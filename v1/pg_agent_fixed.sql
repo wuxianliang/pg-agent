@@ -2,7 +2,6 @@
 -- 1. 扩展 & 配置
 -- =============================================
 CREATE EXTENSION IF NOT EXISTS http;          -- 需要超级用户/云平台白名单
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- gen_random_uuid() 在 PG13+ 为内置；PG12 及以下需 CREATE EXTENSION pgcrypto;
 
 -- 兼容处理：若 http_set_curlopt 不存在则静默跳过

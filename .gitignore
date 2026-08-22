@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local embedded Postgres data
+.pgdata/
+.pgdata.*/
+
+# Oracle/session prompt dumps
+prompt-exports/

@@ -52,4 +52,4 @@
 - `test_poml_brew.py` — poml 渲染层补充测试（临时 brew PG，测完即关）
 - `test_connectivity.py` — http 扩展 / DeepSeek 连通性
 
-复跑：`uv run setup_db.py && uv run run_tests.py && uv run test_poml_brew.py`
+复跑：`uv run python v1/setup_db.py && uv run python v1/run_tests.py && uv run python v1/test_poml_brew.py`

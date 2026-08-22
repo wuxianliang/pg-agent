@@ -1,7 +1,8 @@
-"""建库并加载三个 pg-agent SQL 文件。
+"""建库并加载 pg-agent SQL 文件。
 
 - agent_fixed 库 ← pg_agent_fixed.sql
-- agent_func  库 ← pg_agent_functional.sql + pg_agent_poml.sql（poml 依赖 functional）
+- agent_func  库 ← pg_agent_functional.sql + pg_agent_poml.sql + pg_agent_rlm_integrated.sql
+- agent_rlm   库 ← pg_agent_rlm.sql
 
 幂等：重复运行会先 DROP 再建。
 """
@@ -9,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from server import get_server
 
 ROOT = Path(__file__).parent
@@ -19,7 +20,9 @@ DATABASES = {
     "agent_func": [
         ROOT / "pg_agent_functional.sql",
         ROOT / "pg_agent_poml.sql",
+        ROOT / "pg_agent_rlm_integrated.sql",
     ],
+    "agent_rlm": [ROOT / "pg_agent_rlm.sql"],
 }
 
 # 测试环境兼容补丁与 bug 修复（源文件不动，加载时替换；测试报告会列出）
@@ -135,7 +138,7 @@ def run_psql(server, database: str, sql: str, on_error_stop: bool = False) -> st
     """在指定库上执行 SQL，返回输出。"""
     uri = server.get_uri(database)
     cmd = [str(Path(sys.prefix) / "bin" / "psql")] if False else None
-    from pgembed.postgres_server import POSTGRES_BIN_PATH
+    from pgembed import POSTGRES_BIN_PATH
 
     proc = subprocess.run(
         [str(POSTGRES_BIN_PATH / "psql"), uri, "-v", "ON_ERROR_STOP=" + ("1" if on_error_stop else "0"), "-q"],
@@ -175,7 +178,8 @@ def main():
     # 验证关键对象
     checks = {
         "agent_fixed": ["http extension", "execute_sql_safe", "call_llm", "run_agent_sql", "agent_worker", "build_context_parallel"],
-        "agent_func": ["http extension", "exec_sql_readonly", "http_call_llm", "agent_run", "worker", "poml_render", "agent_run_poml", "render_template"],
+        "agent_func": ["http extension", "exec_sql_readonly", "http_call_llm", "agent_run", "worker", "poml_render", "agent_run_poml", "render_template", "agent_run_rlm", "agent_run_hybrid", "rlm_spawn"],
+        "agent_rlm": ["http extension", "rlm_eval", "rlm_run", "env_get", "rlm_spawn"],
     }
     print("\n=== 验证 ===")
     ok = True

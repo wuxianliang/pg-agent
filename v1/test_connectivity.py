@@ -6,7 +6,7 @@ from pathlib import Path
 
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from server import get_server
 
 

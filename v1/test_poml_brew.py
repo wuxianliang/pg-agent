@@ -3,7 +3,7 @@
 pgembed 构建无 libxml（xmlparse/xpath 不可用），POML 渲染层（P2-P4）在 pgembed
 环境不可测；本脚本起一个临时 brew PG 实例把 poml 层测完，测完即关。
 
-用法: uv run test_poml_brew.py
+用法: uv run python v1/test_poml_brew.py
 """
 import os
 import shutil

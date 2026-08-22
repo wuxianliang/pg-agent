@@ -4,6 +4,12 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
-    "pgembed>=0.2.0",
+    "pgembed>=0.3.0rc1",
     "psycopg2-binary>=2.9.12",
 ]
+
+[tool.uv]
+prerelease = "allow"
+
+[tool.uv.sources]
+pgembed = { path = "../pgembed", editable = true }

@@ -1,9 +1,11 @@
-"""pg-agent 三套 SQL agent 系统的端到端测试。
+"""pg-agent SQL agent 系统的端到端测试。
 
 覆盖：
-  A. pg_agent_fixed.sql      —— execute_sql_safe / run_agent_sql / 上下文构建链 / worker
-  B. pg_agent_functional.sql —— 组合子 / 纯函数 / exec_sql_readonly / handler 注册 / agent_run / worker
-  C. pg_agent_poml.sql       —— 模板引擎 / poml_render / render_template / agent_run_poml
+  A. pg_agent_fixed.sql           —— execute_sql_safe / run_agent_sql / 上下文构建链 / worker
+  B. pg_agent_functional.sql      —— 组合子 / 纯函数 / exec_sql_readonly / handler 注册 / agent_run / worker
+  C. pg_agent_poml.sql            —— 模板引擎 / poml_render / render_template / agent_run_poml
+  D. pg_agent_rlm.sql             —— 独立 RLM：env REPL / eval / spawn 深度 / rlm_run
+  E. pg_agent_rlm_integrated.sql  —— 与 CodeAct 共用 agent_runs/steps/jobs
 
 LLM 依赖项通过 DeepSeek 真实调用（openai.* GUC）。
 """
@@ -15,7 +17,7 @@ from pathlib import Path
 
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from server import get_server
 
 RESULTS: list[tuple[str, str, str]] = []  # (name, status, detail) status: pass/fail/skip
@@ -194,7 +196,9 @@ def test_functional(c):
     n = one(cur, "SELECT refresh_handlers()")[0]
     cur.execute("SELECT job_type, fn FROM handlers ORDER BY job_type")
     rows = cur.fetchall()
-    check("B4a 注册 3 个 handler", n == 3 and {r[0] for r in rows} == {"schema_all_tables", "sample_table", "agent_run"},
+    got = {r[0] for r in rows}
+    core = {"schema_all_tables", "sample_table", "agent_run"}
+    check("B4a 注册核心 handler（允许 RLM 扩展）", n >= 3 and core <= got,
           f"n={n}, {[(r[0], str(r[1])) for r in rows]}")
 
     # --- B5. agent_run 端到端（LLM）---
@@ -293,6 +297,158 @@ def test_poml(c):
         check("C4b 答案含数字", any(ch.isdigit() for ch in str(answer)), str(answer)[:120])
 
 
+# ============================================================
+# D. pg_agent_rlm.sql（独立 RLM）
+# ============================================================
+def test_rlm(c):
+    print("\n=== D. pg_agent_rlm.sql ===")
+    cur = c.cursor()
+
+    print(" D1 env REPL")
+    run_id = one(cur, "SELECT gen_random_uuid()::text")[0]
+    cur.execute("INSERT INTO rlm_runs (run_id, question) VALUES (%s, 't')", (run_id,))
+    one(cur, "SELECT rlm_bind(%s)", (run_id,))
+    one(cur, "SELECT env_set_text('question', 'hello')")
+    one(cur, "SELECT env_set('n', '5')")
+    one(cur, "SELECT env_set_text('context', %s)", ("aaa SECRET_TOKEN=pg-rlm-42 bbb",))
+    q = one(cur, "SELECT env_get('question')")[0]
+    n = one(cur, "SELECT env_get('n')")[0]
+    keys = one(cur, "SELECT env_keys()")[0]
+    check("D1a env_get 文本", q == "hello", json.dumps(q, ensure_ascii=False))
+    check("D1b env_set 解析 JSON 数字", n == 5, json.dumps(n))
+    check("D1c env_keys 含 question/n/context", set(keys) >= {"question", "n", "context"}, json.dumps(keys))
+    check("D1d env_peek", one(cur, "SELECT env_peek('question', 1, 2)")[0] == "he")
+    check("D1e env_len", one(cur, "SELECT env_len('question')")[0] == 5)
+    hits = one(cur, "SELECT env_search('context', %s)", (r"SECRET_TOKEN=\S+",))[0]
+    check("D1f env_search", hits.get("n") == 1 and "pg-rlm-42" in json.dumps(hits), json.dumps(hits))
+    chunks = one(cur, "SELECT env_chunk('context', 10)")[0]
+    check("D1g env_chunk", isinstance(chunks, list) and len(chunks) >= 2, json.dumps(chunks)[:120])
+
+    print(" D2 rlm_eval 安全")
+    r = one(cur, "SELECT rlm_eval(%s, %s)", (run_id, "SELECT env_peek('question',1,5)"))[0]
+    check("D2a eval 可读 env", r.get("success") and r.get("row_count") == 1, json.dumps(r, ensure_ascii=False)[:160])
+    r = one(cur, "SELECT rlm_eval(%s, %s)", (run_id, "DROP TABLE t"))[0]
+    check("D2b 拒绝 DROP", not r.get("success"), r.get("error", "")[:80])
+    r = one(cur, "SELECT rlm_query(%s)", ("SELECT 1 AS n",))[0]
+    check("D2c rlm_query 只读查询", r.get("success") and r.get("row_count") == 1, json.dumps(r)[:120])
+
+    print(" D3 纯函数 prompt/parse/fold")
+    d = one(cur, "SELECT (parse_rlm_output(%s)).*",
+            ('{"thought":"t","code":"SELECT 1","final_answer":null}',))
+    check("D3a 解析 code", d[1] == "SELECT 1" and d[2] is None, str(d))
+    d = one(cur, "SELECT (parse_rlm_output(%s)).*",
+            ('```json\n{"thought":"t","code":null,"final_answer":"答案42"}\n```',))
+    check("D3b 解析 markdown 围栏", d[1] is None and d[2] == "答案42", str(d))
+    prompt = one(cur, "SELECT make_rlm_prompt(0,1,50,true)")[0]
+    check("D3c prompt 含 REPL API 且不含业务数据",
+          "env_peek" in prompt and "rlm_spawn" in prompt and "SECRET_TOKEN" not in prompt,
+          prompt[:80].replace("\n", " "))
+    steps = json.dumps([
+        {"seq": 1, "kind": "llm", "payload": {"raw": "R1"}},
+        {"seq": 2, "kind": "tool", "payload": {"observation": "O1"}},
+    ])
+    msgs = one(cur, "SELECT fold_rlm_messages('SYS', 'U', %s::jsonb)", (steps,))[0]
+    roles = [m["role"] for m in msgs]
+    check("D3d fold_rlm_messages 是 JSON 数组", roles == ["system", "user", "assistant", "user"], str(roles))
+    sys_p = one(cur, "SELECT rlm_system_prompt(%s)", (run_id,))[0]
+    check("D3e rlm_system_prompt 不含 context 正文", "SECRET_TOKEN" not in sys_p, sys_p[:80].replace("\n", " "))
+
+    print(" D4 spawn 深度上限（无 LLM）")
+    deep = one(cur, "SELECT gen_random_uuid()::text")[0]
+    cur.execute("INSERT INTO rlm_runs (run_id, question, depth, max_depth) VALUES (%s,'q',1,1)", (deep,))
+    one(cur, "SELECT rlm_bind(%s)", (deep,))
+    r = one(cur, "SELECT rlm_spawn('x', 'c1')")[0]
+    check("D4a depth>=max_depth 拒绝 spawn", r.get("success") is False and "深度" in (r.get("error") or ""), json.dumps(r, ensure_ascii=False)[:160])
+
+    print(" D5 rlm_run（DeepSeek）")
+    t0 = time.time()
+    answer = llm_one(cur, "SELECT rlm_run(%s, NULL, 6, 0)",
+                     ("public 模式下有多少张表？先查询再回答，给出具体数字。",))[0]
+    dt = time.time() - t0
+    state = one(cur, "SELECT status, steps_used FROM rlm_run_state((SELECT run_id FROM rlm_runs WHERE parent_run_id IS NULL ORDER BY created_at DESC LIMIT 1))")
+    check("D5a rlm_run status=SUCCESS", state[0] == "SUCCESS", f"{dt:.0f}s, steps={state[1]}, answer={str(answer)[:80]}")
+    check("D5b 答案含数字", any(ch.isdigit() for ch in str(answer)), str(answer)[:120])
+
+    print(" D6 prompt-as-variable 大海捞针（DeepSeek）")
+    padding = ("lorem ipsum dolor sit amet " * 80)
+    context = padding + "SECRET_TOKEN=pg-rlm-42" + padding
+    t0 = time.time()
+    answer = llm_one(cur, "SELECT rlm_run(%s, %s, 8, 0)",
+                     ("使用 env_search 或 env_peek 在 context 变量中查找 SECRET_TOKEN 的值，只要那个值。", context))[0]
+    dt = time.time() - t0
+    rid = one(cur, "SELECT run_id FROM rlm_runs WHERE parent_run_id IS NULL ORDER BY created_at DESC LIMIT 1")[0]
+    sys_p = one(cur, "SELECT rlm_system_prompt(%s)", (rid,))[0]
+    one(cur, "SELECT rlm_bind(%s)", (rid,))
+    ctx_in_env = one(cur, "SELECT env_text('context')")[0]
+    check("D6a context 在 env 而不在 prompt", "SECRET_TOKEN=pg-rlm-42" in (ctx_in_env or "") and "SECRET_TOKEN=pg-rlm-42" not in sys_p,
+          f"prompt_has={('SECRET_TOKEN=pg-rlm-42' in sys_p)} env_len={len(ctx_in_env or '')}")
+    check("D6b agent 找出 token", "pg-rlm-42" in str(answer), f"{dt:.0f}s, answer={str(answer)[:120]}")
+
+
+# ============================================================
+# E. pg_agent_rlm_integrated.sql（与 CodeAct 共用表）
+# ============================================================
+def test_rlm_integrated(c):
+    print("\n=== E. pg_agent_rlm_integrated.sql ===")
+    cur = c.cursor()
+
+    print(" E1 共用 schema")
+    cur.execute("SELECT paradigm, parent_run_id, depth, max_depth, name FROM agent_runs LIMIT 0")
+    check("E1a agent_runs 扩展列存在", True)
+    cur.execute("SELECT run_id, name, value FROM rlm_vars LIMIT 0")
+    cur.execute("SELECT parent_run_id, child_run_id, kind FROM rlm_children LIMIT 0")
+    check("E1b rlm_vars / rlm_children 存在", True)
+    n = one(cur, "SELECT count(*) FROM handlers WHERE job_type IN ('rlm_run','hybrid_run','agent_run')")[0]
+    check("E1c 同一 handlers 表含 codeact + rlm", n == 3, f"n={n}")
+
+    print(" E2 共用 agent_runs 上的 env")
+    run_id = one(cur, "INSERT INTO agent_runs (run_id, question, paradigm) VALUES (gen_random_uuid()::text, 't', 'rlm') RETURNING run_id")[0]
+    one(cur, "SELECT rlm_bind(%s)", (run_id,))
+    one(cur, "SELECT env_set_text('question', 'shared')")
+    v = one(cur, "SELECT value FROM rlm_vars WHERE run_id=%s AND name='question'", (run_id,))[0]
+    check("E2a rlm_vars 挂在 agent_runs 上", v == "shared", json.dumps(v, ensure_ascii=False))
+    r = one(cur, "SELECT rlm_eval(%s, %s)", (run_id, "SELECT env_peek('question',1,6)"))[0]
+    check("E2b rlm_eval 走 exec_sql_readonly", r.get("success"), json.dumps(r, ensure_ascii=False)[:160])
+    r = one(cur, "SELECT rlm_eval(%s, %s)", (run_id, "DELETE FROM agent_runs"))[0]
+    check("E2c eval 仍拒绝写", not r.get("success"), r.get("error", "")[:80])
+
+    print(" E3 hybrid prompt")
+    p = one(cur, "SELECT make_hybrid_prompt(50, true)")[0]
+    check("E3a hybrid 同时描述 execute_sql 与 rlm", "execute_sql" in p and "rlm" in p,
+          p[:100].replace("\n", " "))
+    check("E3b 长上下文提示不把正文塞进 prompt", "未写入本 prompt" in p or "context" in p, p[:80].replace("\n", " "))
+
+    print(" E4 spawn 深度上限（无 LLM）")
+    deep = one(cur, "INSERT INTO agent_runs (run_id, question, paradigm, depth, max_depth) VALUES (gen_random_uuid()::text,'q','rlm',1,1) RETURNING run_id")[0]
+    one(cur, "SELECT rlm_bind(%s)", (deep,))
+    r = one(cur, "SELECT rlm_spawn('x', 'c1')")[0]
+    check("E4a 共用 run 上的深度拒绝", r.get("success") is False and "深度" in (r.get("error") or ""), json.dumps(r, ensure_ascii=False)[:160])
+
+    print(" E5 agent_run_rlm（DeepSeek，写入共用 steps）")
+    t0 = time.time()
+    answer = llm_one(cur, "SELECT agent_run_rlm(%s, NULL, 6, 0)",
+                     ("public 模式下有多少张表？先查询再回答，给出具体数字。",))[0]
+    dt = time.time() - t0
+    row = one(cur, "SELECT run_id, paradigm FROM agent_runs WHERE paradigm='rlm' ORDER BY created_at DESC LIMIT 1")
+    state = one(cur, "SELECT status, steps_used FROM run_state(%s)", (row[0],))
+    n_steps = one(cur, "SELECT count(*) FROM agent_steps WHERE run_id=%s", (row[0],))[0]
+    check("E5a 写入共用 agent_runs paradigm=rlm", row[1] == "rlm", str(row))
+    check("E5b 共用 run_state=SUCCESS", state[0] == "SUCCESS", f"{dt:.0f}s, steps={state[1]}, n_steps={n_steps}, answer={str(answer)[:80]}")
+    check("E5c 答案含数字", any(ch.isdigit() for ch in str(answer)), str(answer)[:120])
+
+    print(" E6 整合版大海捞针：prompt 不含正文")
+    padding = ("lorem ipsum dolor sit amet " * 80)
+    context = padding + "SECRET_TOKEN=pg-rlm-42" + padding
+    t0 = time.time()
+    answer = llm_one(cur, "SELECT agent_run_rlm(%s, %s, 8, 0)",
+                     ("使用 env_search 或 env_peek 在 context 变量中查找 SECRET_TOKEN 的值，只要那个值。", context))[0]
+    dt = time.time() - t0
+    rid = one(cur, "SELECT run_id FROM agent_runs WHERE paradigm='rlm' ORDER BY created_at DESC LIMIT 1")[0]
+    sys_p = one(cur, "SELECT rlm_system_prompt(%s)", (rid,))[0]
+    check("E6a 共用 run 的 prompt 不含 token", "SECRET_TOKEN=pg-rlm-42" not in sys_p)
+    check("E6b agent 找出 token", "pg-rlm-42" in str(answer), f"{dt:.0f}s, answer={str(answer)[:120]}")
+
+
 def main():
     server = get_server()
 
@@ -303,7 +459,12 @@ def main():
     c2 = conn(server, "agent_func")
     test_functional(c2)
     test_poml(c2)
+    test_rlm_integrated(c2)
     c2.close()
+
+    c3 = conn(server, "agent_rlm")
+    test_rlm(c3)
+    c3.close()
 
     print("\n" + "=" * 60)
     print("汇总")

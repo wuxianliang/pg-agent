@@ -15,10 +15,8 @@ PGDATA = Path(__file__).parent / ".pgdata"
 
 
 def get_server() -> pgembed.PostgresServer:
-    server = pgembed.get_server(PGDATA)
-    server.ensure_pgdata_inited()
-    server.ensure_postgres_running()
-    return server
+    # pgembed 0.3+ get_server() already inspects PGDATA, runs initdb if needed, and starts postgres.
+    return pgembed.get_server(PGDATA)
 
 
 def main():
