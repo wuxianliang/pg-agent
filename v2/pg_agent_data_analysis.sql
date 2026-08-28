@@ -1,7 +1,8 @@
 -- ============================================================
 -- PG-Agent v2 · data_analysis 层
 --
--- 依赖（必须先加载）：pg_agent_functional.sql, pg_agent_rlm.sql
+-- 依赖（必须先加载）：pg_agent_functional.sql, pg_agent_rlm.sql,
+--           pg_agent_workbench_core.sql（da_system_prompt 会渲染 workbench 工具清单）
 -- 目标库：da_agent（与 v1 的 agent_func / agent_rlm 隔离）
 --
 -- 入口 agent_run_data_analysis 只负责建 run（paradigm=data_analysis,
@@ -100,6 +101,7 @@ LANGUAGE sql IMMUTABLE AS $$
 {"thought":"思考","code":"一条 SELECT 或 WITH","final_answer":"答案或 null"}
 
 规则：
+0. code 与 final_answer 互斥：查库轮 final_answer 必须为 null；作答轮 code 必须为 null（不要两者都填）。
 1. 每轮最多一条 SQL，必须是 SELECT 或 WITH，不要分号结尾。
 2. 数据分析题必须先成功查库，再填 final_answer；没查到就继续查，不要猜。运行时也会拒绝「未查库就作答」。
 3. 不知道表/列时，先查 information_schema.tables / columns（当前连接可见的 schema）。
@@ -112,7 +114,6 @@ REPL API（均在 SELECT 中调用）：
 - rlm_query('SELECT ...')          只读查询（也可直接写 SELECT）
 - information_schema.tables / columns / pg_catalog
 - env_keys() / env_peek / env_search / env_len / env_get
-可选捷径（public 普通表）：da_list_tables() / da_show_create('t') / da_sample('t', n)
 预置变量：question。不要假设你已经读过它的内容。
 $sys$, COALESCE(p_max_rows, 50))
 $$;
@@ -142,7 +143,8 @@ DECLARE r record;
 BEGIN
     SELECT max_rows INTO r FROM agent_runs WHERE run_id = p_run_id;
     IF NOT FOUND THEN RAISE EXCEPTION 'run % 不存在', p_run_id; END IF;
-    RETURN make_da_prompt(COALESCE(r.max_rows, 50));
+    -- 静态 IMMUTABLE prompt（make_da_prompt）+ 已注册 workbench 工具清单
+    RETURN make_da_prompt(COALESCE(r.max_rows, 50)) || render_workbench_tools();
 END;
 $$;
 

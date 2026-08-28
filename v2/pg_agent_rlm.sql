@@ -419,7 +419,7 @@ BEGIN
     v_da := COALESCE(r.paradigm, 'rlm') = 'data_analysis';
     v_has_ctx := EXISTS (SELECT 1 FROM rlm_vars WHERE run_id = p_run_id AND name = 'context');
     IF v_da THEN
-        v_system := make_da_prompt(COALESCE(r.max_rows, 50));
+        v_system := da_system_prompt(p_run_id);
     ELSE
         v_system := make_rlm_prompt(COALESCE(r.depth,0), COALESCE(r.max_depth,1),
                                    COALESCE(r.max_rows,50), v_has_ctx);
