@@ -15,3 +15,6 @@ wheels/
 
 # Oracle/session prompt dumps
 prompt-exports/
+
+# DuckDB runtime database created by v6 tests
+/memory
