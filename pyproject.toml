@@ -4,8 +4,11 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
+    "litellm>=1.100.0.dev2",
     "pgembed>=0.3.0rc1",
     "psycopg2-binary>=2.9.12",
+    "duckdb==1.6.0.dev365",
+    "pytz>=2024.1",
 ]
 
 [tool.uv]
