@@ -42,9 +42,12 @@ uv run python v8/stream/test_stream.py       # G9a（流式地基：增列 + gra
 uv run python v8/grant/test_grant.py         # G10（§2.1/§2.2 完整授权模型：grant/slice + 线性化 + RLS + workspace_handles + fork）
 uv run python v8/plugin/test_plugin.py       # G11（§4 插件世代域：表族 + 依赖解析 + digest + 发布 + 下线七条）
 uv run python v8/gates/test_gates.py         # G12（双实时授权门 + cohort 替换 + A57 摘除）
-uv run python v8/compat/test_compat.py       # G13（P0C host 无关合同面）```
+uv run python v8/compat/test_compat.py       # G13（P0C host 无关合同面）
+uv run python v8/concurrency/test_concurrency.py # G14（并发竞态 + 槽位探针 + 声明向量）```
 
 每个 stage 的 `setup_db.py` 会 DROP/CREATE 自己的库并按 `v8/load.py` 的 `SQL_LOAD_ORDER` 累计加载全部已注册 SQL；测试可独立重复运行。
+
+| G14 | `concurrency/test_concurrency.py`（新 stage；**无 SQL**——复用 G12 `gates` 加载集，`load.py` 的 `concurrency` 键与 `gates` 同位） | `agent_v8_concurrency` | **并发竞态与探针补强**（矩阵 #2 第二余项/#5/#8/#15 余量；不新增业务合同、不改任何生产 SQL）：**D1 Conformance 8 (vi) 下线×seal 两条 seal 路径×两条提交序**——P1 下线先提交（真实 `v_revoke_generation` 持 generation 锁未提交 → 初始 decision seal 阻塞于 generation `FOR SHARE`）→ 提交后 seal 稳定拒 `GENERATION_REVOKED`、`counts(session)==(0,0,0,0)`；P2 seal 先提交（seal 持 session `FOR UPDATE`+generation `FOR SHARE` 未提交 → 下线阻塞于其锁）→ 提交后**锁内重扫发现新绑定≠预锁集 → 内部整体回滚重试**（`attempts>=2`）→ 新 effect 被 drain 为 `cancelled_before_dispatch`、无 `dispatch_started` attempt；tools seal 半（阻塞于下线预锁的 session 行锁，提交后稳定拒、零新增控制态）；**D2 Conformance 8 (viii) 下线×retry allocation**——A 下线先提交（holder 持 `FOR NO KEY UPDATE`+受保护 lifecycle GUC 翻 failed，绑定步在锁内重扫之后 → 分配阻塞于 generation `FOR SHARE`）→ 普通入口 `GENERATION_REVOKED`、零分配、两段唯一裁定 (α) step `failed_terminal`/session `failed`；B allocation 先提交（未提交的分配持 session 行锁 → 下线阻塞）→ 分配有效、新 attempt 随后 `cancelled_before_dispatch`、MUST NOT 新 dispatch、attempt 行留存；recovery 入口整体 `accepted`＋子结果 `allocation_denied:GENERATION_REVOKED`；unknown sibling 不达授权/generation 门、无 `allocation_denied` 子结果；**判定源独立性注入**（矩阵 #2 第二余项）：parent 快照偏离（`effect_requests` 派生列改写）下完成仍按冻结 attempt 快照结算、envelope 偏离源被稳定拒；**D3 Conformance 15 finish×尾部 chunk**——final 先到（`stream_complete=true`+`final_chunk_index=N`）后：序 A 尾 chunk 先提交→finish 通过；序 B finish 先提交→尾 chunk 按 terminal 分支接受、session 保持 `completed`、已结算 effect 不回退；**D4 槽位锁序位探针**——实测取得集报告（`v_complete_effect`/`v_recovery_takeover`/`v_repair` 取 `turn_end_slots` 行锁、`request_cancel` 不取、`FORCE_JOB_TAKEOVER` 未实现 ⇒ 规格字面清单与实测差异记偏差 A101）、attempt→slot 相邻位序断言（持 slot 行锁时 attempt 行锁仍可取得）；**D5 Conformance 5 声明 authority vectors (ii)(iii)**（落 `v8/effect/test_effect.py::test_outcome_mismatch`，G6 计数 266→276 重立基线，A48/A71 先例）|
 
 ## 与规格的对应
 

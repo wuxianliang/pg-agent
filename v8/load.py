@@ -112,6 +112,10 @@ STAGE_THROUGH = {
     # effect/tools/retry/takeover files in place — but its gate exercises
     # the full pre-compat order (seal/dispatch/cohort/takeover/append).
     "gates": 13,
+    # G14 (concurrency) also adds NO SQL: it reuses the frozen gates load
+    # set and exercises the lock-wait interleavings of the delivered
+    # gates, so it carries the same position as `gates`.
+    "concurrency": 13,
 }
 
 

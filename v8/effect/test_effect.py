@@ -649,6 +649,52 @@ def test_outcome_mismatch(conn) -> None:
         check("settled mismatch writes the audit row",
               cur.fetchone()[0] == "RESULT_OUTCOME_MISMATCH")
 
+    # (ii) declared failed_retryable x evidence with NO terminal receipt
+    # (neither provider_receipt nor no_side_effect_proof): the unique
+    # classifier derives `unknown`, so the effect MUST settle unknown_outcome
+    # (a known failure MUST NOT be recorded) with exactly one mismatch row.
+    s4, _t4, step4, effect4, _f4, job4, rh4, ik4 = full_chain_fixture(conn)
+    r4 = complete_effect(
+        conn, s4, f"cmp-{u()[:8]}", effect4, "drv", 1,
+        dispatch_session_fence=2, job_fence=job4, step_id=step4,
+        request_hash=rh4, idempotency_key=ik4,
+        outcome="failed_retryable",  # declared known failure ...
+        message={"text": "no receipt"}, tools=[], decision_only=True,
+        final_tools=False,
+        evidence={"class": "known_failure"})  # ... but no receipt and no proof
+    check("(ii) accepted (settlement by the derived classification)",
+          r4["outcome"] == "accepted", r4)
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM effect_requests WHERE effect_id=%s",
+                    (effect4,))
+        check("(ii) evidence without a terminal receipt derives "
+              "unknown_outcome", cur.fetchone()[0] == "unknown_outcome")
+        cur.execute("SELECT count(*) FROM effect_audit WHERE effect_id=%s"
+                    " AND reason='RESULT_OUTCOME_MISMATCH'", (effect4,))
+        check("(ii) exactly one mismatch audit row", cur.fetchone()[0] == 1)
+
+    # (iii) declared cancelled_after_dispatch x provider-confirmed success:
+    # the derived classification wins, so the effect MUST settle succeeded
+    # and MUST NOT take a cancellation terminal state.
+    s5, _t5, step5, effect5, _f5, job5, rh5, ik5 = full_chain_fixture(conn)
+    r5 = complete_effect(
+        conn, s5, f"cmp-{u()[:8]}", effect5, "drv", 1,
+        dispatch_session_fence=2, job_fence=job5, step_id=step5,
+        request_hash=rh5, idempotency_key=ik5,
+        outcome="cancelled_after_dispatch",  # declared cancellation ...
+        message={"text": "ok"}, tools=[], decision_only=True,
+        final_tools=False, evidence=good_evidence())  # ... provider says success
+    check("(iii) accepted (settlement by the derived classification)",
+          r5["outcome"] == "accepted", r5)
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM effect_requests WHERE effect_id=%s",
+                    (effect5,))
+        check("(iii) provider-confirmed success derives succeeded",
+              cur.fetchone()[0] == "succeeded")
+        cur.execute("SELECT count(*) FROM effect_audit WHERE effect_id=%s"
+                    " AND reason='RESULT_OUTCOME_MISMATCH'", (effect5,))
+        check("(iii) exactly one mismatch audit row", cur.fetchone()[0] == 1)
+
 
 # ---------------------------------------------------------------------------
 # Semantic layer: decision marks mutex (validation written in full)
