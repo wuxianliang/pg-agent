@@ -1150,9 +1150,24 @@ BEGIN
         v_fingerprint := v_sha256_hex(coalesce(p_result_payload_canonical, p_payload_canonical));
         INSERT INTO effect_audit(
             audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-            audit_key_kind, audit_key_value, result_fingerprint, reason)
+            audit_key_kind, audit_key_value, result_fingerprint, reason,
+                command_id, result_hash, result_parse_path,
+                expected_driver, received_driver,
+                expected_driver_epoch, received_driver_epoch,
+                expected_dispatch_session_fence, received_dispatch_session_fence,
+                expected_job_fence, received_job_fence,
+                expected_request_hash, received_request_hash,
+                expected_idempotency_key_hash, received_idempotency_key_hash)
         VALUES (p_session_id, p_session_id, v_step_id, p_effect_id, p_attempt_no,
-                'canonical_binding', v_computed, v_fingerprint, 'STALE_JOB_FENCE');
+                'canonical_binding', v_computed, v_fingerprint, 'STALE_JOB_FENCE',
+                p_command_id, v_sha256_hex(p_result_payload_canonical), 'empty',
+                v_att.driver, p_driver,
+                v_att.driver_epoch, p_driver_epoch,
+                v_att.dispatch_session_fence, p_dispatch_session_fence,
+                v_er.current_job_fence, p_job_fence,
+                v_att.request_hash, p_request_hash,
+                v_sha256_hex(v_att.idempotency_key),
+                v_sha256_hex(p_idempotency_key));
         v_receipt := v8_reject_command(p_session_id, p_command_id, 'complete_effect',
             v_computed, 'rejected_stale', 'STALE_JOB_FENCE',
             format('job_fence %s does not match effect current_job_fence %s',
@@ -1168,11 +1183,26 @@ BEGIN
     IF v_att.superseded_by_attempt_no IS NOT NULL THEN
         INSERT INTO effect_audit(
             audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-            audit_key_kind, audit_key_value, result_fingerprint, reason)
+            audit_key_kind, audit_key_value, result_fingerprint, reason,
+                command_id, result_hash, result_parse_path,
+                expected_driver, received_driver,
+                expected_driver_epoch, received_driver_epoch,
+                expected_dispatch_session_fence, received_dispatch_session_fence,
+                expected_job_fence, received_job_fence,
+                expected_request_hash, received_request_hash,
+                expected_idempotency_key_hash, received_idempotency_key_hash)
         VALUES (p_session_id, p_session_id, v_step_id, p_effect_id, p_attempt_no,
                 'canonical_binding', v_computed,
                 v_sha256_hex(coalesce(p_result_payload_canonical, p_payload_canonical)),
-                'ATTEMPT_SUPERSEDED');
+                'ATTEMPT_SUPERSEDED',
+                p_command_id, v_sha256_hex(p_result_payload_canonical), 'empty',
+                v_att.driver, p_driver,
+                v_att.driver_epoch, p_driver_epoch,
+                v_att.dispatch_session_fence, p_dispatch_session_fence,
+                v_er.current_job_fence, p_job_fence,
+                v_att.request_hash, p_request_hash,
+                v_sha256_hex(v_att.idempotency_key),
+                v_sha256_hex(p_idempotency_key));
         v_receipt := v8_reject_command(p_session_id, p_command_id, 'complete_effect',
             v_computed, 'rejected_stale', 'ATTEMPT_SUPERSEDED',
             format('attempt %s was superseded by attempt %s: late results are audit-only',
@@ -1191,11 +1221,26 @@ BEGIN
         -- a late worker completion is stably rejected here (s32b §2.9).
         INSERT INTO effect_audit(
             audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-            audit_key_kind, audit_key_value, result_fingerprint, reason)
+            audit_key_kind, audit_key_value, result_fingerprint, reason,
+                command_id, result_hash, result_parse_path,
+                expected_driver, received_driver,
+                expected_driver_epoch, received_driver_epoch,
+                expected_dispatch_session_fence, received_dispatch_session_fence,
+                expected_job_fence, received_job_fence,
+                expected_request_hash, received_request_hash,
+                expected_idempotency_key_hash, received_idempotency_key_hash)
         VALUES (p_session_id, p_session_id, v_step_id, p_effect_id, p_attempt_no,
                 'canonical_binding', v_computed,
                 v_sha256_hex(coalesce(p_result_payload_canonical, p_payload_canonical)),
-                'ATTEMPT_ALREADY_SETTLED');
+                'ATTEMPT_ALREADY_SETTLED',
+                p_command_id, v_sha256_hex(p_result_payload_canonical), 'empty',
+                v_att.driver, p_driver,
+                v_att.driver_epoch, p_driver_epoch,
+                v_att.dispatch_session_fence, p_dispatch_session_fence,
+                v_er.current_job_fence, p_job_fence,
+                v_att.request_hash, p_request_hash,
+                v_sha256_hex(v_att.idempotency_key),
+                v_sha256_hex(p_idempotency_key));
         v_receipt := v8_reject_command(p_session_id, p_command_id, 'complete_effect',
             v_computed, 'rejected_mismatch', 'ATTEMPT_ALREADY_SETTLED',
             format('attempt already terminal (%s): single settlement', v_att.status));
@@ -1213,11 +1258,26 @@ BEGIN
     IF v_att.status = 'unknown_outcome' THEN
         INSERT INTO effect_audit(
             audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-            audit_key_kind, audit_key_value, result_fingerprint, reason)
+            audit_key_kind, audit_key_value, result_fingerprint, reason,
+                command_id, result_hash, result_parse_path,
+                expected_driver, received_driver,
+                expected_driver_epoch, received_driver_epoch,
+                expected_dispatch_session_fence, received_dispatch_session_fence,
+                expected_job_fence, received_job_fence,
+                expected_request_hash, received_request_hash,
+                expected_idempotency_key_hash, received_idempotency_key_hash)
         VALUES (p_session_id, p_session_id, v_step_id, p_effect_id, p_attempt_no,
                 'canonical_binding', v_computed,
                 v_sha256_hex(coalesce(p_result_payload_canonical, p_payload_canonical)),
-                'REPAIR_REQUIRED');
+                'REPAIR_REQUIRED',
+                p_command_id, v_sha256_hex(p_result_payload_canonical), 'empty',
+                v_att.driver, p_driver,
+                v_att.driver_epoch, p_driver_epoch,
+                v_att.dispatch_session_fence, p_dispatch_session_fence,
+                v_er.current_job_fence, p_job_fence,
+                v_att.request_hash, p_request_hash,
+                v_sha256_hex(v_att.idempotency_key),
+                v_sha256_hex(p_idempotency_key));
         v_receipt := jsonb_build_object(
             'command_kind', 'complete_effect',
             'command_id', p_command_id,
@@ -1474,12 +1534,27 @@ BEGIN
         IF p_outcome <> v_derived THEN
             INSERT INTO effect_audit(
                 audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-                audit_key_kind, audit_key_value, result_fingerprint, reason)
+                audit_key_kind, audit_key_value, result_fingerprint, reason,
+                command_id, result_hash, result_parse_path,
+                expected_driver, received_driver,
+                expected_driver_epoch, received_driver_epoch,
+                expected_dispatch_session_fence, received_dispatch_session_fence,
+                expected_job_fence, received_job_fence,
+                expected_request_hash, received_request_hash,
+                expected_idempotency_key_hash, received_idempotency_key_hash)
             VALUES (p_session_id, p_session_id, v_step_id, p_effect_id, p_attempt_no,
                     'canonical_binding', v_computed,
                     v_sha256_hex(coalesce(p_result_payload_canonical,
                                           p_payload_canonical)),
-                    'RESULT_OUTCOME_MISMATCH')
+                    'RESULT_OUTCOME_MISMATCH',
+                p_command_id, v_sha256_hex(p_result_payload_canonical), 'empty',
+                v_att.driver, p_driver,
+                v_att.driver_epoch, p_driver_epoch,
+                v_att.dispatch_session_fence, p_dispatch_session_fence,
+                v_er.current_job_fence, p_job_fence,
+                v_att.request_hash, p_request_hash,
+                v_sha256_hex(v_att.idempotency_key),
+                v_sha256_hex(p_idempotency_key))
             ON CONFLICT DO NOTHING;
         END IF;
         v_result_hash := v_sha256_hex(p_result_payload_canonical);
@@ -1499,10 +1574,25 @@ BEGIN
          WHERE effect_id = p_effect_id AND attempt_no = p_attempt_no;
         INSERT INTO effect_audit(
             audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-            audit_key_kind, audit_key_value, result_fingerprint, reason)
+            audit_key_kind, audit_key_value, result_fingerprint, reason,
+                command_id, result_hash, result_parse_path,
+                expected_driver, received_driver,
+                expected_driver_epoch, received_driver_epoch,
+                expected_dispatch_session_fence, received_dispatch_session_fence,
+                expected_job_fence, received_job_fence,
+                expected_request_hash, received_request_hash,
+                expected_idempotency_key_hash, received_idempotency_key_hash)
         VALUES (p_session_id, p_session_id, v_step_id, p_effect_id, p_attempt_no,
                 'canonical_binding', v_computed, v_result_hash,
-                'COMPLETED_AFTER_CANCEL')
+                'COMPLETED_AFTER_CANCEL',
+                p_command_id, v_sha256_hex(p_result_payload_canonical), 'empty',
+                v_att.driver, p_driver,
+                v_att.driver_epoch, p_driver_epoch,
+                v_att.dispatch_session_fence, p_dispatch_session_fence,
+                v_er.current_job_fence, p_job_fence,
+                v_att.request_hash, p_request_hash,
+                v_sha256_hex(v_att.idempotency_key),
+                v_sha256_hex(p_idempotency_key))
         ON CONFLICT DO NOTHING;
 
         -- The completion keeps its semantic result event (the same
@@ -1645,11 +1735,26 @@ BEGIN
             IF v_mismatch THEN
                 INSERT INTO effect_audit(
                     audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-                    audit_key_kind, audit_key_value, result_fingerprint, reason)
+                    audit_key_kind, audit_key_value, result_fingerprint, reason,
+                command_id, result_hash, result_parse_path,
+                expected_driver, received_driver,
+                expected_driver_epoch, received_driver_epoch,
+                expected_dispatch_session_fence, received_dispatch_session_fence,
+                expected_job_fence, received_job_fence,
+                expected_request_hash, received_request_hash,
+                expected_idempotency_key_hash, received_idempotency_key_hash)
                 VALUES (p_session_id, p_session_id, v_step_id, p_effect_id, p_attempt_no,
                         'canonical_binding', v_computed,
                         v_sha256_hex(coalesce(p_result_payload_canonical, p_payload_canonical)),
-                        'RESULT_OUTCOME_MISMATCH');
+                        'RESULT_OUTCOME_MISMATCH',
+                p_command_id, v_sha256_hex(p_result_payload_canonical), 'empty',
+                v_att.driver, p_driver,
+                v_att.driver_epoch, p_driver_epoch,
+                v_att.dispatch_session_fence, p_dispatch_session_fence,
+                v_er.current_job_fence, p_job_fence,
+                v_att.request_hash, p_request_hash,
+                v_sha256_hex(v_att.idempotency_key),
+                v_sha256_hex(p_idempotency_key));
             END IF;
 
             -- ---- success closure (tool arm) ----
@@ -1930,11 +2035,26 @@ BEGIN
         IF v_mismatch THEN
             INSERT INTO effect_audit(
                 audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-                audit_key_kind, audit_key_value, result_fingerprint, reason)
+                audit_key_kind, audit_key_value, result_fingerprint, reason,
+                command_id, result_hash, result_parse_path,
+                expected_driver, received_driver,
+                expected_driver_epoch, received_driver_epoch,
+                expected_dispatch_session_fence, received_dispatch_session_fence,
+                expected_job_fence, received_job_fence,
+                expected_request_hash, received_request_hash,
+                expected_idempotency_key_hash, received_idempotency_key_hash)
             VALUES (p_session_id, p_session_id, v_step_id, p_effect_id, p_attempt_no,
                     'canonical_binding', v_computed,
                     v_sha256_hex(coalesce(p_result_payload_canonical, p_payload_canonical)),
-                    'RESULT_OUTCOME_MISMATCH');
+                    'RESULT_OUTCOME_MISMATCH',
+                p_command_id, v_sha256_hex(p_result_payload_canonical), 'empty',
+                v_att.driver, p_driver,
+                v_att.driver_epoch, p_driver_epoch,
+                v_att.dispatch_session_fence, p_dispatch_session_fence,
+                v_er.current_job_fence, p_job_fence,
+                v_att.request_hash, p_request_hash,
+                v_sha256_hex(v_att.idempotency_key),
+                v_sha256_hex(p_idempotency_key));
         END IF;
 
         -- ---- success closure ----
@@ -2111,11 +2231,26 @@ BEGIN
         IF v_mismatch THEN
             INSERT INTO effect_audit(
                 audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-                audit_key_kind, audit_key_value, result_fingerprint, reason)
+                audit_key_kind, audit_key_value, result_fingerprint, reason,
+                command_id, result_hash, result_parse_path,
+                expected_driver, received_driver,
+                expected_driver_epoch, received_driver_epoch,
+                expected_dispatch_session_fence, received_dispatch_session_fence,
+                expected_job_fence, received_job_fence,
+                expected_request_hash, received_request_hash,
+                expected_idempotency_key_hash, received_idempotency_key_hash)
             VALUES (p_session_id, p_session_id, v_step_id, p_effect_id, p_attempt_no,
                     'canonical_binding', v_computed,
                     v_sha256_hex(coalesce(p_result_payload_canonical, p_payload_canonical)),
-                    'RESULT_OUTCOME_MISMATCH');
+                    'RESULT_OUTCOME_MISMATCH',
+                p_command_id, v_sha256_hex(p_result_payload_canonical), 'empty',
+                v_att.driver, p_driver,
+                v_att.driver_epoch, p_driver_epoch,
+                v_att.dispatch_session_fence, p_dispatch_session_fence,
+                v_er.current_job_fence, p_job_fence,
+                v_att.request_hash, p_request_hash,
+                v_sha256_hex(v_att.idempotency_key),
+                v_sha256_hex(p_idempotency_key));
         END IF;
         UPDATE effect_requests SET status = 'unknown_outcome', updated_at = now()
          WHERE effect_id = p_effect_id;

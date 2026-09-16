@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import struct
 import sys
+import uuid
 from pathlib import Path
 
 import psycopg2
@@ -641,6 +642,79 @@ def test_hardcoded_goldens(conn) -> None:
           == GOLDEN_BINDING)
 
 
+# ---------------------------------------------------------------------------
+# 8. D9 — the real completion write path carries the full column set
+# ---------------------------------------------------------------------------
+
+E2E_DB = "agent_v8_audit_e2e"
+
+
+def test_d9_real_write_path() -> None:
+    """Drive a real structural-layer rejection through v_complete_effect and
+    assert the audit row it writes carries the expected/received columns (not
+    the table defaults)."""
+    from v8.load import load_stage, run_psql
+    from v8.grant.fixtures import seed_stage_grants
+    from v8.effect.test_effect import full_chain_fixture
+    from v8.effect.client import complete_effect
+
+    s = get_server()
+    run_psql(s, "postgres", f"DROP DATABASE IF EXISTS {E2E_DB} WITH (FORCE);")
+    run_psql(s, "postgres", f"CREATE DATABASE {E2E_DB};")
+    load_stage(s, E2E_DB, "effect")
+    conn = psycopg2.connect(s.get_uri(E2E_DB))
+    seed_stage_grants(conn, drivers=("drv",))
+    try:
+        _s, _turn, step, effect, _fence, job_fence, rh, ik = full_chain_fixture(conn)
+        # Advance the effect-level fence so the OLD job fence is stale: the
+        # STALE_JOB_FENCE branch is the first full-column audit write.
+        with conn.cursor() as cur:
+            cur.execute("UPDATE effect_requests SET current_job_fence ="
+                        " current_job_fence + 5 WHERE effect_id=%s", (effect,))
+        conn.commit()
+        r = complete_effect(
+            conn, _s, f"cmp-{uuid.uuid4().hex[:8]}", effect, "drv", 1,
+            dispatch_session_fence=2, job_fence=job_fence, step_id=step,
+            request_hash=rh, idempotency_key=ik, outcome="succeeded",
+            message={"text": "late"}, tools=[], decision_only=True,
+            final_tools=False,
+            evidence={"class": "known_success",
+                      "provider_receipt": {"receipt_id": "pr-e2e"}})
+        check("D9: real stale completion rejected", r["code"] == "STALE_JOB_FENCE", r)
+        row = one(conn,
+            "SELECT command_id, result_parse_path,"
+            " expected_driver, received_driver,"
+            " expected_driver_epoch, received_driver_epoch,"
+            " expected_dispatch_session_fence, received_dispatch_session_fence,"
+            " expected_job_fence, received_job_fence,"
+            " expected_request_hash, received_request_hash,"
+            " expected_idempotency_key_hash, received_idempotency_key_hash"
+            " FROM effect_audit WHERE effect_id=%s AND reason='STALE_JOB_FENCE'",
+            (effect,))
+        check("D9: the real write path populated the audit row", row is not None)
+        (c_id, parse_path, e_drv, r_drv, e_ep, r_ep, e_df, r_df,
+         e_jf, r_jf, e_rh, r_rh, e_ik, r_ik) = row
+        check("D9: command_id comes from the calling command", c_id is not None)
+        check("D9: result_parse_path is the empty path at this layer",
+              parse_path == "empty", parse_path)
+        check("D9: expected driver/epoch read the persisted attempt snapshot",
+              e_drv == "drv" and e_ep == 1, (e_drv, e_ep))
+        check("D9: received driver/epoch echo the envelope",
+              r_drv == "drv" and r_ep == 1, (r_drv, r_ep))
+        check("D9: expected dispatch_session_fence is the attempt snapshot",
+              e_df is not None and r_df == 2, (e_df, r_df))
+        check("D9: expected_job_fence reads effect current_job_fence (advanced)",
+              e_jf == r_jf + 5, (e_jf, r_jf))
+        check("D9: expected/received request_hash populated",
+              e_rh == rh and r_rh == rh, (e_rh, r_rh))
+        check("D9: idempotency key is stored hashed on both sides (never raw)",
+              e_ik == _sha(ik.encode()) and r_ik == _sha(ik.encode())
+              and ik not in (e_ik or "") and ik not in (r_ik or ""),
+              (e_ik, r_ik))
+    finally:
+        conn.close()
+
+
 def main() -> int:
 
     setup_db()
@@ -659,6 +733,7 @@ def main() -> int:
         test_version_tags(conn)
     finally:
         conn.close()
+    test_d9_real_write_path()
     print("[G16] all gates passed")
     return 0
 
