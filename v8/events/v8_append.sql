@@ -24,11 +24,16 @@
 -- driver_epoch=1, next_seq=1, cancellation_epoch=0, lease/pointer/failure
 -- columns NULL) is enforced by the G2 BEFORE INSERT trigger, not here.
 -- ---------------------------------------------------------------------------
-CREATE FUNCTION v_create_session(p_session_id uuid, p_driver text)
-RETURNS boolean
+CREATE FUNCTION v_create_session(
+    p_session_id uuid, p_driver text, p_workspace_id uuid DEFAULT NULL
+) RETURNS boolean
 LANGUAGE plpgsql AS $$
 BEGIN
-    INSERT INTO sessions(session_id, driver) VALUES (p_session_id, p_driver)
+    -- G10: the optional p_workspace_id binds the calling session to its
+    -- tenant (the section 2.1 conjunct-2 calling-session leg). NULL
+    -- (default) keeps every legacy gate session unscoped.
+    INSERT INTO sessions(session_id, driver, workspace_id)
+    VALUES (p_session_id, p_driver, p_workspace_id)
     ON CONFLICT (session_id) DO NOTHING;
     RETURN FOUND;
 END;
@@ -301,7 +306,60 @@ DECLARE
     v_si_grant text;
     -- G9b late-chunk equivalence completion (barrier (d)).
     v_lc record;
+    -- G10 session/heartbeat authorization precheck.
+    v_hb_caller text;
+    -- G10 stream registry ownership lookup.
+    v_reg_owner text;
+    v_reg record;
 BEGIN
+    -- G10: session/heartbeat event_append authorization gate — an
+    -- authorization PRECHECK rejection (authorization precedes every
+    -- receipt/binding processing): no command_receipts/command_bindings row
+    -- is written or read, no command binding is occupied; the denial lands
+    -- in the independent authz_denial_audits table keyed by the calling
+    -- security context + target command identity (repeated denials of the
+    -- same context merge into one row). Enforced when the caller identity
+    -- context is supplied (the grant-model path); the all-legs-default
+    -- legacy path keeps the A57 annotated downgrade (G10 retains it, G12
+    -- removes it). No valid grant (including a revoked one) or a
+    -- cross-tenant grant context -> GRANT_DENIED, without leaking target
+    -- existence beyond the denial audit.
+    IF (p_caller_subject IS NOT NULL OR p_caller_driver IS NOT NULL
+        OR p_caller_epoch IS NOT NULL OR p_caller_grant_id IS NOT NULL)
+       AND p_entries IS NOT NULL AND jsonb_typeof(p_entries) = 'array'
+       AND EXISTS (SELECT 1
+                     FROM jsonb_array_elements(p_entries) elem(j)
+                    WHERE j->>'event_type' = 'session/heartbeat')
+       AND EXISTS (SELECT 1 FROM sessions s WHERE s.session_id = p_session_id) THEN
+        -- Master lock order position 1 (session row) BEFORE the grant/slice
+        -- locks taken by the judge (the adjudicator below re-locks it
+        -- harmlessly inside the same transaction).
+        PERFORM 1 FROM sessions a WHERE a.session_id = p_session_id FOR UPDATE;
+        v_hb_caller := coalesce(p_caller_subject,
+                                v_grant_subject(p_caller_grant_id));
+        IF v_grant_find_valid(p_session_id, 'event_append', v_hb_caller,
+                              p_caller_driver, p_caller_epoch,
+                              p_caller_grant_id, NULL) IS NULL THEN
+            PERFORM v_authz_denial(
+                coalesce(v_hb_caller, '') || '|' || coalesce(p_caller_driver, '')
+                || '|' || coalesce(p_caller_epoch::text, '')
+                || '|' || coalesce(p_caller_grant_id, ''),
+                'append_events/session_heartbeat:' || p_session_id::text,
+                'no valid event_append grant for the calling context '
+                '(revoked, unissued or cross-tenant)');
+            RETURN QUERY SELECT 'rejected_mismatch'::text, 'GRANT_DENIED'::text,
+                jsonb_build_object(
+                    'command_kind', 'append_events',
+                    'command_id', p_command_id,
+                    'outcome', 'rejected_mismatch',
+                    'code', 'GRANT_DENIED',
+                    'authz_precheck', true,
+                    'detail', 'authorization precheck (outside the receipt '
+                              'namespace): no valid event_append grant');
+            RETURN;
+        END IF;
+    END IF;
+
     -- Step (1) of the seven steps (session row lock, master lock order
     -- position 1) is taken inside the adjudicator, together with the outer
     -- command receipt/binding judgment order (1)-(4).
@@ -615,25 +673,16 @@ BEGIN
                               OR (p_caller_driver IS NOT NULL)
                               OR (p_caller_epoch IS NOT NULL);
             IF v_stream_bound THEN
-                -- (3) stream_id attribution: the effect MUST resolve to a
-                --     bound provider/adapter subject, and the stream_id MUST
-                --     NOT already belong to an effect bound to a DIFFERENT
-                --     provider (a foreign stream — a provider's stream is
-                --     provider-scoped, so this is checked across sessions;
-                --     unbound effects carry no provider claim and are
-                --     ignored here).
+                -- (3) stream_id attribution (G10: the stream registry
+                --     replaces the A60 cross-session chunk-scan
+                --     approximation). The effect MUST resolve to a bound
+                --     provider/adapter subject, and the stream_id MUST NOT
+                --     be registered to a DIFFERENT provider (first legal
+                --     use binds the stream; foreign reuse rejects).
                 IF v_eff_subject IS NULL
-                   OR EXISTS (
-                       SELECT 1
-                         FROM session_events se
-                         JOIN effect_requests er2 ON er2.effect_id = se.effect_id
-                        WHERE se.event_class = 'observational'
-                          AND se.event_type = 'assistant/chunk'
-                          AND se.stream_id = (v_e->>'stream_id')
-                          AND er2.effect_id <> v_effect
-                          AND er2.grant_id IS NOT NULL
-                          AND v_grant_subject(er2.grant_id)
-                              IS DISTINCT FROM v_eff_subject) THEN
+                   OR EXISTS (SELECT 1 FROM stream_registry sr
+                               WHERE sr.stream_id = (v_e->>'stream_id')
+                                 AND sr.owner_subject IS DISTINCT FROM v_eff_subject) THEN
                     v_receipt := v8_reject_command(p_session_id, p_command_id, 'append_events',
                         v_computed, 'rejected_mismatch', 'CHUNK_ATTRIBUTION_INVALID',
                         format('entry %s: stream_id is not attributable to the effect''s bound provider/adapter (item 3)', v_i));
@@ -642,11 +691,16 @@ BEGIN
                 END IF;
                 -- (6)(i) a valid event_append grant held by the caller
                 --     (base capability; a chunk append never waives it).
-                v_ea_grant := (SELECT gg.grant_id FROM grants gg
-                                WHERE gg.subject_id = v_caller
-                                  AND gg.capability = 'event_append'
-                                ORDER BY gg.grant_id LIMIT 1);
-                IF NOT v_grant_valid(p_session_id, v_ea_grant, 'event_append') THEN
+                --     G10: the grant lookup goes through the full judge
+                --     (v_grant_find_valid — subject resolved through the
+                --     grant/driver chain, all conjuncts evaluated under the
+                --     fixed lock order); a bare subject_id match never
+                --     decides validity anymore.
+                v_ea_grant := v_grant_find_valid(
+                    p_session_id, 'event_append', v_caller,
+                    p_caller_driver, p_caller_epoch, p_caller_grant_id,
+                    jsonb_build_object('target', v_e->>'stream_id'));
+                IF v_ea_grant IS NULL THEN
                     v_receipt := v8_reject_command(p_session_id, p_command_id, 'append_events',
                         v_computed, 'rejected_mismatch', 'CHUNK_ATTRIBUTION_INVALID',
                         format('entry %s: caller holds no valid event_append grant (item 6i)', v_i));
@@ -656,11 +710,11 @@ BEGIN
                 -- (6)(ii) a valid stream_ingest grant held by the same caller
                 --     (dual-grant conjunction; stream_ingest alone never
                 --     substitutes for event_append).
-                v_si_grant := (SELECT gg.grant_id FROM grants gg
-                                WHERE gg.subject_id = v_caller
-                                  AND gg.capability = 'stream_ingest'
-                                ORDER BY gg.grant_id LIMIT 1);
-                IF NOT v_grant_valid(p_session_id, v_si_grant, 'stream_ingest') THEN
+                v_si_grant := v_grant_find_valid(
+                    p_session_id, 'stream_ingest', v_caller,
+                    p_caller_driver, p_caller_epoch, p_caller_grant_id,
+                    jsonb_build_object('target', v_e->>'stream_id'));
+                IF v_si_grant IS NULL THEN
                     v_receipt := v8_reject_command(p_session_id, p_command_id, 'append_events',
                         v_computed, 'rejected_mismatch', 'CHUNK_ATTRIBUTION_INVALID',
                         format('entry %s: caller holds no valid stream_ingest grant (item 6ii)', v_i));
@@ -1043,6 +1097,38 @@ BEGIN
     IF v_new_count > 0 THEN
         UPDATE sessions SET next_seq = next_seq + v_new_count, updated_at = now()
          WHERE session_id = p_session_id;
+
+        -- G10: stream registration (item 3). The FIRST legally attributed
+        -- bound chunk binds its stream to the effect's provider subject
+        -- (resolved through the bound grant) in this same transaction, so
+        -- any later batch rejection rolls the registration back with the
+        -- later batch rejection rolls the registration back with the
+        -- events. A foreign registration that raced past the validation
+        -- check fails closed here (the whole transaction aborts — zero
+        -- events, zero registration).
+        FOR v_reg IN
+            SELECT DISTINCT ON (b.stream_id) b.stream_id, b.effect_id, er.grant_id
+              FROM pg_temp.v8_batch_items b
+              JOIN effect_requests er ON er.effect_id = b.effect_id
+             WHERE b.is_chunk AND b.action = 'insert'
+               AND er.grant_id IS NOT NULL
+             ORDER BY b.stream_id, b.effect_id
+        LOOP
+            INSERT INTO stream_registry(stream_id, workspace_id,
+                                        owner_subject, effect_id)
+            VALUES (v_reg.stream_id,
+                    (SELECT g.workspace_id FROM grants g
+                      WHERE g.grant_id = v_reg.grant_id),
+                    v_grant_subject(v_reg.grant_id), v_reg.effect_id)
+            ON CONFLICT (stream_id) DO NOTHING;
+            SELECT sr.owner_subject INTO v_reg_owner
+              FROM stream_registry sr WHERE sr.stream_id = v_reg.stream_id;
+            IF v_reg_owner IS DISTINCT FROM v_grant_subject(v_reg.grant_id) THEN
+                RAISE EXCEPTION
+                    'v8: stream % raced a foreign provider registration (CHUNK_ATTRIBUTION_INVALID)',
+                    v_reg.stream_id;
+            END IF;
+        END LOOP;
 
         -- G9b: late-chunk equivalence completion (spec §1.2 barrier (d),
         -- second fact). A legally attributed chunk accepted AFTER the effect

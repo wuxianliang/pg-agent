@@ -1,26 +1,23 @@
--- v8 G9a: streaming foundation.
+-- v8 G9a/G9b: streaming foundation.
 --
--- Three pieces, loaded BEFORE the events stage (SQL_LOAD_ORDER position 3)
--- because the public append path consumes all three:
+-- Loaded AFTER the grant stage and BEFORE the events stage (SQL_LOAD_ORDER
+-- position 4). The MINIMAL slice/grant stub that used to live here (§2–§4)
+-- was REMOVED and migrated to v8/grant/v8_grant.sql by G10, where the
+-- complete section 2.1 model replaced it (same column face — additions
+-- only). What remains in this file:
 --   1. session_events stream columns (stream_id / chunk_index /
 --      observation_ordinal) with column-level CHECKs;
---   2. the MINIMAL slice/grant stub (slices, grants, immutability guards);
---   3. the effective-grant predicate v_grant_valid(p_session_id, p_grant_id,
---      p_capability).
+--   2..6. the G9b observation path: v_stream_observe (five-state gate +
+--      observation receipt), certified stream completion facts, the unified
+--      controlled extraction of the accepted chunk set, the persisted
+--      CANONICALIZER_CONFLICT conflict fact / equivalence judgments, and
+--      the waiting-window exhaustion marker.
 --
--- Scope declaration (P0A minimal stub, frozen by the G9a task): this file is
--- ONLY the smallest decidable model the six-item assistant/chunk attribution
--- validation items (3) and (6) and the base event_append / stream_ingest
--- capabilities need. The complete section 2.1 model — authorization
--- linearization point (SELECT ... FOR UPDATE fixed lock order or
--- revocation_version CAS), the seam list, RLS, the operator channel,
--- workspace_handles and the WORKSPACE_LOST drain — is P1. `constraints` is
--- carried as an opaque jsonb object; parameter-level constraint evaluation
--- (path/command/target/TTL/max_bytes/max_rows) is P1.
---
--- Source: docs/analysis/v8-impl-digest/s2-planes-grants.md sections 1.1/1.2/2,
--- docs/analysis/v8-impl-digest/s31b-command-table.md section 2.8, frozen spec
--- docs/designs/v8-dev.md lines 49 (stream identity) and 53 (integrity barrier).
+-- Source: docs/analysis/v8-impl-digest/s2-planes-grants.md section 2.6
+-- (stream_ingest dual-grant conjunction — the grant side now lives in
+-- v8/grant/v8_grant.sql), docs/analysis/v8-impl-digest/s31b-command-table.md
+-- section 2.8, frozen spec docs/designs/v8-dev.md lines 49 (stream
+-- identity) and 53 (integrity barrier).
 
 -- ---------------------------------------------------------------------------
 -- 1. session_events stream columns (G9a scope item 1)
@@ -74,177 +71,6 @@ CREATE UNIQUE INDEX session_events_observation_ordinal
     ON session_events (session_id, effect_id, attempt_no, observation_ordinal)
     WHERE observation_ordinal IS NOT NULL;
 
--- ---------------------------------------------------------------------------
--- 2. slices (digest s2-planes-grants 1.1; minimal stub)
--- ---------------------------------------------------------------------------
-CREATE TABLE slices (
-    slice_id     uuid PRIMARY KEY,
-    workspace_id uuid NOT NULL,
-    name         text NOT NULL,
-    kind         text NOT NULL
-                 CONSTRAINT slices_kind_check
-                 CHECK (kind IN ('corpus', 'fs_prefix', 'tool_set',
-                                 'secret', 'workspace_exec')),
-    -- Opaque resource-set descriptor; content-frozen after creation.
-    spec         jsonb NOT NULL,
-    created_at   timestamptz NOT NULL DEFAULT now(),
-    revoked_at   timestamptz,
-    -- The composite UNIQUE also backs the grants tenant-consistency FK.
-    CONSTRAINT slices_workspace_name_key UNIQUE (workspace_id, name),
-    CONSTRAINT slices_workspace_slice_key UNIQUE (workspace_id, slice_id)
-);
-
--- slice spec (with its workspace_id / slice_id binding fields) is immutable
--- after creation; content changes MUST go through revoke + recreate. No
--- UPDATE path is provided; the trigger is defense in depth. revoked_at is
--- monotonic: NULL -> non-NULL only.
-CREATE FUNCTION v8_slices_immutable() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF OLD.slice_id IS DISTINCT FROM NEW.slice_id
-       OR OLD.workspace_id IS DISTINCT FROM NEW.workspace_id
-       OR OLD.name IS DISTINCT FROM NEW.name
-       OR OLD.kind IS DISTINCT FROM NEW.kind
-       OR OLD.spec IS DISTINCT FROM NEW.spec THEN
-        RAISE EXCEPTION
-            'slices content (slice_id, workspace_id, name, kind, spec) is '
-            'immutable; revoke and re-create instead of UPDATE';
-    END IF;
-    IF OLD.revoked_at IS NOT NULL
-       AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at THEN
-        RAISE EXCEPTION 'slices.revoked_at is monotonic (NULL -> non-NULL only)';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER trg_slices_immutable
-BEFORE UPDATE ON slices
-FOR EACH ROW EXECUTE FUNCTION v8_slices_immutable();
-
--- ---------------------------------------------------------------------------
--- 3. grants (digest s2-planes-grants 1.2; minimal stub)
--- ---------------------------------------------------------------------------
-CREATE TABLE grants (
-    grant_id     text PRIMARY KEY,
-    workspace_id uuid NOT NULL,
-    slice_id     uuid NOT NULL,
-    subject_kind text NOT NULL
-                 CONSTRAINT grants_subject_kind_check
-                 CHECK (subject_kind IN ('session', 'step',
-                                         'plugin_identity', 'driver')),
-    subject_id   text NOT NULL,
-    capability   text NOT NULL
-                 CONSTRAINT grants_capability_check
-                 CHECK (capability IN ('recall', 'fold', 'env_read', 'env_write',
-                                       'tool_resolve', 'authorize_effect',
-                                       'effect_submit', 'event_append',
-                                       'stream_ingest', 'process', 'network',
-                                       'credential', 'compact')),
-    -- Opaque constraint object; parameter-level evaluation is P1.
-    constraints  jsonb,
-    issued_at    timestamptz NOT NULL DEFAULT now(),
-    not_before   timestamptz NOT NULL DEFAULT now(),
-    -- Half-open validity interval [not_before, expires_at).
-    expires_at   timestamptz NOT NULL,
-    revoked_at   timestamptz,
-    delegable    boolean NOT NULL DEFAULT false,
-    CONSTRAINT grants_expiry_after_not_before CHECK (expires_at > not_before),
-    -- Tenant consistency (invariant 12): grant.workspace_id = slice's,
-    -- enforced by a COMPOSITE FOREIGN KEY, never by convention alone.
-    CONSTRAINT grants_slice_tenant_fk
-        FOREIGN KEY (workspace_id, slice_id)
-        REFERENCES slices (workspace_id, slice_id)
-);
-
-CREATE FUNCTION v8_grants_immutable() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF OLD.grant_id IS DISTINCT FROM NEW.grant_id
-       OR OLD.workspace_id IS DISTINCT FROM NEW.workspace_id
-       OR OLD.slice_id IS DISTINCT FROM NEW.slice_id
-       OR OLD.subject_kind IS DISTINCT FROM NEW.subject_kind
-       OR OLD.subject_id IS DISTINCT FROM NEW.subject_id
-       OR OLD.capability IS DISTINCT FROM NEW.capability
-       OR OLD.constraints IS DISTINCT FROM NEW.constraints
-       OR OLD.issued_at IS DISTINCT FROM NEW.issued_at
-       OR OLD.not_before IS DISTINCT FROM NEW.not_before
-       OR OLD.expires_at IS DISTINCT FROM NEW.expires_at
-       OR OLD.delegable IS DISTINCT FROM NEW.delegable THEN
-        RAISE EXCEPTION
-            'grants content (grant_id, workspace_id, slice_id, subject_kind, '
-            'subject_id, capability, constraints, issued_at, not_before, '
-            'expires_at, delegable) is immutable; revoke and re-sign instead';
-    END IF;
-    IF OLD.revoked_at IS NOT NULL
-       AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at THEN
-        RAISE EXCEPTION 'grants.revoked_at is monotonic (NULL -> non-NULL only)';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER trg_grants_immutable
-BEFORE UPDATE ON grants
-FOR EACH ROW EXECUTE FUNCTION v8_grants_immutable();
-
--- ---------------------------------------------------------------------------
--- 4. effective-grant predicate (digest s2-planes-grants section 2.1)
--- ---------------------------------------------------------------------------
--- Valid grant <=> ALL of the following conjuncts hold:
---   * grant.revoked_at IS NULL;
---   * now() in [not_before, expires_at) (half-open);
---   * capability covers this call;
---   * tenant consistency (grant.workspace_id = slice.workspace_id) — also
---     enforced structurally by the composite FK, re-checked here;
---   * slice-membership: the owning slice is not revoked (revoked_at IS NULL).
---     Slice revocation propagates — checking the grant row alone is NOT
---     enough;
---   * the grant subject matches the caller: subject_kind='session' with the
---     calling session, or a session-bound driver/step/plugin identity leg.
---
--- The caller is identified by the session (the frozen signature takes only
--- p_session_id). Full subject resolution through the grant/driver chain and
--- the parameter-level `constraints` evaluation are P1 — this stub decides the
--- capability + subject-kind legs the chunk six-item validation items (3)/(6)
--- and the base append/stream_ingest capability checks need.
-CREATE FUNCTION v_grant_valid(
-    p_session_id uuid, p_grant_id text, p_capability text
-) RETURNS boolean
-LANGUAGE sql STABLE AS $$
-    SELECT COALESCE(bool_or(
-        g.revoked_at IS NULL
-        AND s.revoked_at IS NULL
-        AND g.not_before <= now()
-        AND now() < g.expires_at
-        AND g.capability = p_capability
-        AND g.workspace_id = s.workspace_id
-        AND (
-            (g.subject_kind = 'session'
-             AND g.subject_id = p_session_id::text)
-            OR (g.subject_kind = 'driver'
-                AND g.subject_id = (SELECT se.driver FROM sessions se
-                                     WHERE se.session_id = p_session_id))
-            OR (g.subject_kind = 'step'
-                AND g.subject_id = (SELECT se.active_step_id::text FROM sessions se
-                                     WHERE se.session_id = p_session_id))
-            OR (g.subject_kind = 'plugin_identity'
-                AND g.subject_id = (SELECT se.driver FROM sessions se
-                                     WHERE se.session_id = p_session_id))
-        )
-    ), false)
-    FROM grants g
-    JOIN slices s ON s.slice_id = g.slice_id
-    WHERE g.grant_id = p_grant_id;
-$$;
-
--- Subject of a grant (the effect's bound provider/adapter, resolved through
--- its grant_id). NULL when the grant_id is NULL or unknown.
-CREATE FUNCTION v_grant_subject(p_grant_id text) RETURNS text
-LANGUAGE sql STABLE AS $$
-    SELECT g.subject_id FROM grants g WHERE g.grant_id = p_grant_id;
-$$;
-
 -- ===========================================================================
 -- G9b: observation path, five-state gate, equivalence lifecycle, F4 extra
 -- index, partial synthesis support and the two-layer portable verifier.
@@ -257,7 +83,7 @@ $$;
 -- ===========================================================================
 
 -- ---------------------------------------------------------------------------
--- 5. stream_progress observation sub-operation (five-state gate + receipt)
+-- 2. stream_progress observation sub-operation (five-state gate + receipt)
 -- ---------------------------------------------------------------------------
 -- Frozen priority order (first hit stops), AFTER identity/receipt replay
 -- (the caller ran v8_command_adjudicate) and AFTER the structural envelope
@@ -432,7 +258,7 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 6. certified stream completion facts (settlement write, read by the
+-- 3. certified stream completion facts (settlement write, read by the
 --    equivalence judgments and the late-chunk hook)
 -- ---------------------------------------------------------------------------
 -- The stream end facts of a form-(0)(i) completion (final_chunk_index N /
@@ -468,7 +294,7 @@ LANGUAGE sql AS $$
 $$;
 
 -- ---------------------------------------------------------------------------
--- 7. unified controlled extraction of the accepted chunk set (S04 clause 2)
+-- 4. unified controlled extraction of the accepted chunk set (S04 clause 2)
 -- ---------------------------------------------------------------------------
 -- The ONLY source of the flow-collection set fact: the accepted assistant/
 -- chunk events' index set (sorted) and their merged text, assembled in
@@ -489,7 +315,7 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 -- ---------------------------------------------------------------------------
--- 8. persisted CANONICALIZER_CONFLICT conflict fact (portable verifier layer 2)
+-- 5. persisted CANONICALIZER_CONFLICT conflict fact (portable verifier layer 2)
 -- ---------------------------------------------------------------------------
 -- Idempotent: the effect_audit UNIQUE (NULLS NOT DISTINCT) constraint on
 -- (audit_context_session_id, effect_id, attempt_no, audit_key_kind,
@@ -597,7 +423,7 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 9. waiting-window exhaustion marker (STREAM_INCOMPLETE audit reason)
+-- 6. waiting-window exhaustion marker (STREAM_INCOMPLETE audit reason)
 -- ---------------------------------------------------------------------------
 -- s32b grammar (7): a streaming attempt settled unknown_outcome with no
 -- terminal evidence records the STREAM_INCOMPLETE audit reason (a reason

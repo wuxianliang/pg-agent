@@ -18,13 +18,20 @@ AGENT_ROOT = V8_ROOT.parent
 SQL_LOAD_ORDER: list[Path] = [
     V8_ROOT / "schema" / "v8_schema.sql",
     V8_ROOT / "schema" / "v8_keys.sql",
-    # G9a: the streaming foundation MUST load BEFORE the events stage. It adds
-    # the session_events stream columns (stream_id/chunk_index/
-    # observation_ordinal) with their column-level CHECKs and creates the
-    # minimal slice/grant stub + v_grant_valid that the public append path's
-    # assistant/chunk six-item attribution validation consumes. Loading it
-    # after the events stage would leave the append path's INSERT and CHECK
-    # references unresolved.
+    # G10: the grant stage (complete section 2.1/2.2 model) sits at position
+    # 3 — the G9a stub's replacement (the stub DDL migrated here from
+    # v8_stream.sql §2–§4) — and MUST load BEFORE the events stage: the
+    # public append path consumes the grant predicates (v_grant_find_valid,
+    # the stream registry, the heartbeat authorization precheck). The
+    # pre-dispatch dual-table atomic sync suboperation also moved here from
+    # v8_cancel.sql (it depends only on the schema table family; function
+    # bodies are late-bound, so its position before the cancel stage that
+    # G11 rewires carries no call-order risk).
+    V8_ROOT / "grant" / "v8_grant.sql",
+    # G9a/G9b: the streaming foundation — now only the session_events stream
+    # columns and the G9b observation path (the slice/grant stub moved to
+    # grant/v8_grant.sql by G10). Loading it after the events stage would
+    # leave the append path's INSERT and CHECK references unresolved.
     V8_ROOT / "stream" / "v8_stream.sql",
     V8_ROOT / "events" / "v8_append.sql",
     V8_ROOT / "effect" / "v8_effect.sql",
@@ -44,21 +51,25 @@ SQL_LOAD_ORDER: list[Path] = [
 
 STAGE_THROUGH = {
     "schema": 2,
-    "events": 4,
+    # G10 gate covers the append consumer (events stage) on top of its own
+    # SQL, so its load set runs through events.
+    "grant": 5,
+    "events": 5,
     # G9a: the stream gate exercises the consumers of the new foundation —
     # the public append path (events stage) for the chunk six-item
     # attribution, v_complete_effect (effect stage) for the stream_complete
     # field matrix, and the known_failure settlement (retry stage) for the
     # non-known_success exemption negative vector — so its load set runs
-    # through retry. The stream SQL itself sits at position 3 (before events).
-    "stream": 9,
-    "effect": 5,
-    "tools": 6,
-    "retry": 9,
+    # through retry. The stream SQL itself sits at position 4 (after grant,
+    # before events). Semantic note: the load set includes takeover.
+    "stream": 10,
+    "effect": 6,
+    "tools": 7,
+    "retry": 10,
     # G5 (loop) adds no SQL: the runtime drives the effect-stage functions.
-    "loop": 5,
-    "repair": 10,
-    "cancel": 11,
+    "loop": 6,
+    "repair": 11,
+    "cancel": 12,
 }
 
 
