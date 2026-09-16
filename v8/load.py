@@ -27,6 +27,19 @@ SQL_LOAD_ORDER: list[Path] = [
     # references unresolved.
     V8_ROOT / "stream" / "v8_stream.sql",
     V8_ROOT / "events" / "v8_append.sql",
+    # G11: the §4 plugin generation domain (plugin_specs/implementations/
+    # generations/generation_members, the stable dependency resolution, the
+    # generation digest, the publish lifecycle, the shared generation-check
+    # sub-operation for the G12 gates and the offline revocation drain).
+    # It sits BEFORE the effect stage: steps gain catalog_generation + the
+    # implementation binding column with the DEFAULT seed generation here,
+    # consumed by the effect and later stages. The file also carries the
+    # shared pre-dispatch cancel sync sub-operation whose final home (after
+    # the G10 merge) is grant/v8_grant.sql — on this branch it is defined
+    # here with CREATE OR REPLACE so the cancel stage's call resolves
+    # (deviation A62); it depends only on the schema family and its body
+    # resolves late, so the position carries no call-order risk.
+    V8_ROOT / "plugin" / "v8_plugin.sql",
     V8_ROOT / "effect" / "v8_effect.sql",
     V8_ROOT / "tools" / "v8_tools.sql",
     # G8b: the shared cancel closure sub-operation (five exits / cancel code
@@ -50,15 +63,23 @@ STAGE_THROUGH = {
     # attribution, v_complete_effect (effect stage) for the stream_complete
     # field matrix, and the known_failure settlement (retry stage) for the
     # non-known_success exemption negative vector — so its load set runs
-    # through retry. The stream SQL itself sits at position 3 (before events).
-    "stream": 9,
-    "effect": 5,
-    "tools": 6,
-    "retry": 9,
+    # through retry. The stream SQL itself sits at position 3 (before
+    # events). G11 inserted plugin/v8_plugin.sql after events, so every
+    # stage loading from effect onwards counts one more file (branch-local
+    # in-place +1; the merge commit reconciles across the G10/G13 branches).
+    "stream": 10,
+    "effect": 6,
+    "tools": 7,
+    "retry": 10,
     # G5 (loop) adds no SQL: the runtime drives the effect-stage functions.
-    "loop": 5,
-    "repair": 10,
-    "cancel": 11,
+    "loop": 6,
+    "repair": 11,
+    "cancel": 12,
+    # G11 plugin gate: the offline revocation drain consumes the effect
+    # (late completion rejection), retry (aggregation rule closure
+    # priority) and cancel (shared pre-dispatch sync caller) stages, so its
+    # load set runs through the full order.
+    "plugin": 12,
 }
 
 
