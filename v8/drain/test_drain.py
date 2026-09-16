@@ -94,7 +94,8 @@ def effect_row(conn, e):
                (e,))[0]
 
 
-def seal_fx(conn, drv: str, *, max_attempts: int = 1):
+def seal_fx(conn, drv: str, *, max_attempts: int = 1,
+            execution_mode: str = "non_streaming"):
     """create -> claim -> initial decision seal (effect left `ready`)."""
     s = u()
     turn, step, eff = u(), u(), u()
@@ -105,7 +106,8 @@ def seal_fx(conn, drv: str, *, max_attempts: int = 1):
     rs = prepare_step(conn, s, f"seal-{u()[:8]}", drv, EPOCH,
                       r0["session_fence"], step, turn, eff,
                       request_hash=rh, idempotency_key=ik,
-                      max_attempts=max_attempts)
+                      max_attempts=max_attempts,
+                      execution_mode=execution_mode)
     check("fx seal accepted", rs["outcome"] == "accepted", rs)
     return {"session": s, "turn": turn, "step": step, "effect": eff, "rh": rh,
             "ik": ik, "claim_fence": r0["session_fence"],
@@ -484,6 +486,81 @@ def test_d11_single_predispatch_impl(conn) -> None:
           and effect_row(conn, fx["effect"]) == "cancelled_before_dispatch")
 
 
+def test_d6a_pending_observation_exclusion(conn) -> None:
+    """D6(a): a streaming effect's NON-terminal completion (the (iii)/(iv)
+    stream_complete=false observation shape) MUST NOT be judged
+    DECISION_PLAN_INVALID. Measured behaviour is asserted (G14 precedent):
+    the observation route takes the completion before the decision-marks
+    mutex is consulted."""
+    from v8.effect.client import build_result_payload
+    drv = "g15-d6a"
+    seed_stage_grants(conn, drivers=(drv,))
+    fx = seal_fx(conn, drv, execution_mode="streaming")
+    rd = dispatch_effect(conn, fx["session"], f"dsp-{u()[:8]}", fx["effect"],
+                         drv, EPOCH, fx["seal_fence"], fx["job_fence"])
+    check("D6(a) streaming dispatch accepted", rd["outcome"] == "accepted", rd)
+    # (iii)/(iv): stream_complete=false -> pending observation; the decision
+    # marks are deliberately illegal so a marks-first implementation would
+    # answer DECISION_PLAN_INVALID.
+    payload = build_result_payload({"text": "partial"}, [], False, False)
+    payload["stream_complete"] = False
+    r = complete_effect(
+        conn, fx["session"], f"cmp-{u()[:8]}", fx["effect"], drv, EPOCH,
+        dispatch_session_fence=fx["claim_fence"], job_fence=fx["job_fence"],
+        step_id=fx["step"], request_hash=fx["rh"], idempotency_key=fx["ik"],
+        outcome="succeeded", message={"text": "partial"}, tools=[],
+        decision_only=False, final_tools=False,
+        evidence={"class": "known_success",
+                  "provider_receipt": {"receipt_id": f"pr-{u()[:8]}"}},
+        result_payload=payload)
+    check("D6(a) pending observation is NOT DECISION_PLAN_INVALID",
+          r.get("code") != "DECISION_PLAN_INVALID", r)
+    check("D6(a) no INFRA closure on the observation route",
+          session_row(conn, fx["session"])[0] != "failed", r)
+
+
+def test_d9_terminal_subprotocol(conn) -> None:
+    """D9: after the INFRA closure the terminal sub-protocol behaves like the
+    WORKSPACE_LOST drain — a drained session MAY be recovery-claimed for
+    closure only, while completed/cancelled and non-drain failures stay
+    rejected (the A98 regression)."""
+    from v8.effect.client import recovery_claim_session
+    drv = "g15-d9"
+    seed_stage_grants(conn, drivers=(drv,))
+    # Unknown residue -> the drain pins the step; a recovery claim is then
+    # the closure-only path (the drained in-flight/unknown residue settles
+    # through completion/repair under that claim).
+    fx = dispatch_fx(conn, drv)
+    rc = complete_effect(
+        conn, fx["session"], f"cmp-{u()[:8]}", fx["effect"], drv, EPOCH,
+        dispatch_session_fence=fx["claim_fence"], job_fence=fx["job_fence"],
+        step_id=fx["step"], request_hash=fx["rh"], idempotency_key=fx["ik"],
+        outcome="unknown_outcome", message={"text": ""}, tools=[],
+        decision_only=False, final_tools=False, evidence=unknown_evidence())
+    check("D9 fx unknown settlement accepted", rc["outcome"] == "accepted", rc)
+    r = fail_session(conn, fx["session"], "INFRA_ASSEMBLY_FAILED")
+    check("D9 INFRA closure accepted", r["outcome"] == "accepted", r)
+    claim = recovery_claim_session(conn, fx["session"], drv, lease_owner="rec")
+    check("D9 recoverable for closure only (drain residue)",
+          claim["outcome"] == "claimed", claim)
+    check("D9 claim changes no business state (still failed / INFRA)",
+          session_row(conn, fx["session"])[:2]
+          == ("failed", "INFRA_ASSEMBLY_FAILED"),
+          session_row(conn, fx["session"]))
+
+    # Negative: completed / cancelled sessions stay rejected for recovery
+    # claim; a non-drain failure too.
+    for state, code in (("completed", None), ("cancelled", None),
+                        ("failed", "FAILED_TERMINAL")):
+        s2 = u()
+        create_session(conn, s2, drv)
+        exec_sql(conn, "UPDATE sessions SET state=%s, failure_code=%s"
+                       " WHERE session_id=%s", (state, code, s2))
+        rn = recovery_claim_session(conn, s2, drv, lease_owner="rec")
+        check(f"D9 {state}/{code or '-'} still SESSION_TERMINAL",
+              rn["code"] == "SESSION_TERMINAL", rn)
+
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -499,6 +576,8 @@ def main() -> int:
         test_d4_decision_plan_invalid(conn)
         test_d5_parent_code_priority(conn)
         test_d6_exclusions(conn)
+        test_d6a_pending_observation_exclusion(conn)
+        test_d9_terminal_subprotocol(conn)
         test_d8_isolation(conn)
         test_d11_single_predispatch_impl(conn)
     finally:
