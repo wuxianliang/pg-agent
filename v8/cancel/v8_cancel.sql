@@ -203,6 +203,16 @@ BEGIN
     v_end := v_derive_cancel_turn_end(p_session_id, p_command_id,
                                       p_schema_version,
                                       p_canonicalizer_version);
+    -- G17 (D7): the terminal transition of the three-window collapse
+    -- aborts a still-locked compact lock in the SAME transaction, AFTER
+    -- the slot-touching derivation (the compact row is lock-order position
+    -- position 8, strictly after turn_end_slot position 7). The to_regclass guard
+    -- keeps cancel-stage databases (no compact file) green.
+    IF v_target_state IN ('completed', 'failed', 'cancelled')
+       AND to_regclass('public.compactions') IS NOT NULL THEN
+        PERFORM v_compact_terminal_abort_tx(p_session_id, p_command_id,
+                                            'request_cancel');
+    END IF;
     IF v_end IS NOT NULL THEN
         v_events := jsonb_build_array(jsonb_build_object(
             'event_type', 'turn/end', 'seq', v_end->'seq',

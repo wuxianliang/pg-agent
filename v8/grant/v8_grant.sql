@@ -1216,6 +1216,20 @@ BEGIN
             drain_step_id = v_drain_step,
             updated_at = now()
          WHERE session_id = p_session_id;
+
+    END IF;
+
+    -- G17 (D7): the failure-drain terminal transition aborts a still
+    -- locked compact lock in the SAME transaction, AFTER the whole drain
+    -- write set (step drain branches + turn/end slot closures — the
+    -- compact row is lock-order position 8, strictly after the
+    -- turn_end_slot position 7). Guarded by to_regclass: grant-stage
+    -- databases stop before the compact file. The drain core carries no
+    -- command_id; the audit key value (the caller command's canonical
+    -- hash) serves as the internal sub-operation's parent_command_id.
+    IF NOT v_repeated AND to_regclass('public.compactions') IS NOT NULL THEN
+        PERFORM v_compact_terminal_abort_tx(p_session_id, p_audit_key_value,
+                                            'failure_drain');
     END IF;
 
     INSERT INTO grant_ops_audit(operator_id, action, target_id, reason,

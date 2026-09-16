@@ -549,6 +549,7 @@ DECLARE
     v_evkey text;
     v_seq bigint;
     v_identity text;
+    v_dg record;
 BEGIN
     IF NOT v_compact_authorize(p_session_id, NULL, p_driver, p_driver_epoch)
     THEN
@@ -606,21 +607,24 @@ BEGIN
     END IF;
 
     -- Frozen two-stage generation: semantic payload -> digest -> event_key.
+    -- D11: the two digests come from the covered semantic records of the
+    -- FROZEN range (the digest input layer above), and the three-field
+    -- compact semantic result representation rides the finalize payload
+    -- (D12: normalize extracts it verbatim, never recomputing).
+    SELECT * INTO v_dg FROM v_compact_digests(p_session_id, v_row.through_seq);
     v_payload := jsonb_build_object(
         'compaction_id', p_compaction_id,
         'identity_class', 'compaction/end',
         'base_seq', v_row.base_seq,
-        'through_seq', v_row.through_seq)::text;
+        'through_seq', v_row.through_seq,
+        'logical_cutoff_digest', v_dg.logical_cutoff_digest,
+        'replacement_set_digest', v_dg.replacement_set_digest,
+        'compact_result_identity', v_dg.compact_result_identity)::text;
     v_digest := v_compaction_result_digest(v_payload::jsonb);
     v_seq := v_compact_next_seq(p_session_id);
     v_evkey := v_nonstream_event_key(p_session_id, 'compaction/end',
                                      p_command_id, 0, v_digest);
-    v_identity := v_compact_result_identity(
-        p_session_id,
-        v_sha256_hex('logical_cutoff@v1|' || p_session_id::text || '|'
-                     || v_row.through_seq::text),
-        v_sha256_hex('replacement_set@v1|' || v_row.base_seq::text || '|'
-                     || v_row.through_seq::text));
+    v_identity := v_dg.compact_result_identity;
 
     INSERT INTO session_events(
         seq, session_id, event_type, event_class, schema_version,
@@ -654,5 +658,274 @@ BEGIN
             'canonical_request_hash', v_computed, 'accepted', NULL,
             v_receipt::text, v_sha256_hex(v_receipt::text));
     RETURN QUERY SELECT 'accepted'::text, NULL::text, v_receipt;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 4. the digest input layer (D11) — covered semantic records + the two
+--    digests, computed inside compact_finalize's transaction
+-- ---------------------------------------------------------------------------
+-- The covered set = the semantic elements of normalize(session_events
+-- truncated to seq <= through_seq), with the S03 boundary rule: a
+-- provisional turn/end keeps its provisional representation unless its
+-- closer is inside the range; a closer beyond the range never replaces
+-- truncated history. The SQL derivation covers the fixture-reachable event
+-- classes (public append semantics, tool/call, assistant/message,
+-- turn/end known/provisional, repair closers) — deviation A126 records the
+-- boundary: the per-turn known-end pick uses the in-range latest known
+-- candidate (the §1.2 reducer priority is exercised by the canonicalizer
+-- gate; fixtures keep turns unambiguous).
+CREATE FUNCTION v_compact_unknown_set_digest(p_effect_ids uuid[])
+RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT encode(sha256(
+               (SELECT string_agg(int8send(16::bigint) || uuid_send(e), ''
+                                   ORDER BY uuid_send(e))
+                  FROM unnest(p_effect_ids) e)), 'hex');
+$$;
+
+CREATE FUNCTION v_compact_seg(p_bytes bytea) RETURNS bytea
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT int8send(octet_length(coalesce(p_bytes, ''::bytea)))
+           || coalesce(p_bytes, ''::bytea);
+$$;
+
+CREATE FUNCTION v_compact_covered_records(
+    p_session_id uuid, p_through_seq bigint
+) RETURNS TABLE(
+    k_turn bytea, k_step bytea, k_ord bytea, k_type bytea,
+    k_occ bytea, k_digest bytea, record bytea
+)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    r record;
+    v_eff uuid[];
+    v_set text;
+    v_prov bytea;
+    v_payload text;
+    v_res bytea;
+    v_turn uuid;
+    v_unresolved uuid[];
+    v_pick record;
+BEGIN
+    -- (1) non-turn/end semantic events pass through with their projections.
+    FOR r IN
+        SELECT e.*
+          FROM session_events e
+         WHERE e.session_id = p_session_id
+           AND e.seq <= p_through_seq
+           AND e.event_class = 'semantic'
+           AND e.event_type <> 'turn/end'
+    LOOP
+        v_eff := ARRAY[]::uuid[];
+        -- The occurrence field is a variable-length segment: the field
+        -- carries its own 8-byte length prefix and the BODY is the
+        -- per-component framing of the projection tuple.
+        IF r.event_type IN ('user/message', 'turn/start', 'agent/inject')
+           AND r.semantic_input_ordinal IS NOT NULL THEN
+            v_prov := v_compact_seg(v_compact_seg(
+                convert_to(r.semantic_input_ordinal::text, 'UTF8')));
+        ELSIF r.event_type = 'tool/call'
+              AND (r.payload::jsonb ? 'dispatch_ordinal') THEN
+            v_prov := v_compact_seg(v_compact_seg(convert_to(
+                (r.payload::jsonb ->> 'dispatch_ordinal'), 'UTF8')));
+        ELSIF r.event_type = 'assistant/message' AND r.effect_id IS NOT NULL
+              AND NOT coalesce((r.payload::jsonb ->> 'closer') = 'true',
+                               false) THEN
+            v_prov := v_compact_seg(v_compact_seg(uuid_send(r.effect_id)));
+        ELSE
+            v_prov := v_compact_seg(NULL::bytea);
+        END IF;
+        k_turn := v_compact_seg(CASE WHEN r.turn_id IS NULL THEN NULL
+                                     ELSE uuid_send(r.turn_id) END);
+        k_step := v_compact_seg(CASE WHEN r.step_id IS NULL THEN NULL
+                                     ELSE uuid_send(r.step_id) END);
+        k_ord := v_compact_seg(CASE
+            WHEN r.event_type = 'tool/call'
+                 AND (r.payload::jsonb ? 'dispatch_ordinal')
+            THEN convert_to(r.payload::jsonb ->> 'dispatch_ordinal', 'UTF8')
+            ELSE NULL END);
+        k_type := v_compact_seg(convert_to(r.event_type, 'UTF8'));
+        k_occ := v_prov;
+        k_digest := decode(r.payload_hash, 'hex');
+        record := k_turn || k_step || k_ord || k_type || k_occ
+                  || v_compact_seg(convert_to('semantic', 'UTF8')) || k_digest;
+        -- NOTE: the seven-field record order is
+        -- [event_class][event_type][turn_id][step_id][dispatch_ordinal]
+        -- [occurrence][payload raw32]; the sort key order is the six-key
+        -- full order. Rebuild in the frozen record order:
+        record := v_compact_seg(convert_to('semantic', 'UTF8'))
+                  || k_type || k_turn || k_step || k_ord || k_occ || k_digest;
+        RETURN NEXT;
+    END LOOP;
+
+    -- (2) the per-turn reducer over turn/end-family events.
+    FOR v_turn IN
+        SELECT DISTINCT e.turn_id FROM session_events e
+         WHERE e.session_id = p_session_id AND e.seq <= p_through_seq
+           AND e.event_class = 'semantic' AND e.event_type = 'turn/end'
+           AND e.turn_id IS NOT NULL
+         ORDER BY 1
+    LOOP
+        -- unresolved unknowns: effects presenting unknown in range minus
+        -- effects superseded by an in-range closer.
+        SELECT array_agg(DISTINCT x) INTO v_unresolved
+          FROM (
+            SELECT e.effect_id AS x
+              FROM session_events e
+             WHERE e.session_id = p_session_id AND e.seq <= p_through_seq
+               AND e.event_class = 'semantic' AND e.event_type = 'turn/end'
+               AND (e.payload::jsonb ->> 'outcome') = 'unknown'
+               AND e.effect_id IS NOT NULL
+             UNION
+            SELECT ch.effect_id
+              FROM session_events ch
+             WHERE ch.session_id = p_session_id AND ch.seq <= p_through_seq
+               AND ch.event_class = 'observational'
+               AND ch.event_type = 'assistant/chunk'
+               AND ch.effect_id IS NOT NULL
+               AND NOT EXISTS (
+                    SELECT 1 FROM session_events m
+                     WHERE m.session_id = p_session_id
+                       AND m.seq <= p_through_seq
+                       AND m.event_class = 'semantic'
+                       AND m.event_type = 'assistant/message'
+                       AND m.effect_id = ch.effect_id)
+          ) u
+         WHERE x NOT IN (
+            SELECT c.effect_id FROM session_events c
+             WHERE c.session_id = p_session_id AND c.seq <= p_through_seq
+               AND c.event_class = 'semantic' AND c.event_type = 'turn/end'
+               AND coalesce((c.payload::jsonb ->> 'closer') = 'true', false)
+               AND c.effect_id IS NOT NULL);
+        v_unresolved := coalesce(v_unresolved, ARRAY[]::uuid[]);
+
+        IF array_length(v_unresolved, 1) > 0 THEN
+            -- ONE provisional representation for the turn.
+            v_set := v_compact_unknown_set_digest(v_unresolved);
+            v_payload := '{"outcome":"unknown"}';
+            k_turn := v_compact_seg(uuid_send(v_turn));
+            k_step := v_compact_seg(NULL::bytea);
+            k_ord := v_compact_seg(NULL::bytea);
+            k_type := v_compact_seg(convert_to('turn/end', 'UTF8'));
+            k_occ := v_compact_seg(v_compact_seg(uuid_send(v_turn))
+                     || v_compact_seg(convert_to(v_set, 'UTF8')));
+            k_digest := decode(encode(digest(convert_to(v_payload, 'UTF8'),
+                                             'sha256'), 'hex'), 'hex');
+            record := v_compact_seg(convert_to('semantic', 'UTF8'))
+                      || k_type || k_turn || k_step || k_ord || k_occ
+                      || k_digest;
+            RETURN NEXT;
+        ELSE
+            -- known end: the in-range closer (latest by seq) if any, else
+            -- the latest known turn/end candidate (deviation A126).
+            SELECT * INTO v_pick FROM session_events e
+             WHERE e.session_id = p_session_id AND e.seq <= p_through_seq
+               AND e.event_class = 'semantic' AND e.event_type = 'turn/end'
+               AND e.turn_id = v_turn
+               AND (coalesce((e.payload::jsonb ->> 'closer') = 'true', false)
+                    OR coalesce((e.payload::jsonb ->> 'outcome') <> 'unknown',
+                                true))
+             ORDER BY (coalesce((e.payload::jsonb ->> 'closer') = 'true',
+                                false)) DESC, e.seq DESC
+             LIMIT 1;
+            IF v_pick.seq IS NOT NULL THEN
+                IF coalesce((v_pick.payload::jsonb ->> 'closer') = 'true',
+                            false) THEN
+                    SELECT c.resolution_identity_canonical INTO v_res
+                      FROM turn_end_closers c
+                     WHERE c.session_id = p_session_id
+                       AND c.closer_event_key = v_pick.event_key;
+                    v_prov := v_compact_seg(v_compact_seg(uuid_send(v_turn))
+                              || v_compact_seg(coalesce(v_res, ''::bytea)));
+                ELSE
+                    v_prov := v_compact_seg(v_compact_seg(uuid_send(v_turn)));
+                END IF;
+                k_turn := v_compact_seg(uuid_send(v_turn));
+                k_step := v_compact_seg(NULL::bytea);
+                k_ord := v_compact_seg(NULL::bytea);
+                k_type := v_compact_seg(convert_to('turn/end', 'UTF8'));
+                k_occ := v_prov;
+                k_digest := decode(v_pick.payload_hash, 'hex');
+                record := v_compact_seg(convert_to('semantic', 'UTF8'))
+                          || k_type || k_turn || k_step || k_ord || k_occ
+                          || k_digest;
+                RETURN NEXT;
+            END IF;
+        END IF;
+    END LOOP;
+END;
+$$;
+
+-- The two digests (D11 (a)/(b)) + the portable identity (f).
+CREATE FUNCTION v_compact_digests(
+    p_session_id uuid, p_through_seq bigint
+) RETURNS TABLE(logical_cutoff_digest text, replacement_set_digest text,
+                compact_result_identity text)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_a bytea;
+    v_b bytea;
+BEGIN
+    SELECT decode(string_agg(encode(r.record, 'hex'), ''
+                             ORDER BY r.k_turn, r.k_step, r.k_ord, r.k_type,
+                                      r.k_occ, r.k_digest), 'hex')
+      INTO v_a
+      FROM v_compact_covered_records(p_session_id, p_through_seq) r;
+    SELECT decode(string_agg(encode(r.record, 'hex'), ''
+                             ORDER BY r.record), 'hex')
+      INTO v_b
+      FROM v_compact_covered_records(p_session_id, p_through_seq) r;
+    RETURN QUERY SELECT encode(sha256(coalesce(v_a, ''::bytea)), 'hex'),
+                        encode(sha256(coalesce(v_b, ''::bytea)), 'hex'),
+                        v_compact_result_identity(p_session_id,
+                            encode(sha256(coalesce(v_a, ''::bytea)), 'hex'),
+                            encode(sha256(coalesce(v_b, ''::bytea)), 'hex'));
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 5. D7 — the terminal-transaction controlled abort (internal suboperation,
+--    NOT a command: no command_id/receipt of its own, no result event)
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION v_compact_terminal_abort_tx(
+    p_session_id uuid, p_parent_command_id text, p_source_operation text
+) RETURNS jsonb
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_row compactions%ROWTYPE;
+    v_ordinal bigint;
+    v_abort_key text;
+BEGIN
+    SELECT * INTO v_row FROM compactions c
+     WHERE c.session_id = p_session_id AND c.status = 'locked';
+    IF NOT FOUND THEN
+        RETURN NULL;
+    END IF;
+    SELECT coalesce(max(ioa.internal_op_ordinal), -1) + 1 INTO v_ordinal
+      FROM internal_op_audits ioa
+     WHERE ioa.parent_session_id = p_session_id
+       AND ioa.parent_command_id = p_parent_command_id;
+    v_abort_key := v_sha256_hex('v8:compact_terminal_abort@v1|'
+                                || p_session_id::text || '|'
+                                || p_parent_command_id || '|'
+                                || v_ordinal::text);
+    INSERT INTO internal_op_audits(
+        parent_session_id, parent_command_id, internal_op_ordinal,
+        internal_op_kind, source_operation, target_identity, event_key,
+        parent_receipt_ref)
+    VALUES (p_session_id, p_parent_command_id, v_ordinal,
+            'compact_terminal_abort', p_source_operation,
+            v_row.compaction_id, v_abort_key,
+            'terminal_tx:' || p_source_operation);
+    -- Fenced-abort semantics: the controlled abort ADVANCES the owner
+    -- fence, so the previous owner's later finalize/abort stale-rejects.
+    UPDATE compactions SET
+        status = 'aborted', abort_identity = v_abort_key,
+        owner_fence = owner_fence + 1, updated_at = now()
+     WHERE session_id = p_session_id AND compaction_id = v_row.compaction_id;
+    RETURN jsonb_build_object('compaction_id', v_row.compaction_id,
+                              'abort_identity', v_abort_key,
+                              'owner_fence_after', v_row.owner_fence + 1);
 END;
 $$;

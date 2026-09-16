@@ -2481,6 +2481,16 @@ BEGIN
         updated_at = now()
      WHERE session_id = p_session_id;
 
+    -- G17 (D7): a session entering a terminal state MUST abort its still
+    -- locked compact lock in the SAME transaction (fenced abort advancing
+    -- the owner fence; no separate command/receipt, no result event). The
+    -- to_regclass guard keeps every database whose load set stops before
+    -- the compact stage green (deviation A51 precedent).
+    IF to_regclass('public.compactions') IS NOT NULL THEN
+        PERFORM v_compact_terminal_abort_tx(p_session_id, p_command_id,
+                                            'finish_session');
+    END IF;
+
     v_receipt := jsonb_build_object(
         'command_kind', 'finish_session',
         'command_id', p_command_id,

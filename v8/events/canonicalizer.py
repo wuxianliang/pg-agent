@@ -80,8 +80,22 @@ OBSERVATIONAL_TYPES = frozenset({"assistant/chunk", "session/heartbeat"})
 # per-effect status signal (its count fields are audit-only and never
 # constitute a flow-collection fact, S04 clause 2).
 OBSERVATION_TYPES = frozenset({"stream_progress", "attempt/heartbeat"})
+# G17 (D12) — the compact semantic result representation: normalize
+# extracts it VERBATIM from the finalize record (the compaction/end event
+# payload's three logical fields) and never recomputes, guesses or rewrites
+# it from the event stream. The compaction/end raw event itself is an audit
+# event (never part of the semantic trace); the extracted representation is
+# a distinct semantic element.
+COMPACT_RESULT_TYPES = frozenset({"compaction/end"})
+# compaction/start is an audit-class control event: accepted by the input
+# contract, excluded from every output (the lock's true state is control
+# plane, not trace).
+COMPACT_AUDIT_TYPES = frozenset({"compaction/start"})
+COMPACT_RESULT_FIELDS = ("logical_cutoff_digest", "replacement_set_digest",
+                         "compact_result_identity")
 SUPPORTED_TYPES = (SEMANTIC_TYPES | OBSERVATIONAL_TYPES
-                   | OBSERVATION_TYPES | {"turn/end"})
+                   | OBSERVATION_TYPES | {"turn/end"} | COMPACT_RESULT_TYPES
+                   | COMPACT_AUDIT_TYPES)
 
 # Segment-2 eligibility guard input: "pending" in the §3.2.1 aggregation
 # sense — the three pending_effect_count statuses (planned/ready/
@@ -496,7 +510,28 @@ def normalize(events: list[dict], canonicalizer_version: str = "@v1") -> list[di
     # are accepted by the input contract but excluded from the semantic
     # normalize input — they never reach the chunk merge, the reducer's
     # per-effect aggregation or the output trace.
-    events = [ev for ev in events if ev["event_type"] not in OBSERVATION_TYPES]
+    # G17 (D12): the compact semantic result representation is extracted
+    # verbatim from each finalize record FIRST — the three logical fields
+    # ride the payload as persisted by compact_finalize; nothing is derived
+    # from the stream. The audit raw event itself never enters the trace.
+    compact_results = [
+        {
+            "event_type": "compaction/result",
+            "payload": {k: (ev.get("payload") or {})[k]
+                        for k in COMPACT_RESULT_FIELDS},
+            "event_class": "semantic",
+            "turn_id": None,
+            "step_id": None,
+            "effect_id": None,
+        }
+        for ev in events
+        if ev["event_type"] in COMPACT_RESULT_TYPES
+        and all(k in (ev.get("payload") or {})
+                for k in COMPACT_RESULT_FIELDS)
+    ]
+    events = [ev for ev in events
+              if ev["event_type"] not in OBSERVATION_TYPES
+              and ev["event_type"] not in COMPACT_AUDIT_TYPES]
 
     merged = _merge_chunks(events)
 
@@ -563,4 +598,5 @@ def normalize(events: list[dict], canonicalizer_version: str = "@v1") -> list[di
         # turn-less turn/end or chunk inputs are unreachable in the P0B
         # subset contract (chunks carry effect attribution; ends are
         # turn-owned); anything else already failed SUPPORTED above.
+    out.extend(compact_results)
     return out
