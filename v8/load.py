@@ -40,6 +40,13 @@ SQL_LOAD_ORDER: list[Path] = [
     V8_ROOT / "retry" / "v8_takeover.sql",
     V8_ROOT / "repair" / "v8_repair.sql",
     V8_ROOT / "cancel" / "v8_cancel.sql",
+    # G13: the P0C dsh-compat host-agnostic contract surface, appended at
+    # the END of the load order (no mid-order insertion — every existing
+    # stage keeps its file set and count). It depends only on the
+    # schema/keys/events foundations and the slice/grant stub surface, so
+    # appending is safe for all earlier stages (their load sets stop
+    # before this entry).
+    V8_ROOT / "compat" / "v8_compat.sql",
 ]
 
 STAGE_THROUGH = {
@@ -59,6 +66,11 @@ STAGE_THROUGH = {
     "loop": 5,
     "repair": 10,
     "cancel": 11,
+    # G13: compat loads the full 12-file set (branch-local count; the
+    # merge-order reconciliation lifts this to 14 once G10/G11 insert
+    # grant/plugin ahead of it — existing stage counts are untouched on
+    # this branch).
+    "compat": 12,
 }
 
 

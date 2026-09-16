@@ -1,0 +1,21 @@
+{
+  "_comment": "G13 pinned-host external manifest artifact (spec section 5 preamble: the compat host pins DSH package, Node, profile digest, adapter and canonicalizer versions). The pinned DSH Node host identity is UNCONFIRMED (no package.json / node_modules / vendored SDK in this repository; the local Node v24.13.1 runtime is available but the upstream DSH package identity/version/source is missing -- a user decision, see the plan's open questions). Every external item is therefore null + note: an UNRESOLVED item. While any item is unresolved the compat contract MUST NOT be declared passed (reporter-enforced) and the whole real-I/O test boundary stays blocked.",
+  "pinned": {
+    "dsh_package": {"value": null, "note": "upstream Cordis/DSH package identity (name@version + source) unconfirmed -- user decision pending"},
+    "node_version": {"value": null, "note": "pinned Node version for the host unconfirmed (local v24.13.1 exists but is not a pin)"},
+    "profile_digest": {"value": null, "note": "compat profile digest unconfirmed -- depends on the pinned package"},
+    "adapter_version": {"value": null, "note": "persistence-pg/storage-pg adapter version unconfirmed"},
+    "canonicalizer_version": {"value": null, "note": "compat-side canonicalizer version unconfirmed -- must match the native canonical_profile_version@v1 pipeline"}
+  },
+  "section_5_2_pre_verification": {
+    "dispatch_interception": {
+      "value": null,
+      "note": "the three-row pre-verification of the pinned package's public integration points has not run -- blocked on the pinned package identity"
+    }
+  },
+  "driver_switch_capability": {
+    "value": "unsupported",
+    "note": "conservative created-immutable declaration for the seeded manifest row -- without the pinned host a 'supported' claim cannot be made (deviation ledger G13 block)"
+  },
+  "blocked_unlock_chain": "user/upstream confirms the pinned DSH package -> section 5.2 pre-verification produces its three-row verdict -> manifest items turn from null+note to verified values -> real-I/O-layer subcases unblock"
+}
