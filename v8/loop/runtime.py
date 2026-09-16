@@ -233,6 +233,106 @@ class FakeLLM:
         }
 
 
+class DeepSeekLLM:
+    """G13: real-provider adapter (DeepSeek, OpenAI-compatible wire form).
+
+    Same generate() contract as FakeLLM, so worker_execute can take it as
+    the provider without any main-chain change. NEUTRAL BY DEFAULT: the
+    adapter is constructed explicitly with credentials from the
+    environment (DEEPSEEK_API_KEY / OPENAI_API_KEY, base URL
+    OPENAI_API_URI, model OPENAI_MODEL — the v6 conventions); nothing in
+    this module or the default loop ever instantiates it, so the AGENTS.md
+    "FakeLLM/FakeTool, no real provider calls" convention holds for every
+    existing gate. Explicit credentials are the capability source of the
+    P0C real-provider DB-protocol subcases (Conformance 12: the real
+    provider is used ONLY for protocol shape, idempotency capability and
+    uncertain-window authentication — the fake suite stays authoritative).
+
+    generate() is an external-IO point: it MUST run outside any open
+    database transaction (it opens no connection at all). ``timeout`` /
+    ``abandon_after`` support the uncertain-window probe (issue the real
+    call, discard the response — no bound terminal provider receipt).
+    """
+
+    def __init__(self, *, api_key: str | None = None, base_url: str | None = None,
+                 model: str | None = None, timeout: float = 30.0,
+                 abandon_after: float | None = None):
+        import os
+        self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY") \
+            or os.environ.get("OPENAI_API_KEY") or ""
+        self.base_url = (base_url
+                         or os.environ.get("OPENAI_API_URI")
+                         or "https://api.deepseek.com/v1").rstrip("/")
+        self.model = model or os.environ.get("OPENAI_MODEL") or "deepseek-chat"
+        self.timeout = timeout
+        self.abandon_after = abandon_after
+
+    @property
+    def credentials_present(self) -> bool:
+        return bool(self.api_key)
+
+    def generate(self, descriptor: dict) -> dict:
+        import json as _json
+        import urllib.error
+        import urllib.request
+
+        prompt = (descriptor.get("prompt") or {})
+        seed = prompt.get("seed_text") or ""
+        request = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": seed or "ping"}],
+            "stream": False,
+        }
+        body = _json.dumps(request).encode("utf-8")
+        req = urllib.request.Request(
+            self.base_url + "/chat/completions", data=body,
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {self.api_key}"})
+        effective_timeout = (self.abandon_after
+                             if self.abandon_after is not None
+                             else self.timeout)
+        try:
+            with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
+                payload = _json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            # Uncertain window: the call was issued, no bound terminal
+            # provider receipt came back — the settlement classification
+            # for this shape is unknown_outcome (Conformance 12/5).
+            return {
+                "outcome": "unknown_outcome",
+                "message": {"text": ""},
+                "tools": [],
+                "decision_only": False,
+                "final_tools": False,
+                "evidence": {"class": "timeout",
+                             "detail": f"no bound terminal provider receipt "
+                                       f"({type(exc).__name__})"},
+                "result_payload": {"error": {"kind": "timeout",
+                                             "transport": type(exc).__name__}},
+            }
+        choice = (payload.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        text = message.get("content") or ""
+        provider_receipt = {
+            "receipt_id": (payload.get("id") or ""),
+            "model": payload.get("model") or self.model,
+            "finish_reason": choice.get("finish_reason"),
+            "usage": payload.get("usage") or {},
+            "protocol": "openai-compatible/chat.completions",
+        }
+        return {
+            "outcome": "succeeded",
+            "message": {"text": text, "model": payload.get("model")
+                        or self.model},
+            "tools": [],
+            "decision_only": True,
+            "final_tools": False,
+            "evidence": {"class": "known_success",
+                         "provider_receipt": provider_receipt},
+            "result_payload": {"message": message, "usage": payload.get("usage")},
+        }
+
+
 class FakeTool:
     """Deterministic fake tool executor (spec section 6 Conformance 12).
 
@@ -779,6 +879,7 @@ def worker_execute(
     db_uri: str, session_id, effect_id, *, driver: str = "drv",
     driver_epoch: int = 1, fake_llm: FakeLLM | None = None,
     fake_tool: FakeTool | None = None,
+    provider=None,
     command_ids: dict[str, str] | None = None,
     on_boundary: BoundaryHook | None = None, kill_after: str | None = None,
 ) -> dict:
@@ -791,8 +892,16 @@ def worker_execute(
     connections; the complete transaction contains nothing but the
     settlement command. A rerun after a death between dispatch and complete
     resumes at the provider call (dispatch_started effects skip the gate).
+
+    ``provider`` (G13) is an explicit provider override carrying the same
+    generate() contract as FakeLLM (the DeepSeekLLM real-provider
+    adapter); it takes precedence over ``fake_llm`` and leaves the main
+    chain untouched. Never set by the default loop.
     """
-    fake_llm = fake_llm or FakeLLM()
+    if provider is not None:
+        fake_llm = provider
+    else:
+        fake_llm = fake_llm or FakeLLM()
     fake_tool = fake_tool or FakeTool()
     command_ids = command_ids or {}
     read_conn = _connect(db_uri, autocommit=True)

@@ -476,10 +476,14 @@ $$;
 -- trigger sources: request_cancel, the §4 generation drain of this stage
 -- and the WORKSPACE_LOST failure-drain of the grant stage).
 --
--- FINAL HOME: grant/v8_grant.sql (the G10 branch delivers it there). On the
--- G11 branch v8_grant.sql is not merged yet, so the body is hosted here
--- with CREATE OR REPLACE so the cancel stage's call resolves (deviation
--- A62 in the ledger); the merge keeps one implementation.
+-- FINAL HOME: grant/v8_grant.sql. The G10 stage delivers its own narrower
+-- variant there (v_predispatch_cancel_sync: four params, no counter
+-- recompute) consumed by the WORKSPACE_LOST drain; THIS implementation
+-- (six params with p_reason / p_scope_generation_id defaults + the
+-- authoritative counter recompute) is the one the cancel path and the
+-- generation drain call. The two bodies are not same-source, so the wave1
+-- merge keeps both definitions pending the G12 single-implementation
+-- unification (deviation A73 in the ledger).
 --
 -- For every `ready` effect of the session (optionally scoped to one
 -- catalog generation) the SAME transaction flips effect_requests.status
