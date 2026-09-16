@@ -1,12 +1,19 @@
 """G9a gate: v8 stream foundation — session_events stream columns, the
-minimal slice/grant stub, the assistant/chunk six-item attribution
-completion (items (2)/(3)/(6)), and the stream_complete field matrix.
+assistant/chunk six-item attribution completion (items (2)/(3)/(6)), and
+the stream_complete field matrix.
+
+G10 migration note: the former `test_grant_stub` block moved WHOLESALE to
+v8/grant/test_grant.py (the slice/grant stub DDL now lives in
+v8/grant/v8_grant.sql, replaced by the complete section 2.1 model); the
+grant-seeded chunk fixture + seeders moved to v8/grant/fixtures.py as the
+shared helper for G12 reuse. What remains here is a thin grant-model smoke
+test plus the stream-owned blocks; assertion counts were re-baselined
+accordingly (A48 precedent, see the deviation ledger).
 
 Run: uv run python v8/stream/test_stream.py  (exit 0 = pass)
 """
 from __future__ import annotations
 
-import json
 import sys
 import uuid
 from pathlib import Path
@@ -27,10 +34,14 @@ from v8.effect.client import (
     prepare_step,
 )
 from v8.canonical.canonical import CanonicalizationError
-from v8.events.client import (
-    build_entry,
-    canonical_payload,
-    create_session,
+from v8.events.client import build_entry, canonical_payload
+from v8.grant.fixtures import (
+    append_chunks,
+    chunk_entry,
+    chunk_fixture,
+    fresh_session,
+    seed_grant,
+    seed_slice,
 )
 from v8.stream.setup_db import DB, main as setup_db
 
@@ -51,26 +62,6 @@ def u() -> str:
     return str(uuid.uuid4())
 
 
-def _now(offset_seconds: int = 0):
-    from datetime import datetime, timedelta, timezone
-    return datetime.now(timezone.utc) + timedelta(seconds=offset_seconds)
-
-
-def _uri() -> str:
-    return get_server().get_uri(DB)
-
-
-def tagged(n: int) -> dict:
-    """Wire form for integers beyond the 2^53-1 safe range (canonical profile)."""
-    return {"$int": str(n)}
-
-
-def fresh_session(conn, driver: str = "drv") -> str:
-    s = u()
-    create_session(conn, s, driver)
-    return s
-
-
 def expect_error(conn, label: str, fn) -> None:
     """Run fn; a database error is the expected (negative) outcome."""
     try:
@@ -83,110 +74,13 @@ def expect_error(conn, label: str, fn) -> None:
     check(label, False, "expected a database rejection, none was raised")
 
 
-# ---------------------------------------------------------------------------
-# fixture: a grant-bindable chunk effect (mirrors the events stage fixture)
-# ---------------------------------------------------------------------------
-
-def chunk_fixture(conn, *, session_id: str | None = None, dispatched: bool = True,
-                  grant_id: str | None = None, driver: str = "drv"):
-    s = session_id or fresh_session(conn, driver)
-    with conn.cursor() as cur:
-        turn, step, batch, effect = u(), u(), u(), u()
-        cur.execute(
-            "INSERT INTO steps(step_id, session_id, turn_id, status, stage)"
-            " VALUES (%s, %s, %s, 'waiting_effect', 'decision')", (step, s, turn))
-        cur.execute(
-            "INSERT INTO batches(batch_id, session_id, step_id, sealed_batch_no,"
-            " kind, sealed) VALUES (%s, %s, %s, 1, 'decision', true)",
-            (batch, s, step))
-        cur.execute(
-            "INSERT INTO effect_requests(effect_id, session_id, step_id, batch_id,"
-            " dispatch_ordinal, effect_kind, execution_mode, driver, driver_epoch,"
-            " session_fence, dispatch_session_fence, current_job_fence,"
-            " request_hash, idempotency_key, status, retry_class, max_attempts,"
-            " dispatched_at, grant_id)"
-            " VALUES (%s, %s, %s, %s, 0, 'llm_decision', 'streaming', %s, 1,"
-            " 1, 1, 1, 'rh', 'ik', %s, 'unsafe', 1, %s, %s)",
-            (effect, s, step, batch, driver,
-             "dispatch_started" if dispatched else "ready",
-             _now(0) if dispatched else None, grant_id))
-        cur.execute(
-            "INSERT INTO effect_attempts(effect_id, attempt_no, session_id,"
-            " step_id, dispatch_job_fence, driver, driver_epoch, session_fence,"
-            " dispatch_session_fence, request_hash, idempotency_key,"
-            " execution_mode, status)"
-            " VALUES (%s, 1, %s, %s, 1, %s, 1, 1, 1, 'rh', 'ik',"
-            " 'streaming', %s)",
-            (effect, s, step, driver, "dispatch_started" if dispatched else "ready"))
-    conn.commit()
-    return s, turn, step, effect
+def _uri() -> str:
+    return get_server().get_uri(DB)
 
 
-def chunk_entry(effect: str, text: str, index, attempt: int = 1,
-                stream: str = "s1") -> dict:
-    return build_entry("assistant/chunk", {"text": text}, schema_version=SV,
-                       canonicalizer_version=CV, effect_id=effect,
-                       attempt_no=attempt, stream_id=stream, chunk_index=index)
-
-
-def append_chunks(conn, session_id, command_id, entries, *, expected_seq,
-                  caller_subject=None, caller_driver=None, caller_epoch=None,
-                  caller_grant_id=None, driver="drv", driver_epoch=1) -> dict:
-    """Direct v_command_gate + v_append_events call carrying the G9a caller
-    identity legs (the shared client predates them)."""
-    from v8.events.client import build_request
-    session_id = str(session_id)
-    canonical_text, computed = build_request(
-        "append_events", session_id, command_id, driver, driver_epoch,
-        expected_seq, entries)
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT outcome, code, receipt_json, executable"
-            " FROM v_command_gate(%s::uuid, %s, %s, %s, %s)",
-            (session_id, command_id, "append_events", canonical_text, computed))
-        _g_out, _g_code, _g_rec, executable = cur.fetchone()
-        if not executable:
-            conn.rollback()
-            raise AssertionError("gate not executable")
-        cur.execute(
-            "SELECT outcome, code, receipt_json FROM v_append_events("
-            "%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (session_id, command_id, driver, driver_epoch, expected_seq, computed,
-             canonical_text, json.dumps(entries, ensure_ascii=False,
-                                        separators=(",", ":")),
-             caller_subject, caller_driver, caller_epoch, caller_grant_id))
-        outcome, code, receipt = cur.fetchone()
-    conn.commit()
-    return {"outcome": outcome, "code": code, "receipt": receipt}
-
-
-def seed_slice(conn, ws, name, *, kind="corpus", spec=None, slice_id=None,
-               revoked=False) -> str:
-    sid = slice_id or u()
-    with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO slices(slice_id, workspace_id, name, kind, spec, revoked_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s)",
-            (sid, ws, name, kind, json.dumps(spec or {}),
-             _now(0) if revoked else None))
-    conn.commit()
-    return sid
-
-
-def seed_grant(conn, grant_id, ws, slice_id, subject_kind, subject_id,
-               capability, *, not_before=None, expires_at=None, revoked=False,
-               constraints=None) -> str:
-    with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO grants(grant_id, workspace_id, slice_id, subject_kind,"
-            " subject_id, capability, constraints, not_before, expires_at, revoked_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s,"
-            " COALESCE(%s, now()), COALESCE(%s, now() + interval '1 hour'), %s)",
-            (grant_id, ws, slice_id, subject_kind, subject_id, capability,
-             json.dumps(constraints) if constraints is not None else None,
-             not_before, expires_at, _now(0) if revoked else None))
-    conn.commit()
-    return grant_id
+def tagged(n: int) -> dict:
+    """Wire form for integers beyond the 2^53-1 safe range (canonical profile)."""
+    return {"$int": str(n)}
 
 
 # ---------------------------------------------------------------------------
@@ -260,101 +154,26 @@ def test_session_event_columns(conn) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. minimal grant stub (scope item 2)
+# 2. grant model smoke (the full block lives in v8/grant/test_grant.py)
 # ---------------------------------------------------------------------------
 
-def test_grant_stub(conn) -> None:
+def test_grant_smoke(conn) -> None:
+    """Thin smoke: the grant model loads before events and the frozen
+    three-argument face still decides. The migrated test_grant_stub block
+    (all closed-set / immutability / conjunction vectors) is owned by
+    v8/grant/test_grant.py since G10."""
     ws = u()
-    sl = seed_slice(conn, ws, "corpus-a", kind="corpus",
-                    spec={"paths": ["/data/x"]})
-
-    # slices UNIQUE(workspace_id, name).
-    expect_error(conn, "duplicate slice name in a workspace -> UNIQUE",
-                 lambda: seed_slice(conn, ws, "corpus-a"))
-    # slices kind closed set.
-    expect_error(conn, "slice kind outside the closed set -> CHECK",
-                 lambda: seed_slice(conn, ws, "corpus-b", kind="nonsense"))
-    # slices spec immutability.
-    expect_error(conn, "slice spec UPDATE -> rejected",
-                 lambda: _update(conn, "UPDATE slices SET spec='{}' WHERE slice_id=%s",
-                                 (sl,)))
-    # slices revoked_at monotonic.
-    seed_slice(conn, ws, "corpus-rev", slice_id=u(), revoked=True)
-    expect_error(conn, "slice revoked_at cannot be cleared",
-                 lambda: _update(
-                     conn, "UPDATE slices SET revoked_at=NULL WHERE name='corpus-rev'"))
-
-    # grants closed sets.
-    expect_error(conn, "grant subject_kind outside the closed set -> CHECK",
-                 lambda: seed_grant(conn, u(), ws, sl, "team", "t1", "recall"))
-    expect_error(conn, "grant capability outside the 13-value set -> CHECK",
-                 lambda: seed_grant(conn, u(), ws, sl, "session", "x", "root"))
-    # grants tenant consistency (composite FK): a workspace_id that does not
-    # match the slice's.
-    expect_error(conn, "grant workspace != slice workspace -> composite FK",
-                 lambda: seed_grant(conn, u(), u(), sl, "session", "x", "recall"))
-    # grants constraints immutability.
-    g_imm = seed_grant(conn, "gr-imm", ws, sl, "session", "x", "recall",
-                       constraints={"max_rows": 1})
-    expect_error(conn, "grant constraints UPDATE -> rejected",
-                 lambda: _update(
-                     conn, "UPDATE grants SET constraints='{\"max_rows\":9}'"
-                           " WHERE grant_id='gr-imm'"))
-
-    # ---- v_grant_valid full conjunction (session-bound subject) ----
+    sl = seed_slice(conn, ws, "smoke")
     s = fresh_session(conn)
+    g = seed_grant(conn, "g-smoke", ws, sl, "session", s, "event_append")
     with conn.cursor() as cur:
-        cur.execute("SELECT driver FROM sessions WHERE session_id=%s", (s,))
-        drv = cur.fetchone()[0]
-    base = dict(subject_kind="session", subject_id=s, capability="event_append")
-
-    g_ok = seed_grant(conn, "g-ok", ws, sl, **base)
-    _valid(conn, "valid grant -> true", s, g_ok, "event_append", True)
-    _valid(conn, "wrong capability -> false", s, g_ok, "stream_ingest", False)
-
-    g_rev = seed_grant(conn, "g-rev", ws, sl, **base, revoked=True)
-    _valid(conn, "grant revoked -> false", s, g_rev, "event_append", False)
-
-    g_future = seed_grant(conn, "g-fut", ws, sl, **base,
-                          not_before=_now(3600), expires_at=_now(7200))
-    _valid(conn, "not_before in the future -> false", s, g_future,
-           "event_append", False)
-
-    g_exp = seed_grant(conn, "g-exp", ws, sl, **base,
-                       not_before=_now(-7200), expires_at=_now(-3600))
-    _valid(conn, "expires_at in the past -> false", s, g_exp, "event_append", False)
-
-    g_other = seed_grant(conn, "g-oth", ws, sl, "session", u(), "event_append")
-    _valid(conn, "subject mismatch -> false", s, g_other, "event_append", False)
-
-    # slice revocation propagation: slice revoked, grant NOT revoked -> invalid.
-    sl_rev = seed_slice(conn, ws, "corpus-rev2", revoked=True)
-    g_prop = seed_grant(conn, "g-prop", ws, sl_rev, **base)
-    _valid(conn, "slice revoked propagates (grant itself unrevoked) -> false",
-           s, g_prop, "event_append", False)
-
-    # driver-bound subject leg.
-    g_drv = seed_grant(conn, "g-drv", ws, sl, "driver", drv, "event_append")
-    _valid(conn, "driver-bound subject matches the session -> true",
-           s, g_drv, "event_append", True)
-
-    # unknown grant id.
-    _valid(conn, "unknown grant_id -> false", s, "g-missing", "event_append", False)
-
-
-def _update(conn, sql, params=()):
-    with conn.cursor() as cur:
-        cur.execute(sql, params)
-    conn.commit()
-
-
-def _valid(conn, label, session_id, grant_id, capability, expect) -> None:
-    with conn.cursor() as cur:
-        cur.execute("SELECT v_grant_valid(%s::uuid, %s, %s)",
-                    (session_id, grant_id, capability))
-        got = cur.fetchone()[0]
+        cur.execute("SELECT v_grant_valid(%s::uuid, %s, 'event_append')", (s, g))
+        ok = cur.fetchone()[0]
+        cur.execute("SELECT v_grant_valid(%s::uuid, %s, 'stream_ingest')", (s, g))
+        bad = cur.fetchone()[0]
     conn.rollback()
-    check(label, got is expect, got)
+    check("grant model smoke: valid grant true / wrong capability false",
+          ok is True and bad is False, (ok, bad))
 
 
 # ---------------------------------------------------------------------------
@@ -705,7 +524,7 @@ def main() -> int:
     conn.autocommit = False
     try:
         test_session_event_columns(conn)
-        test_grant_stub(conn)
+        test_grant_smoke(conn)
         test_chunk_attribution(conn)
         test_field_matrix(conn)
     finally:
