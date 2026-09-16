@@ -1842,6 +1842,17 @@ BEGIN
         v_ft := (v_res->>'final_tools')::boolean;
         IF NOT ((v_tools_empty AND v_do AND NOT v_ft)
                 OR (NOT v_tools_empty AND NOT v_do AND v_ft)) THEN
+            -- G15 D4: the rejection is a class (3) INFRA protocol
+            -- violation, so the SAME control transaction runs the
+            -- closed INFRA settlement (effect -> failed_terminal, the
+            -- shared deterministic drain, session -> failed /
+            -- INFRA_PROTOCOL_VIOLATION) alongside the rejection
+            -- receipt. Re-sending the same command_id replays the
+            -- receipt and creates no further control state.
+            PERFORM v_infra_closure_effect(
+                p_session_id, p_effect_id, 'INFRA_PROTOCOL_VIOLATION',
+                p_command_id,
+                'decision marks/tools plan combination violates the bidirectional mutex schema');
             v_receipt := v8_reject_command(p_session_id, p_command_id, 'complete_effect',
                 v_computed, 'rejected_mismatch', 'DECISION_PLAN_INVALID',
                 'decision marks/tools plan combination violates the bidirectional mutex schema');
@@ -1857,6 +1868,17 @@ BEGIN
         -- that it parses and is jsonb-equal to the result payload's tools
         -- member, so the persisted bytes bind to the settled result.
         IF p_plan_canonical IS NULL THEN
+            -- G15 D4: the rejection is a class (3) INFRA protocol
+            -- violation, so the SAME control transaction runs the
+            -- closed INFRA settlement (effect -> failed_terminal, the
+            -- shared deterministic drain, session -> failed /
+            -- INFRA_PROTOCOL_VIOLATION) alongside the rejection
+            -- receipt. Re-sending the same command_id replays the
+            -- receipt and creates no further control state.
+            PERFORM v_infra_closure_effect(
+                p_session_id, p_effect_id, 'INFRA_PROTOCOL_VIOLATION',
+                p_command_id,
+                'successful decision result requires the normalized tools plan canonical text');
             v_receipt := v8_reject_command(p_session_id, p_command_id, 'complete_effect',
                 v_computed, 'rejected_mismatch', 'DECISION_PLAN_INVALID',
                 'successful decision result requires the normalized tools plan canonical text');
@@ -1866,6 +1888,17 @@ BEGIN
         BEGIN
             v_plan := p_plan_canonical::jsonb;
         EXCEPTION WHEN OTHERS THEN
+            -- G15 D4: the rejection is a class (3) INFRA protocol
+            -- violation, so the SAME control transaction runs the
+            -- closed INFRA settlement (effect -> failed_terminal, the
+            -- shared deterministic drain, session -> failed /
+            -- INFRA_PROTOCOL_VIOLATION) alongside the rejection
+            -- receipt. Re-sending the same command_id replays the
+            -- receipt and creates no further control state.
+            PERFORM v_infra_closure_effect(
+                p_session_id, p_effect_id, 'INFRA_PROTOCOL_VIOLATION',
+                p_command_id,
+                'tools plan canonical text is not valid JSON');
             v_receipt := v8_reject_command(p_session_id, p_command_id, 'complete_effect',
                 v_computed, 'rejected_mismatch', 'DECISION_PLAN_INVALID',
                 'tools plan canonical text is not valid JSON');
@@ -1873,6 +1906,17 @@ BEGIN
             RETURN;
         END;
         IF jsonb_typeof(v_plan) <> 'array' OR v_plan IS DISTINCT FROM (v_res->'tools') THEN
+            -- G15 D4: the rejection is a class (3) INFRA protocol
+            -- violation, so the SAME control transaction runs the
+            -- closed INFRA settlement (effect -> failed_terminal, the
+            -- shared deterministic drain, session -> failed /
+            -- INFRA_PROTOCOL_VIOLATION) alongside the rejection
+            -- receipt. Re-sending the same command_id replays the
+            -- receipt and creates no further control state.
+            PERFORM v_infra_closure_effect(
+                p_session_id, p_effect_id, 'INFRA_PROTOCOL_VIOLATION',
+                p_command_id,
+                'tools plan canonical does not match the result payload tools member');
             v_receipt := v8_reject_command(p_session_id, p_command_id, 'complete_effect',
                 v_computed, 'rejected_mismatch', 'DECISION_PLAN_INVALID',
                 'tools plan canonical does not match the result payload tools member');

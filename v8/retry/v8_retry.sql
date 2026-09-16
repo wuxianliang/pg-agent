@@ -180,11 +180,14 @@ $$;
 -- reason from the authoritative inputs and CAS-writes the column:
 --   column NULL      -> write the recomputed value;
 --   column equal     -> idempotent return, no rewrite;
---   column different -> INFRA_PROTOCOL_VIOLATION (fail closed: the column
---                       keeps the original value; the fail_session (3)
---                       INFRA closure is the failure-drain milestone, so
---                       this stage aborts the transaction — same treatment
---                       as the ledger's DECISION_PLAN_INVALID deviation).
+--   column different -> INFRA_PROTOCOL_VIOLATION, CLOSED NOT ABORTED (G15
+--                       D7, ledger A30): the column keeps the original
+--                       value, both sides are retained in one
+--                       effect_audit row (reason INFRA_PROTOCOL_VIOLATION,
+--                       internal_op_kind failure_drain), the function
+--                       RETURNS the code instead of raising, and the caller
+--                       transaction continues. Re-running the same CAS
+--                       writes no second audit row.
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION v_retry_stop_reason_cas(p_effect_id uuid) RETURNS text
 LANGUAGE plpgsql AS $$
@@ -203,11 +206,31 @@ BEGIN
     ELSIF v_existing = v_computed THEN
         RETURN v_computed;
     ELSE
-        RAISE EXCEPTION
-            'INFRA_PROTOCOL_VIOLATION: retry_stop_reason CAS mismatch for '
-            'effect % (existing %, recomputed %); the column keeps the '
-            'original value and both sides must be audited',
-            p_effect_id, v_existing, v_computed;
+        -- G15 D7 (A30): a CAS mismatch is an INFRA_PROTOCOL_VIOLATION, but
+        -- it is NO LONGER a transaction abort. The caller keeps running and
+        -- the violation closes as a controlled result: the column keeps its
+        -- original value and BOTH sides are retained in effect_audit. The
+        -- write is idempotent — re-running the same CAS on the same effect
+        -- adds no second audit row.
+        IF NOT EXISTS (SELECT 1 FROM effect_audit ea
+                        WHERE ea.effect_id = p_effect_id
+                          AND ea.reason = 'INFRA_PROTOCOL_VIOLATION') THEN
+            INSERT INTO effect_audit(
+                audit_context_session_id, session_id, step_id, effect_id,
+                attempt_no, audit_key_kind, audit_key_value,
+                result_fingerprint, reason, internal_op_kind,
+                parent_command_id, internal_op_ordinal)
+            SELECT er.session_id, er.session_id, er.step_id, er.effect_id,
+                   er.attempt_no, 'canonical_binding',
+                   coalesce(er.retry_stop_reason, '') || '->' || v_computed,
+                   v_sha256_hex('retry_stop_reason_cas:' ||
+                                p_effect_id::text || ':' ||
+                                coalesce(v_existing, '') || ':' || v_computed),
+                   'INFRA_PROTOCOL_VIOLATION', 'infra_closure',
+                   'v_retry_stop_reason_cas', 0
+              FROM effect_requests er WHERE er.effect_id = p_effect_id;
+        END IF;
+        RETURN 'INFRA_PROTOCOL_VIOLATION';
     END IF;
 END;
 $$;

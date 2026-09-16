@@ -200,7 +200,11 @@ CREATE TABLE grant_ops_audit (
                                    'revoke_slice', 'ws_initialize',
                                    'ws_register_mutation', 'ws_fenced_publish',
                                    'ws_yield_checkpoint', 'ws_materialize',
-                                   'ws_lost_drain', 'fork_session')),
+                                   'ws_lost_drain', 'fork_session',
+                                   -- G15: the §3.1.1 fail_session class (3)
+                                   -- INFRA closure (same shape as
+                                   -- ws_lost_drain, different failure code).
+                                   'infra_drain')),
     target_id    text NOT NULL,
     workspace_id uuid,
     reason       text,
@@ -1050,27 +1054,35 @@ BEGIN
 END;
 $$;
 
--- 5.6 WORKSPACE_LOST fail-closed + deterministic failure-drain (§2.2
---     item 3). One control transaction: append workspace/lost, set the
---     handle lost, session -> failed/WORKSPACE_LOST (lease revoked, fence
---     bumped, active_step_id cleared), drain every ready effect via the
---     shared pre-dispatch sync, then settle the step by the three drain
---     branches. Re-running the SAME drain judgment (late completion/repair
---     arrival) converges: no second event, no second fence bump — only the
---     branch resolution is re-evaluated and drain_step_id refreshed.
---     Entry (and repeat entry) refuses non-READ COMMITTED with
---     ISOLATION_UNSUPPORTED (Conformance 8 (x) drain half).
-CREATE FUNCTION v_workspace_fail_closed(
-    p_session_id uuid, p_run_id text, p_reason text,
-    p_from_status text DEFAULT NULL
+-- 5.5b v_failure_drain_core — the SHARED deterministic failure-drain core
+--      (G15; §2.2 item 3 WORKSPACE_LOST + §3.1.1 fail_session class (3)
+--      INFRA closure, "第 (3) 类与 §2.2 第 3 条 WORKSPACE_LOST fail-closed
+--      同构"). One control transaction:
+--        (a) drain every `ready` effect through the shared pre-dispatch
+--            dual-table atomic sync sub-operation;
+--        (b) recompute the aggregation counters from the effect table;
+--        (c) settle the single non-terminal step by the three drain
+--            branches (unknown > pending > neither), the `neither` arm
+--            taking `outcome_code = p_failure_code`;
+--        (d) take the session terminal: FIRST failure sets
+--            state='failed' / failure_code=p_failure_code / session_fence+1
+--            / coordination lease revoked / active_step_id cleared. An
+--            ALREADY-TERMINAL session is NEVER overwritten (G15 D5
+--            parent-layer cause priority: a session that already failed
+--            with WORKSPACE_LOST or another INFRA code keeps its cause);
+--            only `drain_step_id` is refreshed, so re-running the SAME
+--            drain judgment (late completion/repair arrival) converges —
+--            no second event, no second fence bump.
+--      Entry (and repeat entry) refuses non-READ COMMITTED with
+--      ISOLATION_UNSUPPORTED (Conformance 8 (x) drain half).
+CREATE FUNCTION v_failure_drain_core(
+    p_session_id uuid, p_failure_code text, p_reason text,
+    p_audit_key_value text, p_audit_action text
 ) RETURNS jsonb
 LANGUAGE plpgsql AS $$
 DECLARE
     v_sess sessions%ROWTYPE;
-    v_h workspace_handles%ROWTYPE;
     v_repeated boolean;
-    v_evkey text;
-    v_seq bigint;
     v_cancelled jsonb;
     v_step uuid;
     v_unknown bigint;
@@ -1080,8 +1092,8 @@ BEGIN
     IF current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
         RETURN jsonb_build_object('outcome', 'rejected_mismatch',
                                   'code', 'ISOLATION_UNSUPPORTED',
-                                  'detail', 'WORKSPACE_LOST drain entries '
-                                            'require READ COMMITTED');
+                                  'detail', 'failure-drain entries require '
+                                            'READ COMMITTED');
     END IF;
 
     SELECT * INTO v_sess FROM sessions WHERE session_id = p_session_id
@@ -1089,43 +1101,14 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'v8: session % not found', p_session_id;
     END IF;
-    v_repeated := (v_sess.state = 'failed'
-                   AND v_sess.failure_code = 'WORKSPACE_LOST');
-
-    SELECT * INTO v_h FROM workspace_handles
-     WHERE session_id = p_session_id AND run_id = p_run_id
-     FOR UPDATE;
-    IF FOUND AND v_h.status IN ('active', 'handoff_ready') THEN
-        UPDATE workspace_handles SET status = 'lost', lost_reason = p_reason
-         WHERE handle_id = v_h.handle_id;
-    END IF;
-
-    -- workspace/lost event, appended exactly once per (session, run). The
-    -- payload carries ONLY the run identity — the free-form reason stays
-    -- on the handle row and the audit (capability API boundary,
-    -- Conformance 13: credentials never enter session_events payloads).
-    v_evkey := v_sha256_hex('v8:workspace-lost@db1:' || p_session_id::text
-                            || ':' || p_run_id);
-    IF NOT v_repeated
-       AND NOT EXISTS (SELECT 1 FROM session_events se
-                        WHERE se.session_id = p_session_id
-                          AND se.event_key = v_evkey) THEN
-        v_seq := v_sess.next_seq;
-        INSERT INTO session_events(seq, session_id, event_type, event_class,
-                                   schema_version, canonicalizer_version,
-                                   event_key, payload, payload_hash)
-        VALUES (v_seq, p_session_id, 'workspace/lost', 'audit', 'sv@1',
-                'canon@1', v_evkey,
-                jsonb_build_object('run_id', p_run_id)::text,
-                v_sha256_hex(jsonb_build_object('run_id', p_run_id)::text));
-        UPDATE sessions SET next_seq = v_seq + 1 WHERE session_id = p_session_id;
-    END IF;
+    -- Any terminal state is a repeat: the drain judgment converges and the
+    -- session terminal is never rewritten (parent-layer cause priority).
+    v_repeated := v_sess.state IN ('completed', 'failed', 'cancelled');
 
     -- (a) effect drain: every ready effect -> cancelled_before_dispatch,
     --     dual-table atomic sync (shared suboperation).
     v_cancelled := v_predispatch_cancel_sync(
-        p_session_id, 'failure_drain',
-        'workspace_lost:' || p_run_id, v_evkey);
+        p_session_id, 'failure_drain', p_audit_key_value, p_audit_key_value);
 
     -- Recompute the aggregation counters from the effect table.
     UPDATE steps st SET
@@ -1179,21 +1162,21 @@ BEGIN
             -- tools plan — the accepted decision result stays in history,
             -- no tools effect is created).
             UPDATE steps SET status = 'failed_terminal',
-                             outcome_code = 'WORKSPACE_LOST',
+                             outcome_code = p_failure_code,
                              closed_at = now(), updated_at = now()
              WHERE step_id = v_step;
         END IF;
     END IF;
 
-    -- (c) session terminal state (first failure only; repeats keep the
-    --     terminal state and only refresh drain_step_id).
+    -- (c) session terminal (first failure only; repeats and already-terminal
+    --     sessions keep their existing state and failure_code).
     IF v_repeated THEN
         UPDATE sessions SET drain_step_id = v_drain_step, updated_at = now()
          WHERE session_id = p_session_id;
     ELSE
         UPDATE sessions SET
             state = 'failed',
-            failure_code = 'WORKSPACE_LOST',
+            failure_code = p_failure_code,
             session_fence = session_fence + 1,
             lease_owner = NULL, lease_until = NULL, lease_purpose = NULL,
             active_step_id = NULL,
@@ -1204,15 +1187,170 @@ BEGIN
 
     INSERT INTO grant_ops_audit(operator_id, action, target_id, reason,
                                 details)
-    VALUES ('system', 'ws_lost_drain', p_session_id::text, p_reason,
-            jsonb_build_object('run_id', p_run_id, 'repeated', v_repeated,
+    VALUES ('system', p_audit_action, p_session_id::text, p_reason,
+            jsonb_build_object('failure_code', p_failure_code,
+                               'repeated', v_repeated,
                                'drain_step_id', v_drain_step));
     RETURN jsonb_build_object('outcome', 'accepted',
                               'repeated', v_repeated,
-                              'failure_code', 'WORKSPACE_LOST',
+                              'failure_code', p_failure_code,
                               'cancelled_effects', v_cancelled,
-                              'drain_step_id', v_drain_step,
-                              'event_key', v_evkey);
+                              'drain_step_id', v_drain_step);
+END;
+$$;
+
+-- 5.5c v_infra_failure_code_ok / v_infra_closure_effect — the §3.1.1
+--      fail_session class (3) closed set and its closure over a triggering
+--      effect (G15). Both live here (position 3) so every consumer —
+--      including the completion path in effect/v8_effect.sql (position 7)
+--      — can reach them; the drain stage hosts only the thin validated
+--      entry (v8/drain/v8_drain.sql).
+--
+--      The closure settles the TRIGGERING effect failed_terminal first, so
+--      the drain's three-branch pending/unknown count no longer sees it and
+--      the unfinished step takes the `neither` arm, landing
+--      failed_terminal / <the INFRA code> exactly per the §3.2.1 INFRA
+--      derivation rows.
+CREATE FUNCTION v_infra_failure_code_ok(p_code text) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT p_code IN ('INFRA_ASSEMBLY_FAILED', 'INFRA_PROTOCOL_VIOLATION');
+$$;
+
+CREATE FUNCTION v_infra_closure_effect(
+    p_session_id uuid, p_effect_id uuid, p_failure_code text, p_reason text,
+    p_parent_command_id text
+) RETURNS jsonb
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_core jsonb;
+BEGIN
+    IF NOT v_infra_failure_code_ok(p_failure_code) THEN
+        RETURN jsonb_build_object(
+            'outcome', 'rejected_mismatch',
+            'code', 'FAILURE_CODE_INVALID',
+            'detail', 'INFRA closure accepts only the closed class (3) set');
+    END IF;
+    UPDATE effect_requests SET status = 'failed_terminal', updated_at = now()
+     WHERE effect_id = p_effect_id
+       AND status IN ('planned', 'ready', 'dispatch_started');
+    UPDATE effect_attempts SET status = 'failed_terminal', completed_at = now()
+     WHERE effect_id = p_effect_id
+       AND attempt_no = (SELECT max(a.attempt_no) FROM effect_attempts a
+                          WHERE a.effect_id = p_effect_id)
+       AND status IN ('ready', 'dispatch_started');
+    -- §3.2.2 ordered classification for the settled terminal failure. The
+    -- retry stage loads AFTER the effect stage, so an effect-stage database
+    -- has no v_retry_stop_reason_cas: guard it (A51 precedent, the same
+    -- shape as the G17 compact table guard) — the derivation lands in every
+    -- stage database that includes the retry file, which is where the
+    -- drain gate asserts it.
+    IF to_regprocedure('v_retry_stop_reason_cas(uuid)') IS NOT NULL THEN
+        PERFORM v_retry_stop_reason_cas(p_effect_id);
+    END IF;
+
+    -- One closure audit row (idempotent: a repeat writes no second row).
+    -- The triggering effect is NOT classified by evidence here — the closure
+    -- is a protocol-level settlement, so it never writes a
+    -- RESULT_OUTCOME_MISMATCH row.
+    IF NOT EXISTS (SELECT 1 FROM effect_audit ea
+                    WHERE ea.effect_id = p_effect_id
+                      AND ea.reason = p_failure_code) THEN
+        INSERT INTO effect_audit(
+            audit_context_session_id, session_id, step_id, effect_id,
+            attempt_no, audit_key_kind, audit_key_value, result_fingerprint,
+            reason, internal_op_kind, parent_command_id, internal_op_ordinal)
+        SELECT er.session_id, er.session_id, er.step_id, er.effect_id,
+               er.attempt_no, 'canonical_binding', p_reason,
+               v_sha256_hex('infra_closure:' || p_effect_id::text || ':' ||
+                            p_failure_code),
+               p_failure_code, 'infra_closure', p_parent_command_id, 0
+          FROM effect_requests er WHERE er.effect_id = p_effect_id;
+    END IF;
+
+    v_core := v_failure_drain_core(p_session_id, p_failure_code, p_reason,
+                                   'infra:' || p_failure_code, 'infra_drain');
+    RETURN v_core || jsonb_build_object('effect_id', p_effect_id);
+END;
+$$;
+
+-- 5.6 WORKSPACE_LOST fail-closed + deterministic failure-drain (§2.2
+--     item 3). One control transaction: append workspace/lost, set the
+--     handle lost, session -> failed/WORKSPACE_LOST (lease revoked, fence
+--     bumped, active_step_id cleared), drain every ready effect via the
+--     shared pre-dispatch sync, then settle the step by the three drain
+--     branches. Re-running the SAME drain judgment (late completion/repair
+--     arrival) converges: no second event, no second fence bump — only the
+--     branch resolution is re-evaluated and drain_step_id refreshed.
+--     Entry (and repeat entry) refuses non-READ COMMITTED with
+--     ISOLATION_UNSUPPORTED (Conformance 8 (x) drain half).
+CREATE FUNCTION v_workspace_fail_closed(
+    p_session_id uuid, p_run_id text, p_reason text,
+    p_from_status text DEFAULT NULL
+) RETURNS jsonb
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_sess sessions%ROWTYPE;
+    v_h workspace_handles%ROWTYPE;
+    v_repeated boolean;
+    v_evkey text;
+    v_seq bigint;
+    v_core jsonb;
+BEGIN
+    IF current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        RETURN jsonb_build_object('outcome', 'rejected_mismatch',
+                                  'code', 'ISOLATION_UNSUPPORTED',
+                                  'detail', 'WORKSPACE_LOST drain entries '
+                                            'require READ COMMITTED');
+    END IF;
+
+    SELECT * INTO v_sess FROM sessions WHERE session_id = p_session_id
+     FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'v8: session % not found', p_session_id;
+    END IF;
+    v_repeated := (v_sess.state = 'failed'
+                   AND v_sess.failure_code = 'WORKSPACE_LOST');
+
+    SELECT * INTO v_h FROM workspace_handles
+     WHERE session_id = p_session_id AND run_id = p_run_id
+     FOR UPDATE;
+    IF FOUND AND v_h.status IN ('active', 'handoff_ready') THEN
+        UPDATE workspace_handles SET status = 'lost', lost_reason = p_reason
+         WHERE handle_id = v_h.handle_id;
+    END IF;
+
+    -- workspace/lost event, appended exactly once per (session, run). The
+    -- payload carries ONLY the run identity — the free-form reason stays
+    -- on the handle row and the audit (capability API boundary,
+    -- Conformance 13: credentials never enter session_events payloads).
+    v_evkey := v_sha256_hex('v8:workspace-lost@db1:' || p_session_id::text
+                            || ':' || p_run_id);
+    IF NOT v_repeated
+       AND NOT EXISTS (SELECT 1 FROM session_events se
+                        WHERE se.session_id = p_session_id
+                          AND se.event_key = v_evkey) THEN
+        v_seq := v_sess.next_seq;
+        INSERT INTO session_events(seq, session_id, event_type, event_class,
+                                   schema_version, canonicalizer_version,
+                                   event_key, payload, payload_hash)
+        VALUES (v_seq, p_session_id, 'workspace/lost', 'audit', 'sv@1',
+                'canon@1', v_evkey,
+                jsonb_build_object('run_id', p_run_id)::text,
+                v_sha256_hex(jsonb_build_object('run_id', p_run_id)::text));
+        UPDATE sessions SET next_seq = v_seq + 1 WHERE session_id = p_session_id;
+    END IF;
+
+    -- (a)-(c) the SHARED deterministic failure-drain core (G15): the
+    --     pre-dispatch dual-table atomic sync for every ready effect, the
+    --     aggregation counter recompute, the three-branch step drain
+    --     (outcome code = WORKSPACE_LOST) and the session terminal (first
+    --     failure only; repeats and already-terminal sessions keep their
+    --     existing state and failure_code).
+    v_core := v_failure_drain_core(
+        p_session_id, 'WORKSPACE_LOST', p_reason,
+        'workspace_lost:' || p_run_id, 'ws_lost_drain');
+
+    RETURN v_core || jsonb_build_object('event_key', v_evkey);
 END;
 $$;
 

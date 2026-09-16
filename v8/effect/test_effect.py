@@ -606,6 +606,7 @@ def test_outcome_mismatch(conn) -> None:
     # marks combination -> the semantic-layer DECISION_PLAN_INVALID
     # rejection must NOT leave a mismatch audit row behind.
     s2, _t2, step2, effect2, _f2, job2, rh2, ik2 = full_chain_fixture(conn)
+    ev2 = good_evidence()  # fixed identity: the replay must hash identically
     r2 = complete_effect(
         conn, s2, f"cmp-{u()[:8]}", effect2, "drv", 1,
         dispatch_session_fence=2, job_fence=job2, step_id=step2,
@@ -613,19 +614,51 @@ def test_outcome_mismatch(conn) -> None:
         outcome="failed_retryable",  # mismatching declaration ...
         message={"text": "bad marks"}, tools=[],
         decision_only=False, final_tools=False,  # ... plus an illegal combo
-        evidence=good_evidence())
+        evidence=ev2)
     check("mismatch + illegal marks -> DECISION_PLAN_INVALID",
           r2["outcome"] == "rejected_mismatch"
           and r2["code"] == "DECISION_PLAN_INVALID", r2)
+    # G15 D4: the rejection is a class (3) INFRA_PROTOCOL_VIOLATION, settled
+    # in the SAME transaction — the receipt shape is unchanged, but the
+    # effect/step/session now close as an INFRA failure (was: pure receipt
+    # with zero control state). The closure leaves exactly one audit row and
+    # never a mismatch row (the settlement path is never reached).
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM effect_audit WHERE effect_id=%s",
-                    (effect2,))
-        check("DECISION_PLAN_INVALID leaves no mismatch audit row",
-              cur.fetchone()[0] == 0)
+        cur.execute("SELECT reason, count(*) FROM effect_audit"
+                    " WHERE effect_id=%s GROUP BY reason", (effect2,))
+        _audit = dict(cur.fetchall())
+        check("DECISION_PLAN_INVALID: one closure audit row, no mismatch row",
+              _audit == {"INFRA_PROTOCOL_VIOLATION": 1}, _audit)
         cur.execute("SELECT status FROM effect_requests WHERE effect_id=%s",
                     (effect2,))
-        check("audit-timing rejection: zero control state",
-              cur.fetchone()[0] == "dispatch_started")
+        check("DECISION_PLAN_INVALID: effect settles failed_terminal",
+              cur.fetchone()[0] == "failed_terminal")
+        cur.execute("SELECT status, outcome_code FROM steps WHERE step_id=%s",
+                    (step2,))
+        check("DECISION_PLAN_INVALID: step failed_terminal /"
+              " INFRA_PROTOCOL_VIOLATION",
+              cur.fetchone() == ("failed_terminal", "INFRA_PROTOCOL_VIOLATION"))
+        cur.execute("SELECT state, failure_code FROM sessions"
+                    " WHERE session_id=%s", (s2,))
+        check("DECISION_PLAN_INVALID: session failed /"
+              " INFRA_PROTOCOL_VIOLATION",
+              cur.fetchone() == ("failed", "INFRA_PROTOCOL_VIOLATION"))
+    # Idempotent replay: the same command_id returns the same rejection and
+    # creates no further control state.
+    r2b = complete_effect(
+        conn, s2, r2["receipt"]["command_id"], effect2, "drv", 1,
+        dispatch_session_fence=2, job_fence=job2, step_id=step2,
+        request_hash=rh2, idempotency_key=ik2,
+        outcome="failed_retryable", message={"text": "bad marks"}, tools=[],
+        decision_only=False, final_tools=False, evidence=dict(ev2))
+    check("DECISION_PLAN_INVALID replay: same rejection, no new state",
+          r2b["outcome"] == "rejected_mismatch"
+          and r2b["code"] == "DECISION_PLAN_INVALID", r2b)
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM effect_audit WHERE effect_id=%s"
+                    " AND reason='INFRA_PROTOCOL_VIOLATION'", (effect2,))
+        check("DECISION_PLAN_INVALID replay: still one closure audit row",
+              cur.fetchone()[0] == 1)
 
     # Control: the same mismatching declaration with LEGAL marks settles
     # normally and DOES write the audit row (same-transaction binding).
@@ -718,11 +751,29 @@ def test_decision_plan_invalid(conn) -> None:
         check(f"marks combination ({label}) -> DECISION_PLAN_INVALID",
               r["outcome"] == "rejected_mismatch"
               and r["code"] == "DECISION_PLAN_INVALID", r)
+        # G15 D4: the rejection now closes the same transaction as a class
+        # (3) INFRA_PROTOCOL_VIOLATION — effect/step/session terminalize and
+        # exactly one closure audit row is left; no semantic event is ever
+        # produced (the settlement path is never reached).
         with conn.cursor() as cur:
             cur.execute("SELECT status FROM effect_requests WHERE effect_id=%s",
                         (effect,))
-            check(f"({label}) zero control state",
-                  cur.fetchone()[0] == "dispatch_started")
+            check(f"({label}) effect terminalizes failed_terminal",
+                  cur.fetchone()[0] == "failed_terminal")
+            cur.execute("SELECT status, outcome_code FROM steps WHERE step_id=%s",
+                        (st,))
+            check(f"({label}) step failed_terminal / INFRA_PROTOCOL_VIOLATION",
+                  cur.fetchone() == ("failed_terminal",
+                                     "INFRA_PROTOCOL_VIOLATION"))
+            cur.execute("SELECT state, failure_code FROM sessions"
+                        " WHERE session_id=%s", (s,))
+            check(f"({label}) session failed / INFRA_PROTOCOL_VIOLATION",
+                  cur.fetchone() == ("failed", "INFRA_PROTOCOL_VIOLATION"))
+            cur.execute("SELECT count(*) FROM effect_audit WHERE effect_id=%s"
+                        " AND reason='INFRA_PROTOCOL_VIOLATION' AND"
+                        " internal_op_kind='infra_closure'", (effect,))
+            check(f"({label}) one infra closure audit row",
+                  cur.fetchone()[0] == 1)
             cur.execute("SELECT count(*) FROM session_events WHERE session_id=%s"
                         " AND event_type='assistant/message'", (s,))
             check(f"({label}) zero semantic events", cur.fetchone()[0] == 0)
@@ -1127,40 +1178,47 @@ def test_final_tools_plan_persistence(conn) -> None:
     # payload's tools member (direct SQL — the client always sends a
     # consistent plan; the envelope must carry the fixture's frozen attempt
     # identity and known_success evidence so the run reaches the plan check).
-    s5, _t5, st5, effect5, _f5, job5, rh5, ik5 = full_chain_fixture(conn)
-
-    def direct_complete(cmd, result_text, plan_text):
+    # G15 D4: each reject variant needs its OWN fixture — the rejection now
+    # terminalizes the effect in the same transaction, so a second call on
+    # the same effect would hit ATTEMPT_ALREADY_SETTLED instead of the plan
+    # check. The closure contract (effect/step/session terminal) is asserted
+    # for the last variant.
+    def direct_complete(result_text, plan_text):
+        s5, _t5, st5, effect5, _f5, job5, rh5, ik5 = full_chain_fixture(conn)
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT outcome, code FROM v_complete_effect("
                 "%s::uuid, %s, %s::uuid, 1, %s::uuid, 'drv', 1, 2, %s,"
                 " 'succeeded', %s, %s, %s, %s, %s, 'sv@1', 'canon@1',"
                 " (SELECT v_sha256_hex('{}')), '{}', %s::jsonb)",
-                (s5, cmd, effect5, st5, job5, rh5, ik5, result_text,
+                (s5, f"cmp-{u()[:8]}", effect5, st5, job5, rh5, ik5, result_text,
                  '{"text":"m"}', plan_text,
                  json.dumps(bound_evidence(effect5))))
-            return cur.fetchone()
+            return cur.fetchone(), (s5, st5, effect5)
 
     result5 = ('{"message":{"text":"m"},"tools":[{"name":"t1"}],'
                '"decision_only":false,"final_tools":true}')
-    outcome, code = direct_complete(f"cmp-{u()[:8]}", result5, None)
+    (outcome, code), fx5 = direct_complete(result5, None)
     check("missing plan canonical -> DECISION_PLAN_INVALID",
           outcome == "rejected_mismatch" and code == "DECISION_PLAN_INVALID",
           (outcome, code))
-    outcome, code = direct_complete(f"cmp-{u()[:8]}", result5,
-                                    '[{"name":"OTHER"}]')
+    (outcome, code), _ = direct_complete(result5, '[{"name":"OTHER"}]')
     check("plan canonical mismatching result tools -> DECISION_PLAN_INVALID",
           outcome == "rejected_mismatch" and code == "DECISION_PLAN_INVALID",
           (outcome, code))
-    outcome, code = direct_complete(f"cmp-{u()[:8]}", result5, 'not-json')
+    (outcome, code), fx5b = direct_complete(result5, 'not-json')
     check("plan canonical not valid JSON -> DECISION_PLAN_INVALID",
           outcome == "rejected_mismatch" and code == "DECISION_PLAN_INVALID",
           (outcome, code))
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM effect_requests WHERE effect_id=%s",
-                    (effect5,))
-        check("plan rejections left zero control state",
-              cur.fetchone()[0] == "dispatch_started")
+                    (fx5b[2],))
+        check("plan rejection closes the effect failed_terminal",
+              cur.fetchone()[0] == "failed_terminal")
+        cur.execute("SELECT status, outcome_code FROM steps WHERE step_id=%s",
+                    (fx5b[1],))
+        check("plan rejection closes the step INFRA_PROTOCOL_VIOLATION",
+              cur.fetchone() == ("failed_terminal", "INFRA_PROTOCOL_VIOLATION"))
     conn.commit()
 
 

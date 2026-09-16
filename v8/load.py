@@ -64,6 +64,15 @@ SQL_LOAD_ORDER: list[Path] = [
     V8_ROOT / "retry" / "v8_takeover.sql",
     V8_ROOT / "repair" / "v8_repair.sql",
     V8_ROOT / "cancel" / "v8_cancel.sql",
+    # G15: the failure-drain stage's SQL — the §3.1.1 fail_session class (3)
+    # INFRA closure entry. It sits AFTER the cancel stage and BEFORE compat.
+    # The shared deterministic drain core and the class (3) closure used by
+    # the completion path live in grant/v8_grant.sql (position 3): the
+    # effect stage (position 7) must be able to take the same-transaction
+    # INFRA closure on a DECISION_PLAN_INVALID rejection, and an effect-stage
+    # database does not include this file. Bodies are late-bound, so the
+    # drain file may reference anything loaded before it either way.
+    V8_ROOT / "drain" / "v8_drain.sql",
     # G13: the P0C dsh-compat host-agnostic contract surface, appended at
     # the END of the load order (no mid-order insertion — every existing
     # stage keeps its file set and count). It depends only on the
@@ -105,9 +114,14 @@ STAGE_THROUGH = {
     # priority) and cancel (shared pre-dispatch sync caller) stages, so its
     # load set runs through the full pre-compat order (cancel last).
     "plugin": 13,
-    # G13: compat loads the full 14-file set (merge-order reconciled value
-    # after grant/plugin inserted ahead of it).
-    "compat": 14,
+    # G13: compat loads the full pre-compat order plus its own file (the
+    # G15 drain insertion shifted it from 14 to 15).
+    "compat": 15,
+    # G15 (drain) adds the class (3) INFRA closure; its load set runs through
+    # its own file (the insertion point is after cancel), so every consumer
+    # it exercises — the shared pre-dispatch sync, the aggregation counters
+    # and the retry-stop-reason CAS — is loaded.
+    "drain": 14,
     # G12 (gates) adds NO SQL of its own — it modifies the existing
     # effect/tools/retry/takeover files in place — but its gate exercises
     # the full pre-compat order (seal/dispatch/cohort/takeover/append).

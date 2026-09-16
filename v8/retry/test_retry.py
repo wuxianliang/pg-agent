@@ -986,17 +986,31 @@ def test_stop_reason_unit(conn) -> None:
           and effect_row(conn, fx["effect"])[5] == "first_attempt_failure")
     exec_sql(conn, "UPDATE effect_requests SET retry_stop_reason="
                    "'budget_exhausted' WHERE effect_id=%s", (fx["effect"],))
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT v_retry_stop_reason_cas(%s)", (fx["effect"],))
-        conn.commit()
-        check("CAS mismatch -> INFRA_PROTOCOL_VIOLATION", False, "no error")
-    except psycopg2.Error as exc:
-        conn.rollback()
-        check("CAS mismatch -> INFRA_PROTOCOL_VIOLATION",
-              "INFRA_PROTOCOL_VIOLATION" in str(exc), str(exc)[:100])
+    with conn.cursor() as cur:
+        cur.execute("SELECT v_retry_stop_reason_cas(%s)", (fx["effect"],))
+        cas = cur.fetchone()[0]
+    conn.commit()
+    check("CAS mismatch -> controlled INFRA_PROTOCOL_VIOLATION, no abort",
+          cas == "INFRA_PROTOCOL_VIOLATION", cas)
     check("column keeps the original value through the violation",
           effect_row(conn, fx["effect"])[5] == "budget_exhausted")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM effect_audit WHERE effect_id=%s"
+                    " AND reason='INFRA_PROTOCOL_VIOLATION'", (fx["effect"],))
+        check("CAS mismatch retains both sides in exactly one audit row",
+              cur.fetchone()[0] == 1)
+    # Idempotent: re-running the same CAS returns the same controlled code
+    # and writes no second audit row.
+    with conn.cursor() as cur:
+        cur.execute("SELECT v_retry_stop_reason_cas(%s)", (fx["effect"],))
+        cas2 = cur.fetchone()[0]
+    conn.commit()
+    check("CAS mismatch replay: same code", cas2 == "INFRA_PROTOCOL_VIOLATION")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM effect_audit WHERE effect_id=%s"
+                    " AND reason='INFRA_PROTOCOL_VIOLATION'", (fx["effect"],))
+        check("CAS mismatch replay: still exactly one audit row",
+              cur.fetchone()[0] == 1)
 
 
 # ---------------------------------------------------------------------------
