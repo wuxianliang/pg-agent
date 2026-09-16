@@ -471,92 +471,12 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- v_pre_dispatch_cancel_sync — the SHARED pre-dispatch dual-table atomic
--- sync sub-operation (G8a extraction; single implementation for the three
--- trigger sources: request_cancel, the §4 generation drain of this stage
--- and the WORKSPACE_LOST failure-drain of the grant stage).
---
--- FINAL HOME: grant/v8_grant.sql. The G10 stage delivers its own narrower
--- variant there (v_predispatch_cancel_sync: four params, no counter
--- recompute) consumed by the WORKSPACE_LOST drain; THIS implementation
--- (six params with p_reason / p_scope_generation_id defaults + the
--- authoritative counter recompute) is the one the cancel path and the
--- generation drain call. The two bodies are not same-source, so the wave1
--- merge keeps both definitions pending the G12 single-implementation
--- unification (deviation A73 in the ledger).
---
--- For every `ready` effect of the session (optionally scoped to one
--- catalog generation) the SAME transaction flips effect_requests.status
--- and the current (max attempt_no) attempt row to
--- cancelled_before_dispatch and writes the ABORTED_BEFORE_DISPATCH audit
--- row; the step aggregation counters are then recomputed from the effect
--- table (authoritative). Returns the cancelled-effect jsonb array (the
--- cancel command's receipt member).
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION v_pre_dispatch_cancel_sync(
-    p_session_id uuid,
-    p_command_id text,
-    p_audit_key_kind text,
-    p_audit_key_value text,
-    p_reason text DEFAULT 'ABORTED_BEFORE_DISPATCH',
-    p_scope_generation_id uuid DEFAULT NULL
-) RETURNS jsonb
-LANGUAGE plpgsql AS $$
-DECLARE
-    r record;
-    v_cancelled jsonb := '[]'::jsonb;
-BEGIN
-    FOR r IN
-        SELECT er.effect_id, er.step_id, er.attempt_no
-          FROM effect_requests er
-         WHERE er.session_id = p_session_id
-           AND er.status = 'ready'
-           AND (p_scope_generation_id IS NULL
-                OR (SELECT st.catalog_generation FROM steps st
-                     WHERE st.step_id = er.step_id) = p_scope_generation_id)
-         ORDER BY er.dispatch_ordinal
-    LOOP
-        UPDATE effect_requests SET
-            status = 'cancelled_before_dispatch', updated_at = now()
-         WHERE effect_id = r.effect_id;
-        UPDATE effect_attempts SET
-            status = 'cancelled_before_dispatch', completed_at = now()
-         WHERE effect_id = r.effect_id AND attempt_no = r.attempt_no;
-        INSERT INTO effect_audit(
-            audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-            audit_key_kind, audit_key_value, result_fingerprint, reason)
-        VALUES (p_session_id, p_session_id, r.step_id, r.effect_id, r.attempt_no,
-                p_audit_key_kind, p_audit_key_value,
-                v_sha256_hex(p_command_id || ':' || r.effect_id::text),
-                p_reason);
-        v_cancelled := v_cancelled || jsonb_build_object(
-            'effect_id', r.effect_id, 'attempt_no', r.attempt_no,
-            'code', 'ABORTED_BEFORE_DISPATCH');
-    END LOOP;
-
-    -- Recompute the aggregation counters of the session's steps from the
-    -- effect table (authoritative).
-    UPDATE steps st SET
-        pending_effect_count = (SELECT count(*) FROM effect_requests er
-                                 WHERE er.step_id = st.step_id
-                                   AND er.status IN ('planned', 'ready', 'dispatch_started')),
-        unknown_effect_count = (SELECT count(*) FROM effect_requests er
-                                 WHERE er.step_id = st.step_id
-                                   AND er.status = 'unknown_outcome'),
-        retryable_effect_count = (SELECT count(*) FROM effect_requests er
-                                   WHERE er.step_id = st.step_id
-                                     AND er.status = 'failed_retryable'),
-        terminal_effect_count = (SELECT count(*) FROM effect_requests er
-                                  WHERE er.step_id = st.step_id
-                                    AND er.status IN ('succeeded', 'failed_terminal',
-                                                      'cancelled_before_dispatch',
-                                                      'cancelled_after_dispatch')),
-        updated_at = now()
-     WHERE st.session_id = p_session_id;
-
-    RETURN v_cancelled;
-END;
-$$;
+-- The pre-dispatch dual-table atomic sync suboperation used by the §4
+-- generation drain below lives in grant/v8_grant.sql (load position 4) as
+-- v_pre_dispatch_cancel_sync — G17 (D14) unified the two historical copies
+-- and moved the single rich implementation there so the grant stage (whose
+-- load set does not include this file) can reach it. Function bodies are
+-- late-bound; the caller below resolves against that definition.
 
 -- ---------------------------------------------------------------------------
 -- v_build_generation — the publish build phase: full scan, digest

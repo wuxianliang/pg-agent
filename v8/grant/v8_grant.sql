@@ -683,30 +683,62 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 4. pre-dispatch dual-table atomic sync — shared suboperation
+-- 4. pre-dispatch dual-table atomic sync — the single shared suboperation
 -- ---------------------------------------------------------------------------
--- Moved forward from v_request_cancel's inline block (v8_cancel.sql): the
--- three pre-dispatch cancellation paths (request_cancel, §2.2 WORKSPACE_LOST
--- failure-drain, §4 generation drain) share this ONE implementation. It
--- turns every published `ready` effect of the session into
--- cancelled_before_dispatch together with its CURRENT (max attempt_no)
--- attempt row in the SAME transaction (no single-sided intermediate
--- state), writing the ABORTED_BEFORE_DISPATCH audit row. A database-
--- internal cancellation path: no completion semantic event, no receipt.
--- G11 rewires the cancel side to call this; until then the two copies
--- coexist by the plan's merge order (function bodies are late-bound).
-CREATE FUNCTION v_predispatch_cancel_sync(
-    p_session_id uuid, p_source text, p_command_id text, p_key_value text
+-- The ONE implementation of the pre-dispatch dual-table atomic sync, shared
+-- by the three trigger sources: request_cancel, the §4 generation drain and
+-- the §2.2 WORKSPACE_LOST failure-drain of this stage.
+--
+-- G17 (D14) unified the two historical copies (deviation A68/A73): the
+-- narrow four-parameter variant that used to live here
+-- (v_predispatch_cancel_sync) is DELETED, and the rich six-parameter
+-- variant (p_reason / p_scope_generation_id defaults + the authoritative
+-- counter recompute) moved here from plugin/v8_plugin.sql. This file sits
+-- at load position 4, so every consumer stage (grant, cancel, plugin,
+-- drain, compact and later) has it; the plugin segment of a grant-stage
+-- database does not exist, which is exactly why the rich variant could not
+-- stay in the plugin file. Function bodies are late-bound, so the callers
+-- in the later stages resolve against this single definition.
+--
+-- For every `ready` effect of the session (optionally scoped to one
+-- catalog generation) the SAME transaction flips effect_requests.status
+-- and the current (max attempt_no) attempt row to
+-- cancelled_before_dispatch and writes the audit row named by
+-- (p_audit_key_kind, p_audit_key_value) with reason p_reason; the step
+-- aggregation counters are then recomputed from the effect table
+-- (authoritative). Returns the cancelled-effect jsonb array.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION v_pre_dispatch_cancel_sync(
+    p_session_id uuid,
+    p_command_id text,
+    p_audit_key_kind text,
+    p_audit_key_value text,
+    p_reason text DEFAULT 'ABORTED_BEFORE_DISPATCH',
+    p_scope_generation_id uuid DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql AS $$
 DECLARE
-    v_cancelled jsonb := '[]'::jsonb;
     r record;
+    v_cancelled jsonb := '[]'::jsonb;
 BEGIN
     FOR r IN
         SELECT er.effect_id, er.step_id, er.attempt_no
           FROM effect_requests er
-         WHERE er.session_id = p_session_id AND er.status = 'ready'
+         WHERE er.session_id = p_session_id
+           AND er.status = 'ready'
+           -- G17 (D14, deviation A121): the generation scoping reads the
+           -- step's catalog_generation through a whole-row to_jsonb() probe
+           -- instead of a direct column reference. The column is added by
+           -- the plugin stage (load position 7), so a grant-stage database
+           -- (load set through position 6) has no such column and a direct
+           -- reference would fail to parse. to_jsonb() yields NULL for an
+           -- absent column, which makes a non-NULL scope fail closed in
+           -- those stages (they never pass one) while stages that carry the
+           -- column resolve the frozen generation exactly.
+           AND (p_scope_generation_id IS NULL
+                OR (SELECT (to_jsonb(st) ->> 'catalog_generation')::uuid
+                      FROM steps st WHERE st.step_id = er.step_id)
+                   = p_scope_generation_id)
          ORDER BY er.dispatch_ordinal
     LOOP
         UPDATE effect_requests SET
@@ -716,17 +748,37 @@ BEGIN
             status = 'cancelled_before_dispatch', completed_at = now()
          WHERE effect_id = r.effect_id AND attempt_no = r.attempt_no;
         INSERT INTO effect_audit(
-            audit_context_session_id, session_id, step_id, effect_id,
-            attempt_no, audit_key_kind, audit_key_value, result_fingerprint,
-            reason)
-        VALUES (p_session_id, p_session_id, r.step_id, r.effect_id,
-                r.attempt_no, 'canonical_binding', p_key_value,
+            audit_context_session_id, session_id, step_id, effect_id, attempt_no,
+            audit_key_kind, audit_key_value, result_fingerprint, reason)
+        VALUES (p_session_id, p_session_id, r.step_id, r.effect_id, r.attempt_no,
+                p_audit_key_kind, p_audit_key_value,
                 v_sha256_hex(p_command_id || ':' || r.effect_id::text),
-                'ABORTED_BEFORE_DISPATCH');
+                p_reason);
         v_cancelled := v_cancelled || jsonb_build_object(
             'effect_id', r.effect_id, 'attempt_no', r.attempt_no,
             'code', 'ABORTED_BEFORE_DISPATCH');
     END LOOP;
+
+    -- Recompute the aggregation counters of the session's steps from the
+    -- effect table (authoritative).
+    UPDATE steps st SET
+        pending_effect_count = (SELECT count(*) FROM effect_requests er
+                                 WHERE er.step_id = st.step_id
+                                   AND er.status IN ('planned', 'ready', 'dispatch_started')),
+        unknown_effect_count = (SELECT count(*) FROM effect_requests er
+                                 WHERE er.step_id = st.step_id
+                                   AND er.status = 'unknown_outcome'),
+        retryable_effect_count = (SELECT count(*) FROM effect_requests er
+                                   WHERE er.step_id = st.step_id
+                                     AND er.status = 'failed_retryable'),
+        terminal_effect_count = (SELECT count(*) FROM effect_requests er
+                                  WHERE er.step_id = st.step_id
+                                    AND er.status IN ('succeeded', 'failed_terminal',
+                                                      'cancelled_before_dispatch',
+                                                      'cancelled_after_dispatch')),
+        updated_at = now()
+     WHERE st.session_id = p_session_id;
+
     RETURN v_cancelled;
 END;
 $$;
@@ -1107,29 +1159,10 @@ BEGIN
 
     -- (a) effect drain: every ready effect -> cancelled_before_dispatch,
     --     dual-table atomic sync (shared suboperation).
-    v_cancelled := v_predispatch_cancel_sync(
-        p_session_id, 'failure_drain', p_audit_key_value, p_audit_key_value);
-
-    -- Recompute the aggregation counters from the effect table.
-    UPDATE steps st SET
-        pending_effect_count = (SELECT count(*) FROM effect_requests er
-                                 WHERE er.step_id = st.step_id
-                                   AND er.status IN ('planned', 'ready',
-                                                     'dispatch_started')),
-        unknown_effect_count = (SELECT count(*) FROM effect_requests er
-                                 WHERE er.step_id = st.step_id
-                                   AND er.status = 'unknown_outcome'),
-        retryable_effect_count = (SELECT count(*) FROM effect_requests er
-                                   WHERE er.step_id = st.step_id
-                                     AND er.status = 'failed_retryable'),
-        terminal_effect_count = (SELECT count(*) FROM effect_requests er
-                                  WHERE er.step_id = st.step_id
-                                    AND er.status IN ('succeeded',
-                                                      'failed_terminal',
-                                                      'cancelled_before_dispatch',
-                                                      'cancelled_after_dispatch')),
-        updated_at = now()
-     WHERE st.session_id = p_session_id;
+    -- The shared suboperation recomputes the step aggregation counters.
+    v_cancelled := v_pre_dispatch_cancel_sync(
+        p_session_id, p_audit_key_value, 'canonical_binding',
+        p_audit_key_value, 'ABORTED_BEFORE_DISPATCH', NULL);
 
     -- (b) step drain three branches.
     SELECT st.step_id INTO v_step

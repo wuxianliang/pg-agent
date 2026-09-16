@@ -142,6 +142,25 @@ BEGIN
         RETURN QUERY SELECT v_adj.adj_outcome, v_adj.adj_code, v_adj.adj_receipt;
         RETURN;
     END IF;
+    -- G17 (D10): the compact conflict matrix item (2). An active `locked`
+    -- compact row rejects the creation/seal/dispatch of an LLM effect with
+    -- COMPACT_IN_PROGRESS and zero control state. The check is guarded by
+    -- to_regclass() (deviation A51 precedent): this function also runs in
+    -- stage databases whose load set stops before the compact stage, and
+    -- PL/pgSQL plans the inner statement only when the guard is true.
+    IF to_regclass('public.compactions') IS NOT NULL THEN
+        IF EXISTS (SELECT 1 FROM compactions c
+                    WHERE c.session_id = p_session_id
+                      AND c.status = 'locked') THEN
+            v_receipt := v8_reject_command(p_session_id, p_command_id,
+                'seal_batch', v_computed, 'rejected_mismatch',
+                'COMPACT_IN_PROGRESS',
+                'an active compact lock rejects new LLM effect work');
+            RETURN QUERY SELECT 'rejected_mismatch'::text,
+                                'COMPACT_IN_PROGRESS'::text, v_receipt;
+            RETURN;
+        END IF;
+    END IF;
 
     SELECT * INTO v_sess FROM sessions s WHERE s.session_id = p_session_id FOR UPDATE;
 

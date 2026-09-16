@@ -463,19 +463,18 @@ def test_d8_isolation(conn) -> None:
 
 def test_d11_single_predispatch_impl(conn) -> None:
     # G15 D11: the WORKSPACE_LOST drain and the INFRA closure call the SAME
-    # shared pre-dispatch sync function; the two legacy definitions (the
-    # grant-stage narrow variant consumed by WORKSPACE_LOST and the
-    # plugin-stage six-parameter variant consumed by request_cancel / the
-    # generation drain) are still both present — their unification is
-    # G17-D14, NOT this gate. This gate asserts behavioural equivalence
-    # instead of same-source identity.
+    # shared pre-dispatch sync function. G15 shipped with the two legacy
+    # definitions still coexisting (the grant-stage narrow variant and the
+    # plugin-stage six-parameter variant) and asserted behavioural
+    # equivalence. G17-D14 then completed the unification: the narrow
+    # variant is deleted and exactly ONE definition remains — that is the
+    # post-unification contract asserted here.
     rows_ = rows(conn, "SELECT p.proname FROM pg_proc p WHERE"
                        " p.proname IN ('v_predispatch_cancel_sync',"
                        " 'v_pre_dispatch_cancel_sync') ORDER BY 1")
-    check("D11 both pre-dispatch definitions still present (unification is"
-          " G17-D14)",
-          [r[0] for r in rows_] == ["v_pre_dispatch_cancel_sync",
-                                    "v_predispatch_cancel_sync"],
+    check("D11 exactly one pre-dispatch definition remains (G17-D14"
+          " unification completed)",
+          [r[0] for r in rows_] == ["v_pre_dispatch_cancel_sync"],
           rows_)
     drv = "g15-d11"
     seed_stage_grants(conn, drivers=(drv,))

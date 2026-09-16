@@ -88,6 +88,15 @@ SQL_LOAD_ORDER: list[Path] = [
     # appending is safe for all earlier stages (their load sets stop
     # before this entry).
     V8_ROOT / "compat" / "v8_compat.sql",
+    # G17: the compact control plane (§3.3's three commands + the frozen
+    # compactions DDL). Appended at the END of the order (no mid-order
+    # insertion) — every lower stage keeps its file set, which is why the
+    # compact ownership checks inside v_prepare_step / v_seal_batch /
+    # v_dispatch_effect carry a to_regclass('compactions') guard: those
+    # functions also run in databases whose load set stops before this file.
+    # internal_op_audits (the compact_terminal_abort carrier) is created by
+    # the G16 audit stage at position 3; this stage only consumes it.
+    V8_ROOT / "compact" / "v8_compact.sql",
 ]
 
 STAGE_THROUGH = {
@@ -140,6 +149,11 @@ STAGE_THROUGH = {
     # set and exercises the lock-wait interleavings of the delivered
     # gates, so it carries the same position as `gates`.
     "concurrency": 14,
+    # G17 (compact): its own file at the END of the order — the compact gate
+    # exercises the seal/dispatch/cohort paths (through cancel), the shared
+    # pre-dispatch sync and the G16 internal_op_audits carrier, so its load
+    # set is the full list through its own last entry.
+    "compact": 17,
 }
 
 
