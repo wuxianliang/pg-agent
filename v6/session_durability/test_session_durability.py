@@ -8,6 +8,7 @@ AGENT_ROOT=ROOT.parent.parent
 sys.path.insert(0,str(AGENT_ROOT))
 from server import get_server
 from v6.session_durability.duckdb_runtime import DuckSessionManager, SessionError
+from v6.session_durability.duckdb_grammar import GrammarExtensionConfig
 from v6.source_ingress.duckdb_ingress import PostgresSourceResolver, SourceConfig, snapshot_table
 from v6.session_durability.setup_db import DB, main as setup_db
 
@@ -41,9 +42,10 @@ def main():
     resolver=PostgresSourceResolver([SourceConfig('agent_db',uri,frozenset({('public','sales')}))])
 
     temp_run=new_run(pg,'temp','temp duck session')
-    mgr=DuckSessionManager(uri,resolver=resolver)
+    mgr=DuckSessionManager(uri,resolver=resolver,grammar_config=GrammarExtensionConfig())
     mgr.ensure_metadata_session(temp_run,'temp')
     s=mgr.get_or_open(temp_run)
+    check('session grammar disabled',s.capabilities.enabled is False and s.capabilities.loaded is False and s.capabilities.active_features==())
     snapshot_table(s.connection,resolver,source_id='agent_db',schema_name='public',table_name='sales',artifact_name='sales_src')
     s.create_view('monthly','SELECT month,revenue FROM sales_src WHERE revenue>=100')
     s.create_view('summary','SELECT sum(revenue) AS total FROM monthly')
@@ -71,7 +73,7 @@ def main():
     check('durable initial result',d.connection.execute('SELECT total FROM summary').fetchone()[0]==350)
     mgr.close_run(durable,lost=True)
     with pg.cursor() as cur: cur.execute("UPDATE sales SET revenue=300 WHERE month='2026-02'")
-    mgr2=DuckSessionManager(uri,worker_id='v6-worker-2',resolver=resolver)
+    mgr2=DuckSessionManager(uri,worker_id='v6-worker-2',resolver=resolver,grammar_config=GrammarExtensionConfig())
     d2=mgr2.get_or_open(durable)
     check('run_schema rehydrates definitions',d2.connection.execute('SELECT total FROM summary').fetchone()[0]==400)
     with pg.cursor() as cur:

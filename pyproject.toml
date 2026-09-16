@@ -7,8 +7,9 @@ dependencies = [
     "litellm>=1.100.0.dev2",
     "pgembed>=0.3.0rc1",
     "psycopg2-binary>=2.9.12",
-    "duckdb==1.6.0.dev365",
+    "duckdb==1.6.0.dev366+ga1f0ab1911",
     "pytz>=2024.1",
+    "streamlit>=1.62.0",
 ]
 
 [tool.uv]
@@ -16,3 +17,4 @@ prerelease = "allow"
 
 [tool.uv.sources]
 pgembed = { path = "../pgembed", editable = true }
+duckdb = { path = "../duckdb-python-pgagent/dist-special-g1/duckdb-1.6.0.dev366+ga1f0ab1911-cp312-cp312-macosx_26_0_arm64.whl" }

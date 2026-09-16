@@ -41,7 +41,8 @@ def main():
         cur.execute('CREATE TABLE sales(month text,revenue int)')
         cur.execute("INSERT INTO sales VALUES('2026-01',100),('2026-02',250)")
     resolver=PostgresSourceResolver([SourceConfig('agent_db',uri,frozenset({('public','sales')}))])
-    p=DuckDBWorkerProcessor(uri,resolver=resolver)
+    from v6.session_durability.duckdb_grammar import GrammarExtensionConfig
+    p=DuckDBWorkerProcessor(uri,resolver=resolver,grammar_config=GrammarExtensionConfig())
     run=make_run(c)
     body1={'source_id':'agent_db','schema_name':'public','table_name':'sales','artifact_name':'sales_src'}
     rid1,msg1,_=op(c,run,1,'register',body1)
@@ -98,7 +99,7 @@ def main():
 
     # Real AgentWorker path consumes the Duck queue and applies the result.
     actual=make_run(c); abody={'source_id':'agent_db','schema_name':'public','table_name':'sales','artifact_name':'actual_src'}; arid,amsg,_=op(c,actual,1,'register',abody)
-    actual_processor=DuckDBWorkerProcessor(uri,resolver=resolver,worker_id='actual-worker')
+    actual_processor=DuckDBWorkerProcessor(uri,resolver=resolver,worker_id='actual-worker',grammar_config=GrammarExtensionConfig())
     aw=AgentWorker(uri,api_uri='http://127.0.0.1/v1',api_key='none',model='mock',poll_queues=('duck_heavy_requests',),duck_processor=actual_processor,db=DB)
     actual_result=aw.pump_once(); check('actual AgentWorker consumes duck queue',actual_result is not None and actual_result.get('request_id')==arid,actual_result)
     with c.cursor() as cur:
@@ -108,7 +109,7 @@ def main():
 
     # Real max_read_ct DLQ path updates operation status.
     dlq=make_run(c); dlqbody={'artifact_name':'never','query':'SELECT 1','depends_on':[]}; rid4,msg4,_=op(c,dlq,1,'query',dlqbody)
-    dw=AgentWorker(uri,api_uri='http://127.0.0.1/v1',api_key='none',model='mock',poll_queues=('duck_heavy_requests',),max_read_ct=0,duck_processor=DuckDBWorkerProcessor(uri,resolver=resolver),db=DB)
+    dw=AgentWorker(uri,api_uri='http://127.0.0.1/v1',api_key='none',model='mock',poll_queues=('duck_heavy_requests',),max_read_ct=0,duck_processor=DuckDBWorkerProcessor(uri,resolver=resolver,grammar_config=GrammarExtensionConfig()),db=DB)
     dlq_result=dw.pump_once(); check('real DLQ path fires',dlq_result is not None and dlq_result.get('dead_lettered'),dlq_result)
     with c.cursor() as cur:
         cur.execute("SELECT status FROM duck_operations WHERE request_id=%s",(rid4,)); check('DLQ operation state',cur.fetchone()[0]=='DLQ')
@@ -117,7 +118,7 @@ def main():
     # Malformed message is archived into DLQ instead of poisoning the queue.
     with c.cursor() as cur:
         cur.execute("SELECT pgmq.send('duck_heavy_requests','{\"bad\":1}'::jsonb)")
-    mw=AgentWorker(uri,api_uri='http://127.0.0.1/v1',api_key='none',model='mock',poll_queues=('duck_heavy_requests',),duck_processor=DuckDBWorkerProcessor(uri,resolver=resolver),db=DB)
+    mw=AgentWorker(uri,api_uri='http://127.0.0.1/v1',api_key='none',model='mock',poll_queues=('duck_heavy_requests',),duck_processor=DuckDBWorkerProcessor(uri,resolver=resolver,grammar_config=GrammarExtensionConfig()),db=DB)
     malformed=mw.pump_once(); check('malformed message dead-lettered',malformed is not None and malformed.get('dead_lettered'),malformed)
     mw.close()
     p.close(); c.close(); print('[W5] all gates passed'); return 0

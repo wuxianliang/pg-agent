@@ -1,0 +1,237 @@
+{
+  "duckdb": {
+    "access_mode": "read_only",
+    "library_version": "v1.6.0-dev13823",
+    "package": "1.6.0.dev366+ga1f0ab1911",
+    "source_id": "a1f0ab1911"
+  },
+  "enable_hybrid_index": false,
+  "extensions": {
+    "fts": {
+      "installed": false,
+      "loaded": false,
+      "origin": "unavailable"
+    },
+    "json": {
+      "installed": true,
+      "loaded": true,
+      "origin": "built-in"
+    },
+    "vss": {
+      "installed": false,
+      "loaded": false,
+      "origin": "unavailable"
+    }
+  },
+  "golden_records": [
+    {
+      "_id": "doc_alpha_0",
+      "content_sha256": "447ddb49ae0e88206741f4e0d10b13711675bb523d438de9c21de83c81a3fff4",
+      "file_path_sha256": "e3fa138fe7d56e3a284a2f8b32fd365854605d91bddb80c62e52824cd7c8f057",
+      "mtime": 1000.0,
+      "raw_content_sha256": "447ddb49ae0e88206741f4e0d10b13711675bb523d438de9c21de83c81a3fff4",
+      "vector_len": 4,
+      "vector_sha256": "81bb5e08a5d12308ad54e054f8618ce84e5422261c8f46ae2dd89c3a33acbf93"
+    },
+    {
+      "_id": "doc_beta_0",
+      "content_sha256": "50641684a58f36097ef65c21fde4cf79f1ddda206d769fd128a0c9f88f2d0177",
+      "file_path_sha256": "b0484109c372629b5261d9fad4ecde7fcc35ff15f71897d1f8b8a0f8705d305e",
+      "mtime": 1001.0,
+      "raw_content_sha256": "50641684a58f36097ef65c21fde4cf79f1ddda206d769fd128a0c9f88f2d0177",
+      "vector_len": 4,
+      "vector_sha256": "eec1ab7bf315e0b0444057f6e4482981186a2dcea1a298bc8f96d7b21e9b6d6b"
+    },
+    {
+      "_id": "doc_dup_0",
+      "content_sha256": "b9bceed2548d02b8cdc27e7c3c554fa66ea473b388e0c83114818d6adc2f07a6",
+      "file_path_sha256": "7a1513ba181c1b2186964dd8e23f1739c57dec42856399cd6d1ad729f2fa2ccc",
+      "mtime": 1004.0,
+      "raw_content_sha256": "b9bceed2548d02b8cdc27e7c3c554fa66ea473b388e0c83114818d6adc2f07a6",
+      "vector_len": 4,
+      "vector_sha256": "12bf612bf6e015e3ef54b6e8ce9d2d3fba7da6e11816e1dc66fab75c3b2d63da"
+    },
+    {
+      "_id": "doc_dup_0",
+      "content_sha256": "9546655ea49a91a96026bdec5a902b446fb24aa89c2a2fdc46bd3d3dee5028ec",
+      "file_path_sha256": "014fe6669a533f05b72de3d0b5b0f63aab91df541405a16b025b7feed32f89b0",
+      "mtime": 1005.0,
+      "raw_content_sha256": "9546655ea49a91a96026bdec5a902b446fb24aa89c2a2fdc46bd3d3dee5028ec",
+      "vector_len": 4,
+      "vector_sha256": "9665eae4dd26eecd72613b54a230f73ade66f9e8333712a04547cdbccfa51e5a"
+    },
+    {
+      "_id": "doc_gamma_0",
+      "content_sha256": "0f00a0049d7d61d9b6188f7d068e4fd3c0d554170f644323995d4a9db272aa21",
+      "file_path_sha256": "62626ac00898b6ce365c1cd430d5940ba5bf0a56ae528664a65e192f42ff5b3b",
+      "mtime": 1002.0,
+      "raw_content_sha256": "0f00a0049d7d61d9b6188f7d068e4fd3c0d554170f644323995d4a9db272aa21",
+      "vector_len": 4,
+      "vector_sha256": "1a089efdb8965114ebda89ba4abcfbe5f7c6e53dcd46c581733d61b4f358ad8f"
+    },
+    {
+      "_id": "doc_nullvec_0",
+      "content_sha256": "f239603c687ab399d1beaa55bb50ccd1ebcb643db9daec52ededfaaaabfbdf57",
+      "file_path_sha256": "910ab7db3ac0f28e2499b890fdb977135ec33d1f0fa471933602e2c6e9dc578d",
+      "mtime": 1003.0,
+      "raw_content_sha256": "f239603c687ab399d1beaa55bb50ccd1ebcb643db9daec52ededfaaaabfbdf57",
+      "vector_len": null,
+      "vector_sha256": null
+    }
+  ],
+  "golden_version": 1,
+  "metadata": {
+    "corpus_kind": "synthetic_from_source_schema",
+    "sample_limit": 16,
+    "source_citations": {
+      "autocoder_args": "auto_coder-3.0.74/src/autocoder/common/__init__.py",
+      "storage_cache": "auto_coder-3.0.74/src/autocoder/rag/cache/local_duckdb_storage_cache.py"
+    }
+  },
+  "retrieval_expected": {
+    "hits": [
+      {
+        "_id": "doc_alpha_0",
+        "file_path_sha256": "e3fa138fe7d56e3a284a2f8b32fd365854605d91bddb80c62e52824cd7c8f057",
+        "mtime": 1000.0,
+        "score": 1.0
+      },
+      {
+        "_id": "doc_beta_0",
+        "file_path_sha256": "b0484109c372629b5261d9fad4ecde7fcc35ff15f71897d1f8b8a0f8705d305e",
+        "mtime": 1001.0,
+        "score": 0.60000001
+      }
+    ],
+    "query_vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "similarity": 0.1,
+    "sql": "SELECT _id, file_path, mtime, score\nFROM (\n    SELECT *, list_cosine_similarity(vector, ?) AS score\n    FROM rag_duckdb\n) sq\nWHERE score IS NOT NULL\nAND score >= ?\nORDER BY score DESC LIMIT ?;",
+    "top_1": [
+      {
+        "_id": "doc_alpha_0",
+        "file_path_sha256": "e3fa138fe7d56e3a284a2f8b32fd365854605d91bddb80c62e52824cd7c8f057",
+        "mtime": 1000.0,
+        "score": 1.0
+      }
+    ],
+    "top_k": 32,
+    "top_k_cap": 32
+  },
+  "schema_snapshot": {
+    "columns": [
+      {
+        "name": "_id",
+        "nullable": true,
+        "observed_type": "VARCHAR",
+        "ordinal": 1
+      },
+      {
+        "name": "file_path",
+        "nullable": true,
+        "observed_type": "VARCHAR",
+        "ordinal": 2
+      },
+      {
+        "name": "content",
+        "nullable": true,
+        "observed_type": "VARCHAR",
+        "ordinal": 3
+      },
+      {
+        "name": "raw_content",
+        "nullable": true,
+        "observed_type": "VARCHAR",
+        "ordinal": 4
+      },
+      {
+        "name": "vector",
+        "nullable": true,
+        "observed_type": "FLOAT[]",
+        "ordinal": 5
+      },
+      {
+        "name": "mtime",
+        "nullable": true,
+        "observed_type": "FLOAT",
+        "ordinal": 6
+      }
+    ],
+    "tables": [
+      {
+        "name": "rag_duckdb",
+        "schema": "main",
+        "type": "BASE TABLE"
+      }
+    ],
+    "type_notes": "DuckDB information_schema reports TEXT as VARCHAR"
+  },
+  "source_defaults": {
+    "columns": [
+      {
+        "name": "_id",
+        "source_type": "VARCHAR"
+      },
+      {
+        "name": "file_path",
+        "source_type": "VARCHAR"
+      },
+      {
+        "name": "content",
+        "source_type": "TEXT"
+      },
+      {
+        "name": "raw_content",
+        "source_type": "TEXT"
+      },
+      {
+        "name": "vector",
+        "source_type": "FLOAT[]"
+      },
+      {
+        "name": "mtime",
+        "source_type": "FLOAT"
+      }
+    ],
+    "database_filename": "byzerai_store_duckdb.db",
+    "dimension": 1024,
+    "enable_hybrid_index": false,
+    "extensions": [
+      "json",
+      "fts",
+      "vss"
+    ],
+    "similarity": 0.1,
+    "table_name": "rag_duckdb",
+    "top_k": 10000
+  },
+  "stats": {
+    "dimension": {
+      "distinct_lengths": 1,
+      "max": 4,
+      "min": 4,
+      "mixed": false,
+      "non_null_vectors": 5,
+      "observed_dimension": 4
+    },
+    "duplicate_ids": [
+      {
+        "_id": "doc_dup_0",
+        "count": 2
+      }
+    ],
+    "null_counts": {
+      "_id": 0,
+      "content": 0,
+      "file_path": 0,
+      "mtime": 0,
+      "raw_content": 0,
+      "vector": 1
+    },
+    "row_count": 6
+  }
+}

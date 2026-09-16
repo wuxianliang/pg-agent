@@ -1,0 +1,36 @@
+{
+  "document_id": "doc-json",
+  "title": "JSON payload",
+  "text": "Explicit nested payload for dict_to_payload.",
+  "metadata": {
+    "fixture": "json",
+    "source_kind": "json"
+  },
+  "sections": [
+    {
+      "title": "Declared section",
+      "metadata": {"origin": "json"},
+      "paragraphs": [
+        {
+          "text": "Declared paragraph. Extra sentence.",
+          "sentences": [
+            {"text": "Declared paragraph.", "metadata": {"origin": "json"}},
+            {"text": "Extra sentence.", "metadata": {"origin": "json"}}
+          ],
+          "metadata": {"origin": "json"}
+        }
+      ]
+    },
+    {
+      "title": "Split from text",
+      "metadata": {},
+      "paragraphs": [
+        {
+          "text": "No sentences listed. Indexer must split this.",
+          "sentences": null,
+          "metadata": {}
+        }
+      ]
+    }
+  ]
+}

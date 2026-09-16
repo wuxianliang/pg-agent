@@ -24,7 +24,8 @@ def main():
   cur.execute("SELECT agent_start_session('timeout',8,'temp')"); run=cur.fetchone()[0]; cur.execute("SELECT pgmq.purge_queue('llm_requests')"); cur.execute("INSERT INTO duck_workbench_sessions(run_id,session_mode) VALUES(%s,'temp') ON CONFLICT DO NOTHING",(run,))
   body={'brief':'timeout','artifact_name':'slow','query':'SELECT sum(i) FROM range(1000000000000) t(i)','timeout_ms':10,'depends_on':[]}
   rid=str(uuid.uuid4()); h=hashlib.sha256(json.dumps(body,sort_keys=True,ensure_ascii=False).encode()).hexdigest(); cur.execute("INSERT INTO duck_operations(request_id,run_id,op_seq,op_kind,artifact_name,request_payload) VALUES(%s,%s,1,'query','slow',%s::jsonb)",(rid,run,json.dumps(body))); 
- proc=DuckDBWorkerProcessor(uri); out=proc.process({'run_id':run,'request_id':rid,'op_seq':1,'op_kind':'query','payload_hash':h,**body}); check('timeout returns structured result',out.get('Type')=='DUCK_TIMEOUT',out)
+ from v6.session_durability.duckdb_grammar import GrammarExtensionConfig
+ proc=DuckDBWorkerProcessor(uri,grammar_config=GrammarExtensionConfig()); out=proc.process({'run_id':run,'request_id':rid,'op_seq':1,'op_kind':'query','payload_hash':h,**body}); check('timeout returns structured result',out.get('Type')=='DUCK_TIMEOUT',out)
  con=proc.sessions.sessions.get(run); check('timeout leaves no session view',con is None or con.connection.execute("SELECT count(*) FROM duckdb_views() WHERE view_name='slow'").fetchone()[0]==0)
  proc.close(); c.close(); print('[W8] all gates passed'); return 0
 if __name__=='__main__': raise SystemExit(main())

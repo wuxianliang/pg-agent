@@ -1,0 +1,3 @@
+Alpha sentence. Beta sentence.
+
+Gamma paragraph without a heading.

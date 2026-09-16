@@ -1,0 +1,27 @@
+{
+  "lock_format": "duckrag-wi1-upstream-package/1",
+  "package": "mineru",
+  "pypi_artifacts": [
+    {
+      "filename": "mineru-3.4.4-py3-none-any.whl",
+      "packagetype": "bdist_wheel",
+      "sha256": "d4d678539782a7683d998e2914a52d96b5720676ce65658b29666b1f4d9dfd13",
+      "size": 1540534,
+      "url": "https://files.pythonhosted.org/packages/ec/d1/fd23b40d7bbdeaa04a6070ffeb21caff91c2c5a2c5fde22c7ce804f08dd8/mineru-3.4.4-py3-none-any.whl"
+    }
+  ],
+  "release_assets": [
+    {
+      "name": "mineru-3.4.4-py3-none-any.whl",
+      "sha256": "d4d678539782a7683d998e2914a52d96b5720676ce65658b29666b1f4d9dfd13",
+      "size": 1540534,
+      "url": "https://github.com/opendatalab/MinerU/releases/download/mineru-3.4.4-released/mineru-3.4.4-py3-none-any.whl"
+    }
+  ],
+  "release_immutable": false,
+  "release_tag": "mineru-3.4.4-released",
+  "repository": "https://github.com/opendatalab/MinerU",
+  "tag_commit_sha": "0dfc9460cd9ab693b9af60ae3fbffd7bc111b062",
+  "tag_object_sha": "0dfc9460cd9ab693b9af60ae3fbffd7bc111b062",
+  "version": "3.4.4"
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": "flock-rag-phase0-infinisynapse-split/1",
+  "id": "infinisynapse_schema",
+  "authority": "v7/evidence/contracts/infinisynapse_schema.md",
+  "work_item": "WI-C P2-5",
+  "workflow_semantics": {
+    "frozen": true,
+    "level": "E1",
+    "implementation_allowed": true,
+    "release_allowed": false,
+    "sequence": ["list_tables", "show_create", "register_table", "execute_sql"],
+    "register_table_copies_table_data": false,
+    "notes": "Agent-visible workflow is frozen. v7 maps it onto schema snapshot + context binding, not Infinity SQL / JDBC."
+  },
+  "exact_tool_dto": {
+    "frozen": false,
+    "level": "E0",
+    "implementation_allowed": false,
+    "release_allowed": false,
+    "not_a_frozen_e1_tool_shape": true,
+    "reason": "src/agent/infini-sql handlers are obfuscated; original-app-tool-contracts-2026-05-27.json is missing (git D). Oracle-plan param table is E1 of the export, not a frozen exact DTO."
+  }
+}

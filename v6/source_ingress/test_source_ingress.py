@@ -5,7 +5,6 @@ import json
 import sys
 from pathlib import Path
 
-import duckdb
 import psycopg2
 
 ROOT = Path(__file__).resolve().parent
@@ -21,6 +20,7 @@ from v6.source_ingress.duckdb_ingress import (
     snapshot_table,
 )
 from v6.source_ingress.setup_db import DB, main as setup_db
+from v6.session_durability.duckdb_grammar import GrammarExtensionConfig, bootstrap_connection
 
 
 def check(label: str, condition: bool, detail: object = "") -> None:
@@ -30,11 +30,7 @@ def check(label: str, condition: bool, detail: object = "") -> None:
 
 
 def hardened():
-    con = duckdb.connect()
-    con.execute("SET autoinstall_known_extensions=false")
-    con.execute("SET autoload_known_extensions=false")
-    con.execute("SET enable_external_access=false")
-    con.execute("SET memory_limit='512 MiB'")
+    con, _ = bootstrap_connection(GrammarExtensionConfig())
     return con
 
 

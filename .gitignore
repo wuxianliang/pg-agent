@@ -18,3 +18,12 @@ prompt-exports/
 
 # DuckDB runtime database created by v6 tests
 /memory
+
+# Test caches
+.pytest_cache/
+
+# macOS Finder metadata
+.DS_Store
+
+# Local spike scratch (DuckDB sdist + flock checkout)
+.spike-flock/

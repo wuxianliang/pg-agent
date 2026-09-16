@@ -1,0 +1,83 @@
+{
+  "command": "uv run python v7/migration/range_trio_fixture.py --write",
+  "corpus_kind": "imported_and_generated_fixtures",
+  "golden_version": 1,
+  "legs": {
+    "code": {
+      "corpus_kind": "generated_source_line_fixture",
+      "line_end": 13,
+      "line_start": 1,
+      "newline": "\n",
+      "range_origin": "source_line",
+      "source_rel": "v7/tests/fixtures/range_trio/code/sample.py",
+      "source_sha256": "db6f869ad70f5fe8910a7c7bf9d625edea9a4508333ecdd64fb1425a628d938e",
+      "source_size_bytes": 252
+    },
+    "legacy": {
+      "corpus_kind": "synthetic_from_source_schema",
+      "line_end": 3,
+      "line_start": 1,
+      "notes": "Not live byzerai_store_duckdb.db. Projection text is synthetic. related_legacy_golden _id doc_alpha_0 is compatibility intent only.",
+      "range_origin": "legacy_flat",
+      "related_legacy_golden": "v7/tests/fixtures/legacy_cache/golden.v1.json",
+      "source_rel": "v7/tests/fixtures/range_trio/legacy/flat.txt",
+      "source_sha256": "d6ad7d0569e8fecc07d58f3203d86952b9f5bf7017ffa30910be3cbc89405d04",
+      "source_size_bytes": 125
+    },
+    "pdf": {
+      "catalog_page": 1,
+      "content_list": [
+        {
+          "bbox": [
+            112,
+            70,
+            439,
+            94
+          ],
+          "page_idx": 0,
+          "text": "DuckRAG P19-S Fixture",
+          "text_level": 1,
+          "type": "text"
+        },
+        {
+          "bbox": [
+            112,
+            113,
+            488,
+            132
+          ],
+          "page_idx": 0,
+          "text": "Offline MinerU process-control verification.",
+          "type": "text"
+        }
+      ],
+      "line_end": null,
+      "line_start": null,
+      "page_idx": 0,
+      "page_size": [
+        612,
+        792
+      ],
+      "pdf_sha256": "163c9ac8f7f857904793b01fa9f031cebbe83f186b9cfc3510b9a371e464922c",
+      "pdf_size_bytes": 672,
+      "provenance": {
+        "duckrag_head_at_copy": "0c6ad30b000ac8ef532947b7b997933b6f28feb0",
+        "harness_revision": "duckrag-wi1-harness/2",
+        "kind": "imported_from_duckrag_p19s",
+        "mineru_invoked_this_freeze": false,
+        "p19s_evidence_sha256": "ae77a11045b4ce9a26705b0665ee54d11f67f26e37b72755253f46c92b0dff55",
+        "p19s_repository_revision_synthetic": "a6f9e079ded72250c8a7ef4a9372613382707795",
+        "p19s_run_id": "p19-s-20260807T041212.416512Z",
+        "profile_id": "mineru-3.4.4-pipeline-cpython312-darwin-arm64",
+        "source_main_revision": "cd2d4c4951bbd993ea81d9be862d943aa213711e"
+      },
+      "range_origin": "page_bbox",
+      "source_rel": "v7/tests/fixtures/range_trio/pdf/p19-mineru-offline.pdf"
+    }
+  },
+  "not_live_kohaku_service": true,
+  "not_live_legacy_cache": true,
+  "not_live_mineru_runtime": true,
+  "notes": "PDF imported from DuckRAG P19-S; code/legacy generated. Not live MinerU, Kohaku, or legacy cache. Origin-shape only; not plan \u00a73.14 diversity. This freeze does not mark baseline E2.",
+  "schema_version": "flock-rag-range-trio-fixture/1"
+}

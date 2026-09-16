@@ -1,0 +1,787 @@
+{
+  "command": "uv run python v7/migration/kohaku_tree_fixture.py --write",
+  "corpus_kind": "generated_from_kohaku_source",
+  "documents": [
+    {
+      "id": "doc-md",
+      "payload": {
+        "document_id": "doc-md",
+        "metadata": {
+          "fixture": "markdown",
+          "source_kind": "markdown"
+        },
+        "sections": [
+          {
+            "metadata": {
+              "level": 1
+            },
+            "paragraphs": [
+              {
+                "metadata": {},
+                "sentences": [
+                  {
+                    "metadata": {},
+                    "text": "First paragraph."
+                  },
+                  {
+                    "metadata": {},
+                    "text": "Second sentence here!"
+                  }
+                ],
+                "text": "First paragraph. Second sentence here!"
+              },
+              {
+                "metadata": {},
+                "sentences": [
+                  {
+                    "metadata": {},
+                    "text": "Second paragraph in intro."
+                  }
+                ],
+                "text": "Second paragraph in intro."
+              }
+            ],
+            "title": "Intro"
+          },
+          {
+            "metadata": {
+              "level": 2
+            },
+            "paragraphs": [
+              {
+                "metadata": {},
+                "sentences": [
+                  {
+                    "metadata": {},
+                    "text": "Detail paragraph one."
+                  },
+                  {
+                    "metadata": {},
+                    "text": "It has two sentences."
+                  }
+                ],
+                "text": "Detail paragraph one. It has two sentences."
+              }
+            ],
+            "title": "Details"
+          },
+          {
+            "metadata": {
+              "level": 3
+            },
+            "paragraphs": [
+              {
+                "metadata": {},
+                "sentences": [
+                  {
+                    "metadata": {},
+                    "text": "Deep heading paragraph."
+                  }
+                ],
+                "text": "Deep heading paragraph."
+              }
+            ],
+            "title": "Nested"
+          },
+          {
+            "metadata": {
+              "level": 1
+            },
+            "paragraphs": [
+              {
+                "metadata": {},
+                "sentences": [
+                  {
+                    "metadata": {},
+                    "text": "Final words."
+                  }
+                ],
+                "text": "Final words."
+              }
+            ],
+            "title": "Closing"
+          }
+        ],
+        "text": "# Intro\n\nFirst paragraph. Second sentence here!\n\nSecond paragraph in intro.\n\n## Details\n\nDetail paragraph one. It has two sentences.\n\n### Nested\n\nDeep heading paragraph.\n\n# Closing\n\nFinal words.\n",
+        "title": "Headings sample"
+      },
+      "source_kind": "markdown",
+      "source_rel": "v7/tests/fixtures/kohaku/documents/headings.md",
+      "tree": [
+        {
+          "child_ids": [
+            "doc-md:sec1",
+            "doc-md:sec2",
+            "doc-md:sec3",
+            "doc-md:sec4"
+          ],
+          "kind": "document",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "fixture": "markdown",
+            "source_kind": "markdown"
+          },
+          "node_id": "doc-md",
+          "parent_id": null,
+          "text": "# Intro\n\nFirst paragraph. Second sentence here!\n\nSecond paragraph in intro.\n\n## Details\n\nDetail paragraph one. It has two sentences.\n\n### Nested\n\nDeep heading paragraph.\n\n# Closing\n\nFinal words.\n",
+          "title": "Headings sample"
+        },
+        {
+          "child_ids": [
+            "doc-md:sec1:p1",
+            "doc-md:sec1:p2"
+          ],
+          "kind": "section",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "level": 1,
+            "section_index": 1
+          },
+          "node_id": "doc-md:sec1",
+          "parent_id": "doc-md",
+          "text": "Intro",
+          "title": "Intro"
+        },
+        {
+          "child_ids": [
+            "doc-md:sec1:p1:s1",
+            "doc-md:sec1:p1:s2"
+          ],
+          "kind": "paragraph",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_index": 1,
+            "section_id": "doc-md:sec1",
+            "section_index": 1
+          },
+          "node_id": "doc-md:sec1:p1",
+          "parent_id": "doc-md:sec1",
+          "text": "First paragraph. Second sentence here!",
+          "title": "Intro"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_id": "doc-md:sec1:p1",
+            "section_id": "doc-md:sec1",
+            "sentence_index": 1
+          },
+          "node_id": "doc-md:sec1:p1:s1",
+          "parent_id": "doc-md:sec1:p1",
+          "text": "First paragraph.",
+          "title": "Intro"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_id": "doc-md:sec1:p1",
+            "section_id": "doc-md:sec1",
+            "sentence_index": 2
+          },
+          "node_id": "doc-md:sec1:p1:s2",
+          "parent_id": "doc-md:sec1:p1",
+          "text": "Second sentence here!",
+          "title": "Intro"
+        },
+        {
+          "child_ids": [
+            "doc-md:sec1:p2:s3"
+          ],
+          "kind": "paragraph",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_index": 2,
+            "section_id": "doc-md:sec1",
+            "section_index": 1
+          },
+          "node_id": "doc-md:sec1:p2",
+          "parent_id": "doc-md:sec1",
+          "text": "Second paragraph in intro.",
+          "title": "Intro"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_id": "doc-md:sec1:p2",
+            "section_id": "doc-md:sec1",
+            "sentence_index": 3
+          },
+          "node_id": "doc-md:sec1:p2:s3",
+          "parent_id": "doc-md:sec1:p2",
+          "text": "Second paragraph in intro.",
+          "title": "Intro"
+        },
+        {
+          "child_ids": [
+            "doc-md:sec2:p3"
+          ],
+          "kind": "section",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "level": 2,
+            "section_index": 2
+          },
+          "node_id": "doc-md:sec2",
+          "parent_id": "doc-md",
+          "text": "Details",
+          "title": "Details"
+        },
+        {
+          "child_ids": [
+            "doc-md:sec2:p3:s4",
+            "doc-md:sec2:p3:s5"
+          ],
+          "kind": "paragraph",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_index": 3,
+            "section_id": "doc-md:sec2",
+            "section_index": 2
+          },
+          "node_id": "doc-md:sec2:p3",
+          "parent_id": "doc-md:sec2",
+          "text": "Detail paragraph one. It has two sentences.",
+          "title": "Details"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_id": "doc-md:sec2:p3",
+            "section_id": "doc-md:sec2",
+            "sentence_index": 4
+          },
+          "node_id": "doc-md:sec2:p3:s4",
+          "parent_id": "doc-md:sec2:p3",
+          "text": "Detail paragraph one.",
+          "title": "Details"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_id": "doc-md:sec2:p3",
+            "section_id": "doc-md:sec2",
+            "sentence_index": 5
+          },
+          "node_id": "doc-md:sec2:p3:s5",
+          "parent_id": "doc-md:sec2:p3",
+          "text": "It has two sentences.",
+          "title": "Details"
+        },
+        {
+          "child_ids": [
+            "doc-md:sec3:p4"
+          ],
+          "kind": "section",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "level": 3,
+            "section_index": 3
+          },
+          "node_id": "doc-md:sec3",
+          "parent_id": "doc-md",
+          "text": "Nested",
+          "title": "Nested"
+        },
+        {
+          "child_ids": [
+            "doc-md:sec3:p4:s6"
+          ],
+          "kind": "paragraph",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_index": 4,
+            "section_id": "doc-md:sec3",
+            "section_index": 3
+          },
+          "node_id": "doc-md:sec3:p4",
+          "parent_id": "doc-md:sec3",
+          "text": "Deep heading paragraph.",
+          "title": "Nested"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_id": "doc-md:sec3:p4",
+            "section_id": "doc-md:sec3",
+            "sentence_index": 6
+          },
+          "node_id": "doc-md:sec3:p4:s6",
+          "parent_id": "doc-md:sec3:p4",
+          "text": "Deep heading paragraph.",
+          "title": "Nested"
+        },
+        {
+          "child_ids": [
+            "doc-md:sec4:p5"
+          ],
+          "kind": "section",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "level": 1,
+            "section_index": 4
+          },
+          "node_id": "doc-md:sec4",
+          "parent_id": "doc-md",
+          "text": "Closing",
+          "title": "Closing"
+        },
+        {
+          "child_ids": [
+            "doc-md:sec4:p5:s7"
+          ],
+          "kind": "paragraph",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_index": 5,
+            "section_id": "doc-md:sec4",
+            "section_index": 4
+          },
+          "node_id": "doc-md:sec4:p5",
+          "parent_id": "doc-md:sec4",
+          "text": "Final words.",
+          "title": "Closing"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-md",
+            "document_title": "Headings sample",
+            "paragraph_id": "doc-md:sec4:p5",
+            "section_id": "doc-md:sec4",
+            "sentence_index": 7
+          },
+          "node_id": "doc-md:sec4:p5:s7",
+          "parent_id": "doc-md:sec4:p5",
+          "text": "Final words.",
+          "title": "Closing"
+        }
+      ]
+    },
+    {
+      "id": "doc-text",
+      "payload": {
+        "document_id": "doc-text",
+        "metadata": {
+          "autogenerated_section": true,
+          "fixture": "text",
+          "source_kind": "text"
+        },
+        "sections": [
+          {
+            "metadata": {
+              "autogenerated": true
+            },
+            "paragraphs": [
+              {
+                "metadata": {},
+                "sentences": [
+                  {
+                    "metadata": {},
+                    "text": "Alpha sentence."
+                  },
+                  {
+                    "metadata": {},
+                    "text": "Beta sentence."
+                  }
+                ],
+                "text": "Alpha sentence. Beta sentence."
+              },
+              {
+                "metadata": {},
+                "sentences": [
+                  {
+                    "metadata": {},
+                    "text": "Gamma paragraph without a heading."
+                  }
+                ],
+                "text": "Gamma paragraph without a heading."
+              }
+            ],
+            "title": "Plain sample"
+          }
+        ],
+        "text": "Alpha sentence. Beta sentence.\n\nGamma paragraph without a heading.\n",
+        "title": "Plain sample"
+      },
+      "source_kind": "text",
+      "source_rel": "v7/tests/fixtures/kohaku/documents/plain.txt",
+      "tree": [
+        {
+          "child_ids": [
+            "doc-text:sec1"
+          ],
+          "kind": "document",
+          "metadata": {
+            "autogenerated_section": true,
+            "document_id": "doc-text",
+            "document_title": "Plain sample",
+            "fixture": "text",
+            "source_kind": "text"
+          },
+          "node_id": "doc-text",
+          "parent_id": null,
+          "text": "Alpha sentence. Beta sentence.\n\nGamma paragraph without a heading.\n",
+          "title": "Plain sample"
+        },
+        {
+          "child_ids": [
+            "doc-text:sec1:p1",
+            "doc-text:sec1:p2"
+          ],
+          "kind": "section",
+          "metadata": {
+            "autogenerated": true,
+            "document_id": "doc-text",
+            "document_title": "Plain sample",
+            "section_index": 1
+          },
+          "node_id": "doc-text:sec1",
+          "parent_id": "doc-text",
+          "text": "Plain sample",
+          "title": "Plain sample"
+        },
+        {
+          "child_ids": [
+            "doc-text:sec1:p1:s1",
+            "doc-text:sec1:p1:s2"
+          ],
+          "kind": "paragraph",
+          "metadata": {
+            "document_id": "doc-text",
+            "document_title": "Plain sample",
+            "paragraph_index": 1,
+            "section_id": "doc-text:sec1",
+            "section_index": 1
+          },
+          "node_id": "doc-text:sec1:p1",
+          "parent_id": "doc-text:sec1",
+          "text": "Alpha sentence. Beta sentence.",
+          "title": "Plain sample"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-text",
+            "document_title": "Plain sample",
+            "paragraph_id": "doc-text:sec1:p1",
+            "section_id": "doc-text:sec1",
+            "sentence_index": 1
+          },
+          "node_id": "doc-text:sec1:p1:s1",
+          "parent_id": "doc-text:sec1:p1",
+          "text": "Alpha sentence.",
+          "title": "Plain sample"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-text",
+            "document_title": "Plain sample",
+            "paragraph_id": "doc-text:sec1:p1",
+            "section_id": "doc-text:sec1",
+            "sentence_index": 2
+          },
+          "node_id": "doc-text:sec1:p1:s2",
+          "parent_id": "doc-text:sec1:p1",
+          "text": "Beta sentence.",
+          "title": "Plain sample"
+        },
+        {
+          "child_ids": [
+            "doc-text:sec1:p2:s3"
+          ],
+          "kind": "paragraph",
+          "metadata": {
+            "document_id": "doc-text",
+            "document_title": "Plain sample",
+            "paragraph_index": 2,
+            "section_id": "doc-text:sec1",
+            "section_index": 1
+          },
+          "node_id": "doc-text:sec1:p2",
+          "parent_id": "doc-text:sec1",
+          "text": "Gamma paragraph without a heading.",
+          "title": "Plain sample"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-text",
+            "document_title": "Plain sample",
+            "paragraph_id": "doc-text:sec1:p2",
+            "section_id": "doc-text:sec1",
+            "sentence_index": 3
+          },
+          "node_id": "doc-text:sec1:p2:s3",
+          "parent_id": "doc-text:sec1:p2",
+          "text": "Gamma paragraph without a heading.",
+          "title": "Plain sample"
+        }
+      ]
+    },
+    {
+      "id": "doc-json",
+      "payload": {
+        "document_id": "doc-json",
+        "metadata": {
+          "fixture": "json",
+          "source_kind": "json"
+        },
+        "sections": [
+          {
+            "metadata": {
+              "origin": "json"
+            },
+            "paragraphs": [
+              {
+                "metadata": {
+                  "origin": "json"
+                },
+                "sentences": [
+                  {
+                    "metadata": {
+                      "origin": "json"
+                    },
+                    "text": "Declared paragraph."
+                  },
+                  {
+                    "metadata": {
+                      "origin": "json"
+                    },
+                    "text": "Extra sentence."
+                  }
+                ],
+                "text": "Declared paragraph. Extra sentence."
+              }
+            ],
+            "title": "Declared section"
+          },
+          {
+            "metadata": {},
+            "paragraphs": [
+              {
+                "metadata": {},
+                "sentences": null,
+                "text": "No sentences listed. Indexer must split this."
+              }
+            ],
+            "title": "Split from text"
+          }
+        ],
+        "text": "Explicit nested payload for dict_to_payload.",
+        "title": "JSON payload"
+      },
+      "source_kind": "json",
+      "source_rel": "v7/tests/fixtures/kohaku/documents/nested.json",
+      "tree": [
+        {
+          "child_ids": [
+            "doc-json:sec1",
+            "doc-json:sec2"
+          ],
+          "kind": "document",
+          "metadata": {
+            "document_id": "doc-json",
+            "document_title": "JSON payload",
+            "fixture": "json",
+            "source_kind": "json"
+          },
+          "node_id": "doc-json",
+          "parent_id": null,
+          "text": "Explicit nested payload for dict_to_payload.",
+          "title": "JSON payload"
+        },
+        {
+          "child_ids": [
+            "doc-json:sec1:p1"
+          ],
+          "kind": "section",
+          "metadata": {
+            "document_id": "doc-json",
+            "document_title": "JSON payload",
+            "origin": "json",
+            "section_index": 1
+          },
+          "node_id": "doc-json:sec1",
+          "parent_id": "doc-json",
+          "text": "Declared section",
+          "title": "Declared section"
+        },
+        {
+          "child_ids": [
+            "doc-json:sec1:p1:s1",
+            "doc-json:sec1:p1:s2"
+          ],
+          "kind": "paragraph",
+          "metadata": {
+            "document_id": "doc-json",
+            "document_title": "JSON payload",
+            "origin": "json",
+            "paragraph_index": 1,
+            "section_id": "doc-json:sec1",
+            "section_index": 1
+          },
+          "node_id": "doc-json:sec1:p1",
+          "parent_id": "doc-json:sec1",
+          "text": "Declared paragraph. Extra sentence.",
+          "title": "Declared section"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-json",
+            "document_title": "JSON payload",
+            "origin": "json",
+            "paragraph_id": "doc-json:sec1:p1",
+            "section_id": "doc-json:sec1",
+            "sentence_index": 1
+          },
+          "node_id": "doc-json:sec1:p1:s1",
+          "parent_id": "doc-json:sec1:p1",
+          "text": "Declared paragraph.",
+          "title": "Declared section"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-json",
+            "document_title": "JSON payload",
+            "origin": "json",
+            "paragraph_id": "doc-json:sec1:p1",
+            "section_id": "doc-json:sec1",
+            "sentence_index": 2
+          },
+          "node_id": "doc-json:sec1:p1:s2",
+          "parent_id": "doc-json:sec1:p1",
+          "text": "Extra sentence.",
+          "title": "Declared section"
+        },
+        {
+          "child_ids": [
+            "doc-json:sec2:p2"
+          ],
+          "kind": "section",
+          "metadata": {
+            "document_id": "doc-json",
+            "document_title": "JSON payload",
+            "section_index": 2
+          },
+          "node_id": "doc-json:sec2",
+          "parent_id": "doc-json",
+          "text": "Split from text",
+          "title": "Split from text"
+        },
+        {
+          "child_ids": [
+            "doc-json:sec2:p2:s3",
+            "doc-json:sec2:p2:s4"
+          ],
+          "kind": "paragraph",
+          "metadata": {
+            "document_id": "doc-json",
+            "document_title": "JSON payload",
+            "paragraph_index": 2,
+            "section_id": "doc-json:sec2",
+            "section_index": 2
+          },
+          "node_id": "doc-json:sec2:p2",
+          "parent_id": "doc-json:sec2",
+          "text": "No sentences listed. Indexer must split this.",
+          "title": "Split from text"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-json",
+            "document_title": "JSON payload",
+            "paragraph_id": "doc-json:sec2:p2",
+            "section_id": "doc-json:sec2",
+            "sentence_index": 3
+          },
+          "node_id": "doc-json:sec2:p2:s3",
+          "parent_id": "doc-json:sec2:p2",
+          "text": "No sentences listed.",
+          "title": "Split from text"
+        },
+        {
+          "child_ids": [],
+          "kind": "sentence",
+          "metadata": {
+            "document_id": "doc-json",
+            "document_title": "JSON payload",
+            "paragraph_id": "doc-json:sec2:p2",
+            "section_id": "doc-json:sec2",
+            "sentence_index": 4
+          },
+          "node_id": "doc-json:sec2:p2:s4",
+          "parent_id": "doc-json:sec2:p2",
+          "text": "Indexer must split this.",
+          "title": "Split from text"
+        }
+      ]
+    }
+  ],
+  "embedder_invoked": false,
+  "golden_version": 1,
+  "invariants": {
+    "attachment_node_count": 0,
+    "attachment_nodes_present": false,
+    "document_count": 3,
+    "id_pattern": "{document_id}:sec{n}:p{n}:s{n} with global counters",
+    "kinds_present": [
+      "document",
+      "paragraph",
+      "section",
+      "sentence"
+    ],
+    "node_count": 33,
+    "node_kinds_closed": [
+      "document",
+      "section",
+      "paragraph",
+      "sentence",
+      "attachment"
+    ]
+  },
+  "kohaku_commit": "f3d27c8d24616b75508795766355632640979e5b",
+  "kohaku_root_env": "PG_AGENT_KOHAKURAG_ROOT",
+  "kohaku_src_clean": true,
+  "not_live_kohaku_service": true,
+  "notes": "Generated by executing KohakuRAG parsers.py and indexer._build_tree at f3d27c8d24616b75508795766355632640979e5b. Embeddings were not computed. Not a live Kohaku service.",
+  "schema_version": "flock-rag-kohaku-tree-fixture/1"
+}

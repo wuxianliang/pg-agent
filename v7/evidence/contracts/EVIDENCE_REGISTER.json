@@ -1,0 +1,427 @@
+{
+  "schema_version": "flock-rag-phase0-evidence-register/1",
+  "authority": "/Users/wxl/Projects/pg-agent/docs/plans/flock-rag-on-duckdb-final-plan-v4.1.md",
+  "work_items": [
+    "WI-3",
+    "WI-5-contracts"
+  ],
+  "written_at": "2026-08-29",
+  "session_ran_external_binaries": false,
+  "evidence_levels": {
+    "E0": "unread/unknown/missing — cannot implement against",
+    "E1": "source/tests/static contract inspected; citations are file:line or lock fields",
+    "E2": "ran on target runtime/fixture this freeze (command + exit). Prior evidence records from other repos are not E2 for this freeze.",
+    "E3": "cross-repository integration/acceptance on the frozen four-repo pins (pg-agent, flock, duckdb-pgagent, duckdb-python-pgagent). Phase 0 is not E3."
+  },
+  "contracts": [
+    {
+      "id": "mineru",
+      "path": "v7/evidence/contracts/mineru.md",
+      "level": "E1",
+      "related_backend": "mineru_ingest",
+      "backend_blocked": false,
+      "backend_blocked_reason": null,
+      "notes": "JSON node types/page/bbox/table-image refs frozen from samples + P19 harness golden. Parse identity is pinned (wheel + 84-wheel lock + Darwin profile_id + 187-file snapshot manifest). OCI digest / single-file weights are N/A. Live snapshot files are still absent and block live parse, not the JSON parser contract.",
+      "paths_read": [
+        "/Users/wxl/Projects/MinerU-Popo/post_processing/label_normalization.py",
+        "/Users/wxl/Projects/MinerU-Popo/post_processing/get_json_tree.py",
+        "/Users/wxl/Projects/MinerU-Popo/output_cases/trees/1.json",
+        "/Users/wxl/MinerU (output corpus, not git source)",
+        "/Users/wxl/mineru.json (operator config; secrets not copied)",
+        "/Users/wxl/Projects/repoprompt-ce-agno/benchmarks/duckrag_wi1/p19_mineru_process.py",
+        "/Users/wxl/Projects/repoprompt-ce-agno/benchmarks/duckrag_wi1/fixtures/p19-mineru-offline.pdf",
+        "/Users/wxl/Projects/repoprompt-ce-agno/benchmarks/duckrag_wi1/locks/mineru-3.4.4.lock.json",
+        "/Users/wxl/Projects/repoprompt-ce-agno/benchmarks/duckrag_wi1/environments/mineru-3.4.4-cpython312-arm64/README.md",
+        "/Users/wxl/Projects/repoprompt-ce-agno/docs/investigations/duckrag-wi1/p19-s.json"
+      ],
+      "git": {
+        "MinerU-Popo": {
+          "commit": "75c36a8c0f38adee03c78850366645a58cd5d4af",
+          "branch": "master"
+        },
+        "/Users/wxl/MinerU": {
+          "commit": null,
+          "status": "not_a_git_source_tree"
+        },
+        "repoprompt-ce-agno": {
+          "commit": "0c6ad30b000ac8ef532947b7b997933b6f28feb0",
+          "branch": "integration/clean-start-20260812"
+        }
+      },
+      "blockers": [
+        {
+          "id": "mineru_container_image_digest",
+          "level": "E1",
+          "blocks_backend": null,
+          "detail": "N/A: P19-S identity is mineru[pipeline] wheel + 187-file snapshot, not an OCI container. Field remains null + not_applicable. Do not invent a digest. dockerrr8277/mineru-popo-vllm:latest is not a pin."
+        },
+        {
+          "id": "mineru_unpacked_source_tree",
+          "level": "E0",
+          "blocks_backend": null,
+          "detail": "/Users/wxl/MinerU is parse output, not opendatalab/MinerU source. Wheel lock tag_commit_sha 0dfc9460cd9ab693b9af60ae3fbffd7bc111b062 is the source identity."
+        },
+        {
+          "id": "mineru_live_model_snapshot_this_session",
+          "level": "E0",
+          "blocks_backend": "live_mineru_runtime",
+          "detail": "P19 harness pins PDF-Extract-Kit revision ed6b654c018d742e65a17671e379c5e6ecc87ec9 and manifest sha256 8c4a6a53815e2a8f410d71350128d0db1276579ac9f50cd1dee56b165e4a4df6; files not re-hashed this session"
+        }
+      ]
+    },
+    {
+      "id": "kohakurag",
+      "path": "v7/evidence/contracts/kohakurag.md",
+      "level": "E1",
+      "related_backend": "text_catalog_tree",
+      "backend_blocked": false,
+      "backend_blocked_reason": null,
+      "notes": "NodeKind closed set frozen. Kohaku-native tree fixtures generated at v7/tests/fixtures/kohaku/golden.v1.json (E2 generated_from_kohaku_source; not a live Kohaku service). MinerU→Kohaku mapping remains E0.",
+      "paths_read": [
+        "/Users/wxl/Projects/rag/KohakuRAG/src/kohakurag/types.py",
+        "/Users/wxl/Projects/rag/KohakuRAG/src/kohakurag/parsers.py",
+        "/Users/wxl/Projects/rag/KohakuRAG/src/kohakurag/indexer.py",
+        "/Users/wxl/Projects/rag/KohakuRAG/src/kohakurag/pdf_utils.py",
+        "/Users/wxl/Projects/bookohakurag/KohakuRAG/src/kohakurag/types.py",
+        "v7/migration/kohaku_tree_fixture.py",
+        "v7/tests/fixtures/kohaku/golden.v1.json",
+        "v7/tests/fixtures/kohaku/documents/headings.md",
+        "v7/tests/fixtures/kohaku/documents/plain.txt",
+        "v7/tests/fixtures/kohaku/documents/nested.json"
+      ],
+      "git": {
+        "KohakuRAG": {
+          "commit": "f3d27c8d24616b75508795766355632640979e5b",
+          "branch": "main"
+        },
+        "bookohakurag/KohakuRAG": {
+          "commit": "f3d27c8d24616b75508795766355632640979e5b",
+          "branch": "main"
+        }
+      },
+      "blockers": [
+        {
+          "id": "mineru_to_kohaku_tree_mapping",
+          "level": "E0",
+          "blocks_backend": null,
+          "detail": "No MinerU JSON → Kohaku tree golden. Kohaku-native markdown/text/json trees are frozen at v7/tests/fixtures/kohaku/golden.v1.json."
+        }
+      ]
+    },
+    {
+      "id": "mdenseon",
+      "path": "v7/evidence/contracts/mdenseon.md",
+      "level": "E1",
+      "related_backend": "dense_mdenseon",
+      "backend_blocked": true,
+      "backend_blocked_reason": "Live weights/tokenizer files absent this session. Adapter must not be implemented against invented hashes. Lock lfs_sha256 values are frozen from SOURCE lock file.",
+      "notes": "EXPECTED_DIMENSION=768, float32-l2/1, zero_norm reject, prompts query:/document: frozen from p16_*. Prior p16.json is an inspected evidence record (2026-08-05), not a re-run.",
+      "paths_read": [
+        "/Users/wxl/Projects/repoprompt-ce-agno/benchmarks/duckrag_wi1/p16_mdenseon.py",
+        "/Users/wxl/Projects/repoprompt-ce-agno/benchmarks/duckrag_wi1/p16_worker.py",
+        "/Users/wxl/Projects/repoprompt-ce-agno/benchmarks/duckrag_wi1/fixtures/p16-mdenseon.json",
+        "/Users/wxl/Projects/repoprompt-ce-agno/benchmarks/duckrag_wi1/locks/mdenseon-a5fdb000.lock.json",
+        "/Users/wxl/Projects/repoprompt-ce-agno/benchmarks/duckrag_wi1/locks/p16-cpython312.lock.json",
+        "/Users/wxl/Projects/repoprompt-ce-agno/docs/investigations/duckrag-wi1/p16.json"
+      ],
+      "git": {
+        "repoprompt-ce-agno": {
+          "commit": "0c6ad30b000ac8ef532947b7b997933b6f28feb0"
+        }
+      },
+      "frozen_without_live_files": {
+        "model_id": "lightonai/mDenseOn",
+        "revision": "a5fdb000f7a21da96c3bddde3a782ef777316df3",
+        "expected_dimension": 768,
+        "dtype": "float32",
+        "normalization": "float32-l2/1",
+        "zero_norm_policy": "reject",
+        "weights_lfs_sha256_from_lock": "a336c49fc679aeb23969114b12fb7317804da3cc7d8bc214818009dea39d545c",
+        "tokenizer_json_lfs_sha256_from_lock": "a086e6a7efb90bbab8e379a63f3463fb13e6256ebec3343c1f1612cab693935b"
+      },
+      "blockers": [
+        {
+          "id": "mdenseon_live_weights",
+          "level": "E0",
+          "blocks_backend": "dense_mdenseon",
+          "detail": "model.safetensors not present at prior path /Users/wxl/.cache/duckrag-wi1-phase3/models/mdenseon-a5fdb000f7a21da96c3bddde3a782ef777316df3 or HF hub cache. Do not invent SHA; use lock lfs_sha256 when files reappear."
+        }
+      ]
+    },
+    {
+      "id": "tachiom",
+      "path": "v7/evidence/contracts/tachiom.md",
+      "level": "E1",
+      "related_backend": "multi_vector_tachiom",
+      "backend_blocked": true,
+      "backend_blocked_reason": "duckdb-tachiom Makefile TARGET_DUCKDB_VERSION=v1.5.4 and venv duckdb-1.5.4; v7 target is duckdb-pgagent a1f0ab1911 / duckdb-special-20260829-g1. Unstable C API extension ABI unproven. Tests not executed this session.",
+      "notes": "SQL names frozen from test/sql/*.test and src/lib.rs: tachiom_build_files, tachiom_load, tachiom_unload, tachiom_index_info, tachiom_search, tachiom_search_flat, tachiom_match.",
+      "paths_read": [
+        "/Users/wxl/Projects/tachiom/Cargo.toml",
+        "/Users/wxl/Projects/tachiom/docs/PythonUsage.md",
+        "/Users/wxl/Projects/tachiom/src/python.rs",
+        "/Users/wxl/Projects/duckdb-tachiom/Cargo.toml",
+        "/Users/wxl/Projects/duckdb-tachiom/Makefile",
+        "/Users/wxl/Projects/duckdb-tachiom/src/lib.rs",
+        "/Users/wxl/Projects/duckdb-tachiom/src/build.rs",
+        "/Users/wxl/Projects/duckdb-tachiom/src/admin.rs",
+        "/Users/wxl/Projects/duckdb-tachiom/src/search.rs",
+        "/Users/wxl/Projects/duckdb-tachiom/src/envelope.rs",
+        "/Users/wxl/Projects/duckdb-tachiom/test/sql/build_files.test",
+        "/Users/wxl/Projects/duckdb-tachiom/test/sql/admin.test",
+        "/Users/wxl/Projects/duckdb-tachiom/test/sql/search.test",
+        "/Users/wxl/Projects/duckdb-tachiom/test/sql/match.test"
+      ],
+      "git": {
+        "tachiom": {
+          "commit": "69f6f3dc2eef3b543983eb71227bb65590e498a8",
+          "describe": "v0.3.4-2-g69f6f3d",
+          "tag_v0.3.4": "2d1b2050d60eb28462f9d9c451c2fe7653cc4aa9",
+          "checkout_commit": "69f6f3dc2eef3b543983eb71227bb65590e498a8",
+          "build_identity_commit": "2d1b2050d60eb28462f9d9c451c2fe7653cc4aa9",
+          "build_identity_tag": "v0.3.4",
+          "commit_is_build_identity": false
+        },
+        "duckdb-tachiom": {
+          "commit": "5c91f3cb5c4091cb70735449e546446a09136a04",
+          "branch": "main"
+        },
+        "duckdb-pgagent_target": {
+          "commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+          "tag": "duckdb-special-20260829-g1"
+        }
+      },
+      "blockers": [
+        {
+          "id": "duckdb_tachiom_abi_vs_pgagent",
+          "level": "E0",
+          "blocks_backend": "multi_vector_tachiom",
+          "detail": "Existing build/ artifacts appear built against DuckDB 1.5.4 unstable C API. Not loaded into duckdb-pgagent. Plan §4.5: ABI fix is a separate gate + artifact hash, not a Flock reimplementation."
+        },
+        {
+          "id": "tachiom_extension_artifact_sha256",
+          "level": "E0",
+          "blocks_backend": "multi_vector_tachiom",
+          "detail": "build/release/duckdb_tachiom.duckdb_extension exists; SHA-256 not computed this session (do not invent)"
+        }
+      ]
+    },
+    {
+      "id": "auto_coder_longcontext",
+      "path": "v7/evidence/contracts/auto_coder_longcontext.md",
+      "level": "E1",
+      "related_backend": "longcontext_python",
+      "backend_blocked": false,
+      "backend_blocked_reason": null,
+      "notes": "3.0.74 is freeze authority (no git). Defaults from AutoCoderArgs + llm_request_timeout + TokenLimiter/DocFilter. v4.1 retry policy is stricter than auto-coder TokenLimiter blanket Exception retry.",
+      "paths_read": [
+        "/Users/wxl/Projects/auto_coder-3.0.74/pyproject.toml",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/common/__init__.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/long_context_rag.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/token_limiter.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/doc_filter.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/rag_config.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/llm_request_timeout.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/conversation_to_queries.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/stream_event/types.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/observability.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/qa_conversation_strategy.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/types.py",
+        "/Users/wxl/Projects/rag/auto_coder-3.0.45/src/autocoder/rag (secondary listing only)"
+      ],
+      "git": {
+        "auto_coder-3.0.74": {
+          "commit": null,
+          "status": "no_git"
+        }
+      },
+      "blockers": [
+        {
+          "id": "qa_tokenizer_identity_hash",
+          "level": "E0",
+          "blocks_backend": null,
+          "detail": "Review F-10: TokenLimiter tokenizer must match QA LLM tokenizer; path optional, hash not frozen"
+        }
+      ]
+    },
+    {
+      "id": "infinisynapse_schema",
+      "path": "v7/evidence/contracts/infinisynapse_schema.md",
+      "level": "E1",
+      "related_backend": "schema_rag_workflow",
+      "backend_blocked": false,
+      "backend_blocked_reason": null,
+      "notes": "Workflow list_tables → show_create → register_table is E1. Exact tool DTO / tool-shape is E0 and not frozen (obfuscated handlers; missing original JSON). register_table is context binding, not table-data copy.",
+      "paths_read": [
+        "/Users/wxl/Projects/infinisynapse/src/agent/tools/all-tool-specs.ts",
+        "/Users/wxl/Projects/infinisynapse/src/agent/prompts/prompt-sections.ts",
+        "/Users/wxl/Projects/infinisynapse/src/modules/websocket/socket-module.ts",
+        "/Users/wxl/Projects/infinisynapse/src/modules/ai-rag/ai-rag-sdk.controller.ts",
+        "/Users/wxl/Projects/infinisynapse/src/modules/ai-rag/rag-hub.ts",
+        "/Users/wxl/Projects/infinisynapse/docs/investigations/infinirag-rag-implementation-2026-06-03.md",
+        "/Users/wxl/Projects/infinisynapse/prompt-exports/oracle-plan-2026-05-27-233922-infinity-sql-rewrite-b335.md",
+        "/Users/wxl/Projects/repoprompt-ce-agno/src/agno_infinisynapse/tools/sql_tools.py"
+      ],
+      "git": {
+        "infinisynapse": {
+          "commit": "c4def3563a2100012ad33826902a62263fb86614",
+          "branch": "master",
+          "dirty": true
+        }
+      },
+      "blockers": [
+        {
+          "id": "infinisynapse_clean_handlers",
+          "level": "E0",
+          "blocks_backend": null,
+          "detail": "handle-list-tables.ts and siblings are obfuscated; original-app-tool-contracts JSON missing (git D). Param table taken from oracle-plan export."
+        }
+      ],
+      "exact_tool_dto_frozen": false,
+      "exact_tool_dto_level": "E0",
+      "workflow_semantics_frozen": true,
+      "workflow_semantics_level": "E1",
+      "machine_checkable": "v7/evidence/contracts/infinisynapse_schema.json"
+    },
+    {
+      "id": "infinisynapse_exact_dto",
+      "path": "v7/evidence/contracts/infinisynapse_schema.md",
+      "machine_checkable": "v7/evidence/contracts/infinisynapse_schema.json",
+      "level": "E0",
+      "related_backend": "schema_rag_exact_dto",
+      "backend_blocked": true,
+      "backend_blocked_reason": "Obfuscated handlers and missing original-app-tool-contracts JSON. Exact tool-shape is not a frozen E1 contract.",
+      "exact_tool_dto_frozen": false,
+      "exact_tool_dto_level": "E0",
+      "notes": "Do not treat the oracle-plan param table as a frozen E1 DTO. Workflow semantics are a separate E1 contract (infinisynapse_schema).",
+      "paths_read": [
+        "/Users/wxl/Projects/infinisynapse/src/agent/tools/all-tool-specs.ts",
+        "/Users/wxl/Projects/infinisynapse/src/agent/prompts/prompt-sections.ts",
+        "/Users/wxl/Projects/infinisynapse/src/modules/websocket/socket-module.ts",
+        "/Users/wxl/Projects/infinisynapse/src/modules/ai-rag/ai-rag-sdk.controller.ts",
+        "/Users/wxl/Projects/infinisynapse/src/modules/ai-rag/rag-hub.ts",
+        "/Users/wxl/Projects/infinisynapse/docs/investigations/infinirag-rag-implementation-2026-06-03.md",
+        "/Users/wxl/Projects/infinisynapse/prompt-exports/oracle-plan-2026-05-27-233922-infinity-sql-rewrite-b335.md",
+        "/Users/wxl/Projects/repoprompt-ce-agno/src/agno_infinisynapse/tools/sql_tools.py"
+      ],
+      "git": {
+        "infinisynapse": {
+          "commit": "c4def3563a2100012ad33826902a62263fb86614",
+          "branch": "master",
+          "dirty": true
+        }
+      },
+      "blockers": [
+        {
+          "id": "infinisynapse_clean_handlers",
+          "level": "E0",
+          "blocks_backend": "schema_rag_exact_dto",
+          "detail": "handle-list-tables.ts and siblings are obfuscated; original-app-tool-contracts JSON missing (git D). Param table taken from oracle-plan export is not a frozen exact DTO."
+        }
+      ]
+    },
+    {
+      "id": "owner_live_file",
+      "path": "v7/evidence/contracts/owner_live_file.md",
+      "level": "E1",
+      "related_backend": "deployment_owner_runtime",
+      "backend_blocked": false,
+      "backend_blocked_reason": null,
+      "notes": "Phase 0 technical contract from plan §3.3 (register level stays E1). Phase 1 E2 same-process writer/readers, TEMP isolation, and non-owner live-file lock failure: v7/evidence/phase1_runtime.e2.md.",
+      "paths_read": [
+        "/Users/wxl/Projects/pg-agent/docs/plans/flock-rag-on-duckdb-final-plan-v4.1.md",
+        "/Users/wxl/Projects/pg-agent/docs/reviews/oracle-v4-plan-review-2026-08-29.md"
+      ],
+      "git": null,
+      "blockers": [
+        {
+          "id": "owner_connection_model_e2",
+          "level": "E2",
+          "blocks_backend": null,
+          "detail": "Phase 1 E2 on v7 wheel: same-process writer/readers and non-owner process open fail with DuckDB conflicting lock. See v7/evidence/phase1_runtime.e2.md. Do not work around with multi-process live opens. Owner service is not this contract."
+        }
+      ]
+    },
+    {
+      "id": "temp_candidate_stage",
+      "path": "v7/evidence/contracts/temp_candidate_stage.md",
+      "level": "E1",
+      "related_backend": "flock_ranking",
+      "backend_blocked": false,
+      "backend_blocked_reason": null,
+      "notes": "Fixed TEMP columns; no chunk text / raw MinerU JSON / embedding / full metadata JSON. Ranking does not accept arbitrary table names. Phase 1 E2 connection-local TEMP on v7 binding: v7/evidence/phase1_runtime.e2.md. Register level stays E1.",
+      "paths_read": [
+        "/Users/wxl/Projects/pg-agent/docs/plans/flock-rag-on-duckdb-final-plan-v4.1.md"
+      ],
+      "git": null,
+      "blockers": [
+        {
+          "id": "temp_stage_e2_on_target_binding",
+          "level": "E2",
+          "blocks_backend": null,
+          "detail": "Phase 1 E2 on v7 wheel: rag_candidates TEMP is connection-local and does not leak. Ranking over the stage remains Phase 3. See v7/evidence/phase1_runtime.e2.md."
+        }
+      ]
+    },
+    {
+      "id": "line_range_mapping",
+      "path": "v7/evidence/contracts/line_range_mapping.md",
+      "level": "E1",
+      "related_backend": "text_catalog_ranges",
+      "backend_blocked": false,
+      "backend_blocked_reason": null,
+      "notes": "range_origin in {source_line, normalized_line, page_bbox, legacy_flat}. MinerU PDF has no native source lines (E1 samples). Synthetic lines never called source lines.",
+      "paths_read": [
+        "/Users/wxl/Projects/pg-agent/docs/plans/flock-rag-on-duckdb-final-plan-v4.1.md",
+        "/Users/wxl/Projects/pg-agent/docs/reviews/oracle-v4-plan-review-2026-08-29.md",
+        "/Users/wxl/MinerU sample content_list.json and layout.json",
+        "/Users/wxl/Projects/repoprompt-ce-agno/benchmarks/duckrag_wi1/p19_mineru_process.py",
+        "/Users/wxl/Projects/auto_coder-3.0.74/src/autocoder/rag/token_limiter.py"
+      ],
+      "git": null,
+      "blockers": [
+        {
+          "id": "normalization_version_string",
+          "level": "E0",
+          "blocks_backend": null,
+          "detail": "Exact newline/Unicode algorithm for normalized_line not assigned a version id yet"
+        }
+      ]
+    },
+    {
+      "id": "nearest_basic",
+      "path": "v7/evidence/nearest_e2_summary.md",
+      "level": "E2",
+      "related_backend": "dense_nearest",
+      "backend_blocked": false,
+      "backend_blocked_reason": null,
+      "notes": "Sibling WI-5 ran unittest on duckdb-pgagent a1f0ab1911 (exit 0, 112 assertions). On-disk binary SHA-256 recorded in nearest_e2.json / this binary object. Not rebuilt this freeze. Historical freeze E2; live gate reports E2 only if the in-repo log and target unittest binary verify. Missing binary/log downgrades the gate to blocked. Not E3.",
+      "live_e2_requires_binary_and_log": true,
+      "unverified_gate_level": "blocked",
+      "unverified_blocker_id": "nearest_target_e2_unverified",
+      "paths_read": [
+        "/Users/wxl/Projects/pg-agent/v7/evidence/nearest_e2_summary.md",
+        "/Users/wxl/Projects/pg-agent/v7/evidence/nearest_basic.e2.log"
+      ],
+      "git": {
+        "duckdb-pgagent": {
+          "commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+          "tag": "duckdb-special-20260829-g1"
+        }
+      },
+      "blockers": [],
+      "binary": {
+        "path": "/Users/wxl/Projects/duckdb-pgagent/build/reldebug/test/unittest",
+        "sha256": "2924bc6ce716b2363c218c28e4418ad57c7e800f735cf0bd4520baf7df8519b8",
+        "size_bytes": 11567456,
+        "file_type": "Mach-O 64-bit executable arm64",
+        "mtime_local": "2026-08-29T12:21:55",
+        "build_identity": {
+          "commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+          "tag": "duckdb-special-20260829-g1"
+        }
+      },
+      "machine_checkable": "v7/evidence/nearest_e2.json"
+    }
+  ]
+}

@@ -6,4 +6,4 @@
 
 拒绝：DML、COPY、DDL、ATTACH/CONNECT、INSTALL/LOAD、CALL/PRAGMA/SET，以及 `postgres_*`、文件读取函数。
 
-validator 是“已知副作用阻断 + 外部访问关闭”，不是任意 SQL 的形式化安全证明。
+validator 是“已知副作用阻断 + 外部访问关闭”，不是任意 SQL 的形式化安全证明。必须传入已 bootstrap 的 managed 连接；`con is None` 会 `DUCK_ARGUMENT_ERROR`，不再自建连接。`|>` 能否解析由该连接上的 DuckDB grammar 决定。静态 `agent_system` v3 故意不含 `pipe_query_syntax`；worker 可能按 live capability 追加说明。

@@ -1,0 +1,216 @@
+# pg-agent v7 Phase 0 constraints — macOS arm64
+# Authority: docs/plans/flock-rag-on-duckdb-final-plan-v4.1.md §3.2, §4.1, §6 Phase 0
+# Work item: WI-2 plus Phase 1 runtime wrap-up. v7 wheel exists (distinct from v6).
+# Does not claim an owner service exists. Do not enter Phase 2 from this file.
+# Do not change the v6 DuckDB pin in the repo-root pyproject.toml.
+
+platform: macOS 26.6.2 arm64 (Darwin 25.6.0 RELEASE_ARM64_T8112)
+python_target: CPython 3.12
+python_observed: CPython 3.12.13 (/Users/wxl/Projects/pg-agent/.venv/bin/python -> /opt/homebrew/opt/python@3.12/bin/python3.12)
+
+###############################################################################
+# Pins (verified this session; re-check with git before a release)
+###############################################################################
+
+pg-agent:
+  commit  b569051530bfe4fb092b225f89695e15c2568e5d
+  branch  main
+  dirty   yes (pre-existing v6 + docs; Phase 0 adds more)
+  tag     (none)
+
+flock:
+  commit  a291edce23db47b877dfcf595aabd1e88ca6ecb4
+  branch  dev
+  dirty   no
+  tag     (none; describe v0.8.0-3-ga291edce)
+  must compile against duckdb-pgagent a1f0ab1911, NOT the floating submodule
+    duckdb gitlink (uninitialized): 08e34c447bae34eaee3723cac61f2878b6bdf787  url=https://github.com/duckdb/duckdb branch=main
+
+duckdb-pgagent:
+  commit  a1f0ab191185c0852b162adc6feb206822dc9daa
+  short   a1f0ab1911
+  branch  integration/grammar-24919-20260829   (provenance only)
+  dirty   no
+  tag     duckdb-special-20260829-g1
+  engine  PRAGMA version on v6 wheel = v1.6.0-dev13823  git_hash=a1f0ab1911
+
+duckdb-python-pgagent:
+  commit  40d439bcd10affb1c920efa549e61df25e710248
+  branch  integration/duckdb-special-20260829-g1
+  dirty   no
+  tag     duckdb-python-special-20260829-g1
+  vendored engine external/duckdb = a1f0ab191185c0852b162adc6feb206822dc9daa
+
+tachiom (external, not four-repo):
+  commit  69f6f3dc2eef3b543983eb71227bb65590e498a8
+  branch  main
+  dirty   no
+  describe v0.3.4-2-g69f6f3d
+
+duckdb-tachiom (external, not four-repo):
+  commit  5c91f3cb5c4091cb70735449e546446a09136a04
+  branch  main
+  dirty   yes (untracked examples/native_bench.rs, prompt-exports/, testing/)
+  Cargo tachiom pin: git tag v0.3.4  (not the local tachiom HEAD)
+
+MinerU-Popo (external, not four-repo):
+  commit  75c36a8c0f38adee03c78850366645a58cd5d4af
+  branch  master
+  dirty   no
+
+v6 DuckDB Python pin (DO NOT CHANGE in pyproject.toml):
+  duckdb==1.6.0.dev366+ga1f0ab1911
+  wheel  ../duckdb-python-pgagent/dist-special-g1/duckdb-1.6.0.dev366+ga1f0ab1911-cp312-cp312-macosx_26_0_arm64.whl
+  sha256 fa4ba6fb193e98d9273d494d1255393a4df33b8d6890fbbcdd65b064b3c15ad9
+  this is the v6 artifact, not a v7 wheel
+
+v7 DuckDB Python wheel (separate from v6; do not overwrite dist-special-g1):
+  path    ../duckdb-python-pgagent/dist-v7/duckdb-1.6.0.dev366-cp312-cp312-macosx_26_0_arm64.whl
+  sha256  d4e8fd28e6c6daa22dba349ed253b45b7a9f01e110126f65dc79a126308ba5ff
+  flock   STATICALLY_LINKED
+  fts     STATICALLY_LINKED (GIT_TAG 2266e67d01c737cb65114e77c7c672e58869a635, no DONT_LINK in v7_extension_config.cmake)
+  tachiom BLOCKED RAG_MULTI_VECTOR_UNAVAILABLE (no CMake tachiom_extension; duckdb-tachiom is DuckDB v1.5.4 ABI)
+
+FTS out-of-tree pin:
+  https://github.com/duckdb/duckdb-fts
+  GIT_TAG 2266e67d01c737cb65114e77c7c672e58869a635
+  duckdb-pgagent .github/config/extensions/fts.cmake still DONT_LINK (engine default)
+  v7 static path: duckdb-python-pgagent/cmake/v7_extension_config.cmake (no DONT_LINK)
+  patch   .github/patches/extensions/fts/0001-get-default-schema-optional.patch
+
+###############################################################################
+# Exact CMake / loader / cargo target names (Phase 1 v7 wheel links flock+fts static)
+###############################################################################
+
+Flock (CMakeLists.txt):
+  TARGET_NAME=flock
+  static   flock_extension          # build_static_extension(flock ...)
+  loadable flock_loadable_extension # build_loadable_extension(flock ...)
+  duckdb_extension_load(flock SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR} LOAD_TESTS)
+
+FTS (duckdb-fts CMakeLists.txt at GIT_TAG above; not in duckdb-pgagent/extension/):
+  TARGET_NAME=fts
+  static   fts_extension
+  loadable fts_loadable_extension
+
+tachiom / duckdb-tachiom (NO CMakeLists.txt):
+  Makefile EXTENSION_NAME=duckdb_tachiom
+  TARGET_DUCKDB_VERSION=v1.5.4
+  USE_UNSTABLE_C_API=1
+  cargo package duckdb_tachiom  crate-type cdylib,rlib
+  wasm example name duckdb_tachiom  crate-type staticlib
+  native dylib   libduckdb_tachiom.dylib
+  loadable file  duckdb_tachiom.duckdb_extension
+  NO tachiom_extension CMake static target
+
+Python loader (duckdb-python-pgagent):
+  duckdb_add_library(duckdb_target)
+  nanobind module _duckdb
+  duckdb_link_extensions(_duckdb)
+  WHOLE_ARCHIVE duckdb_generated_extension_loader
+  per-ext link  ${ext}_extension
+  current BUILD_EXTENSIONS  core_functions;json;parquet;icu
+  current linked targets    core_functions_extension json_extension parquet_extension icu_extension
+  v6 wheel does NOT load flock, fts, or tachiom (fts present in catalog as loaded=false installed=false)
+
+###############################################################################
+# Known build commands (do not run as Phase 1 integration from this file)
+###############################################################################
+
+duckdb-pgagent:
+  make reldebug
+  make release
+  make debug
+  ./build/reldebug/test/unittest test/sql/join/nearest/nearest_basic.test
+  BUILD_FTS=1 make reldebug     # still DONT_LINK unless the extension config is changed
+
+flock (submodules currently empty; floating duckdb is forbidden for v7):
+  git submodule update --init --recursive     # then retarget duckdb/ to duckdb-pgagent a1f0ab1911
+  source scripts/setup_vcpkg.sh
+  ./scripts/build_and_run.sh
+  cmake -S duckdb -B build/debug \
+    -DEXTENSION_STATIC_BUILD=1 \
+    -DDUCKDB_EXTENSION_CONFIGS=../extension_config.cmake \
+    -DVCPKG_MANIFEST_DIR=../../ \
+    -DVCPKG_BUILD=1 \
+    -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake
+  Makefile includes extension-ci-tools/makefiles/duckdb_extension.Makefile (file missing until submodule init)
+
+duckdb-python-pgagent:
+  uv sync --only-group build --no-install-project -p 3.12
+  uv sync --no-build-isolation -v --reinstall -p 3.12
+  uv sync --no-build-isolation --no-editable -v --reinstall -p 3.12
+  uv build --wheel
+  v7 output MUST be a new path, not dist-special-g1/
+
+duckdb-tachiom:
+  make configure
+  make debug     # build/debug/duckdb_tachiom.duckdb_extension
+  make release   # build/release/duckdb_tachiom.duckdb_extension
+  make test_debug
+  ABI is pinned to DuckDB v1.5.4 unstable C API — not the target fork
+
+tachiom engine:
+  cargo build --release --features cli
+  maturin build --features python
+
+###############################################################################
+# Blockers (unknowns). Related backend cannot enter implementation.
+###############################################################################
+
+BLOCKER flock_abi_catalog_version
+  Flock RAG catalog/ABI version does not exist. Phase 2 store open must refuse until defined.
+
+BLOCKER flock_floating_duckdb_submodule
+  flock/duckdb gitlink is upstream duckdb main (uninitialized). v7 must use duckdb-pgagent a1f0ab1911.
+
+BLOCKER flock_extension-ci-tools_uninitialized
+  Makefile include path is empty on disk. Cannot execute standard extension makefile targets until populated.
+
+RESOLVED v7_wheel_sha256 (Phase 1)
+  dist-v7 wheel SHA-256 d4e8fd28e6c6daa22dba349ed253b45b7a9f01e110126f65dc79a126308ba5ff
+  Do not reuse the v6 dist-special-g1 hash.
+
+RESOLVED fts_not_statically_linked (Phase 1 v7 wheel)
+  v7_extension_config.cmake loads fts without DONT_LINK. duckdb_extensions(): fts STATICALLY_LINKED.
+  Engine fts.cmake remains DONT_LINK; v6 wheel is unchanged.
+
+BLOCKER bm25_config_hash
+  tokenizer / stemming / stop-words / case-folding / Unicode normalization / field weights
+  not frozen; config hash is JSON null. BM25 cannot be a silent default.
+
+BLOCKER tachiom_no_cmake_static_target
+  duckdb_link_extensions expects ${ext}_extension. duckdb-tachiom has none.
+  wasm staticlib example name duckdb_tachiom is not a native CMake target.
+
+BLOCKER tachiom_abi_v1.5.4_vs_target_v1.6.0-dev
+  TARGET_DUCKDB_VERSION=v1.5.4 unstable C API vs engine a1f0ab1911 / v1.6.0-dev13823.
+  If a fix is required it is a separate gate + artifact hash. Do not reimplement in Flock.
+
+BLOCKER tachiom_artifact_sha256
+  Local debug/release .duckdb_extension files exist but are not a v7 rebuild. Hash left null.
+
+BLOCKER duckdb_tachiom_dirty
+  Untracked files. Plan: any dirty tree fails the release gate.
+
+BLOCKER mineru_runtime_distribution_version
+  MinerU-Popo is not a MinerU parser pin. Runtime version unknown.
+
+BLOCKER mineru_container_image_digest
+  Only a floating docker tag latest is documented. Digest unknown.
+
+BLOCKER mineru_model_weights_sha256
+  DreamEternal/MinerU-Popo referenced without revision digest or hashed weights.
+
+BLOCKER canonical_mineru_contract_version
+  WI-3 contract freeze. No v7/mineru/contracts.py in this work item.
+
+BLOCKER mdenseon_package_native_runtime_version
+BLOCKER mdenseon_model_weights_sha256
+BLOCKER tokenizer_identity_version_hash
+BLOCKER embedding_dimension_dtype_normalization_batch
+  Not re-hashed/re-run in WI-2. External duckrag-wi1 lock/fixture is a pointer for WI-3 only.
+  Dense adapter is blocked until those fields are non-null with real SHA-256.
+
+BLOCKER pg-agent_dirty
+  Expected during Phase 0; still a release-gate failure until cleaned.

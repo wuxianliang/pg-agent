@@ -2,7 +2,7 @@
 
 目标：把 DuckDB 运行时事实变成自动化开工门，不凭博客或未来版本设计。
 
-只接受：`duckdb==1.6.0.dev365`、engine `v2.0.0-alpha38615`、macOS arm64、CPython 3.12。
+只接受：`duckdb==1.6.0.dev366+ga1f0ab1911`、`pragma_version()` `library_version=v1.6.0-dev13823` / `source_id=a1f0ab1911`、macOS arm64、CPython 3.12。连接通过 `bootstrap_connection(GrammarExtensionConfig())` 打开，默认关闭 grammar。
 
 通过门：连接硬化、TEMP VIEW 事务、单语句抽取、DML/COPY-in-CTE 反例、`fetchmany`、`interrupt()`、内存限制均实测；查询连接从未加载 `postgres` 扩展。
 

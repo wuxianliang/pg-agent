@@ -6,11 +6,18 @@ import re
 import sys
 import threading
 import time
+from pathlib import Path
 
 import duckdb
 
-EXPECTED_PACKAGE = "1.6.0.dev365"
-EXPECTED_ENGINE = "v2.0.0-alpha38615"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from v6.session_durability.duckdb_grammar import (
+    EXPECTED_LIBRARY_VERSION,
+    EXPECTED_PACKAGE,
+    EXPECTED_SOURCE_ID,
+    GrammarExtensionConfig,
+    bootstrap_connection,
+)
 
 
 def check(label: str, condition: bool, detail: object = "") -> None:
@@ -31,12 +38,7 @@ def raises(fn, pattern: str | None = None) -> str:
 
 
 def hardened_connection():
-    con = duckdb.connect()
-    # These settings must be applied before any extension/file operation.
-    con.execute("SET autoinstall_known_extensions=false")
-    con.execute("SET autoload_known_extensions=false")
-    con.execute("SET enable_external_access=false")
-    con.execute("SET memory_limit='512 MiB'")
+    con, _ = bootstrap_connection(GrammarExtensionConfig())
     return con
 
 
@@ -48,8 +50,9 @@ def main() -> int:
 
     con = hardened_connection()
     try:
-        engine = con.execute("SELECT version()").fetchone()[0]
-        check("expected alpha engine", engine == EXPECTED_ENGINE, engine)
+        library_version, source_id = con.execute("SELECT library_version, source_id FROM pragma_version()").fetchone()
+        check("expected library version", library_version == EXPECTED_LIBRARY_VERSION, library_version)
+        check("expected source_id", source_id == EXPECTED_SOURCE_ID, source_id)
         settings = dict(con.execute(
             "SELECT name, value FROM duckdb_settings() WHERE name IN "
             "('autoinstall_known_extensions','autoload_known_extensions',"

@@ -1,0 +1,394 @@
+{
+  "schema_version": "flock-rag-phase0-baseline-status/3",
+  "evaluator": "v7.gates.phase0_evaluator",
+  "authority": "docs/plans/flock-rag-on-duckdb-final-plan-v4.1.md \u00a76 Phase 0",
+  "work_item": "WI-C",
+  "encoded_at": "2026-08-29",
+  "rule": "Boolean fields are machine-checkable. Synthetic/E1 is not Phase 0 pass. Do not invent hashes. Affected backends stay blocked. implementation_allowed and release_allowed are false while live runtime or acceptance fixtures are missing.",
+  "hunt_report": {
+    "path": "v7/evidence/local_evidence_search.md",
+    "present": true,
+    "used": true,
+    "notes": "WI-A hunt (local_evidence_search.md) found no pre-existing live byzerai_store_duckdb.db, no Kohaku/range-trio goldens in KohakuRAG, no live MinerU/mdenseon bytes, no target tachiom artifact for a1f0ab1911. Later freezes generated Kohaku-native trees and MinerU origin-shape range-trio fixtures; live MinerU/mdenseon/legacy/tachiom stay missing. 2026-08-30 addendum: OCI digest N/A, P19-S is not this-freeze live E2. No hashes invented."
+  },
+  "phase0_pass": false,
+  "derived": true,
+  "blocker_ids": [
+    "dense_mdenseon",
+    "multi_vector_tachiom",
+    "legacy_cache_live",
+    "live_legacy_cache",
+    "live_mdenseon",
+    "target_tachiom_static_artifact",
+    "C3",
+    "DR-PO-1",
+    "DR-PO-2",
+    "DR-PO-3",
+    "F-9",
+    "F-12",
+    "C5",
+    "C6",
+    "C7",
+    "DR-SEC-4",
+    "DR-T-2",
+    "tachiom_static_loadable_artifact_sha256",
+    "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash",
+    "flock_abi_catalog_version",
+    "canonical_mineru_contract_version",
+    "embedding_batch_contract",
+    "tachiom_static_cmake_target",
+    "pg-agent dirty",
+    "duckdb-tachiom dirty",
+    "flock.duckdb uninitialized",
+    "flock.extension-ci-tools uninitialized"
+  ],
+  "blocker_classes": [
+    "blockers",
+    "missing_baselines",
+    "open_corrections",
+    "required_null_hashes",
+    "configuration_gaps",
+    "dirty_uninitialized_dependencies"
+  ],
+  "reasons": [
+    {
+      "blocker_id": "dense_mdenseon",
+      "blocker_class": "blockers",
+      "code": "BACKEND_GATE_BLOCKED",
+      "details": {
+        "gate": "dense_mdenseon"
+      }
+    },
+    {
+      "blocker_id": "multi_vector_tachiom",
+      "blocker_class": "blockers",
+      "code": "BACKEND_GATE_BLOCKED",
+      "details": {
+        "gate": "multi_vector_tachiom"
+      }
+    },
+    {
+      "blocker_id": "legacy_cache_live",
+      "blocker_class": "blockers",
+      "code": "BACKEND_GATE_BLOCKED",
+      "details": {
+        "gate": "legacy_cache_live"
+      }
+    },
+    {
+      "blocker_id": "live_legacy_cache",
+      "blocker_class": "missing_baselines",
+      "code": "BASELINE_MISSING_OR_UNAVAILABLE",
+      "details": {
+        "item": "live_legacy_cache",
+        "required_evidence_level": "E2",
+        "live_runtime_missing": true,
+        "acceptance_fixture_missing": true,
+        "evidence_level": "E0"
+      }
+    },
+    {
+      "blocker_id": "live_mdenseon",
+      "blocker_class": "missing_baselines",
+      "code": "BASELINE_MISSING_OR_UNAVAILABLE",
+      "details": {
+        "item": "live_mdenseon",
+        "required_evidence_level": "E2",
+        "live_runtime_missing": true,
+        "acceptance_fixture_missing": true,
+        "evidence_level": "E0"
+      }
+    },
+    {
+      "blocker_id": "target_tachiom_static_artifact",
+      "blocker_class": "missing_baselines",
+      "code": "BASELINE_MISSING_OR_UNAVAILABLE",
+      "details": {
+        "item": "target_tachiom_static_artifact",
+        "required_evidence_level": "E2",
+        "live_runtime_missing": true,
+        "acceptance_fixture_missing": true,
+        "evidence_level": "E0"
+      }
+    },
+    {
+      "blocker_id": "C3",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "UNRESOLVED"
+      }
+    },
+    {
+      "blocker_id": "DR-PO-1",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "UNRESOLVED"
+      }
+    },
+    {
+      "blocker_id": "DR-PO-2",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "UNRESOLVED"
+      }
+    },
+    {
+      "blocker_id": "DR-PO-3",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "UNRESOLVED"
+      }
+    },
+    {
+      "blocker_id": "F-9",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "PARTIAL"
+      }
+    },
+    {
+      "blocker_id": "F-12",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "PARTIAL"
+      }
+    },
+    {
+      "blocker_id": "C5",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "PARTIAL"
+      }
+    },
+    {
+      "blocker_id": "C6",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "PARTIAL"
+      }
+    },
+    {
+      "blocker_id": "C7",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "PARTIAL"
+      }
+    },
+    {
+      "blocker_id": "DR-SEC-4",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "PARTIAL"
+      }
+    },
+    {
+      "blocker_id": "DR-T-2",
+      "blocker_class": "open_corrections",
+      "code": "OPEN_CORRECTION",
+      "details": {
+        "status": "PARTIAL"
+      }
+    },
+    {
+      "blocker_id": "tachiom_static_loadable_artifact_sha256",
+      "blocker_class": "required_null_hashes",
+      "code": "REQUIRED_HASH_UNAVAILABLE",
+      "details": {
+        "path": "tachiom_static_loadable_artifact_sha256"
+      }
+    },
+    {
+      "blocker_id": "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash",
+      "blocker_class": "required_null_hashes",
+      "code": "REQUIRED_HASH_UNAVAILABLE",
+      "details": {
+        "path": "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash"
+      }
+    },
+    {
+      "blocker_id": "flock_abi_catalog_version",
+      "blocker_class": "configuration_gaps",
+      "code": "CONFIG_UNRESOLVED",
+      "details": {
+        "field": "flock_abi_catalog_version",
+        "status": "blocked"
+      }
+    },
+    {
+      "blocker_id": "canonical_mineru_contract_version",
+      "blocker_class": "configuration_gaps",
+      "code": "CONFIG_UNRESOLVED",
+      "details": {
+        "field": "canonical_mineru_contract_version",
+        "status": "blocked"
+      }
+    },
+    {
+      "blocker_id": "embedding_batch_contract",
+      "blocker_class": "configuration_gaps",
+      "code": "CONFIG_UNRESOLVED",
+      "details": {
+        "field": "embedding_batch_contract",
+        "status": "blocked"
+      }
+    },
+    {
+      "blocker_id": "tachiom_static_cmake_target",
+      "blocker_class": "configuration_gaps",
+      "code": "CONFIG_UNRESOLVED",
+      "details": {
+        "field": "tachiom_static_cmake_target",
+        "status": "blocked"
+      }
+    },
+    {
+      "blocker_id": "pg-agent dirty",
+      "blocker_class": "dirty_uninitialized_dependencies",
+      "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+      "details": {
+        "label": "pg-agent dirty"
+      }
+    },
+    {
+      "blocker_id": "duckdb-tachiom dirty",
+      "blocker_class": "dirty_uninitialized_dependencies",
+      "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+      "details": {
+        "label": "duckdb-tachiom dirty"
+      }
+    },
+    {
+      "blocker_id": "flock.duckdb uninitialized",
+      "blocker_class": "dirty_uninitialized_dependencies",
+      "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+      "details": {
+        "label": "flock.duckdb uninitialized"
+      }
+    },
+    {
+      "blocker_id": "flock.extension-ci-tools uninitialized",
+      "blocker_class": "dirty_uninitialized_dependencies",
+      "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+      "details": {
+        "label": "flock.extension-ci-tools uninitialized"
+      }
+    }
+  ],
+  "items": {
+    "live_legacy_cache": {
+      "contract_frozen": true,
+      "acceptance_fixture_missing": true,
+      "live_runtime_missing": true,
+      "implementation_allowed": false,
+      "release_allowed": false,
+      "evidence_level": "E0",
+      "blocked_backend": "legacy_cache_live",
+      "notes": "Live byzerai_store_duckdb.db not found (legacy_cache_live_path.md). v7/tests/fixtures/legacy_cache/golden.v1.json is synthetic_from_source_schema, not a live baseline. Canonical importer blocked."
+    },
+    "kohaku_tree_fixtures": {
+      "contract_frozen": true,
+      "acceptance_fixture_missing": false,
+      "live_runtime_missing": true,
+      "implementation_allowed": true,
+      "release_allowed": true,
+      "evidence_level": "E2",
+      "evidence_components": {
+        "live_or_fixture": {
+          "level": "E2",
+          "kind": "fixtures"
+        }
+      },
+      "blocked_backend": "kohaku_tree_acceptance",
+      "notes": "NodeKind closed set remains E1 in kohakurag.md. Kohaku-native markdown/text/JSON trees generated at v7/tests/fixtures/kohaku/golden.v1.json (corpus_kind=generated_from_kohaku_source, Kohaku pin f3d27c8d24616b75508795766355632640979e5b). Embedder not invoked. Not a live Kohaku service (live_runtime_missing remains true). Not MinerU\u2192Kohaku. See v7/evidence/kohaku_tree_fixtures.md."
+    },
+    "kohaku_mineru_range_trio": {
+      "contract_frozen": true,
+      "acceptance_fixture_missing": false,
+      "live_runtime_missing": true,
+      "implementation_allowed": true,
+      "release_allowed": true,
+      "evidence_level": "E2",
+      "evidence_components": {
+        "live_or_fixture": {
+          "level": "E2",
+          "kind": "fixtures"
+        }
+      },
+      "blocked_backend": "range_trio_acceptance",
+      "notes": "Origin-shape fixtures at v7/tests/fixtures/range_trio/ (PDF imported_from_duckrag_p19s, code generated_source_line_fixture, legacy synthetic_from_source_schema). Not live MinerU. live_runtime_missing remains true. Implementation/release allowed for range mapping / JSON ingest fixtures only; does not authorize live parse. Not plan \u00a73.14 large/multipage/table corpus. See v7/evidence/mineru_identity.md."
+    },
+    "live_mineru_runtime": {
+      "contract_frozen": true,
+      "acceptance_fixture_missing": true,
+      "live_runtime_missing": true,
+      "implementation_allowed": false,
+      "release_allowed": false,
+      "evidence_level": "E0",
+      "evidence_components": {
+        "contract": {
+          "level": "E1",
+          "kind": "json",
+          "id": "mineru"
+        },
+        "live_or_fixture": {
+          "level": "E0",
+          "kind": "runtime"
+        }
+      },
+      "blocked_backend": "live_mineru_runtime",
+      "notes": "JSON node types/page/bbox frozen (mineru.md). Operator cache $HOME/.cache/duckrag-wi1 is absent. Historical P19-S is not this-freeze live E2. Kind remains runtime. See v7/evidence/mineru_identity.md. Not a Phase 0 pass predicate (Option B, 2026-08-30)."
+    },
+    "live_mdenseon": {
+      "contract_frozen": true,
+      "acceptance_fixture_missing": true,
+      "live_runtime_missing": true,
+      "implementation_allowed": false,
+      "release_allowed": false,
+      "evidence_level": "E0",
+      "evidence_components": {
+        "contract": {
+          "level": "E1",
+          "kind": "lock",
+          "id": "mdenseon"
+        },
+        "live_or_fixture": {
+          "level": "E0",
+          "kind": "bytes"
+        }
+      },
+      "blocked_backend": "dense_mdenseon",
+      "notes": "Lock lfs_sha256 values copied from EVIDENCE_REGISTER. Live model.safetensors and tokenizer.json absent. Not re-hashed. Not E2. Dense adapter blocked."
+    },
+    "target_tachiom_static_artifact": {
+      "contract_frozen": true,
+      "acceptance_fixture_missing": true,
+      "live_runtime_missing": true,
+      "implementation_allowed": false,
+      "release_allowed": false,
+      "evidence_level": "E0",
+      "evidence_components": {
+        "contract": {
+          "level": "E1",
+          "kind": "sql",
+          "id": "tachiom"
+        },
+        "live_or_fixture": {
+          "level": "E0",
+          "kind": "target_artifact"
+        }
+      },
+      "blocked_backend": "multi_vector_tachiom",
+      "notes": "SQL names/envelope E1 from duckdb-tachiom source. No static/loadable artifact rebuilt for duckdb-pgagent a1f0ab1911. Existing 1.5.4 unstable-C-API binaries are not the v7 pin. Artifact SHA-256 not invented. Multi-vector blocked."
+    }
+  }
+}

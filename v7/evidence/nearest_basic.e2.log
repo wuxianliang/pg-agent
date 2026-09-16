@@ -1,0 +1,20 @@
+command: ./build/reldebug/test/unittest test/sql/join/nearest/nearest_basic.test
+cwd: /Users/wxl/Projects/duckdb-pgagent
+duckdb commit: a1f0ab191185c0852b162adc6feb206822dc9daa
+duckdb tag: duckdb-special-20260829-g1
+binary path: /Users/wxl/Projects/duckdb-pgagent/build/reldebug/test/unittest
+working tree: clean (git status --porcelain empty)
+start: 2026-08-29T10:51:08Z
+end: 2026-08-29T10:51:09Z
+exit code: 0
+
+----- stdout -----
+Filters: test/sql/join/nearest/nearest_basic.test
+
+[0/1] (0%): test/sql/join/nearest/nearest_basic.test
+[1/1] (100%): test/sql/join/nearest/nearest_basic.test took 0.189s
+===============================================================================
+All tests passed (112 assertions in 1 test case)
+
+----- stderr -----
+(empty)

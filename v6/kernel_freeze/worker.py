@@ -209,8 +209,17 @@ class AgentWorker:
         out["_queue"] = q
         return out
 
+    def _messages_for_llm(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        messages = list(payload.get("messages") or [])
+        if self.duck_processor is None:
+            return messages
+        fragment = self.duck_processor.prompt_text_for_run(payload.get("run_id"))
+        if fragment:
+            messages.append({"role": "system", "content": fragment})
+        return messages
+
     def _invoke_llm(self, payload: dict) -> str:
-        messages = payload["messages"]
+        messages = self._messages_for_llm(payload)
         model = self.model or payload.get("model")
         api_uri = self.api_uri or payload.get("api_uri")
         last: Exception | None = None
@@ -317,19 +326,20 @@ class AgentWorker:
         attempts = max(1, self.llm_retries + 1)
         used = 0
         out: Any = None
+        messages = self._messages_for_llm(payload)
         for i in range(attempts):
             used = i + 1
             try:
                 if self.llm_fn is not None:
                     out = self.llm_fn(
-                        payload["messages"],
+                        messages,
                         model=self.model,
                         api_uri=self.api_uri,
                         api_key=self.api_key,
                     )
                 else:
                     out = call_llm(
-                        payload["messages"],
+                        messages,
                         model=self.model,
                         api_uri=self.api_uri,
                         api_key=self.api_key,

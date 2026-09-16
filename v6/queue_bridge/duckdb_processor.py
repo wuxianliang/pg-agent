@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 from v6.session_durability.duckdb_runtime import DuckSessionManager, SessionError
+from v6.session_durability.duckdb_grammar import GrammarExtensionConfig
 from v6.dialect_guardrails.duckdb_validation import QueryValidationError, validate_read_query
 from v6.budget_observability.duckdb_results import bounded_result
 from v6.budget_observability.duckdb_errors import error_envelope
@@ -16,16 +17,33 @@ from v6.source_ingress.duckdb_ingress import IngressError, PostgresSourceResolve
 
 
 class DuckDBWorkerProcessor:
-    def __init__(self, pg_uri: str, *, resolver: PostgresSourceResolver | None = None, worker_id: str = "v6-worker-1"):
+    def __init__(
+        self,
+        pg_uri: str,
+        *,
+        resolver: PostgresSourceResolver | None = None,
+        worker_id: str = "v6-worker-1",
+        grammar_config: GrammarExtensionConfig | None = None,
+    ):
         self.pg_uri = pg_uri
         self.worker_id = worker_id
         self.resolver = resolver
         self.budget = DuckBudget()
         self.budget.validate()
-        self.sessions = DuckSessionManager(pg_uri, worker_id=worker_id, resolver=resolver)
+        self.sessions = DuckSessionManager(
+            pg_uri, worker_id=worker_id, resolver=resolver, grammar_config=grammar_config,
+        )
         self._run_locks: dict[str, threading.Lock] = {}
         self._completed: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
+
+    def prompt_text_for_run(self, run_id: str | None) -> str:
+        if not run_id:
+            return ""
+        caps = self.sessions.live_capabilities(run_id)
+        if caps is None:
+            return ""
+        return caps.prompt_text()
 
     def close(self) -> None:
         for run_id in list(self.sessions.sessions):

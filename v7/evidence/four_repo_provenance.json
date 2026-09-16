@@ -1,0 +1,388 @@
+{
+  "phase": 0,
+  "work_item": "WI-2",
+  "authority": "docs/plans/flock-rag-on-duckdb-final-plan-v4.1.md §3.2 / §6 Phase 0 item 3; prompt-exports/phase-0-orchestrate-checklist.md WI-2",
+  "recorded_at_utc": "2026-08-29T10:55:14Z",
+  "method": [
+    "git rev-parse HEAD",
+    "git rev-parse --abbrev-ref HEAD",
+    "git status --porcelain=v1",
+    "git describe --tags --always --dirty",
+    "git tag --points-at HEAD",
+    "git log -1 --format='%H %D %s'",
+    "git remote -v",
+    "git submodule status / git ls-tree HEAD <submodule>",
+    "read CMakeLists.txt / Makefile / pyproject.toml / cmake/duckdb_loader.cmake / extension_config.cmake (no Phase 1 edits)"
+  ],
+  "notes": "Four-repo atomic constraint is pg-agent, flock, duckdb-pgagent, duckdb-python-pgagent. tachiom, duckdb-tachiom, and MinerU-Popo are external contract/build dependencies, recorded separately. SHA-256 hashes are not invented. Phase 0 will add more dirty files under pg-agent.",
+  "repos": {
+    "pg-agent": {
+      "path": "/Users/wxl/Projects/pg-agent",
+      "remote": "https://github.com/wuxianliang/pg-agent.git",
+      "commit": "b569051530bfe4fb092b225f89695e15c2568e5d",
+      "branch": "main",
+      "dirty": true,
+      "tag": null,
+      "tag_status": "missing",
+      "tag_notes": "No tag points at HEAD. git describe --tags --always --dirty = b569051-dirty.",
+      "describe": "b569051-dirty",
+      "subject": "v6: add DuckDB-side agent runtime (ingress, tools, queue bridge, budgets)",
+      "dirty_kind": "pre-existing v6 + docs; Phase 0 adds more untracked v7 files. Release gate would fail until clean.",
+      "build_entry": {
+        "kind": "python_sql_runtime",
+        "files": [
+          "pyproject.toml",
+          "uv.lock",
+          "v6/load.py"
+        ],
+        "cmake_targets": [],
+        "v6_duckdb_pin": {
+          "requirement": "duckdb==1.6.0.dev366+ga1f0ab1911",
+          "uv_source_wheel": "../duckdb-python-pgagent/dist-special-g1/duckdb-1.6.0.dev366+ga1f0ab1911-cp312-cp312-macosx_26_0_arm64.whl",
+          "wi2_action": "do_not_change"
+        },
+        "v7_runtime": {
+          "status": "missing",
+          "notes": "Phase 0 only. No v7 owner/runtime/load.py in this work item. Do not claim Phase 1 exists."
+        },
+        "commands": [
+          "uv sync  # uses the pinned v6 wheel; do not retarget this extra to a v7 wheel in-place"
+        ]
+      }
+    },
+    "flock": {
+      "path": "/Users/wxl/Projects/flock",
+      "remote": "https://github.com/dais-polymtl/flock.git",
+      "commit": "a291edce23db47b877dfcf595aabd1e88ca6ecb4",
+      "branch": "dev",
+      "dirty": false,
+      "tag": null,
+      "tag_status": "missing",
+      "tag_notes": "HEAD is 3 commits after v0.8.0. git describe --tags --always --dirty = v0.8.0-3-ga291edce. No exact tag at HEAD.",
+      "describe": "v0.8.0-3-ga291edce",
+      "subject": "Add streaming support for LLM completions (#287)",
+      "submodules": {
+        "duckdb": {
+          "recorded_gitlink": "08e34c447bae34eaee3723cac61f2878b6bdf787",
+          "url": "https://github.com/duckdb/duckdb",
+          "branch_in_gitmodules": "main",
+          "initialized": false,
+          "status": "blocked",
+          "notes": "Floating upstream DuckDB submodule, not the target fork. Plan §3.2: Flock must compile against duckdb-pgagent a1f0ab1911. Submodule working tree is empty."
+        },
+        "extension-ci-tools": {
+          "recorded_gitlink": "b777c70d30942cca5bef62d6d4fa23a13362f398",
+          "url": "https://github.com/duckdb/extension-ci-tools",
+          "initialized": false,
+          "status": "blocked",
+          "notes": "Makefile include extension-ci-tools/makefiles/duckdb_extension.Makefile is therefore missing on disk. Standard debug/release targets cannot be executed until the submodule is populated AND retargeted."
+        }
+      },
+      "build_entry": {
+        "kind": "duckdb_cpp_extension",
+        "files": [
+          "CMakeLists.txt",
+          "src/CMakeLists.txt",
+          "extension_config.cmake",
+          "Makefile",
+          "scripts/build_and_run.sh",
+          "scripts/setup_vcpkg.sh"
+        ],
+        "cmake_variables": {
+          "TARGET_NAME": "flock",
+          "EXTENSION_NAME": "flock_extension",
+          "LOADABLE_EXTENSION_NAME": "flock_loadable_extension"
+        },
+        "cmake_targets": [
+          "flock_extension",
+          "flock_loadable_extension"
+        ],
+        "cmake_macros": [
+          "build_static_extension(flock ${EXTENSION_SOURCES})",
+          "build_loadable_extension(flock \" \" ${EXTENSION_SOURCES})"
+        ],
+        "duckdb_extension_load": "duckdb_extension_load(flock SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR} LOAD_TESTS)",
+        "python_loader_link_name": "flock_extension",
+        "makefile": {
+          "EXT_NAME": "flock",
+          "EXT_CONFIG": "extension_config.cmake",
+          "include": "extension-ci-tools/makefiles/duckdb_extension.Makefile",
+          "local_targets": ["tidy-check", "lf_setup", "lf_setup_dev"]
+        },
+        "commands": [
+          "git submodule update --init --recursive  # currently uninitialized; Phase 1 must then retarget duckdb/ to duckdb-pgagent a1f0ab1911 instead of floating main",
+          "source scripts/setup_vcpkg.sh",
+          "./scripts/build_and_run.sh",
+          "cmake -S duckdb -B build/debug -DEXTENSION_STATIC_BUILD=1 -DDUCKDB_EXTENSION_CONFIGS=../extension_config.cmake -DVCPKG_MANIFEST_DIR=../../ -DVCPKG_BUILD=1 -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake"
+        ],
+        "phase1_gate": "Do not keep the floating duckdb submodule. Compile against /Users/wxl/Projects/duckdb-pgagent @ a1f0ab191185c0852b162adc6feb206822dc9daa."
+      }
+    },
+    "duckdb-pgagent": {
+      "path": "/Users/wxl/Projects/duckdb-pgagent",
+      "remotes": {
+        "grammar-pr": "https://github.com/Tishj/duckdb.git",
+        "upstream": "https://github.com/duckdb/duckdb.git"
+      },
+      "commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+      "commit_short10": "a1f0ab1911",
+      "branch": "integration/grammar-24919-20260829",
+      "branch_role": "provenance_only",
+      "dirty": false,
+      "tag": "duckdb-special-20260829-g1",
+      "describe": "duckdb-special-20260829-g1",
+      "describe_v_star": "v1.5.5-11931-ga1f0ab1911",
+      "subject": null,
+      "subject_status": "missing",
+      "subject_notes": "Subject not required for the pin. Tag duckdb-special-20260829-g1 points at HEAD.",
+      "pin_rule": "fixed a1f0ab1911 / duckdb-special-20260829-g1; branch is provenance only",
+      "build_entry": {
+        "kind": "duckdb_engine",
+        "files": [
+          "CMakeLists.txt",
+          "Makefile",
+          "extension/extension_config.cmake",
+          "extension/extension_build_tools.cmake",
+          ".github/config/extensions/fts.cmake",
+          ".github/patches/extensions/fts/0001-get-default-schema-optional.patch"
+        ],
+        "default_in_tree_extensions_via_extension_config_cmake": [
+          "core_functions",
+          "parquet"
+        ],
+        "makefile_targets": ["debug", "release", "reldebug", "relassert", "unittest"],
+        "commands": [
+          "make reldebug",
+          "make release",
+          "make debug",
+          "./build/reldebug/test/unittest test/sql/join/nearest/nearest_basic.test",
+          "BUILD_FTS=1 make reldebug  # adds fts to BUILD_EXTENSIONS; default fts.cmake still uses DONT_LINK"
+        ],
+        "fts_out_of_tree": {
+          "duckdb_extension_load_name": "fts",
+          "git_url": "https://github.com/duckdb/duckdb-fts",
+          "git_tag": "2266e67d01c737cb65114e77c7c672e58869a635",
+          "flags": ["LOAD_TESTS", "DONT_LINK", "APPLY_PATCHES"],
+          "cmake_targets_from_fts_CMakeLists_at_git_tag": [
+            "fts_extension",
+            "fts_loadable_extension"
+          ],
+          "python_loader_link_name": "fts_extension",
+          "dont_link_implication": "Default DuckDB CI config does not statically link FTS. v7 Python static build must load fts without DONT_LINK so duckdb_link_extensions can link fts_extension."
+        },
+        "static_extension_macro": "build_static_extension(NAME ...) creates add_library(${NAME}_extension STATIC ...)"
+      }
+    },
+    "duckdb-python-pgagent": {
+      "path": "/Users/wxl/Projects/duckdb-python-pgagent",
+      "remote": "https://github.com/duckdb/duckdb-python.git",
+      "commit": "40d439bcd10affb1c920efa549e61df25e710248",
+      "branch": "integration/duckdb-special-20260829-g1",
+      "dirty": false,
+      "tag": "duckdb-python-special-20260829-g1",
+      "describe": "duckdb-python-special-20260829-g1",
+      "subject": "Pin DuckDB special engine train 20260829-g1",
+      "vendored_engine": {
+        "path": "external/duckdb",
+        "commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+        "submodule_describe": "v1.5.5-11931-ga1f0ab1911",
+        "matches_duckdb_pgagent": true
+      },
+      "build_entry": {
+        "kind": "python_static_binding",
+        "files": [
+          "CMakeLists.txt",
+          "cmake/duckdb_loader.cmake",
+          "pyproject.toml",
+          "duckdb_packaging/build_backend.py"
+        ],
+        "cmake_targets": [
+          "duckdb_target",
+          "_duckdb",
+          "_duckdb_dependencies",
+          "duckdb_generated_extension_loader",
+          "core_functions_extension",
+          "json_extension",
+          "parquet_extension",
+          "icu_extension"
+        ],
+        "loader": {
+          "DUCKDB_SOURCE_PATH_default": "${CMAKE_CURRENT_SOURCE_DIR}/external/duckdb",
+          "BUILD_EXTENSIONS_pyproject": "core_functions;json;parquet;icu",
+          "BUILD_EXTENSIONS_loader_default_if_unset": "core_functions;parquet;icu;json",
+          "link_macro": "duckdb_link_extensions(_duckdb)",
+          "whole_archive": "$<LINK_LIBRARY:WHOLE_ARCHIVE,duckdb_generated_extension_loader>",
+          "per_extension_link": "target_link_libraries(_duckdb PRIVATE ${ext}_extension)",
+          "v7_must_add_without_floating_source": [
+            "flock_extension",
+            "fts_extension"
+          ],
+          "tachiom_loader_gap": "No ${NAME}_extension CMake static target exists in duckdb-tachiom. Current cargo outputs are cdylib (libduckdb_tachiom.dylib) plus a wasm example staticlib named duckdb_tachiom. Cannot hook duckdb_link_extensions until Phase 1 defines a real static/C-API target."
+        },
+        "commands": [
+          "uv sync --only-group build --no-install-project -p 3.12",
+          "uv sync --no-build-isolation -v --reinstall -p 3.12",
+          "uv sync --no-build-isolation --no-editable -v --reinstall -p 3.12",
+          "uv build --wheel"
+        ],
+        "v6_wheel_output_must_stay_separate_from_v7": "dist-special-g1/duckdb-1.6.0.dev366+ga1f0ab1911-cp312-cp312-macosx_26_0_arm64.whl",
+        "v7_artifact": {
+          "path": null,
+          "path_status": "missing",
+          "path_notes": "No v7 wheel has been built. Phase 1 must emit a separate artifact, not overwrite dist-special-g1."
+        }
+      }
+    }
+  },
+  "external_not_four_repo": {
+    "tachiom": {
+      "path": "/Users/wxl/Projects/tachiom",
+      "remote": "https://github.com/TusKANNy/tachiom.git",
+      "commit": "69f6f3dc2eef3b543983eb71227bb65590e498a8",
+      "branch": "main",
+      "dirty": false,
+      "tag": null,
+      "tag_status": "missing",
+      "tag_notes": "HEAD is 2 commits after v0.3.4. git describe --tags --always --dirty = v0.3.4-2-g69f6f3d. Cargo.toml/pyproject version string is still 0.3.4.",
+      "describe": "v0.3.4-2-g69f6f3d",
+      "subject": "Update logo",
+      "crate_targets": {
+        "package": "tachiom",
+        "crate_type": ["cdylib", "rlib"],
+        "bins_require_cli_feature": [
+          "tachiom_build",
+          "tachiom_build_from_tac",
+          "tachiom_build_from_parts",
+          "tachiom_search",
+          "bench_tac"
+        ]
+      },
+      "build_entry": {
+        "files": ["Cargo.toml", "pyproject.toml"],
+        "commands": [
+          "cargo build --release --features cli",
+          "maturin build --features python"
+        ]
+      }
+    },
+    "duckdb-tachiom": {
+      "path": "/Users/wxl/Projects/duckdb-tachiom",
+      "remote": "https://github.com/wuxianliang/duckdb-tachiom.git",
+      "commit": "5c91f3cb5c4091cb70735449e546446a09136a04",
+      "branch": "main",
+      "dirty": true,
+      "dirty_kind": "untracked only: examples/native_bench.rs, prompt-exports/, testing/. No staged/unstaged tracked edits.",
+      "tag": null,
+      "tag_status": "missing",
+      "tag_notes": "git describe --tags --always --dirty = 5c91f3c. No tag points at HEAD.",
+      "describe": "5c91f3c",
+      "subject": "docs: rewrite README as project front page",
+      "build_entry": {
+        "kind": "duckdb_rust_c_api_loadable_extension",
+        "no_cmakelists": true,
+        "files": ["Makefile", "Cargo.toml", "src/wasm_lib.rs", "extension-ci-tools/makefiles/c_api_extensions/rust.Makefile"],
+        "makefile_variables": {
+          "EXTENSION_NAME": "duckdb_tachiom",
+          "USE_UNSTABLE_C_API": "1",
+          "TARGET_DUCKDB_VERSION": "v1.5.4"
+        },
+        "cargo_targets": {
+          "package": "duckdb_tachiom",
+          "lib_crate_type": ["cdylib", "rlib"],
+          "wasm_example_name": "duckdb_tachiom",
+          "wasm_example_crate_type": ["staticlib"],
+          "native_cdylib_on_macos": "libduckdb_tachiom.dylib",
+          "loadable_artifact_name": "duckdb_tachiom.duckdb_extension"
+        },
+        "cmake_targets": [],
+        "cmake_targets_status": "blocked",
+        "cmake_targets_notes": "There is no CMakeLists.txt and no build_static_extension(tachiom) / tachiom_extension target. The only staticlib crate-type is the wasm example named duckdb_tachiom. Native build is cargo cdylib + metadata wrapper.",
+        "make_targets": [
+          "configure",
+          "debug",
+          "release",
+          "test",
+          "test_debug",
+          "test_release",
+          "build_extension_library_debug",
+          "build_extension_library_release"
+        ],
+        "commands": [
+          "make configure",
+          "make debug   # -> build/debug/duckdb_tachiom.duckdb_extension",
+          "make release # -> build/release/duckdb_tachiom.duckdb_extension",
+          "make test_debug"
+        ],
+        "abi_mismatch_vs_target_fork": {
+          "status": "blocked",
+          "notes": "Extension Makefile pins TARGET_DUCKDB_VERSION=v1.5.4 with unstable C API. Target engine is a1f0ab1911 (observed PRAGMA version v1.6.0-dev13823). Plan: if duckdb-tachiom needs a fix for the target ABI, that fix is a separate gate and fixed artifact hash; do not reimplement tachiom inside Flock."
+        },
+        "cargo_tachiom_pin": {
+          "git": "https://github.com/TusKANNy/tachiom.git",
+          "tag": "v0.3.4",
+          "local_tachiom_checkout_is_not_that_tag": "69f6f3dc2eef3b543983eb71227bb65590e498a8 is v0.3.4-2"
+        }
+      }
+    },
+    "MinerU-Popo": {
+      "path": "/Users/wxl/Projects/MinerU-Popo",
+      "remote": "https://github.com/opendatalab/MinerU-Popo.git",
+      "commit": "75c36a8c0f38adee03c78850366645a58cd5d4af",
+      "branch": "master",
+      "dirty": false,
+      "tag": null,
+      "tag_status": "missing",
+      "tag_notes": "git describe --tags --always --dirty = 75c36a8. No tag points at HEAD.",
+      "describe": "75c36a8",
+      "subject": "Update Citation",
+      "build_entry": {
+        "kind": "python_postprocessor_not_full_mineru_runtime",
+        "files": ["requirements.txt", "README.md"],
+        "commands": [
+          "conda create -n popo python=3.10 && pip install -r requirements.txt",
+          "docker run -it --rm --gpus=all --ipc=host --network=host dockerrr8277/mineru-popo-vllm:latest",
+          "hf download DreamEternal/MinerU-Popo --local-dir models/Mineru-Popo"
+        ],
+        "notes": "This checkout is MinerU-Popo (post-process tree builder), not a pinned MinerU parser distribution. Canonical MinerU runtime/container digest remain blockers for WI-3/ingestion."
+      }
+    }
+  },
+  "static_build_targets_exact": {
+    "flock": {
+      "duckdb_extension_load_name": "flock",
+      "static_cmake_target": "flock_extension",
+      "loadable_cmake_target": "flock_loadable_extension",
+      "source": "/Users/wxl/Projects/flock/CMakeLists.txt"
+    },
+    "fts": {
+      "duckdb_extension_load_name": "fts",
+      "static_cmake_target": "fts_extension",
+      "loadable_cmake_target": "fts_loadable_extension",
+      "source": "https://raw.githubusercontent.com/duckdb/duckdb-fts/2266e67d01c737cb65114e77c7c672e58869a635/CMakeLists.txt (TARGET_NAME fts; build_static_extension/build_loadable_extension). Not vendored in duckdb-pgagent/extension/."
+    },
+    "tachiom": {
+      "duckdb_extension_load_name": null,
+      "static_cmake_target": null,
+      "loadable_cmake_target": null,
+      "cargo_package": "duckdb_tachiom",
+      "native_crate_types": ["cdylib", "rlib"],
+      "wasm_example_staticlib_name": "duckdb_tachiom",
+      "makefile_EXTENSION_NAME": "duckdb_tachiom",
+      "loadable_filename": "duckdb_tachiom.duckdb_extension",
+      "source": "/Users/wxl/Projects/duckdb-tachiom/Makefile and Cargo.toml"
+    },
+    "python_loader": {
+      "engine_interface_target": "duckdb_target",
+      "python_module_target": "_duckdb",
+      "generated_loader_target": "duckdb_generated_extension_loader",
+      "link_policy": "WHOLE_ARCHIVE on duckdb_generated_extension_loader, then ${ext}_extension for each BUILD_EXTENSIONS entry",
+      "current_linked_extension_targets": [
+        "core_functions_extension",
+        "json_extension",
+        "parquet_extension",
+        "icu_extension"
+      ],
+      "source": "/Users/wxl/Projects/duckdb-python-pgagent/CMakeLists.txt and cmake/duckdb_loader.cmake"
+    }
+  }
+}

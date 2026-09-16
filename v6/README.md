@@ -6,13 +6,15 @@ v6 的目标是在 v5 的“PostgreSQL 负责状态和队列、库外 worker 负
 
 ## 版本和平台边界
 
-- Python 依赖只允许：`duckdb==1.6.0.dev365`
+- Python 依赖只允许：`duckdb==1.6.0.dev366+ga1f0ab1911`（本地 fork wheel，`[tool.uv.sources]` 指向兄弟仓库文件）
 - 只支持已验证的平台：macOS arm64、CPython 3.12
-- DuckDB 引擎实测版本：`v2.0.0-alpha38615`
+- DuckDB identity：`pragma_version()` 的 `library_version=v1.6.0-dev13823`、`source_id=a1f0ab1911`
+- Wheel SHA-256：`fa4ba6fb193e98d9273d494d1255393a4df33b8d6890fbbcdd65b064b3c15ad9`
 - 不使用 DuckDB 1.5.x，不等待或假设 DuckDB 2.0.0 GA，不做 Linux/Windows 矩阵
 - DuckDB 运行在 v6 worker 进程中，不运行在 PostgreSQL backend 内
 - PostgreSQL 是 agent 状态、队列、元数据和权限的事实源
 - pgembed 暂不修改；PostgreSQL 侧不安装 `pg_duckdb`
+- `run_schema` 仍是 PostgreSQL `duck_workbench_sessions.session_mode`，不是 DuckDB schema
 
 ## 核心功能范围
 
@@ -60,6 +62,8 @@ v6 的目标是在 v5 的“PostgreSQL 负责状态和队列、库外 worker 负
 - DuckDB 查询连接打开后立即关闭自动安装、自动加载和 external access，并且永不加载 `postgres` 扩展。
 - `temp` 模式中 worker 进程丢失意味着 `DUCK_SESSION_LOST`，不能静默创建一个空会话。
 - `run_schema` 只表示从 PostgreSQL 元数据重读源并重放 view 定义，不表示恢复历史数据快照。
+- grammar extension 默认关闭。启用时每个新连接都要重新 `LOAD` 本地 unsigned demo 扩展，然后立刻 `SET enable_external_access=false`；不 `INSTALL`，不把 grammar 状态写入数据库。
+- `LOAD` 发生在 `DuckSessionManager` 的 `_manager_lock` 内，现有 query `interrupt()` 覆盖不到它。
 
 详细计划和逐阶段审查见：
 
@@ -82,7 +86,38 @@ W8 budget_observability     passed
 W9 integration              passed
 ```
 
-运行环境固定为 `duckdb==1.6.0.dev365` / engine `v2.0.0-alpha38615` / macOS arm64 / CPython 3.12。
+运行环境固定为 `duckdb==1.6.0.dev366+ga1f0ab1911` / `library_version=v1.6.0-dev13823` / `source_id=a1f0ab1911` / macOS arm64 / CPython 3.12。
+
+## Grammar extension（opt-in，默认关闭）
+
+这是本地 demo unsigned native 扩展，**不是**已签名生产插件。SHA-256 只保证与 pinned bytes 一致。启用即在 worker 进程加载 native code。
+
+Extension 路径默认：
+
+`/Users/wxl/Projects/duckdb-pgagent/build/reldebug/test/extension/loadable_grammar_extension_demo.duckdb_extension`
+
+Extension SHA-256：`fce89a46632a3ff3b98f75bc7f9bafb7c663e5b31d3cc0453d012ce4c8986393`
+
+配置在 `DuckSessionManager` 构造时冻结（读 env 一次）。之后改 env 无效，直到重启 worker。
+
+| 变量 | 含义 |
+|---|---|
+| `PG_AGENT_DUCKDB_GRAMMAR_ENABLED` | 缺省关闭。`1/true/yes/on` 启用；`0/false/no/off` 关闭。其它非空值是配置错误。 |
+| `PG_AGENT_DUCKDB_GRAMMAR_EXTENSION_PATH` | 仅启用时使用。缺省为上面的 demo 路径。 |
+| `PG_AGENT_DUCKDB_GRAMMAR_EXTENSION_SHA256` | 仅启用时使用。必须 64 hex。缺省为上面的 digest。 |
+| `PG_AGENT_DUCKDB_GRAMMAR_FEATURES` | 仅启用时使用。必须恰好 `pipe_query_syntax`。 |
+| `PG_AGENT_DUCKDB_GRAMMAR_ENABLE_EXTERNAL_ACCESS` | 与 ENABLED 同一套布尔 token。true **始终拒绝**（含 grammar 关闭时）。 |
+| `PG_AGENT_DUCKDB_GRAMMAR_NATIVE_TEST` | 仅测试。`1` 时运行真实 extension 集成；缺省 skip。marker 打开而文件缺失则失败。 |
+
+启动时（启用）会 hash 一次；每个新连接 `LOAD` 前再 hash 一次。`allow_unsigned_extensions` 不是用户配置，只在启用分支传给 `duckdb.connect`。
+
+Prompt：静态 `agent_system` v3 不含 pipe 广告。worker 只在该 run 已有 live DuckSession 且 capability 确认 `pipe_query_syntax` 时追加一条 system 消息。第一次 LLM 可能还看不到 `|>`。
+
+关闭 grammar：停 worker，unset/`=0` `PG_AGENT_DUCKDB_GRAMMAR_ENABLED`，清 path/hash/features/native-test，重启。不会碰扩展文件，不会 `LOAD`。
+
+回滚旧 wheel：只关 grammar **不够**（disabled 也校验 fork identity）。恢复 `pyproject.toml`/`uv.lock` 中的 `duckdb==1.6.0.dev365`，`uv sync --locked`，并恢复 identity 常量。
+
+Streamlit demo（`v6/workbench_demo`）不注入配置，走进程 env；默认关闭。
 
 当前版本仍是核心功能实验版：`temp` 会话丢失会终止 run；`run_schema` 是重读源数据后的逻辑重放；不支持 PIVOT、文件直读、live PostgreSQL catalog、多 worker 自动亲和和跨引擎原子提交。
 

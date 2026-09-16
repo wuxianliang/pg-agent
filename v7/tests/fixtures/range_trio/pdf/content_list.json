@@ -1,0 +1,15 @@
+[
+  {
+    "type": "text",
+    "text": "DuckRAG P19-S Fixture",
+    "text_level": 1,
+    "bbox": [112, 70, 439, 94],
+    "page_idx": 0
+  },
+  {
+    "type": "text",
+    "text": "Offline MinerU process-control verification.",
+    "bbox": [112, 113, 488, 132],
+    "page_idx": 0
+  }
+]

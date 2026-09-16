@@ -23,7 +23,8 @@ def main():
   cur.execute("SELECT agent_start_session('South revenue',10,'temp')"); run=cur.fetchone()[0]
   cur.execute("SELECT pgmq.purge_queue('llm_requests')")
  resolver=PostgresSourceResolver([SourceConfig('agent_db',uri,frozenset({('public','sales')}))])
- worker=DuckDBWorkerProcessor(uri,resolver=resolver)
+ from v6.session_durability.duckdb_grammar import GrammarExtensionConfig
+ worker=DuckDBWorkerProcessor(uri,resolver=resolver,grammar_config=GrammarExtensionConfig())
  def tool(action,args):
   with c.cursor() as cur:
    cur.execute("SELECT set_config('pg_agent.current_run_id',%s,false)",(run,))

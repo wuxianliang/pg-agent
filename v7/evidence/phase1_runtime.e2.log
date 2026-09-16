@@ -1,0 +1,33 @@
+command: /tmp/v7-phase1-verify/bin/python v7/tests/test_phase1_runtime.py
+cwd: /Users/wxl/Projects/pg-agent
+python: /tmp/v7-phase1-verify/bin/python
+start_utc: 2026-08-30T12:21:28Z
+---
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+Failed to attach flock_storage: Resource In Use Error: Unique file handle conflict: Cannot attach "flock_storage" - the database file "/private/tmp/v7-phase1-home.791cRT/.duckdb/flock_storage/flock.db" is already attached by database "flock_storage"
+Failed to USE flock_storage: Catalog Error: SET schema: No catalog + schema named "flock_storage" found.
+phase1 runtime: all checks passed
+exit_code: 0

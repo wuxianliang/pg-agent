@@ -1,0 +1,60 @@
+{
+  "artifact_count": 84,
+  "artifact_total_size_bytes": 269202543,
+  "contract_format": "duckrag-wi1-environment/1",
+  "files": {
+    "../../locks/p19-cpython312-arm64.lock.json": "2bc744715ae0407de1f30e62f6a4f64ec4eff8eff706ef58250267dcda3d91b5",
+    ".python-version": "aa0d6581054e6e4ff3f91839deca7a854ad37221b8784d060b42d0f847ff1a3b",
+    "pyproject.toml": "c61b8db1ef01026575cfa811af052254f0f0c9ba8c484371d43e42032dc2af1c",
+    "requirements-arm64.txt": "9de6d1af4d6e61197d01032ce2e78039c57f74d7c2d95e98dd9ac7c1964651f7",
+    "uv.lock": "5b2b5e38c1fbe2c594df879bd19209426211b4c15d3a5e223865415145f0393b"
+  },
+  "model_provisioning_allowed": true,
+  "pipeline_model": {
+    "case_materialization_policy": "upstream models/OCR/PaddleOCR paths materialize under models/OCR/paddleocr on case-insensitive APFS",
+    "file_count": 187,
+    "immutable_revision": "ed6b654c018d742e65a17671e379c5e6ecc87ec9",
+    "license": "AGPL-3.0",
+    "manifest_sha256": "8c4a6a53815e2a8f410d71350128d0db1276579ac9f50cd1dee56b165e4a4df6",
+    "repository": "opendatalab/PDF-Extract-Kit-1.0",
+    "total_size_bytes": 15127785361
+  },
+  "platform_marker": "sys_platform == 'darwin' and platform_machine == 'arm64' and python_full_version == '3.12.13'",
+  "profile": "pipeline",
+  "profile_id": "mineru-3.4.4-pipeline-cpython312-darwin-arm64",
+  "python": {
+    "architecture": "arm64",
+    "expected_launcher": "/opt/homebrew/bin/python3.12",
+    "implementation": "CPython",
+    "sys_platform": "darwin",
+    "version": "3.12.13"
+  },
+  "root_requirement": "mineru[pipeline]==3.4.4",
+  "runtime_supplements": [
+    "six==1.17.0"
+  ],
+  "storage": {
+    "dependency_sync_declared_increment_bytes": 2147483648,
+    "repository_external_required": [
+      "venv_root",
+      "uv_cache_root",
+      "wheelhouse",
+      "model_cache_root",
+      "execution_work_root"
+    ],
+    "reserve_bytes": 5368709120
+  },
+  "tls": {
+    "ca_identity": "Proxyman local interception CA documented by docs/local-environment.md",
+    "default_path": "~/Library/Application Support/com.proxyman.NSProxy/app-data/proxyman-ca.pem",
+    "insecure_overrides_forbidden": true,
+    "sha256": "2bab15d93c3b8cc1eac9b0c7028cb557a64d52998baf403372c942e29bf9919c",
+    "verification_required": true
+  },
+  "uv": {
+    "build": "252f88733",
+    "expected_version_output": "uv 0.8.24 (252f88733 2025-10-07)",
+    "release_date": "2025-10-07",
+    "version": "0.8.24"
+  }
+}

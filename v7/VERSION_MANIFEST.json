@@ -1,0 +1,1148 @@
+{
+  "phase": 0,
+  "manifest_kind": "v7_build_model_artifact",
+  "authority": "docs/plans/flock-rag-on-duckdb-final-plan-v4.1.md \u00a73.2 Manifest fields",
+  "work_item": "WI-2",
+  "recorded_at_utc": "2026-08-29T10:55:14Z",
+  "e1_lock_merge": {
+    "work_item": "WI-3",
+    "at_utc": "2026-08-29T11:14:59Z",
+    "sources": [
+      "v7/evidence/contracts/EVIDENCE_REGISTER.json",
+      "v7/evidence/contracts/mdenseon.md",
+      "v7/evidence/contracts/mineru.md",
+      "v7/evidence/contracts/tachiom.md"
+    ],
+    "rule": "Copied only values already present in those files. No invented SHA-256. Live-file-absent backends remain blocked. Not E2 for mdenseon/tachiom/mineru runtime."
+  },
+  "release_gate": {
+    "schema_version": "flock-rag-release-gate/2",
+    "evaluator": "v7.gates.release_evaluator",
+    "phase0": {
+      "schema_version": "flock-rag-phase0-baseline-status/3",
+      "evaluator": "v7.gates.phase0_evaluator",
+      "phase0_pass": false,
+      "blocker_ids": [
+        "dense_mdenseon",
+        "multi_vector_tachiom",
+        "legacy_cache_live",
+        "live_legacy_cache",
+        "live_mdenseon",
+        "target_tachiom_static_artifact",
+        "C3",
+        "DR-PO-1",
+        "DR-PO-2",
+        "DR-PO-3",
+        "F-9",
+        "F-12",
+        "C5",
+        "C6",
+        "C7",
+        "DR-SEC-4",
+        "DR-T-2",
+        "tachiom_static_loadable_artifact_sha256",
+        "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash",
+        "flock_abi_catalog_version",
+        "canonical_mineru_contract_version",
+        "embedding_batch_contract",
+        "tachiom_static_cmake_target",
+        "pg-agent dirty",
+        "duckdb-tachiom dirty",
+        "flock.duckdb uninitialized",
+        "flock.extension-ci-tools uninitialized"
+      ],
+      "blocker_classes": [
+        "blockers",
+        "missing_baselines",
+        "open_corrections",
+        "required_null_hashes",
+        "configuration_gaps",
+        "dirty_uninitialized_dependencies"
+      ],
+      "reasons": [
+        {
+          "blocker_id": "dense_mdenseon",
+          "blocker_class": "blockers",
+          "code": "BACKEND_GATE_BLOCKED",
+          "details": {
+            "gate": "dense_mdenseon"
+          }
+        },
+        {
+          "blocker_id": "multi_vector_tachiom",
+          "blocker_class": "blockers",
+          "code": "BACKEND_GATE_BLOCKED",
+          "details": {
+            "gate": "multi_vector_tachiom"
+          }
+        },
+        {
+          "blocker_id": "legacy_cache_live",
+          "blocker_class": "blockers",
+          "code": "BACKEND_GATE_BLOCKED",
+          "details": {
+            "gate": "legacy_cache_live"
+          }
+        },
+        {
+          "blocker_id": "live_legacy_cache",
+          "blocker_class": "missing_baselines",
+          "code": "BASELINE_MISSING_OR_UNAVAILABLE",
+          "details": {
+            "item": "live_legacy_cache",
+            "required_evidence_level": "E2",
+            "live_runtime_missing": true,
+            "acceptance_fixture_missing": true,
+            "evidence_level": "E0"
+          }
+        },
+        {
+          "blocker_id": "live_mdenseon",
+          "blocker_class": "missing_baselines",
+          "code": "BASELINE_MISSING_OR_UNAVAILABLE",
+          "details": {
+            "item": "live_mdenseon",
+            "required_evidence_level": "E2",
+            "live_runtime_missing": true,
+            "acceptance_fixture_missing": true,
+            "evidence_level": "E0"
+          }
+        },
+        {
+          "blocker_id": "target_tachiom_static_artifact",
+          "blocker_class": "missing_baselines",
+          "code": "BASELINE_MISSING_OR_UNAVAILABLE",
+          "details": {
+            "item": "target_tachiom_static_artifact",
+            "required_evidence_level": "E2",
+            "live_runtime_missing": true,
+            "acceptance_fixture_missing": true,
+            "evidence_level": "E0"
+          }
+        },
+        {
+          "blocker_id": "C3",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "UNRESOLVED"
+          }
+        },
+        {
+          "blocker_id": "DR-PO-1",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "UNRESOLVED"
+          }
+        },
+        {
+          "blocker_id": "DR-PO-2",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "UNRESOLVED"
+          }
+        },
+        {
+          "blocker_id": "DR-PO-3",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "UNRESOLVED"
+          }
+        },
+        {
+          "blocker_id": "F-9",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "PARTIAL"
+          }
+        },
+        {
+          "blocker_id": "F-12",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "PARTIAL"
+          }
+        },
+        {
+          "blocker_id": "C5",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "PARTIAL"
+          }
+        },
+        {
+          "blocker_id": "C6",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "PARTIAL"
+          }
+        },
+        {
+          "blocker_id": "C7",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "PARTIAL"
+          }
+        },
+        {
+          "blocker_id": "DR-SEC-4",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "PARTIAL"
+          }
+        },
+        {
+          "blocker_id": "DR-T-2",
+          "blocker_class": "open_corrections",
+          "code": "OPEN_CORRECTION",
+          "details": {
+            "status": "PARTIAL"
+          }
+        },
+        {
+          "blocker_id": "tachiom_static_loadable_artifact_sha256",
+          "blocker_class": "required_null_hashes",
+          "code": "REQUIRED_HASH_UNAVAILABLE",
+          "details": {
+            "path": "tachiom_static_loadable_artifact_sha256"
+          }
+        },
+        {
+          "blocker_id": "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash",
+          "blocker_class": "required_null_hashes",
+          "code": "REQUIRED_HASH_UNAVAILABLE",
+          "details": {
+            "path": "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash"
+          }
+        },
+        {
+          "blocker_id": "flock_abi_catalog_version",
+          "blocker_class": "configuration_gaps",
+          "code": "CONFIG_UNRESOLVED",
+          "details": {
+            "field": "flock_abi_catalog_version",
+            "status": "blocked"
+          }
+        },
+        {
+          "blocker_id": "canonical_mineru_contract_version",
+          "blocker_class": "configuration_gaps",
+          "code": "CONFIG_UNRESOLVED",
+          "details": {
+            "field": "canonical_mineru_contract_version",
+            "status": "blocked"
+          }
+        },
+        {
+          "blocker_id": "embedding_batch_contract",
+          "blocker_class": "configuration_gaps",
+          "code": "CONFIG_UNRESOLVED",
+          "details": {
+            "field": "embedding_batch_contract",
+            "status": "blocked"
+          }
+        },
+        {
+          "blocker_id": "tachiom_static_cmake_target",
+          "blocker_class": "configuration_gaps",
+          "code": "CONFIG_UNRESOLVED",
+          "details": {
+            "field": "tachiom_static_cmake_target",
+            "status": "blocked"
+          }
+        },
+        {
+          "blocker_id": "pg-agent dirty",
+          "blocker_class": "dirty_uninitialized_dependencies",
+          "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+          "details": {
+            "label": "pg-agent dirty"
+          }
+        },
+        {
+          "blocker_id": "duckdb-tachiom dirty",
+          "blocker_class": "dirty_uninitialized_dependencies",
+          "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+          "details": {
+            "label": "duckdb-tachiom dirty"
+          }
+        },
+        {
+          "blocker_id": "flock.duckdb uninitialized",
+          "blocker_class": "dirty_uninitialized_dependencies",
+          "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+          "details": {
+            "label": "flock.duckdb uninitialized"
+          }
+        },
+        {
+          "blocker_id": "flock.extension-ci-tools uninitialized",
+          "blocker_class": "dirty_uninitialized_dependencies",
+          "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+          "details": {
+            "label": "flock.extension-ci-tools uninitialized"
+          }
+        }
+      ]
+    },
+    "phase_gates": {
+      "phase_1": {
+        "state": "PASSED",
+        "evidence_level": "E2",
+        "exit_criteria_passed": true
+      },
+      "phase_2": {
+        "state": "NOT_STARTED",
+        "evidence_level": "E0",
+        "exit_criteria_passed": false
+      },
+      "phase_3": {
+        "state": "NOT_STARTED",
+        "evidence_level": "E0",
+        "exit_criteria_passed": false
+      },
+      "phase_4": {
+        "state": "NOT_STARTED",
+        "evidence_level": "E0",
+        "exit_criteria_passed": false
+      },
+      "phase_5": {
+        "state": "NOT_STARTED",
+        "evidence_level": "E0",
+        "exit_criteria_passed": false
+      },
+      "phase_6": {
+        "state": "NOT_STARTED",
+        "evidence_level": "E0",
+        "exit_criteria_passed": false
+      },
+      "phase_7": {
+        "state": "NOT_STARTED",
+        "evidence_level": "E0",
+        "exit_criteria_passed": false
+      }
+    },
+    "e3": {
+      "state": "NOT_STARTED",
+      "evidence_level": "E0",
+      "frozen_four_repo_pins": false,
+      "cross_repo_integration_passed": false,
+      "phase_7_exit_criteria_passed": false
+    },
+    "release_ready": false,
+    "would_pass": false,
+    "blocker_ids": [
+      "dense_mdenseon",
+      "multi_vector_tachiom",
+      "legacy_cache_live",
+      "live_legacy_cache",
+      "live_mdenseon",
+      "target_tachiom_static_artifact",
+      "C3",
+      "DR-PO-1",
+      "DR-PO-2",
+      "DR-PO-3",
+      "F-9",
+      "F-12",
+      "C5",
+      "C6",
+      "C7",
+      "DR-SEC-4",
+      "DR-T-2",
+      "tachiom_static_loadable_artifact_sha256",
+      "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash",
+      "flock_abi_catalog_version",
+      "canonical_mineru_contract_version",
+      "embedding_batch_contract",
+      "tachiom_static_cmake_target",
+      "pg-agent dirty",
+      "duckdb-tachiom dirty",
+      "flock.duckdb uninitialized",
+      "flock.extension-ci-tools uninitialized",
+      "phase_2_not_passed",
+      "phase_3_not_passed",
+      "phase_4_not_passed",
+      "phase_5_not_passed",
+      "phase_6_not_passed",
+      "phase_7_not_passed",
+      "e3_not_verified"
+    ],
+    "blocker_classes": [
+      "blockers",
+      "missing_baselines",
+      "open_corrections",
+      "required_null_hashes",
+      "configuration_gaps",
+      "dirty_uninitialized_dependencies",
+      "phase_gates",
+      "e3_integration"
+    ],
+    "reasons": [
+      {
+        "blocker_id": "dense_mdenseon",
+        "blocker_class": "blockers",
+        "code": "BACKEND_GATE_BLOCKED",
+        "details": {
+          "gate": "dense_mdenseon"
+        }
+      },
+      {
+        "blocker_id": "multi_vector_tachiom",
+        "blocker_class": "blockers",
+        "code": "BACKEND_GATE_BLOCKED",
+        "details": {
+          "gate": "multi_vector_tachiom"
+        }
+      },
+      {
+        "blocker_id": "legacy_cache_live",
+        "blocker_class": "blockers",
+        "code": "BACKEND_GATE_BLOCKED",
+        "details": {
+          "gate": "legacy_cache_live"
+        }
+      },
+      {
+        "blocker_id": "live_legacy_cache",
+        "blocker_class": "missing_baselines",
+        "code": "BASELINE_MISSING_OR_UNAVAILABLE",
+        "details": {
+          "item": "live_legacy_cache",
+          "required_evidence_level": "E2",
+          "live_runtime_missing": true,
+          "acceptance_fixture_missing": true,
+          "evidence_level": "E0"
+        }
+      },
+      {
+        "blocker_id": "live_mdenseon",
+        "blocker_class": "missing_baselines",
+        "code": "BASELINE_MISSING_OR_UNAVAILABLE",
+        "details": {
+          "item": "live_mdenseon",
+          "required_evidence_level": "E2",
+          "live_runtime_missing": true,
+          "acceptance_fixture_missing": true,
+          "evidence_level": "E0"
+        }
+      },
+      {
+        "blocker_id": "target_tachiom_static_artifact",
+        "blocker_class": "missing_baselines",
+        "code": "BASELINE_MISSING_OR_UNAVAILABLE",
+        "details": {
+          "item": "target_tachiom_static_artifact",
+          "required_evidence_level": "E2",
+          "live_runtime_missing": true,
+          "acceptance_fixture_missing": true,
+          "evidence_level": "E0"
+        }
+      },
+      {
+        "blocker_id": "C3",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "UNRESOLVED"
+        }
+      },
+      {
+        "blocker_id": "DR-PO-1",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "UNRESOLVED"
+        }
+      },
+      {
+        "blocker_id": "DR-PO-2",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "UNRESOLVED"
+        }
+      },
+      {
+        "blocker_id": "DR-PO-3",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "UNRESOLVED"
+        }
+      },
+      {
+        "blocker_id": "F-9",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "PARTIAL"
+        }
+      },
+      {
+        "blocker_id": "F-12",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "PARTIAL"
+        }
+      },
+      {
+        "blocker_id": "C5",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "PARTIAL"
+        }
+      },
+      {
+        "blocker_id": "C6",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "PARTIAL"
+        }
+      },
+      {
+        "blocker_id": "C7",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "PARTIAL"
+        }
+      },
+      {
+        "blocker_id": "DR-SEC-4",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "PARTIAL"
+        }
+      },
+      {
+        "blocker_id": "DR-T-2",
+        "blocker_class": "open_corrections",
+        "code": "OPEN_CORRECTION",
+        "details": {
+          "status": "PARTIAL"
+        }
+      },
+      {
+        "blocker_id": "tachiom_static_loadable_artifact_sha256",
+        "blocker_class": "required_null_hashes",
+        "code": "REQUIRED_HASH_UNAVAILABLE",
+        "details": {
+          "path": "tachiom_static_loadable_artifact_sha256"
+        }
+      },
+      {
+        "blocker_id": "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash",
+        "blocker_class": "required_null_hashes",
+        "code": "REQUIRED_HASH_UNAVAILABLE",
+        "details": {
+          "path": "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash"
+        }
+      },
+      {
+        "blocker_id": "flock_abi_catalog_version",
+        "blocker_class": "configuration_gaps",
+        "code": "CONFIG_UNRESOLVED",
+        "details": {
+          "field": "flock_abi_catalog_version",
+          "status": "blocked"
+        }
+      },
+      {
+        "blocker_id": "canonical_mineru_contract_version",
+        "blocker_class": "configuration_gaps",
+        "code": "CONFIG_UNRESOLVED",
+        "details": {
+          "field": "canonical_mineru_contract_version",
+          "status": "blocked"
+        }
+      },
+      {
+        "blocker_id": "embedding_batch_contract",
+        "blocker_class": "configuration_gaps",
+        "code": "CONFIG_UNRESOLVED",
+        "details": {
+          "field": "embedding_batch_contract",
+          "status": "blocked"
+        }
+      },
+      {
+        "blocker_id": "tachiom_static_cmake_target",
+        "blocker_class": "configuration_gaps",
+        "code": "CONFIG_UNRESOLVED",
+        "details": {
+          "field": "tachiom_static_cmake_target",
+          "status": "blocked"
+        }
+      },
+      {
+        "blocker_id": "pg-agent dirty",
+        "blocker_class": "dirty_uninitialized_dependencies",
+        "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+        "details": {
+          "label": "pg-agent dirty"
+        }
+      },
+      {
+        "blocker_id": "duckdb-tachiom dirty",
+        "blocker_class": "dirty_uninitialized_dependencies",
+        "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+        "details": {
+          "label": "duckdb-tachiom dirty"
+        }
+      },
+      {
+        "blocker_id": "flock.duckdb uninitialized",
+        "blocker_class": "dirty_uninitialized_dependencies",
+        "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+        "details": {
+          "label": "flock.duckdb uninitialized"
+        }
+      },
+      {
+        "blocker_id": "flock.extension-ci-tools uninitialized",
+        "blocker_class": "dirty_uninitialized_dependencies",
+        "code": "DEPENDENCY_DIRTY_OR_UNINITIALIZED",
+        "details": {
+          "label": "flock.extension-ci-tools uninitialized"
+        }
+      },
+      {
+        "blocker_id": "phase_2_not_passed",
+        "blocker_class": "phase_gates",
+        "code": "PHASE_GATE_NOT_PASSED",
+        "details": {
+          "phase": "phase_2",
+          "state": "NOT_STARTED",
+          "evidence_level": "E0",
+          "exit_criteria_passed": false,
+          "schema": "PRESENT"
+        }
+      },
+      {
+        "blocker_id": "phase_3_not_passed",
+        "blocker_class": "phase_gates",
+        "code": "PHASE_GATE_NOT_PASSED",
+        "details": {
+          "phase": "phase_3",
+          "state": "NOT_STARTED",
+          "evidence_level": "E0",
+          "exit_criteria_passed": false,
+          "schema": "PRESENT"
+        }
+      },
+      {
+        "blocker_id": "phase_4_not_passed",
+        "blocker_class": "phase_gates",
+        "code": "PHASE_GATE_NOT_PASSED",
+        "details": {
+          "phase": "phase_4",
+          "state": "NOT_STARTED",
+          "evidence_level": "E0",
+          "exit_criteria_passed": false,
+          "schema": "PRESENT"
+        }
+      },
+      {
+        "blocker_id": "phase_5_not_passed",
+        "blocker_class": "phase_gates",
+        "code": "PHASE_GATE_NOT_PASSED",
+        "details": {
+          "phase": "phase_5",
+          "state": "NOT_STARTED",
+          "evidence_level": "E0",
+          "exit_criteria_passed": false,
+          "schema": "PRESENT"
+        }
+      },
+      {
+        "blocker_id": "phase_6_not_passed",
+        "blocker_class": "phase_gates",
+        "code": "PHASE_GATE_NOT_PASSED",
+        "details": {
+          "phase": "phase_6",
+          "state": "NOT_STARTED",
+          "evidence_level": "E0",
+          "exit_criteria_passed": false,
+          "schema": "PRESENT"
+        }
+      },
+      {
+        "blocker_id": "phase_7_not_passed",
+        "blocker_class": "phase_gates",
+        "code": "PHASE_GATE_NOT_PASSED",
+        "details": {
+          "phase": "phase_7",
+          "state": "NOT_STARTED",
+          "evidence_level": "E0",
+          "exit_criteria_passed": false,
+          "schema": "PRESENT"
+        }
+      },
+      {
+        "blocker_id": "e3_not_verified",
+        "blocker_class": "e3_integration",
+        "code": "E3_NOT_VERIFIED",
+        "details": {
+          "state": "NOT_STARTED",
+          "evidence_level": "E0",
+          "frozen_four_repo_pins": false,
+          "cross_repo_integration_passed": false,
+          "phase_7_exit_criteria_passed": false,
+          "schema": "PRESENT"
+        }
+      }
+    ]
+  },
+  "completeness": {
+    "pg_agent_commit": "recorded",
+    "flock_commit": "recorded",
+    "duckdb_pgagent_commit": "recorded",
+    "duckdb_python_pgagent_commit": "recorded",
+    "duckdb_engine_version": "recorded",
+    "build_flags": "recorded",
+    "python_version": "recorded",
+    "platform_architecture": "recorded",
+    "flock_abi_catalog_version": "blocked",
+    "mineru_runtime_distribution_version": "recorded_from_lock",
+    "mineru_container_image_digest": "not_applicable",
+    "mineru_model_name_version_weights_hash": "recorded_from_lock",
+    "mineru_parser_config": "recorded_e1",
+    "canonical_mineru_contract_version": "blocked",
+    "mdenseon_package_native_runtime_version": "recorded_from_lock",
+    "mdenseon_model_weights_sha256": "recorded_from_lock",
+    "tokenizer_identity_version_hash": "recorded_from_lock",
+    "embedding_dimension_dtype_normalization_batch": "partial",
+    "tachiom_commit": "recorded",
+    "duckdb_tachiom_commit": "recorded",
+    "tachiom_static_loadable_artifact_sha256": "blocked",
+    "tachiom_index_format_version": "recorded_e1",
+    "fts_extension_version": "recorded",
+    "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash": "blocked",
+    "build_artifact_wheel_sha256": "recorded"
+  },
+  "pg_agent_commit": "b569051530bfe4fb092b225f89695e15c2568e5d",
+  "pg_agent_branch": "main",
+  "pg_agent_dirty": true,
+  "pg_agent_tag": null,
+  "pg_agent_tag_status": "missing",
+  "pg_agent_tag_notes": "No tag at HEAD. describe=b569051-dirty.",
+  "flock_commit": "a291edce23db47b877dfcf595aabd1e88ca6ecb4",
+  "flock_branch": "dev",
+  "flock_dirty": false,
+  "flock_tag": null,
+  "flock_tag_status": "missing",
+  "flock_tag_notes": "describe=v0.8.0-3-ga291edce. Product tag v0.8.0 is an ancestor, not HEAD.",
+  "flock_describe": "v0.8.0-3-ga291edce",
+  "duckdb_pgagent_commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+  "duckdb_pgagent_commit_short10": "a1f0ab1911",
+  "duckdb_pgagent_branch": "integration/grammar-24919-20260829",
+  "duckdb_pgagent_branch_role": "provenance_only",
+  "duckdb_pgagent_dirty": false,
+  "duckdb_pgagent_tag": "duckdb-special-20260829-g1",
+  "duckdb_python_pgagent_commit": "40d439bcd10affb1c920efa549e61df25e710248",
+  "duckdb_python_pgagent_branch": "integration/duckdb-special-20260829-g1",
+  "duckdb_python_pgagent_dirty": false,
+  "duckdb_python_pgagent_tag": "duckdb-python-special-20260829-g1",
+  "duckdb_python_pgagent_vendored_engine_commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+  "duckdb_engine_version": "v1.6.0-dev13823",
+  "duckdb_engine_version_source": "PRAGMA version / SELECT version() on the v6 pinned wheel imported in pg-agent .venv",
+  "duckdb_engine_git_hash_from_pragma": "a1f0ab1911",
+  "duckdb_engine_library_type_from_pragma": "Development Version",
+  "duckdb_python_package_version": "1.6.0.dev366+ga1f0ab1911",
+  "duckdb_git_describe_v_star": "v1.5.5-11931-ga1f0ab1911",
+  "duckdb_git_describe_v_star_notes": "git -C duckdb-pgagent describe --tags --long --match 'v*'. CMake MAIN_BRANCH_VERSIONING=TRUE bumps 1.5.5 \u2192 1.6.0-devN. Observed N in the built wheel is 13823, not 11931; record both, do not collapse them.",
+  "build_flags": {
+    "v6_python_wheel": {
+      "BUILD_EXTENSIONS": "core_functions;json;parquet;icu",
+      "DUCKDB_SOURCE_PATH": "external/duckdb @ a1f0ab191185c0852b162adc6feb206822dc9daa",
+      "CMAKE_CXX_STANDARD": "17",
+      "BUILD_SHELL": "OFF",
+      "BUILD_UNITTESTS": "OFF",
+      "BUILD_BENCHMARKS": "OFF",
+      "DISABLE_UNITY": "OFF (release wheel); ON for editable darwin override",
+      "DISABLE_BUILTIN_EXTENSIONS": "OFF",
+      "ENABLE_EXTENSION_AUTOINSTALL": "ON",
+      "ENABLE_EXTENSION_AUTOLOADING": "ON",
+      "NATIVE_ARCH": "OFF",
+      "ENABLE_SANITIZER": "OFF",
+      "ENABLE_UBSAN": "OFF",
+      "WHOLE_ARCHIVE_loader": "duckdb_generated_extension_loader",
+      "wheel_tag": "cp312-cp312-macosx_26_0_arm64"
+    },
+    "v7_python_wheel": {
+      "status": "recorded",
+      "notes": "Phase 1 local wheel. flock_extension and fts_extension statically linked via cmake/v7_extension_config.cmake (fts not in BUILD_EXTENSIONS because engine fts.cmake is DONT_LINK). tachiom blocked RAG_MULTI_VECTOR_UNAVAILABLE. ENABLE_EXTENSION_AUTOINSTALL/AUTOLOADING OFF. Health fts row is unknown (FLOCK_ENABLE_FTS off); duckdb_extensions() reports fts STATICALLY_LINKED. Do not reuse dist-special-g1.",
+      "required_static_extensions": [
+        "flock_extension",
+        "fts_extension"
+      ],
+      "target_duckdb_commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+      "artifact_path": "../duckdb-python-pgagent/dist-v7/duckdb-1.6.0.dev366-cp312-cp312-macosx_26_0_arm64.whl",
+      "artifact_path_status": "recorded",
+      "separate_from_v6_wheel": true,
+      "artifact_sha256": "d4e8fd28e6c6daa22dba349ed253b45b7a9f01e110126f65dc79a126308ba5ff",
+      "WHOLE_ARCHIVE_loader": "duckdb_generated_extension_loader",
+      "tachiom": "blocked",
+      "tachiom_gate": "RAG_MULTI_VECTOR_UNAVAILABLE"
+    },
+    "duckdb_pgagent_default": {
+      "extension_config_cmake": [
+        "core_functions",
+        "parquet"
+      ],
+      "fts_default": "DONT_LINK out-of-tree duckdb-fts @ 2266e67d01c737cb65114e77c7c672e58869a635"
+    },
+    "flock_documented_cmake": "-DEXTENSION_STATIC_BUILD=1 -DDUCKDB_EXTENSION_CONFIGS=../extension_config.cmake -DVCPKG_MANIFEST_DIR=../../ -DVCPKG_BUILD=1 -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake"
+  },
+  "python_version": "CPython 3.12.13",
+  "python_version_target": "CPython 3.12 (plan \u00a73.14 performance baseline)",
+  "python_executable_observed": "/Users/wxl/Projects/pg-agent/.venv/bin/python -> /opt/homebrew/opt/python@3.12/bin/python3.12",
+  "python_requires_duckdb_python": ">=3.11.0",
+  "python_requires_pg_agent": ">=3.12",
+  "platform_architecture": "macOS 26.6.2 arm64 (Darwin 25.6.0 RELEASE_ARM64_T8112)",
+  "platform": {
+    "os": "macOS",
+    "os_version": "26.6.2",
+    "os_build": "25G83",
+    "arch": "arm64",
+    "python_platform_string": "macOS-26.6.2-arm64-arm-64bit"
+  },
+  "flock_abi_catalog_version": null,
+  "flock_abi_catalog_version_status": "blocked",
+  "flock_abi_catalog_version_notes": "No Flock RAG catalog/ABI version exists in source at a291edce. Current Flock is the LLM extension (describe v0.8.0-3-ga291edce). flock_rag_store_meta.catalog_version is a Phase 2 schema field. Opening a v7 live store must refuse until this is defined and hashed. Do not invent a catalog version.",
+  "mineru_runtime_distribution_version": "3.4.4",
+  "mineru_runtime_distribution_version_status": "recorded_from_lock",
+  "mineru_runtime_distribution_version_evidence_level": "E1",
+  "mineru_runtime_distribution_version_notes": "Copied from locks/mineru-3.4.4.lock.json as cited in v7/evidence/contracts/mineru.md. Identity is mineru[pipeline]==3.4.4 wheel + Darwin profile_id, not an OCI container. Not a live MinerU execution. Not E2. MinerU-Popo 75c36a8c is a post-processor, not this pin. Live parse is a separate backend gate.",
+  "mineru_wheel_name": "mineru-3.4.4-py3-none-any.whl",
+  "mineru_wheel_sha256": "d4d678539782a7683d998e2914a52d96b5720676ce65658b29666b1f4d9dfd13",
+  "mineru_wheel_sha256_status": "recorded_from_lock",
+  "mineru_wheel_sha256_evidence_level": "E1",
+  "mineru_wheel_size_bytes": 1540534,
+  "mineru_github_release_tag": "mineru-3.4.4-released",
+  "mineru_tag_commit_sha": "0dfc9460cd9ab693b9af60ae3fbffd7bc111b062",
+  "mineru_upstream_repo": "https://github.com/opendatalab/MinerU",
+  "mineru_popo_commit_not_the_parser_pin": "75c36a8c0f38adee03c78850366645a58cd5d4af",
+  "mineru_container_image_digest": null,
+  "mineru_container_image_digest_status": "not_applicable",
+  "mineru_container_image_digest_notes": "N/A: P19-S identity is mineru[pipeline]==3.4.4 wheel + 84-wheel lock + Darwin profile_id, not an OCI container runtime. Not present in mineru-3.4.4.lock.json. Do not invent a digest. MinerU-Popo floating tag dockerrr8277/mineru-popo-vllm:latest is not a pin. Live parse stays blocked because cache/snapshot bytes are absent, not because this field is null.",
+  "mineru_model_name": "opendatalab/PDF-Extract-Kit-1.0",
+  "mineru_model_name_status": "recorded_from_lock_live_files_absent",
+  "mineru_model_version": "ed6b654c018d742e65a17671e379c5e6ecc87ec9",
+  "mineru_model_version_status": "recorded_from_lock_live_files_absent",
+  "mineru_model_version_kind": "huggingface_revision",
+  "mineru_model_weights_sha256": null,
+  "mineru_model_weights_sha256_status": "not_applicable",
+  "mineru_model_weights_sha256_notes": "N/A top-level alias of single-file weights. Identity is the 187-file snapshot manifest (mineru_model_snapshot_manifest_sha256), not a single *.safetensors. Do not invent a single-file hash. Snapshot files were not re-hashed this session (live files absent).",
+  "mineru_model_snapshot_manifest_sha256": "8c4a6a53815e2a8f410d71350128d0db1276579ac9f50cd1dee56b165e4a4df6",
+  "mineru_model_snapshot_manifest_sha256_status": "recorded_from_lock_live_files_absent",
+  "mineru_model_snapshot_manifest_sha256_evidence_level": "E1",
+  "mineru_model_snapshot_manifest_sha256_notes": "Copied identity from in-tree profile.json pipeline_model.manifest_sha256 and v7/evidence/duckrag/p19-s.json descriptors model_closure. The 187 snapshot files are absent on this machine; this sha256 was not recalculated this freeze. Still E1.",
+  "mineru_model_snapshot_file_count": 187,
+  "mineru_model_snapshot_total_bytes": 15127785361,
+  "mineru_model_snapshot_license": "AGPL-3.0",
+  "mineru_parser_config": {
+    "backend": "pipeline",
+    "method": "txt",
+    "formula": false,
+    "table": false,
+    "cli": "mineru -p <pdf> -o <out> -b pipeline -m txt -f false -t false",
+    "env": {
+      "MINERU_MODEL_SOURCE": "local",
+      "HF_HUB_OFFLINE": "1",
+      "TRANSFORMERS_OFFLINE": "1",
+      "MODELSCOPE_OFFLINE": "1",
+      "OMP_NUM_THREADS": "4",
+      "MKL_NUM_THREADS": "4"
+    },
+    "required_artifacts": [
+      "*_content_list.json",
+      "*_content_list_v2.json",
+      "*_middle.json"
+    ],
+    "canonical_surface": "content_list.json",
+    "page_idx": "0-based",
+    "catalog_page": "page_idx + 1",
+    "bbox": "page-pixel xyxy"
+  },
+  "mineru_parser_config_status": "recorded_e1",
+  "mineru_parser_config_evidence_level": "E1",
+  "mineru_parser_config_notes": "Frozen from p19_mineru_process.py as cited in mineru.md. Not re-executed this session. Not E2.",
+  "mineru_model_name_version_weights_hash": {
+    "name": "opendatalab/PDF-Extract-Kit-1.0",
+    "version": "ed6b654c018d742e65a17671e379c5e6ecc87ec9",
+    "snapshot_manifest_sha256": "8c4a6a53815e2a8f410d71350128d0db1276579ac9f50cd1dee56b165e4a4df6",
+    "single_file_weights_sha256": null,
+    "single_file_weights_sha256_status": "not_applicable",
+    "single_file_weights_sha256_notes": "N/A: identity is the 187-file snapshot manifest, not a single-file weights sha256. snapshot_manifest_sha256 is the substitute identity, not a substitute field for this leaf. Do not invent a single-file hash."
+  },
+  "mineru_model_name_version_weights_hash_status": "recorded_from_lock_live_files_absent",
+  "mineru_model_name_version_weights_hash_evidence_level": "E1",
+  "mineru_model_name_version_weights_hash_notes": "Name/revision/snapshot_manifest_sha256 copied from in-tree profile.json and p19-s.json. Parent completeness is recorded_from_lock. Nested snapshot sha is copied identity; live 187 files are absent so sibling status is recorded_from_lock_live_files_absent. Single-file weights are not_applicable. Not E2.",
+  "canonical_mineru_contract_version": null,
+  "canonical_mineru_contract_version_status": "blocked",
+  "canonical_mineru_contract_version_notes": "E1 freeze document is v7/evidence/contracts/mineru.md (JSON node types/page/bbox/table-image refs). mineru.md has no document-level contract version string. Darwin profile_id is not this field; see mineru_profile_id. Do not invent flock-rag-mineru-contract/1. User 2026-08-30 chose to keep this configuration gap blocked.",
+  "mineru_profile_id": "mineru-3.4.4-pipeline-cpython312-darwin-arm64",
+  "mineru_harness_revision": "duckrag-wi1-harness/2",
+  "mineru_execution_backend": "mineru_pipeline_cpu_offline",
+  "mineru_identity_lock_rel": "v7/evidence/locks/mineru/mineru-3.4.4.lock.json",
+  "mineru_identity_profile_rel": "v7/evidence/locks/mineru/profile.json",
+  "mdenseon_package_native_runtime_version": {
+    "model_id": "lightonai/mDenseOn",
+    "revision": "a5fdb000f7a21da96c3bddde3a782ef777316df3",
+    "source": "https://huggingface.co/lightonai/mDenseOn",
+    "library_name": "sentence-transformers",
+    "lock_format": "duckrag-wi1-upstream-model/1",
+    "expected_python": "3.12.13"
+  },
+  "mdenseon_package_native_runtime_version_status": "recorded_from_lock_live_files_absent",
+  "mdenseon_package_native_runtime_version_evidence_level": "E1",
+  "mdenseon_package_native_runtime_version_notes": "Copied from locks/mdenseon-a5fdb000.lock.json and p16_mdenseon.py EXPECTED_PYTHON as cited in mdenseon.md / EVIDENCE_REGISTER frozen_without_live_files. Live weights/tokenizer absent. Prior p16.json dependency versions (sentence-transformers 5.4.1, torch 2.6.0, \u2026) are a 2026-08-05 evidence record, not re-measured, not a v7 E2 pin. Dense adapter stays blocked. Not E2.",
+  "mdenseon_model_weights_sha256": "a336c49fc679aeb23969114b12fb7317804da3cc7d8bc214818009dea39d545c",
+  "mdenseon_model_weights_sha256_status": "recorded_from_lock_live_files_absent",
+  "mdenseon_model_weights_sha256_kind": "lfs_sha256",
+  "mdenseon_model_weights_sha256_path": "model.safetensors",
+  "mdenseon_model_weights_sha256_size_bytes": 1227771776,
+  "mdenseon_model_weights_sha256_evidence_level": "E1",
+  "mdenseon_model_weights_sha256_notes": "Copied from EVIDENCE_REGISTER frozen_without_live_files.weights_lfs_sha256_from_lock / mdenseon-a5fdb000.lock.json. Live model.safetensors absent this session. Not re-hashed. Not E2. Dense adapter blocked until bytes are present and match.",
+  "tokenizer_identity": "lightonai/mDenseOn tokenizer.json",
+  "tokenizer_identity_status": "recorded_from_lock_live_files_absent",
+  "tokenizer_version": "a5fdb000f7a21da96c3bddde3a782ef777316df3",
+  "tokenizer_version_status": "recorded_from_lock_live_files_absent",
+  "tokenizer_hash": "a086e6a7efb90bbab8e379a63f3463fb13e6256ebec3343c1f1612cab693935b",
+  "tokenizer_hash_status": "recorded_from_lock_live_files_absent",
+  "tokenizer_hash_kind": "lfs_sha256",
+  "tokenizer_hash_path": "tokenizer.json",
+  "tokenizer_hash_size_bytes": 34363287,
+  "tokenizer_identity_version_hash": {
+    "identity": "lightonai/mDenseOn tokenizer.json",
+    "version": "a5fdb000f7a21da96c3bddde3a782ef777316df3",
+    "lfs_sha256": "a086e6a7efb90bbab8e379a63f3463fb13e6256ebec3343c1f1612cab693935b"
+  },
+  "tokenizer_identity_version_hash_status": "recorded_from_lock_live_files_absent",
+  "tokenizer_identity_version_hash_evidence_level": "E1",
+  "tokenizer_identity_version_hash_notes": "Dense tokenizer copied from EVIDENCE_REGISTER frozen_without_live_files.tokenizer_json_lfs_sha256_from_lock. Live tokenizer.json absent. Not E2. QA TokenLimiter tokenizer is a separate identity and remains unfrozen (auto_coder_longcontext blocker qa_tokenizer_identity_hash). BM25 tokenizer is a third identity (see bm25_*).",
+  "embedding_dimension": 768,
+  "embedding_dimension_status": "recorded_from_lock",
+  "embedding_dtype": "float32",
+  "embedding_dtype_status": "recorded_from_lock",
+  "embedding_normalization": "float32-l2/1",
+  "embedding_normalization_status": "recorded_from_lock",
+  "embedding_zero_norm_policy": "reject",
+  "embedding_batch_contract": null,
+  "embedding_batch_contract_status": "blocked",
+  "embedding_batch_contract_notes": "p16 harness calibration grid 1,4,8 is not a frozen production batch. Golden encode used batch 1. Production must still pin an explicit batch.",
+  "embedding_dimension_dtype_normalization_batch": {
+    "dimension": 768,
+    "dtype": "float32",
+    "normalization": "float32-l2/1",
+    "zero_norm_policy": "reject",
+    "batch_contract": null,
+    "batch_contract_status": "blocked",
+    "batch_contract_notes": "Harness measurement grid, not a production pin."
+  },
+  "embedding_dimension_dtype_normalization_batch_status": "partial",
+  "embedding_dimension_dtype_normalization_batch_evidence_level": "E1",
+  "embedding_dimension_dtype_normalization_batch_notes": "Dimension/dtype/normalization/zero_norm_policy copied from EVIDENCE_REGISTER frozen_without_live_files and p16-mdenseon.json (golden_version duckrag-mdenseon-invariant/1). Batch contract not frozen. Encode not re-run. Not E2. Dense adapter stays blocked until live files match lock lfs_sha256.",
+  "tachiom_commit": "2d1b2050d60eb28462f9d9c451c2fe7653cc4aa9",
+  "tachiom_branch": "main",
+  "tachiom_dirty": false,
+  "tachiom_crate_version_string": "0.3.4",
+  "tachiom_git_describe": "v0.3.4",
+  "duckdb_tachiom_commit": "5c91f3cb5c4091cb70735449e546446a09136a04",
+  "duckdb_tachiom_branch": "main",
+  "duckdb_tachiom_dirty": true,
+  "duckdb_tachiom_dirty_notes": "Untracked: examples/native_bench.rs, prompt-exports/, testing/.",
+  "duckdb_tachiom_tag": null,
+  "duckdb_tachiom_tag_status": "missing",
+  "duckdb_tachiom_cargo_tachiom_git_tag_pin": "v0.3.4",
+  "duckdb_tachiom_cargo_tachiom_git_tag_pin_notes": "Cargo.lock source = git+https://github.com/TusKANNy/tachiom.git?tag=v0.3.4#2d1b2050d60eb28462f9d9c451c2fe7653cc4aa9. Local checkout HEAD may differ and is not the build identity.",
+  "tachiom_static_loadable_artifact_sha256": null,
+  "tachiom_static_loadable_artifact_sha256_status": "blocked",
+  "tachiom_static_loadable_artifact_sha256_notes": "No v7 rebuild against a1f0ab1911. SHA-256 was not computed this session (do not invent). Local files build/debug/duckdb_tachiom.duckdb_extension and build/release/duckdb_tachiom.duckdb_extension exist but predate this pin, target DuckDB v1.5.4 unstable C API, and must not be promoted as the v7 artifact. Multi-vector backend stays blocked. Not E2.",
+  "tachiom_index_format_version": 1,
+  "tachiom_index_format_version_status": "recorded_e1",
+  "tachiom_index_format_version_evidence_level": "E1",
+  "tachiom_envelope_version": 1,
+  "tachiom_index_format_version_notes": "E1 from duckdb-tachiom src/envelope.rs: ENVELOPE_VERSION u32 = 1, ENVELOPE_MAGIC = b\"\\x93DBTACHIOM\" as cited in tachiom.md. Native tachiom CLI files are a different bincode 2.x format without this envelope. Not E2 on duckdb-pgagent a1f0ab1911. Multi-vector backend stays blocked on ABI.",
+  "tachiom_envelope_magic": "\\x93DBTACHIOM",
+  "tachiom_native_vs_envelope": "extension envelope = bincode 1.3 + magic; native tachiom save_index = bincode 2.x. tachiom_load peeks magic to route.",
+  "fts_extension_version": "2266e67d01c737cb65114e77c7c672e58869a635",
+  "fts_extension_version_kind": "duckdb-fts git tag in duckdb-pgagent .github/config/extensions/fts.cmake",
+  "fts_extension_semver": null,
+  "fts_extension_semver_status": "missing",
+  "fts_extension_semver_notes": "No semver string in the load stanza. Version identity for v7 is the git tag plus APPLY_PATCHES (.github/patches/extensions/fts/0001-get-default-schema-optional.patch). FTS is DONT_LINK by default and not installed in the v6 wheel (duckdb_extensions(): fts loaded=false installed=false).",
+  "fts_static_cmake_target": "fts_extension",
+  "fts_loadable_cmake_target": "fts_loadable_extension",
+  "bm25_tokenizer": null,
+  "bm25_tokenizer_status": "blocked",
+  "bm25_stemming": null,
+  "bm25_stemming_status": "blocked",
+  "bm25_stop_words": null,
+  "bm25_stop_words_status": "blocked",
+  "bm25_case_folding": null,
+  "bm25_case_folding_status": "blocked",
+  "bm25_unicode_normalization": null,
+  "bm25_unicode_normalization_status": "blocked",
+  "bm25_field_weights": null,
+  "bm25_field_weights_status": "blocked",
+  "bm25_backend_version": null,
+  "bm25_backend_version_status": "blocked",
+  "bm25_config_hash": null,
+  "bm25_config_hash_status": "blocked",
+  "bm25_config_hash_notes": "Not frozen. See bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash_notes. Do not invent a config hash.",
+  "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash": null,
+  "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash_status": "blocked",
+  "bm25_tokenizer_stemming_stopword_casefolding_unicode_config_hash_notes": "v7 BM25 config is not frozen. Candidate backend is DuckDB FTS (snowball + english_stopwords SQL assets in duckdb-fts at the git tag above) IFF the target Python binding statically links verified fts_extension. Until tokenizer/stemmer/stop-word/case-folding/Unicode/field-weight bytes are hashed, BM25 cannot be a default implementation. Do not invent a config hash.",
+  "build_artifact_wheel_sha256": "d4e8fd28e6c6daa22dba349ed253b45b7a9f01e110126f65dc79a126308ba5ff",
+  "build_artifact_wheel_sha256_status": "recorded",
+  "build_artifact_wheel_sha256_notes": "SHA-256 of the Phase 1 v7 wheel at dist-v7/. Distinct from v6_python_wheel_sha256 fa4ba6fb\u2026",
+  "v6_python_wheel_path": "/Users/wxl/Projects/duckdb-python-pgagent/dist-special-g1/duckdb-1.6.0.dev366+ga1f0ab1911-cp312-cp312-macosx_26_0_arm64.whl",
+  "v6_python_wheel_sha256": "fa4ba6fb193e98d9273d494d1255393a4df33b8d6890fbbcdd65b064b3c15ad9",
+  "v6_python_wheel_sha256_notes": "SHA-256 of the current pg-agent pyproject pin (v6). Not a v7 artifact. Recorded so v7 work cannot silently reuse or overwrite it.",
+  "v6_python_wheel_size_bytes": 17531134,
+  "static_build_targets": {
+    "flock_static": "flock_extension",
+    "flock_loadable": "flock_loadable_extension",
+    "fts_static": "fts_extension",
+    "fts_loadable": "fts_loadable_extension",
+    "tachiom_static_cmake": null,
+    "tachiom_static_cmake_status": "blocked",
+    "tachiom_static_cmake_notes": "No matching ${NAME}_extension CMake target for tachiom on duckdb-pgagent a1f0ab1911. Recorded as an intentional blocked configuration, not an omitted field.",
+    "tachiom_wasm_staticlib_example": "duckdb_tachiom",
+    "tachiom_native_cdylib": "libduckdb_tachiom.dylib",
+    "tachiom_loadable_filename": "duckdb_tachiom.duckdb_extension",
+    "python_module": "_duckdb",
+    "python_engine_interface": "duckdb_target",
+    "python_generated_loader": "duckdb_generated_extension_loader",
+    "python_currently_linked_extensions": [
+      "core_functions_extension",
+      "json_extension",
+      "parquet_extension",
+      "icu_extension",
+      "flock_extension",
+      "fts_extension"
+    ]
+  },
+  "backend_gates": {
+    "dense_mdenseon": {
+      "blocked": true,
+      "evidence_level": "E1",
+      "not_e2": true,
+      "reason": "Live model.safetensors and tokenizer.json absent this session. Lock lfs_sha256 values are recorded from EVIDENCE_REGISTER; adapter must not be implemented until live files match."
+    },
+    "multi_vector_tachiom": {
+      "blocked": true,
+      "evidence_level": "E1",
+      "not_e2": true,
+      "reason": "duckdb-tachiom TARGET_DUCKDB_VERSION=v1.5.4 unstable C API vs duckdb-pgagent a1f0ab1911. Artifact SHA-256 not computed. Envelope version is E1 only."
+    },
+    "live_mineru_runtime": {
+      "blocked": true,
+      "evidence_level": "E1",
+      "not_e2": true,
+      "reason": "cache absent; historical P19-S is not this-freeze live E2"
+    },
+    "mineru_json_ingest": {
+      "blocked": false,
+      "evidence_level": "E1",
+      "not_e2": true,
+      "reason": "JSON node types/page/bbox/table-image refs frozen in mineru.md. Parser contract is not live execution."
+    },
+    "legacy_cache_live": {
+      "blocked": true,
+      "evidence_level": "E0",
+      "not_e2": true,
+      "reason": "Live byzerai_store_duckdb.db not found. Synthetic golden fixture is not Phase 0 pass. Canonical importer blocked."
+    },
+    "kohaku_tree_acceptance": {
+      "blocked": false,
+      "evidence_level": "E2",
+      "not_e2": false,
+      "reason": "Kohaku-native tree fixtures generated at v7/tests/fixtures/kohaku/golden.v1.json (generated_from_kohaku_source). Not a live Kohaku service. Not MinerU\u2192Kohaku."
+    },
+    "range_trio_acceptance": {
+      "blocked": false,
+      "evidence_level": "E2",
+      "not_e2": false,
+      "reason": "Range-trio origin-shape fixtures at v7/tests/fixtures/range_trio/ (page_bbox/source_line/legacy_flat). live_runtime_missing remains true; not a live MinerU parse; not plan \u00a73.14 diversity corpus."
+    }
+  },
+  "provenance_file": "v7/evidence/four_repo_provenance.json",
+  "constraints_file": "v7/constraints-macos-arm64.txt",
+  "phase0_repair": {
+    "work_item": "WI-C",
+    "at_utc": "2026-08-29",
+    "items": [
+      "P1-1",
+      "P1-2",
+      "P1-4",
+      "P1-5",
+      "P1-7",
+      "P2-1",
+      "P2-2",
+      "P2-5",
+      "P2-6",
+      "P2-8",
+      "P2-9"
+    ],
+    "rule": "Did not invent hashes. Did not enter Phase 1. tachiom_commit is Cargo-resolved tag v0.3.4, not local checkout HEAD. phase0_pass is derived by v7.gates.phase0_evaluator. release_gate.would_pass is derived by v7.gates.release_evaluator and requires Phase 1-7 and E3. They are not equal by construction. NEAREST live E2 requires binary+log verification; unverified live evidence emits nearest_target_e2_unverified."
+  },
+  "corrections_register_file": "v7/evidence/corrections_register.json",
+  "phase0_baselines_file": "v7/evidence/phase0_baseline_status.json",
+  "nearest_e2_file": "v7/evidence/nearest_e2.json",
+  "duckdb_pgagent_tag_commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+  "duckdb_python_pgagent_tag_commit": "40d439bcd10affb1c920efa549e61df25e710248",
+  "duckdb_python_pgagent_vendored_engine_equals_target": true,
+  "tachiom_commit_kind": "cargo_resolved_build_identity",
+  "tachiom_tag": "v0.3.4",
+  "tachiom_tag_commit": "2d1b2050d60eb28462f9d9c451c2fe7653cc4aa9",
+  "tachiom_checkout_commit": "69f6f3dc2eef3b543983eb71227bb65590e498a8",
+  "tachiom_checkout_branch": "main",
+  "tachiom_checkout_dirty": false,
+  "tachiom_checkout_tag": null,
+  "tachiom_checkout_tag_status": "missing",
+  "tachiom_checkout_describe": "v0.3.4-2-g69f6f3d",
+  "tachiom_checkout_is_build_identity": false,
+  "tachiom_checkout_notes": "Local /Users/wxl/Projects/tachiom HEAD is two documentation commits after tag v0.3.4. Build identity is Cargo-resolved tag commit 2d1b2050d60eb28462f9d9c451c2fe7653cc4aa9, not checkout HEAD.",
+  "duckdb_tachiom_cargo_tachiom_git_tag_pin_commit": "2d1b2050d60eb28462f9d9c451c2fe7653cc4aa9",
+  "nearest_e2": {
+    "evidence_level": "E2",
+    "command": "./build/reldebug/test/unittest test/sql/join/nearest/nearest_basic.test",
+    "cwd": "/Users/wxl/Projects/duckdb-pgagent",
+    "exit_code": 0,
+    "assertions": 112,
+    "log": "v7/evidence/nearest_basic.e2.log",
+    "binary_path": "/Users/wxl/Projects/duckdb-pgagent/build/reldebug/test/unittest",
+    "binary_sha256": "2924bc6ce716b2363c218c28e4418ad57c7e800f735cf0bd4520baf7df8519b8",
+    "binary_size_bytes": 11567456,
+    "binary_file_type": "Mach-O 64-bit executable arm64",
+    "binary_mtime_local": "2026-08-29T12:21:55",
+    "build_identity_commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+    "build_identity_tag": "duckdb-special-20260829-g1",
+    "notes": "SHA-256 is of the on-disk binary (re-hashed this freeze). E2 log recorded exit 0 on the same path and commit. Historical freeze only; live gate reports E2 iff the in-repo log verifies and the target unittest binary is present via env/config and matches SHA/size.",
+    "verification": {
+      "binary_required_for_live_e2": true,
+      "log_required_for_live_e2": true,
+      "binary_env_vars": [
+        "PG_AGENT_UNITTEST_BIN",
+        "DUCKDB_PGAGENT_UNITTEST"
+      ],
+      "absent_binary_or_log_gate_level": "blocked",
+      "notes": "Do not claim live E2 from a missing binary or log. Do not invent a new E2 run. Live binary is resolved from v7/evidence/nearest_live_binary.relpath (repo-root-relative) or PG_AGENT_UNITTEST_BIN / DUCKDB_PGAGENT_UNITTEST. Recorded absolute binary_path is freeze metadata, not a live input."
+    }
+  }
+}

@@ -14,6 +14,11 @@ import duckdb
 import psycopg2
 
 from v6.source_ingress.duckdb_ingress import PostgresSourceResolver, snapshot_table
+from v6.session_durability.duckdb_grammar import (
+    DuckDBGrammarCapabilities,
+    GrammarExtensionConfig,
+    bootstrap_connection,
+)
 
 _DANGEROUS = re.compile(
     r"\b(INSERT|UPDATE|DELETE|MERGE|COPY|CREATE|ALTER|DROP|TRUNCATE|ATTACH|DETACH|"
@@ -37,6 +42,7 @@ class DuckSession:
     worker_id: str
     generation: int
     connection: duckdb.DuckDBPyConnection
+    capabilities: DuckDBGrammarCapabilities
 
     def __post_init__(self) -> None:
         self.lock = threading.RLock()
@@ -90,7 +96,14 @@ class DuckSession:
 
 
 class DuckSessionManager:
-    def __init__(self, pg_uri: str, *, worker_id: str = "v6-worker-1", resolver: PostgresSourceResolver | None = None):
+    def __init__(
+        self,
+        pg_uri: str,
+        *,
+        worker_id: str = "v6-worker-1",
+        resolver: PostgresSourceResolver | None = None,
+        grammar_config: GrammarExtensionConfig | None = None,
+    ):
         if sys.platform != "darwin" or platform.machine() != "arm64":
             raise SessionError("DUCK_PLATFORM_UNSUPPORTED", "v6 DuckDB runtime only supports macOS arm64", "Run v6 on the locked macOS arm64 environment.")
         self.pg_uri = pg_uri
@@ -98,6 +111,12 @@ class DuckSessionManager:
         self.resolver = resolver
         self.sessions: dict[str, DuckSession] = {}
         self._manager_lock = threading.RLock()
+        config = grammar_config if grammar_config is not None else GrammarExtensionConfig.from_env()
+        config.validate()
+        self._grammar_config = config
+        self._prepared_extension_path = None
+        if config.enabled:
+            self._prepared_extension_path, _ = config.verified_path_and_hash()
 
     def _pg(self):
         conn = psycopg2.connect(self.pg_uri)
@@ -129,20 +148,20 @@ class DuckSessionManager:
         finally:
             conn.close()
 
-    @staticmethod
-    def _open_connection() -> duckdb.DuckDBPyConnection:
-        if duckdb.__version__ != "1.6.0.dev365":
-            raise SessionError("DUCK_RUNTIME_UNSUPPORTED", f"unexpected duckdb package {duckdb.__version__}", "Install duckdb==1.6.0.dev365.")
-        con = duckdb.connect()
-        engine = con.execute("SELECT version()").fetchone()[0]
-        if engine != "v2.0.0-alpha38615":
-            con.close()
-            raise SessionError("DUCK_RUNTIME_UNSUPPORTED", f"unexpected DuckDB engine {engine}", "Use the locked v2.0.0-alpha38615 wheel.")
-        con.execute("SET autoinstall_known_extensions=false")
-        con.execute("SET autoload_known_extensions=false")
-        con.execute("SET enable_external_access=false")
-        con.execute("SET memory_limit='512 MiB'")
-        return con
+    def _open_connection(self) -> tuple[duckdb.DuckDBPyConnection, DuckDBGrammarCapabilities]:
+        try:
+            return bootstrap_connection(
+                self._grammar_config,
+                prepared_extension_path=self._prepared_extension_path,
+            )
+        except SessionError:
+            raise
+        except Exception as exc:
+            raise SessionError(
+                "DUCK_GRAMMAR_BOOTSTRAP_FAILED",
+                str(exc),
+                "Verify the locked DuckDB wheel, extension file, configured digest, and native integration environment.",
+            ) from exc
 
     def get_or_open(self, run_id: str) -> DuckSession:
         with self._manager_lock:
@@ -162,7 +181,8 @@ class DuckSessionManager:
                     finally:
                         conn.close()
                 raise SessionError("DUCK_SESSION_LOST", f"session {run_id} is {status}", "Start a new run; temp sessions cannot be reopened by another worker.")
-            session = DuckSession(run_id, mode, self.worker_id, generation + 1, self._open_connection())
+            connection, capabilities = self._open_connection()
+            session = DuckSession(run_id, mode, self.worker_id, generation + 1, connection, capabilities)
             self.sessions[run_id] = session
             conn = self._pg()
             try:
@@ -181,6 +201,13 @@ class DuckSessionManager:
                     self.sessions.pop(run_id, None)
                     raise
             return session
+
+    def live_capabilities(self, run_id: str) -> DuckDBGrammarCapabilities | None:
+        with self._manager_lock:
+            session = self.sessions.get(run_id)
+            if session is None or session.closed:
+                return None
+            return session.capabilities
 
     def close_run(self, run_id: str, *, lost: bool | None = None) -> None:
         with self._manager_lock:

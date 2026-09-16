@@ -1,0 +1,25 @@
+{
+  "schema_version": "flock-rag-phase0-nearest-e2/1",
+  "evidence_level": "E2",
+  "command": "./build/reldebug/test/unittest test/sql/join/nearest/nearest_basic.test",
+  "cwd": "/Users/wxl/Projects/duckdb-pgagent",
+  "exit_code": 0,
+  "assertions": 112,
+  "log": "v7/evidence/nearest_basic.e2.log",
+  "log_start_utc": "2026-08-29T10:51:08Z",
+  "binary_path": "/Users/wxl/Projects/duckdb-pgagent/build/reldebug/test/unittest",
+  "binary_sha256": "2924bc6ce716b2363c218c28e4418ad57c7e800f735cf0bd4520baf7df8519b8",
+  "binary_size_bytes": 11567456,
+  "binary_file_type": "Mach-O 64-bit executable arm64",
+  "binary_mtime_local": "2026-08-29T12:21:55",
+  "build_identity_commit": "a1f0ab191185c0852b162adc6feb206822dc9daa",
+  "build_identity_tag": "duckdb-special-20260829-g1",
+  "notes": "SHA-256 is of the on-disk binary at binary_path (re-hashed this freeze). The E2 log recorded exit 0 on the same path and commit; this file does not claim the hash was captured inside that log. DuckDB source was not modified. Historical freeze only — live gate reports E2 iff log+binary verify.",
+  "verification": {
+    "binary_required_for_live_e2": true,
+    "log_required_for_live_e2": true,
+    "binary_env_vars": ["PG_AGENT_UNITTEST_BIN", "DUCKDB_PGAGENT_UNITTEST"],
+    "absent_binary_or_log_gate_level": "blocked",
+    "notes": "Do not claim live E2 from a missing binary or log. Do not invent a new E2 run. Historical freeze hashes stay as recorded. Live binary is resolved from v7/evidence/nearest_live_binary.relpath (repo-root-relative) or PG_AGENT_UNITTEST_BIN / DUCKDB_PGAGENT_UNITTEST. Recorded absolute binary_path is freeze metadata, not a live input."
+  }
+}
