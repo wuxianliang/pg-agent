@@ -1,5 +1,9 @@
 # s31b-command-table — §3.1 后半：命令表、append_events 七步、事件键三层
 
+> **交付状态横幅（2026-09-16，G10/G12 收尾时补记）**——本文件是规格抽取摘要，`[LATER]` 为抽取时点记号。已交付对照：
+> - **独立授权拒绝审计行**（授权前置拒绝、同上下文同命令标识幂等合并）→ **G10 已实现**（`authz_denial_audits`，偏差 A65/A99）。
+> - **授权前置拒绝**（receipt 命名空间之外、先于一切 receipt/binding 处理）→ **G10 已实现**（session/heartbeat 门；偏差 A65）。
+> - 仍为 LATER：transport/payload 三类拒绝路径与三键指纹（`rejection_fingerprint@v1`/`transport_rejection_key@v1`/`malformed_binding_fingerprint@v2`，audit 指纹里程碑）、`DECISION_PLAN_INVALID` 的同事务 INFRA 收束（当前纯 receipt 拒绝）、`FORCE_JOB_TAKEOVER` 受控内部命令。
 > 来源：`/Users/wxl/Projects/pg-agent/docs/designs/v8-dev.md` 第 299–396 行（§3.1.2 核心命令与 receipt 幂等 + §3.1.2 事件键三层 + turn-end 槽位数据合同）。本文件是冻结合同的实现抽取摘要：关键字段名、code 字符串、字节公式逐字引自规格，不得意译。
 
 ---

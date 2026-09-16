@@ -1,5 +1,9 @@
 # s33-s4-compact-plugin — §3.3 seq/cancel/compact/repair + §4 插件协议开头
 
+> **交付状态横幅（2026-09-16，G11/G12 收尾时补记）**——本文件是规格抽取摘要，`[LATER]` 为抽取时点记号。已交付对照：
+> - `1.5 plugin_specs`、`1.6 plugin_implementations`、`1.7 generation_members` 与世代域其余段（发布/下线七条/依赖解析/digest）→ **G11 已实现**（偏差 A73–A81）；世代门在 seal/dispatch/cohort 的接线 → **G12 已实现**（偏差 A95/A96）。
+> - `1.3 turn_end_closers` → **G7c 已实现**；`1.4 internal_op_audits` → G7c/G11 已落地使用面。
+> - 仍为 LATER：`1.1 compactions`（compact 三命令整体未实现，仅八位锁序第 8 位在 v10 侧被引用）、compact 并发矩阵（`COMPACT_BUSY_EFFECTS` 等）、driver epoch 切换正向机制、fork 完整面（最小 fork 本体已由 G10 交付，多 driver/epoch 继承矩阵仍缺）。
 > 抽取自 `/Users/wxl/Projects/pg-agent/docs/designs/v8-dev.md` 行 697–760（§3.3 全部 + §4 插件协议 + §5 开头边界行）。冻结条款逐字引用；引用其他节的合同此处只登记指针、不复述（防漂移）。
 
 ## 1. 数据库表（完整清单）

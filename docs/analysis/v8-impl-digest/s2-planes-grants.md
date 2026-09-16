@@ -1,5 +1,9 @@
 # s2-planes-grants — §2.1 slice/grant + §2.2 workspace_handle 与 WORKSPACE_LOST
 
+> **交付状态横幅（2026-09-16，G10/G12 收尾时补记）**——本文件是**规格抽取摘要**，其中的 `[LATER]` 是**抽取时点**的记号，不代表当前实现状态。已交付对照：
+> - `1.3 workspace_handles`、`1.4 受控 mutation 记录`、`2.4 授权线性化点`、`2.5 slice/grant 不可变`、`2.1 完整 grant 模型`、`2.6 stream_ingest 双 grant 合取` → **G10 已实现**（机制 (a) FOR UPDATE 固定锁序，未采用 1.1 `revocation_version` CAS 机制 (b)；见偏差 A62–A72）。
+> - `seal 授权阶段` 与 `generation 检查`（GRANT_DENIED/GENERATION_REVOKED 两道实时门）→ **G12 已实现**（见偏差 A90–A100）。
+> - 仍为 LATER：**seam 清单**各同事务 grant 检查点（recall/fold/env_read/env_write/tool_resolve/authorize_effect，偏差 A72）、两阶段 manifest 快照 → assemble 里程碑。
 来源:`/Users/wxl/Projects/pg-agent/docs/designs/v8-dev.md` 第 112–198 行(已冻结实现合同)。本 digest 为逐条抽取,冻结条款关键字段名 / code 字符串 / 公式均逐字引用,不得意译。P0B 判定标准见文末第 5 节。
 
 ## 0. 概念分层(四对象对照,逐字引用规格表)
