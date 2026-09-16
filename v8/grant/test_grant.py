@@ -7,7 +7,7 @@ linearization point (mechanism (a), both commit orders + a lock-wait
 interleave), RLS tenant isolation, the operator channel, workspace_handles
 (full chain), the WORKSPACE_LOST fail-closed drain, the minimal fork, and
 the append-layer upgrades (heartbeat authorization precheck, full-subject
-grant lookup, stream registry, retained A57 legacy downgrade).
+grant lookup, stream registry; the A57 legacy chunk downgrade was removed in G12).
 
 Run: uv run python v8/grant/test_grant.py  (exit 0 = pass)
 """
@@ -1122,11 +1122,13 @@ def test_append_upgrades(conn) -> None:
     check("heartbeat: home-tenant grant -> accepted", r["outcome"] == "accepted",
           r)
 
-    # legacy path retained (A57 downgrade): no caller legs, no binding.
+    # legacy heartbeat path (A65 trigger semantics, unchanged by G12): the
+    # heartbeat authorization precheck fires only when a caller-identity leg
+    # is supplied, so the all-legs-default path is still accepted.
     s_leg = fresh_session(conn)
     r = append_chunks(conn, s_leg, "hb-leg", [hb()], expected_seq=1)
-    check("heartbeat: legacy all-legs-default path still accepted (A57"
-          " downgrade retained this gate)",
+    check("heartbeat: legacy all-legs-default path still accepted"
+          " (precheck fires only with caller legs)",
           r["outcome"] == "accepted", r)
 
     # ---- chunk attribution: full subject resolution + registry ----
@@ -1189,12 +1191,16 @@ def test_append_upgrades(conn) -> None:
               (sr,))
     check("three-conjunction: zero events landed", row[0] == 0, row)
 
-    # legacy chunk path (A57 downgrade retained): unbound effect + no legs.
+    # legacy chunk path (A57 REMOVED in G12): unbound effect + no caller
+    # legs now fails the always-enforced (3)/(6) conjunction with zero rows.
     s_lg = fresh_session(conn)
     slg, _tlg, _stlg, elg = chunk_fixture(conn)
     r = append_chunks(conn, slg, "leg", [chunk_entry(elg, "x", 0)], expected_seq=1)
-    check("chunk: legacy unbound no-legs path still accepted (A57 retained)",
-          r["outcome"] == "accepted", r)
+    check("chunk: legacy unbound no-legs path rejected (A57 removed in G12)",
+          r["code"] == "CHUNK_ATTRIBUTION_INVALID", r)
+    row = one(conn, "SELECT count(*) FROM session_events WHERE session_id=%s",
+              (slg,))
+    check("chunk: A57 removal persists zero events", row[0] == 0, row)
 
 
 # ---------------------------------------------------------------------------

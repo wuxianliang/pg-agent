@@ -164,8 +164,80 @@ def seed_grant(conn, grant_id, ws, slice_id, subject_kind, subject_id,
     return grant_id
 
 
+# ---------------------------------------------------------------------------
+# G12 stage seeding: with the seal/dispatch/cohort gates live, every
+# positive-path test session needs valid authorize_effect + effect_submit
+# grants (seal member creation + dispatch revalidation) and the append-side
+# capabilities for chunk tests. Sessions in the legacy tests carry
+# workspace_id NULL, which skips the tenant conjunct on both sides, so one
+# permissive slice covers the stage; subject matching goes through the
+# session's driver (subject_kind='driver').
+# ---------------------------------------------------------------------------
+
+STAGE_CAPABILITIES = (
+    "authorize_effect",
+    "effect_submit",
+    "event_append",
+    "stream_ingest",
+)
+
+STAGE_WORKSPACE = "00000012-0012-4012-8012-000000000012"
+
+
+def seed_stage_grants(conn, *, ws=STAGE_WORKSPACE, drivers=("drv",),
+                      capabilities=STAGE_CAPABILITIES,
+                      slice_id=None) -> str:
+    """Seed one permissive slice + one grant per (driver, capability).
+
+    The slice spec carries NO 'resources' key, so slice-membership passes
+    for any target; the grants carry no constraints. Gates that need
+    negative vectors seed their own constrained rows in the test body.
+    """
+    sid = seed_slice(conn, ws, f"stage-slice-{drivers[0]}-{u()[:8]}",
+                     kind="tool_set", spec={}, slice_id=slice_id)
+    for drv in drivers:
+        for cap in capabilities:
+            seed_grant(conn, f"g-stage-{drv}-{cap}", ws, sid,
+                       "driver", drv, cap)
+    return sid
+
+
+# ---------------------------------------------------------------------------
+# G12 chunk-fixture migration helper: with the A57 legacy downgrade removed,
+# an accepted chunk append needs the full (3)/(6) conjunction — bind the
+# fixture effect to a provider identity (grant_id -> the provider's
+# event_append grant) and seed the dual grants (event_append +
+# stream_ingest). The caller identity then resolves through the default
+# legs (v_caller := the effect's bound subject), so existing call sites
+# that pass no caller legs keep working.
+# ---------------------------------------------------------------------------
+
+CHUNK_PROVIDER = "provider-1"
+
+
+def bind_chunk_provider(conn, session_id, effect, *,
+                        provider=CHUNK_PROVIDER, ws=STAGE_WORKSPACE) -> str:
+    """Seed the provider's dual grants and bind the chunk effect to them.
+
+    Returns the bound grant_id. Slice-membership is permissive (no
+    'resources' key), matching the stage seed shape.
+    """
+    sid = seed_slice(conn, ws, f"chunk-slice-{session_id}", kind="tool_set",
+                     spec={})
+    g_ea = seed_grant(conn, f"g-chunk-{session_id}-ea", ws, sid,
+                      "plugin_identity", provider, "event_append")
+    seed_grant(conn, f"g-chunk-{session_id}-si", ws, sid,
+               "plugin_identity", provider, "stream_ingest")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE effect_requests SET grant_id=%s"
+                    " WHERE effect_id=%s", (g_ea, effect))
+    conn.commit()
+    return g_ea
+
+
 __all__ = [
     "SV", "CV", "u", "_now", "fresh_session", "expect_error",
     "chunk_fixture", "chunk_entry", "append_chunks",
-    "seed_slice", "seed_grant",
+    "seed_slice", "seed_grant", "seed_stage_grants", "STAGE_CAPABILITIES",
+    "STAGE_WORKSPACE", "CHUNK_PROVIDER", "bind_chunk_provider",
 ]

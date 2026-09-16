@@ -428,6 +428,11 @@ DECLARE
     v_computed text := v_sha256_hex(p_payload_canonical);
     v_adj record;
     v_sess sessions%ROWTYPE;
+    -- G12 (A39 closure): repair on a drain-terminal session (failed /
+    -- WORKSPACE_LOST / INFRA_*) settles the effect and closes steps but
+    -- MUST NOT overwrite the terminal session state; completed/cancelled
+    -- sessions are rejected.
+    v_terminal boolean := false;
     v_receipt jsonb;
     v_er effect_requests%ROWTYPE;
     v_att effect_attempts%ROWTYPE;
@@ -472,6 +477,24 @@ BEGIN
 
     SELECT * INTO v_sess FROM sessions s WHERE s.session_id = p_session_id
      FOR UPDATE;
+
+    -- G12 (A39 closure): the terminal-session repair exception covers ONLY
+    -- drain-terminal sessions (failed with a WORKSPACE_LOST / INFRA drain
+    -- code); completed/cancelled and non-drain failures reject stably.
+    IF v_sess.state IN ('completed', 'cancelled')
+       OR (v_sess.state = 'failed'
+           AND NOT (v_sess.failure_code IS NOT NULL
+                    AND v_sess.failure_code IN ('WORKSPACE_LOST',
+                                                'INFRA_ASSEMBLY_FAILED',
+                                                'INFRA_PROTOCOL_VIOLATION'))) THEN
+        v_receipt := v8_reject_command(p_session_id, p_command_id, 'repair',
+            v_computed, 'rejected_mismatch', 'SESSION_TERMINAL',
+            format('repair on a terminal session (state %s, code %s)',
+                   v_sess.state, v_sess.failure_code));
+        RETURN QUERY SELECT 'rejected_mismatch'::text, 'SESSION_TERMINAL'::text, v_receipt;
+        RETURN;
+    END IF;
+    v_terminal := v_sess.state = 'failed';
 
     IF p_driver IS DISTINCT FROM v_sess.driver
        OR p_driver_epoch IS DISTINCT FROM v_sess.driver_epoch THEN
@@ -949,7 +972,8 @@ BEGIN
             PERFORM v_apply_step_aggregation(
                 p_session_id, v_step_id, v_agg.rule_no, v_agg.step_status,
                 v_agg.outcome_code, v_agg.session_state, v_agg.failure_code,
-                v_agg.closure_effect_ids, p_command_id, v_computed);
+                v_agg.closure_effect_ids, p_command_id, v_computed,
+                p_write_session => NOT v_terminal);
         ELSIF v_agg.rule_no = 3 THEN
             -- G8b: the COMPLETE rule 3 (cancel-wins), replacing the G7c
             -- minimal repair-triggered arm. The shared judgment above
@@ -967,7 +991,8 @@ BEGIN
             PERFORM v_apply_step_aggregation(
                 p_session_id, v_step_id, v_agg.rule_no, v_agg.step_status,
                 v_agg.outcome_code, v_agg.session_state, v_agg.failure_code,
-                v_agg.closure_effect_ids, p_command_id, v_computed);
+                v_agg.closure_effect_ids, p_command_id, v_computed,
+                p_write_session => NOT v_terminal);
         ELSIF v_agg.rule_no IN (4, 5) THEN
             -- Rule 4 (a repair-proved failure closes the batch) and rule 5
             -- (the aggregation-completion edge: the last unknown cleared
@@ -976,7 +1001,8 @@ BEGIN
             PERFORM v_apply_step_aggregation(
                 p_session_id, v_step_id, v_agg.rule_no, v_agg.step_status,
                 v_agg.outcome_code, v_agg.session_state, v_agg.failure_code,
-                v_agg.closure_effect_ids, p_command_id, v_computed);
+                v_agg.closure_effect_ids, p_command_id, v_computed,
+                p_write_session => NOT v_terminal);
         ELSE
             -- Rule 6 (all siblings terminal, none failed/cancelled): the
             -- success arms — decision_only closes the turn (step
@@ -1010,13 +1036,15 @@ BEGIN
                                      outcome_code = 'SUCCEEDED',
                                      closed_at = now(), updated_at = now()
                      WHERE step_id = v_step_id;
-                    SELECT * INTO v_fin FROM v_session_finalize(
-                        p_session_id, v_turn);
-                    IF NOT v_fin.closed THEN
-                        RAISE EXCEPTION
-                            'INFRA_PROTOCOL_VIOLATION: turn-close judgment '
-                            'failed after a repaired decision_only success '
-                            '(session %, turn %)', p_session_id, v_turn;
+                    IF NOT v_terminal THEN
+                        SELECT * INTO v_fin FROM v_session_finalize(
+                            p_session_id, v_turn);
+                        IF NOT v_fin.closed THEN
+                            RAISE EXCEPTION
+                                'INFRA_PROTOCOL_VIOLATION: turn-close judgment '
+                                'failed after a repaired decision_only success '
+                                '(session %, turn %)', p_session_id, v_turn;
+                        END IF;
                     END IF;
                 ELSE
                     -- Controlled recovery edge: ready, stage=decision with
@@ -1039,9 +1067,12 @@ BEGIN
                 END IF;
             END IF;
             -- Aggregation NEVER derives completed: rule 6 targets ready;
-            -- only finish_session completes.
-            UPDATE sessions SET state = 'ready', updated_at = now()
-             WHERE session_id = p_session_id;
+            -- only finish_session completes. G12: on a drain-terminal
+            -- session the step closes but the terminal state stays.
+            IF NOT v_terminal THEN
+                UPDATE sessions SET state = 'ready', updated_at = now()
+                 WHERE session_id = p_session_id;
+            END IF;
         END IF;
     EXCEPTION WHEN OTHERS THEN
         IF SQLERRM LIKE 'V8_REPAIR_SLOT_REJECTED:%' THEN

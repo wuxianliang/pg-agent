@@ -243,11 +243,10 @@ $$;
 --
 -- Caller-identity legs (G9a, digest 2.8 items (3)/(6)): p_caller_subject /
 -- p_caller_driver / p_caller_epoch / p_caller_grant_id. They default to NULL
--- so the legacy P0B call sites stay byte-identical. When the target effect is
--- grant-bound (effect_requests.grant_id IS NOT NULL) or any caller leg is
--- supplied, the full attribution conjunction is enforced; an unbound effect
--- with no caller legs (legacy P0B path) passes items (3)/(6) with the P0A
--- annotation (see the chunk branch) — the grant model is opt-in.
+-- so the legacy call sites stay byte-identical. G12 REMOVED the A57 opt-in
+-- downgrade: the full attribution conjunction (items (3)/(6)) is enforced
+-- for EVERY chunk append — an unbound effect with no caller legs now fails
+-- CHUNK_ATTRIBUTION_INVALID (zero rows persisted).
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION v_append_events(
     p_session_id uuid, p_command_id text, p_driver text, p_driver_epoch bigint,
@@ -319,11 +318,9 @@ BEGIN
     -- in the independent authz_denial_audits table keyed by the calling
     -- security context + target command identity (repeated denials of the
     -- same context merge into one row). Enforced when the caller identity
-    -- context is supplied (the grant-model path); the all-legs-default
-    -- legacy path keeps the A57 annotated downgrade (G10 retains it, G12
-    -- removes it). No valid grant (including a revoked one) or a
-    -- cross-tenant grant context -> GRANT_DENIED, without leaking target
-    -- existence beyond the denial audit.
+    -- context is supplied (the grant-model path). No valid grant (including
+    -- a revoked one) or a cross-tenant grant context -> GRANT_DENIED,
+    -- without leaking target existence beyond the denial audit.
     IF (p_caller_subject IS NOT NULL OR p_caller_driver IS NOT NULL
         OR p_caller_epoch IS NOT NULL OR p_caller_grant_id IS NOT NULL)
        AND p_entries IS NOT NULL AND jsonb_typeof(p_entries) = 'array'
@@ -656,22 +653,19 @@ BEGIN
             -- (5) chunk_index domain checked above; arrival order and gaps
             --     never affect legality (frozen; 2,0,1 accepted).
             --
-            -- (3)/(6): the grant-chain attribution. The grant model is opt-in
-            -- for this P0A stub: an UNBOUND effect (grant_id NULL) with no
-            -- caller identity supplied is the legacy P0B path and passes with
-            -- the annotated downgrade. Once the effect is grant-bound or any
-            -- caller leg is supplied, ALL of (3) and (6) MUST hold.
+            -- (3)/(6): the grant-chain attribution. G12 REMOVED the A57
+            -- opt-in legacy downgrade: items (3) and (6) are ALWAYS
+            -- enforced now — an UNBOUND effect (grant_id NULL) fails item
+            -- (3) (no bound provider/adapter subject) and a caller without
+            -- valid event_append + stream_ingest grants fails item (6);
+            -- the all-legs-default legacy path no longer passes.
             v_eff_subject := v_grant_subject(v_er.er_grant_id);
             v_caller := COALESCE(p_caller_subject,
                                  v_grant_subject(p_caller_grant_id),
                                  v_eff_subject);
             v_caller_driver := COALESCE(p_caller_driver, v_sess.driver);
             v_caller_epoch := COALESCE(p_caller_epoch, v_sess.driver_epoch);
-            v_stream_bound := (v_er.er_grant_id IS NOT NULL)
-                              OR (p_caller_subject IS NOT NULL)
-                              OR (p_caller_grant_id IS NOT NULL)
-                              OR (p_caller_driver IS NOT NULL)
-                              OR (p_caller_epoch IS NOT NULL);
+            v_stream_bound := true;
             IF v_stream_bound THEN
                 -- (3) stream_id attribution (G10: the stream registry
                 --     replaces the A60 cross-session chunk-scan

@@ -19,10 +19,11 @@
 -- time, so effect/tools/loop stage databases (which never reach that arm)
 -- are unaffected.
 --
--- G7a scope guards (explicit, [LATER] in the digests): the grant/slice
--- model is absent, so the cohort authorization check (sub-operation step
--- 3) always passes (TODO note in place); catalog_generation is absent, so
--- the generation check (step 4) always passes (TODO note in place).
+-- G7a scope guards RETIRED in G12: the cohort authorization check
+-- (sub-operation step 3) and the generation check (step 4) are real
+-- implementations now (grant/slice pre-locked by the callers in the
+-- eight-slot master order; generation read FOR SHARE; denials map to
+-- GRANT_DENIED / GENERATION_REVOKED per entry contract).
 -- known_cancellation settlement (rule 3, shared cancel closure) was
 -- refused CANCEL_LATER in G7a; G8b opens it (v_complete_effect routes the
 -- classification to the shared closure sub-operation in
@@ -800,6 +801,12 @@ DECLARE
     v_new_no bigint;
     v_was_claimed boolean;
     v_new_fence bigint;
+    -- G12 cohort gates (3)/(4).
+    v_deny text;
+    v_denied jsonb;
+    v_gen uuid;
+    v_gen_status text;
+    v_closure jsonb;
 BEGIN
     SELECT * INTO v_sess FROM sessions s WHERE s.session_id = p_session_id;
 
@@ -845,17 +852,69 @@ BEGIN
     -- per-effect allocation variant). The virtual aggregation already
     -- verified that every failed_retryable sibling re-evaluates eligible.
     --
-    -- (3) cohort authorization check (allocation-point re-validation of
-    -- every member's grant/slice validity under the §2.1 linearization
-    -- point): P0B/G7a has NO grant/slice model, so this gate always
-    -- passes. TODO(G7+, §2.1): re-validate grants here, lock order
-    -- session -> grant/slice -> generation -> step -> effect -> attempt.
+    -- (3) cohort authorization check (G12, real implementation replacing
+    -- the G7a always-pass scope guard): re-validate EVERY cohort member's
+    -- seal-frozen grants under the §2.1 linearization point. The callers
+    -- pre-locked this exact grant/slice set (retry_effect / the recovery
+    -- takeover step-1 full prelock), so the judge re-locks only rows
+    -- already held by this transaction — no new lock order is introduced.
+    -- Any member invalid (or never grant-bound) -> NO allocation, no
+    -- attempt_no increment, the whole cohort stays failed_retryable; this
+    -- sub-operation writes ZERO control state on this branch and the
+    -- entries map the denial per their own contracts (normal entry:
+    -- rejected_mismatch GRANT_DENIED with session/lease/fence unchanged;
+    -- recovery entry: allocation_denied sub-result + final aggregation).
+    v_denied := '[]'::jsonb;
+    FOR v_row IN
+        SELECT er.effect_id, er.grant_id, er.authz_params,
+               er.dispatch_ordinal
+          FROM effect_requests er
+         WHERE er.step_id = p_step_id AND er.status = 'failed_retryable'
+           AND v_retry_eligible(er.effect_id)
+         ORDER BY er.dispatch_ordinal
+    LOOP
+        v_deny := v_gate_revalidate(p_session_id, v_row.grant_id,
+                                    v_row.authz_params);
+        IF v_deny IS NULL THEN
+            v_deny := v_gate_revalidate_authorize(p_session_id,
+                                                  v_row.authz_params);
+        END IF;
+        IF v_deny IS NOT NULL THEN
+            v_denied := v_denied || jsonb_build_object(
+                'effect_id', v_row.effect_id,
+                'grant_id', v_row.grant_id,
+                'reason', v_deny);
+        END IF;
+    END LOOP;
+    IF jsonb_array_length(v_denied) > 0 THEN
+        RETURN jsonb_build_object('allocated', false,
+                                  'reason', 'grant_denied',
+                                  'denied', v_denied);
+    END IF;
     --
-    -- (4) generation check (the third gate, same as seal/dispatch):
-    -- catalog_generation does not exist in P0B/G7a, so this gate always
-    -- passes. TODO(G7+, §4): shared-read lock + failed -> GENERATION_REVOKED
-    -- zero-allocation stable rejection with the post-denial final
-    -- aggregation.
+    -- (4) generation check (G12, §4 first-item third gate): the step-bound
+    -- catalog generation shared read (the callers pre-locked it FOR
+    -- SHARE); already failed -> NO allocation, the post-denial final
+    -- aggregation runs in this same transaction through the SHARED
+    -- generation closure sub-operation (three-conjunction: close the step
+    -- failed_terminal/GENERATION_REVOKED; existing rules finalize first;
+    -- unaffected keeps failed_retryable). The entries map the denial:
+    -- normal entry -> rejected_mismatch GENERATION_REVOKED receipt; the
+    -- recovery entry records allocation_denied: GENERATION_REVOKED.
+    SELECT st.catalog_generation INTO v_gen FROM steps st
+     WHERE st.step_id = p_step_id;
+    IF v_gen IS NOT NULL THEN
+        SELECT g.status INTO v_gen_status FROM generations g
+         WHERE g.generation_id = v_gen FOR SHARE;
+        IF v_gen_status = 'failed' THEN
+            v_closure := v_generation_close_step(p_session_id, p_step_id,
+                                                 v_gen, p_command_id);
+            RETURN jsonb_build_object('allocated', false,
+                                      'reason', 'generation_revoked',
+                                      'generation_id', v_gen,
+                                      'closure', v_closure);
+        END IF;
+    END IF;
     FOR v_row IN
         SELECT er.effect_id, er.dispatch_ordinal,
                (SELECT max(a.attempt_no) FROM effect_attempts a
@@ -971,9 +1030,14 @@ $$;
 --   SIBLING_UNKNOWN / SIBLING_PENDING  the virtual aggregation hit
 --         rule 1/2 — zero control state, only the rejection receipt
 --         persists; the step keeps its blocked/waiting state.
---   GRANT_DENIED (placeholder, absent grant model) and
---   GENERATION_REVOKED (absent catalog_generation) never fire in this
---         stage — the sub-operation steps 3/4 always pass.
+--   GRANT_DENIED (G12)  the cohort authorization check found a member
+--         whose frozen grant/slice is no longer valid — zero control
+--         state (session/lease/fence keep their entry values, the whole
+--         cohort stays failed_retryable, no attempt is created).
+--   GENERATION_REVOKED (G12)  the step-bound generation is failed — the
+--         shared post-denial final aggregation runs in the same
+--         transaction (three-conjunction closure), the rejection receipt
+--         commits with it.
 -- The defensive rule-4 case (a failed_retryable sibling failing the
 -- retry_eligible re-evaluation — normally unreachable, an implementation
 -- defect if seen) executes the budget/closure controlled edge in this
@@ -997,6 +1061,10 @@ DECLARE
     v_receipt jsonb;
     v_agg record;
     v_alloc jsonb;
+    -- G12 prelock set (grant/slice + generation shared read).
+    v_pre_grants text[];
+    v_pre_auth text[];
+    v_pre_gen uuid;
 BEGIN
     SELECT * INTO v_adj FROM v8_command_adjudicate(
         p_session_id, p_command_id, 'retry_effect',
@@ -1055,6 +1123,39 @@ BEGIN
         RETURN QUERY SELECT 'rejected_mismatch'::text, 'EFFECT_NOT_FOUND'::text, v_receipt;
         RETURN;
     END IF;
+
+    -- G12: eight-slot master order — the grant/slice locks (authorization
+    -- linearization point) and the generation shared read are taken BEFORE
+    -- the step/effect/attempt locks below. The pre-locked grant set covers
+    -- EVERY frozen grant of the located step's effects (the cohort plus
+    -- eligible siblings, matching the recovery takeover's step-1 full
+    -- prelock); the cohort sub-operation step (3) re-judges under these
+    -- held locks and never takes a grant lock out of order.
+    SELECT array_agg(DISTINCT er.grant_id) INTO v_pre_grants
+      FROM effect_requests er
+     WHERE er.step_id = v_step_id AND er.grant_id IS NOT NULL;
+    IF v_pre_grants IS NOT NULL THEN
+        PERFORM lj.grant_id FROM v_grant_lock_judge(
+            p_session_id, v_pre_grants, 'effect_submit',
+            NULL, NULL, NULL, NULL) lj;
+    END IF;
+    SELECT array_agg(DISTINCT er.authz_params->>'authorize_grant_id')
+      INTO v_pre_auth
+      FROM effect_requests er
+     WHERE er.step_id = v_step_id
+       AND er.authz_params->>'authorize_grant_id' IS NOT NULL;
+    IF v_pre_auth IS NOT NULL THEN
+        PERFORM lj.grant_id FROM v_grant_lock_judge(
+            p_session_id, v_pre_auth, 'authorize_effect',
+            NULL, NULL, NULL, NULL) lj;
+    END IF;
+    SELECT st.catalog_generation INTO v_pre_gen FROM steps st
+     WHERE st.step_id = v_step_id;
+    IF v_pre_gen IS NOT NULL THEN
+        PERFORM 1 FROM generations g
+         WHERE g.generation_id = v_pre_gen FOR SHARE;
+    END IF;
+
     PERFORM 1 FROM steps st WHERE st.step_id = v_step_id FOR UPDATE;
     SELECT * INTO v_er FROM effect_requests er
      WHERE er.effect_id = p_effect_id FOR UPDATE;
@@ -1168,6 +1269,33 @@ BEGIN
     v_alloc := v_retry_cohort_allocation(p_session_id, v_step_id,
                                          p_command_id);
     IF NOT (v_alloc->>'allocated')::boolean THEN
+        -- G12: the cohort gates deny with their own classified receipts.
+        -- grant_denied: zero control-state change (the sub-operation wrote
+        -- nothing) — session stays claimed/ready, the coordination lease
+        -- is not implicitly released, the fence is not bumped, every
+        -- cohort member (and any initial ready effect) keeps its state.
+        -- generation_revoked: the post-denial final aggregation already
+        -- ran inside the sub-operation (shared generation closure) and
+        -- commits together with this rejection receipt (spec receipt-rule
+        -- exception for the step-4 generation denial).
+        IF v_alloc->>'reason' = 'grant_denied' THEN
+            v_receipt := v8_reject_command(p_session_id, p_command_id,
+                'retry_effect', v_computed, 'rejected_mismatch',
+                'GRANT_DENIED',
+                format('cohort authorization check failed for %s member(s): %s',
+                       jsonb_array_length(v_alloc->'denied'),
+                       (v_alloc->'denied'->0->>'reason')));
+            RETURN QUERY SELECT 'rejected_mismatch'::text, 'GRANT_DENIED'::text, v_receipt;
+            RETURN;
+        END IF;
+        IF v_alloc->>'reason' = 'generation_revoked' THEN
+            v_receipt := v8_reject_command(p_session_id, p_command_id,
+                'retry_effect', v_computed, 'rejected_mismatch',
+                'GENERATION_REVOKED',
+                'cohort generation check: the step-bound catalog generation is failed');
+            RETURN QUERY SELECT 'rejected_mismatch'::text, 'GENERATION_REVOKED'::text, v_receipt;
+            RETURN;
+        END IF;
         RAISE EXCEPTION
             'INFRA_PROTOCOL_VIOLATION: retry_cohort_allocation declined '
             'after a rule-5 precondition (step %): %', v_step_id, v_alloc;

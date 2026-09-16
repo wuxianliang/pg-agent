@@ -32,6 +32,137 @@
 CREATE SEQUENCE v8_job_fence_seq AS bigint START WITH 1;
 
 -- ---------------------------------------------------------------------------
+-- G12: the two real-time authorization gates (s2 §2.3, spec L165) and the
+-- seal-frozen effect -> grant binding. The FIRST gate runs inside both seal
+-- paths (v_prepare_step here, v_seal_batch in v8_tools.sql) BEFORE any
+-- batch/effect/attempt creation; the SECOND gate runs at dispatch
+-- (ready -> dispatch_started) and re-validates the seal-frozen grants with
+-- all conjuncts — the manifest snapshot never exempts it. Both gates are
+-- independent: passing one never exempts the other.
+--
+-- authz_params (A8-precedent stage ALTER, the G2 schema is untouched):
+-- the concrete authorization context frozen at seal — {command, target,
+-- path, bytes, authorize_grant_id}. effect_requests.grant_id (G2 column)
+-- carries the frozen effect_submit grant (the bound provider/adapter
+-- subject source for chunk attribution item (3)); the authorize_effect
+-- grant id lives inside authz_params. Dispatch and the cohort allocation
+-- re-judge BOTH frozen grants with the SAME frozen params (deviation:
+-- constraint re-evaluation is frozen-params stable; revocation, the
+-- validity window and TTL are the live inputs — exactly the second gate's
+-- reason to exist). Pre-G12 rows carry NULLs: dispatch/cohort re-judge a
+-- NULL grant as denied (Conformance 14: no grant -> GRANT_DENIED), a
+-- non-NULL grant_id with NULL authz_params is re-judged with NULL params
+-- and the authorize-effect half is skipped (legacy binding, G12 deviation).
+-- ---------------------------------------------------------------------------
+ALTER TABLE effect_requests
+    ADD COLUMN authz_params jsonb;
+
+-- The concrete parameter object every gate judges with (deviation A90:
+-- target = 'effect:'||effect_kind for the initial LLM slot,
+-- 'tool:'||tool_name for tool effects; path = the session-scoped resource
+-- path; bytes = the sealed payload size).
+CREATE FUNCTION v_gate_params(p_command text, p_target text, p_path text,
+                              p_bytes bigint)
+RETURNS jsonb
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT jsonb_build_object('command', p_command, 'target', p_target,
+                              'path', p_path, 'bytes', p_bytes);
+$$;
+
+-- Seal-stage authorization for ONE member effect: resolve a valid
+-- authorize_effect grant AND a valid effect_submit grant (deterministic
+-- single choice each, v_grant_find_valid ORDER BY grant_id LIMIT 1). The
+-- caller identity resolves from the session control row (the validated
+-- envelope driver == sessions.driver at both seal paths). Returns both
+-- grant ids (NULL when no valid grant) plus the judged params object the
+-- caller MUST freeze onto the member row.
+CREATE FUNCTION v_gate_authorize(
+    p_session_id uuid, p_command text, p_target text, p_path text,
+    p_bytes bigint
+) RETURNS TABLE(authorize_grant_id text, submit_grant_id text,
+                params jsonb)
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_params jsonb := v_gate_params(p_command, p_target, p_path, p_bytes);
+    v_auth text;
+    v_sub text;
+BEGIN
+    v_auth := v_grant_find_valid(p_session_id, 'authorize_effect',
+                                 NULL, NULL, NULL, NULL, v_params);
+    IF v_auth IS NULL THEN
+        RETURN QUERY SELECT NULL::text, NULL::text, v_params;
+        RETURN;
+    END IF;
+    v_sub := v_grant_find_valid(p_session_id, 'effect_submit',
+                                NULL, NULL, NULL, NULL, v_params);
+    RETURN QUERY SELECT v_auth, v_sub, v_params;
+END;
+$$;
+
+-- Dispatch/cohort re-validation of the seal-frozen grants: judge the frozen
+-- effect_submit grant (full conjuncts, frozen params) and, when frozen, the
+-- authorize_effect grant. Returns the first failing reason, NULL when all
+-- frozen grants are valid. The grant/slice row locks are the §2.1 mechanism
+-- (a) linearization point (fixed (workspace_id, slice_id, grant_id) order
+-- inside v_grant_lock_judge).
+CREATE FUNCTION v_gate_revalidate(
+    p_session_id uuid, p_grant_id text, p_authz_params jsonb
+) RETURNS text
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_reason text;
+    v_auth_id text;
+BEGIN
+    IF p_grant_id IS NULL THEN
+        RETURN 'GRANT_NOT_BOUND';
+    END IF;
+    SELECT lj.reason INTO v_reason
+      FROM v_grant_lock_judge(p_session_id, ARRAY[p_grant_id],
+                              'effect_submit', NULL, NULL, NULL,
+                              p_authz_params) lj
+     WHERE NOT lj.valid
+     LIMIT 1;
+    IF FOUND THEN
+        RETURN v_reason;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM grants g WHERE g.grant_id = p_grant_id) THEN
+        RETURN 'GRANT_NOT_FOUND';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+-- The authorize-half is a separate capability (two independent grants,
+-- s2 §2.1 action list): revalidated only when the seal froze one.
+CREATE FUNCTION v_gate_revalidate_authorize(
+    p_session_id uuid, p_authz_params jsonb
+) RETURNS text
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_auth_id text;
+    v_reason text;
+BEGIN
+    v_auth_id := p_authz_params ->> 'authorize_grant_id';
+    IF v_auth_id IS NULL THEN
+        RETURN NULL;  -- legacy binding without a frozen authorize grant
+    END IF;
+    SELECT lj.reason INTO v_reason
+      FROM v_grant_lock_judge(p_session_id, ARRAY[v_auth_id],
+                              'authorize_effect', NULL, NULL, NULL,
+                              p_authz_params) lj
+     WHERE NOT lj.valid
+     LIMIT 1;
+    IF FOUND THEN
+        RETURN v_reason;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM grants g WHERE g.grant_id = v_auth_id) THEN
+        RETURN 'GRANT_NOT_FOUND';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- claim / recovery_claim / yield — coordination lease CAS (s31a §2.3/§2.4).
 -- These are lease operations, not receipt commands (not in the frozen
 -- command list), so they return a plain jsonb result instead of a receipt.
@@ -118,10 +249,20 @@ BEGIN
         RETURN jsonb_build_object('outcome', 'rejected_stale',
                                   'code', 'DRIVER_EPOCH_MISMATCH');
     END IF;
-    -- Recovery claim works on any non-terminal state (terminal uses LATER),
-    -- only when the lease slot is vacant or expired, never starts new work
-    -- (business state untouched), and must keep/verify active_step_id.
-    IF v_sess.state IN ('completed', 'failed', 'cancelled') THEN
+    -- Recovery claim works on any non-terminal state, only when the lease
+    -- slot is vacant or expired, never starts new work (business state
+    -- untouched), and must keep/verify active_step_id. G12 (A39 closure):
+    -- a session failed-terminal through a WORKSPACE_LOST / INFRA
+    -- failure-drain MAY be recovery-claimed for closure only (the drained
+    -- in-flight/unknown residue settles through completion/repair under
+    -- this claim); completed/cancelled and non-drain failures stay
+    -- rejected.
+    IF v_sess.state IN ('completed', 'failed', 'cancelled')
+       AND NOT (v_sess.state = 'failed'
+                AND v_sess.failure_code IS NOT NULL
+                AND v_sess.failure_code IN ('WORKSPACE_LOST',
+                                            'INFRA_ASSEMBLY_FAILED',
+                                            'INFRA_PROTOCOL_VIOLATION')) THEN
         RETURN jsonb_build_object('outcome', 'rejected_mismatch',
                                   'code', 'SESSION_TERMINAL', 'state', v_sess.state);
     END IF;
@@ -392,6 +533,10 @@ DECLARE
     v_batch_id uuid;
     v_job_fence bigint;
     v_new_fence bigint;
+    -- G12 seal authorization stage + generation gate.
+    v_gate record;
+    v_gen uuid;
+    v_gen_status text;
 BEGIN
     -- Judgment order (1)-(4) with the session row lock (master lock order
     -- position 1) taken inside the adjudicator.
@@ -494,10 +639,51 @@ BEGIN
         RETURN;
     END IF;
 
+    -- Seal authorization stage (G12, first real-time gate; spec L165):
+    -- BEFORE creating any step member/LLM slot/batch/first attempt, the
+    -- whole effect set of this seal (the single LLM slot) is authorized
+    -- with concrete params — valid authorize_effect grant AND valid
+    -- effect_submit grant. The grant/slice row locks are taken inside the
+    -- judge (master order: after the session row, before generation/step).
+    -- Any failure rejects the WHOLE seal with zero side effects (binding +
+    -- rejection receipt only); the generation check follows immediately
+    -- (§4 third gate: failed -> GENERATION_REVOKED, retired passes, no
+    -- binding treated as non-failed).
+    SELECT * INTO v_gate FROM v_gate_authorize(
+        p_session_id, 'prepare_step', 'effect:' || p_effect_kind,
+        'session/' || p_session_id::text || '/effect/' || p_effect_id::text,
+        octet_length(p_payload_canonical));
+    IF v_gate.authorize_grant_id IS NULL OR v_gate.submit_grant_id IS NULL THEN
+        v_receipt := v8_reject_command(p_session_id, p_command_id, 'prepare_step',
+            v_computed, 'rejected_mismatch', 'GRANT_DENIED',
+            format('seal authorization stage: no valid %s grant for the LLM slot',
+                   CASE WHEN v_gate.authorize_grant_id IS NULL
+                        THEN 'authorize_effect' ELSE 'effect_submit' END));
+        RETURN QUERY SELECT 'rejected_mismatch'::text, 'GRANT_DENIED'::text, v_receipt;
+        RETURN;
+    END IF;
+    v_gen := COALESCE(v_sess.active_catalog_generation,
+                      '00000000-0000-4000-8000-000000000001'::uuid);
+    IF v_gen IS NOT NULL THEN
+        SELECT g.status INTO v_gen_status FROM generations g
+         WHERE g.generation_id = v_gen FOR SHARE;
+        IF v_gen_status = 'failed' THEN
+            v_receipt := v8_reject_command(p_session_id, p_command_id, 'prepare_step',
+                v_computed, 'rejected_mismatch', 'GENERATION_REVOKED',
+                'seal generation check: the bound catalog generation is failed');
+            RETURN QUERY SELECT 'rejected_mismatch'::text, 'GENERATION_REVOKED'::text, v_receipt;
+            RETURN;
+        END IF;
+    END IF;
+
     -- Seal step (1): create_step — created as planned/stage=decision, an
-    -- in-transaction building state only.
-    INSERT INTO steps(step_id, session_id, turn_id, status, stage)
-    VALUES (p_step_id, p_session_id, p_turn_id, 'planned', 'decision');
+    -- in-transaction building state only. The catalog generation is bound
+    -- at creation (the session's assemble-bound active generation, else
+    -- the seed generation DEFAULT).
+    INSERT INTO steps(step_id, session_id, turn_id, status, stage,
+                      catalog_generation)
+    VALUES (p_step_id, p_session_id, p_turn_id, 'planned', 'decision',
+            v_gen);
 
     -- Seal steps (4)+(5): the unique sealed decision batch + the LLM slot
     -- effect (create_effect_in_seal mode: member creation inside the seal
@@ -514,13 +700,17 @@ BEGIN
         effect_id, session_id, step_id, batch_id, dispatch_ordinal, tool_call_id,
         effect_kind, execution_mode, driver, driver_epoch, session_fence,
         dispatch_session_fence, current_job_fence, request_hash, idempotency_key,
-        status, retry_class, max_attempts, attempt_no, dispatch_count)
+        status, retry_class, max_attempts, attempt_no, dispatch_count,
+        grant_id, authz_params)
     VALUES (
         p_effect_id, p_session_id, p_step_id, v_batch_id, 0, NULL,
         p_effect_kind, p_execution_mode, v_sess.driver, v_sess.driver_epoch,
         v_sess.session_fence, v_sess.session_fence, v_job_fence,
         p_request_hash, p_idempotency_key, 'planned', p_retry_class,
-        p_max_attempts, 1, 0);
+        p_max_attempts, 1, 0,
+        v_gate.submit_grant_id,
+        v_gate.params || jsonb_build_object(
+            'authorize_grant_id', v_gate.authorize_grant_id));
 
     INSERT INTO effect_attempts(
         effect_id, attempt_no, session_id, step_id, driver, driver_epoch,
@@ -608,6 +798,11 @@ DECLARE
     v_er effect_requests%ROWTYPE;
     v_att effect_attempts%ROWTYPE;
     v_receipt jsonb;
+    -- G12 dispatch gate.
+    v_bind record;
+    v_deny text;
+    v_gen uuid;
+    v_gen_status text;
 BEGIN
     SELECT * INTO v_adj FROM v8_command_adjudicate(
         p_session_id, p_command_id, 'dispatch_effect',
@@ -654,6 +849,47 @@ BEGIN
         RETURN QUERY SELECT 'rejected_mismatch'::text, 'EFFECT_NOT_FOUND'::text, v_receipt;
         RETURN;
     END IF;
+
+    -- Dispatch authorization gate (G12, SECOND real-time gate; spec L165
+    -- two-phase snapshot boundary): re-validate the seal-frozen grants with
+    -- ALL conjuncts against the CURRENT grant/slice state — a revocation
+    -- landing between assemble (manifest snapshot) / seal and this dispatch
+    -- MUST deny here; the snapshot never exempts. Grant/slice row locks are
+    -- taken inside the judge (master order: after the session row, BEFORE
+    -- the step lock below); the generation read check follows (read-only,
+    -- the offline drain owns the generation exclusive lock). Read-only
+    -- denials: receipt only, zero control state, the effect stays ready.
+    -- The immutable binding columns are read lockless (frozen at seal);
+    -- every mutable guard below is re-verified under the row locks.
+    SELECT er.grant_id, er.authz_params INTO v_bind
+      FROM effect_requests er WHERE er.effect_id = p_effect_id;
+    v_deny := v_gate_revalidate(p_session_id, v_bind.grant_id,
+                                v_bind.authz_params);
+    IF v_deny IS NULL THEN
+        v_deny := v_gate_revalidate_authorize(p_session_id,
+                                              v_bind.authz_params);
+    END IF;
+    IF v_deny IS NOT NULL THEN
+        v_receipt := v8_reject_command(p_session_id, p_command_id, 'dispatch_effect',
+            v_computed, 'rejected_mismatch', 'GRANT_DENIED',
+            format('dispatch gate revalidation failed: %s', v_deny));
+        RETURN QUERY SELECT 'rejected_mismatch'::text, 'GRANT_DENIED'::text, v_receipt;
+        RETURN;
+    END IF;
+    SELECT st.catalog_generation INTO v_gen FROM steps st
+     WHERE st.step_id = v_step_id;
+    IF v_gen IS NOT NULL THEN
+        SELECT g.status INTO v_gen_status FROM generations g
+         WHERE g.generation_id = v_gen FOR SHARE;
+        IF v_gen_status = 'failed' THEN
+            v_receipt := v8_reject_command(p_session_id, p_command_id, 'dispatch_effect',
+                v_computed, 'rejected_mismatch', 'GENERATION_REVOKED',
+                'dispatch gate: the bound catalog generation is failed');
+            RETURN QUERY SELECT 'rejected_mismatch'::text, 'GENERATION_REVOKED'::text, v_receipt;
+            RETURN;
+        END IF;
+    END IF;
+
     PERFORM 1 FROM steps st WHERE st.step_id = v_step_id FOR UPDATE;
     SELECT * INTO v_er FROM effect_requests er WHERE er.effect_id = p_effect_id FOR UPDATE;
     IF v_er.session_id IS DISTINCT FROM p_session_id THEN
@@ -790,6 +1026,9 @@ DECLARE
     v_er effect_requests%ROWTYPE;
     v_att effect_attempts%ROWTYPE;
     v_receipt jsonb;
+    -- G12: terminal-session late completion settles evidence but MUST
+    -- NOT overwrite the terminal session state (A39/drain contract).
+    v_terminal boolean := false;
     v_res jsonb;
     v_plan jsonb;
     v_class text;
@@ -840,6 +1079,7 @@ BEGIN
     END IF;
 
     SELECT * INTO v_sess FROM sessions s WHERE s.session_id = p_session_id FOR UPDATE;
+    v_terminal := v_sess.state IN ('completed', 'failed', 'cancelled');
 
     -- Locate, then lock in the master order: step -> effect -> attempt.
     SELECT er.step_id INTO v_step_id FROM effect_requests er
@@ -1323,7 +1563,8 @@ BEGIN
         PERFORM v_apply_step_aggregation(
             p_session_id, v_step_id, v_agg.rule_no, v_agg.step_status,
             v_agg.outcome_code, v_agg.session_state, v_agg.failure_code,
-            v_agg.closure_effect_ids, p_command_id, v_computed);
+            v_agg.closure_effect_ids, p_command_id, v_computed,
+            p_write_session => NOT v_terminal);
         v_end := v_derive_cancel_turn_end(p_session_id, p_command_id,
                                           p_schema_version,
                                           p_canonicalizer_version);
@@ -1485,14 +1726,18 @@ BEGIN
                 UPDATE steps SET status = 'blocked_unknown_effect',
                                  outcome_code = 'UNKNOWN_AFTER_DISPATCH', updated_at = now()
                  WHERE step_id = v_step_id;
-                UPDATE sessions SET state = 'blocked_unknown_effect', updated_at = now()
-                 WHERE session_id = p_session_id;
+                IF NOT v_terminal THEN
+                    UPDATE sessions SET state = 'blocked_unknown_effect', updated_at = now()
+                     WHERE session_id = p_session_id;
+                END IF;
             ELSIF v_pending > 0 THEN
                 -- rule 2: pending sibling keeps step and session waiting_effect.
                 UPDATE steps SET status = 'waiting_effect', updated_at = now()
                  WHERE step_id = v_step_id;
-                UPDATE sessions SET state = 'waiting_effect', updated_at = now()
-                 WHERE session_id = p_session_id;
+                IF NOT v_terminal THEN
+                    UPDATE sessions SET state = 'waiting_effect', updated_at = now()
+                     WHERE session_id = p_session_id;
+                END IF;
             ELSE
                 -- G7a: failure siblings now persist (known_failure
                 -- settlement). The aggregation priority puts
@@ -1514,7 +1759,8 @@ BEGIN
                             p_session_id, v_step_id, v_agg.rule_no,
                             v_agg.step_status, v_agg.outcome_code,
                             v_agg.session_state, v_agg.failure_code,
-                            v_agg.closure_effect_ids, p_command_id, v_computed);
+                            v_agg.closure_effect_ids, p_command_id, v_computed,
+                            p_write_session => NOT v_terminal);
                     ELSE
                         RAISE EXCEPTION
                             'INFRA_PROTOCOL_VIOLATION: failure siblings present '
@@ -1535,8 +1781,10 @@ BEGIN
                         status = 'succeeded', stage = 'closed', outcome_code = 'SUCCEEDED',
                         closed_at = now(), updated_at = now()
                      WHERE step_id = v_step_id;
-                    UPDATE sessions SET state = 'ready', updated_at = now()
-                     WHERE session_id = p_session_id;
+                    IF NOT v_terminal THEN
+                        UPDATE sessions SET state = 'ready', updated_at = now()
+                         WHERE session_id = p_session_id;
+                    END IF;
                 ELSE
                     -- Unreachable: a settled tools batch with no unknown,
                     -- pending or failure siblings is all-succeeded.
@@ -1728,14 +1976,18 @@ BEGIN
             UPDATE steps SET status = 'blocked_unknown_effect',
                              outcome_code = 'UNKNOWN_AFTER_DISPATCH', updated_at = now()
              WHERE step_id = v_step_id;
-            UPDATE sessions SET state = 'blocked_unknown_effect', updated_at = now()
-             WHERE session_id = p_session_id;
+            IF NOT v_terminal THEN
+                UPDATE sessions SET state = 'blocked_unknown_effect', updated_at = now()
+                 WHERE session_id = p_session_id;
+            END IF;
         ELSIF v_pending > 0 THEN
             -- rule 2: pending sibling keeps step and session waiting_effect.
             UPDATE steps SET status = 'waiting_effect', updated_at = now()
              WHERE step_id = v_step_id;
-            UPDATE sessions SET state = 'waiting_effect', updated_at = now()
-             WHERE session_id = p_session_id;
+            IF NOT v_terminal THEN
+                UPDATE sessions SET state = 'waiting_effect', updated_at = now()
+                 WHERE session_id = p_session_id;
+            END IF;
         ELSIF v_do THEN
             -- rule 6 success branch: terminalize the closing step.
             UPDATE steps SET
@@ -1743,12 +1995,17 @@ BEGIN
                 closed_at = now(), updated_at = now()
              WHERE step_id = v_step_id;
             -- Shared turn-close judgment (also used by finish_session).
-            SELECT * INTO v_fin FROM v_session_finalize(p_session_id, v_step.turn_id);
-            IF NOT v_fin.closed THEN
-                RAISE EXCEPTION
-                    'INFRA_PROTOCOL_VIOLATION: turn-close judgment failed after a '
-                    'clean decision_only success (session %, turn %)',
-                    p_session_id, v_step.turn_id;
+            -- G12: on a terminal session the closing step still terminalizes
+            -- but the session finalize MUST NOT run (the terminal state is
+            -- preserved; A39/drain contract).
+            IF NOT v_terminal THEN
+                SELECT * INTO v_fin FROM v_session_finalize(p_session_id, v_step.turn_id);
+                IF NOT v_fin.closed THEN
+                    RAISE EXCEPTION
+                        'INFRA_PROTOCOL_VIOLATION: turn-close judgment failed after a '
+                        'clean decision_only success (session %, turn %)',
+                        p_session_id, v_step.turn_id;
+                END IF;
             END IF;
             -- Turn closure: known turn/end {interrupted:false} + slot row.
             v_end_payload := '{"interrupted":false}';
@@ -1776,14 +2033,18 @@ BEGIN
                 v_endkey, 'known', convert_to(v_end_payload, 'UTF8'), 1);
             -- Aggregation NEVER derives completed: rule 6 targets ready;
             -- only finish_session completes.
-            UPDATE sessions SET state = 'ready', updated_at = now()
-             WHERE session_id = p_session_id;
+            IF NOT v_terminal THEN
+                UPDATE sessions SET state = 'ready', updated_at = now()
+                 WHERE session_id = p_session_id;
+            END IF;
         ELSE
             -- final_tools branch: step waits the tools seal (LATER).
             UPDATE steps SET status = 'ready', updated_at = now()
              WHERE step_id = v_step_id;
-            UPDATE sessions SET state = 'ready', updated_at = now()
-             WHERE session_id = p_session_id;
+            IF NOT v_terminal THEN
+                UPDATE sessions SET state = 'ready', updated_at = now()
+                 WHERE session_id = p_session_id;
+            END IF;
         END IF;
 
         v_receipt := jsonb_build_object(
@@ -1877,8 +2138,10 @@ BEGIN
         -- and session_events carries no chunk_index column, so the merge
         -- stays LATER.
 
-        UPDATE sessions SET state = 'blocked_unknown_effect', updated_at = now()
-         WHERE session_id = p_session_id;
+        IF NOT v_terminal THEN
+            UPDATE sessions SET state = 'blocked_unknown_effect', updated_at = now()
+             WHERE session_id = p_session_id;
+        END IF;
 
         v_receipt := jsonb_build_object(
             'command_kind', 'complete_effect',

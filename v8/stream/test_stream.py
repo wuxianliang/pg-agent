@@ -37,6 +37,7 @@ from v8.canonical.canonical import CanonicalizationError
 from v8.events.client import build_entry, canonical_payload
 from v8.grant.fixtures import (
     append_chunks,
+    bind_chunk_provider,
     chunk_entry,
     chunk_fixture,
     fresh_session,
@@ -206,13 +207,19 @@ def test_chunk_attribution(conn) -> None:
     check("chunk negative chunk_index -> CHUNK_ATTRIBUTION_INVALID",
           r["code"] == "CHUNK_ATTRIBUTION_INVALID", r["code"])
 
-    # Value-domain boundary four points on the unbounded (legacy) path.
+    # Value-domain boundary four points on a grant-bound provider fixture
+    # (G12: the A57 legacy path is removed; the caller identity resolves
+    # through the effect's bound provider subject by default).
     sb, _, _, eb = chunk_fixture(conn)
+    bind_chunk_provider(conn, sb, eb)
+    sb_stream = f"sb-{u()[:8]}"
     rb = append_chunks(conn, sb, "c-b1",
-                       [chunk_entry(eb, "a", SAFE_MAX)], expected_seq=1)
+                       [chunk_entry(eb, "a", SAFE_MAX, stream=sb_stream)],
+                       expected_seq=1)
     check("chunk_index 2^53-1 (number) accepted", rb["outcome"] == "accepted", rb)
     rb2 = append_chunks(conn, sb, "c-b2",
-                        [chunk_entry(eb, "b", U64MAX)], expected_seq=2)
+                        [chunk_entry(eb, "b", U64MAX, stream=sb_stream)],
+                        expected_seq=2)
     check("chunk_index 2^63-1 (tagged $int) accepted", rb2["outcome"] == "accepted",
           rb2)
     # 2^53 bare number is rejected by the canonical schema pre-check; the
@@ -224,18 +231,25 @@ def test_chunk_attribution(conn) -> None:
         check("bare 2^53 number rejected by canonical schema",
               exc.code == "UNSAFE_NUMBER", exc.code)
     rb3 = append_chunks(conn, sb, "c-b3",
-                        [chunk_entry(eb, "c", 2 ** 53)], expected_seq=3)
+                        [chunk_entry(eb, "c", 2 ** 53, stream=sb_stream)],
+                        expected_seq=3)
     check("chunk_index 2^53 tagged form accepted", rb3["outcome"] == "accepted", rb3)
     rb4 = append_chunks(conn, sb, "c-b4",
-                        [chunk_entry(eb, "d", U64MAX + 1)], expected_seq=4)
+                        [chunk_entry(eb, "d", U64MAX + 1, stream=sb_stream)],
+                        expected_seq=4)
     check("chunk_index 2^63 -> CHUNK_ATTRIBUTION_INVALID",
           rb4["code"] == "CHUNK_ATTRIBUTION_INVALID", rb4["code"])
 
     # Out-of-order with a gap (2,0,1) accepted.
     so, _, _, eo = chunk_fixture(conn)
-    r1 = append_chunks(conn, so, "c-o1", [chunk_entry(eo, "A", 2)], expected_seq=1)
-    r2 = append_chunks(conn, so, "c-o2", [chunk_entry(eo, "B", 0)], expected_seq=2)
-    r3 = append_chunks(conn, so, "c-o3", [chunk_entry(eo, "C", 1)], expected_seq=3)
+    bind_chunk_provider(conn, so, eo)
+    so_stream = f"so-{u()[:8]}"
+    r1 = append_chunks(conn, so, "c-o1", [chunk_entry(eo, "A", 2, stream=so_stream)],
+                       expected_seq=1)
+    r2 = append_chunks(conn, so, "c-o2", [chunk_entry(eo, "B", 0, stream=so_stream)],
+                       expected_seq=2)
+    r3 = append_chunks(conn, so, "c-o3", [chunk_entry(eo, "C", 1, stream=so_stream)],
+                       expected_seq=3)
     check("out-of-order chunk with a gap accepted",
           r1["outcome"] == r2["outcome"] == r3["outcome"] == "accepted",
           (r1["outcome"], r2["outcome"], r3["outcome"]))
@@ -243,16 +257,19 @@ def test_chunk_attribution(conn) -> None:
     # Four-tuple derivation dedup (SQL == Python key; idempotent; conflict).
     with conn.cursor() as cur:
         cur.execute("SELECT event_key, seq, payload FROM session_events"
-                    " WHERE session_id=%s AND stream_id='s1' AND chunk_index=2",
-                    (so,))
+                    " WHERE session_id=%s AND stream_id=%s AND chunk_index=2",
+                    (so, so_stream))
         ek, seq, payload = cur.fetchone()
-    py_key = event_key_v1(eo, 1, "s1", 2)
+    py_key = event_key_v1(eo, 1, so_stream, 2)
     check("stored streaming event_key == keys.event_key_v1 (byte parity)",
           ek == py_key, (ek, py_key))
-    rr = append_chunks(conn, so, "c-o4", [chunk_entry(eo, "A", 2)], expected_seq=4)
+    rr = append_chunks(conn, so, "c-o4",
+                       [chunk_entry(eo, "A", 2, stream=so_stream)], expected_seq=4)
     check("same four-tuple same content -> idempotent",
           rr["outcome"] == "accepted" and rr["receipt"]["inserted"] is None, rr)
-    rc = append_chunks(conn, so, "c-o5", [chunk_entry(eo, "DIFF", 2)], expected_seq=4)
+    rc = append_chunks(conn, so, "c-o5",
+                       [chunk_entry(eo, "DIFF", 2, stream=so_stream)],
+                       expected_seq=4)
     check("same four-tuple different content -> CANONICALIZER_CONFLICT",
           rc["code"] == "CANONICALIZER_CONFLICT", rc["code"])
 
@@ -283,27 +300,35 @@ def test_chunk_attribution(conn) -> None:
     # (6)(i) missing event_append grant (only stream_ingest held).
     ws2 = u()
     sl2 = seed_slice(conn, ws2, "si-only")
-    sD = fresh_session(conn)
+    # G12: a driver outside the stage-seed set ('drv') so event_append is
+    # genuinely absent for this session (the stage seed is permissive).
+    sD = fresh_session(conn, driver="drv-noea")
     g_d_eff = seed_grant(conn, "g-deff", ws2, sl2, "session", sD, "stream_ingest")
     seed_grant(conn, "g-dsi", ws2, sl2, "session", sD, "stream_ingest")
     sD2, _, _, eD = chunk_fixture(conn, session_id=sD, grant_id=g_d_eff)
-    r_no_ea = append_chunks(conn, sD2, "cD-noea", [chunk_entry(eD, "x", 0)],
-                            expected_seq=1, caller_subject=sD)
+    r_no_ea = append_chunks(conn, sD2, "cD-noea",
+                            [chunk_entry(eD, "x", 0, stream=f"sd-{u()[:8]}")],
+                            expected_seq=1, caller_subject=sD,
+                            driver="drv-noea")
     check("no event_append grant -> CHUNK_ATTRIBUTION_INVALID",
-          r_no_ea["code"] == "CHUNK_ATTRIBUTION_INVALID", r_no_ea["code"])
+          r_no_ea["code"] == "CHUNK_ATTRIBUTION_INVALID"
+          and "item 6i" in r_no_ea["receipt"]["detail"], r_no_ea)
 
     # (6)(ii) dual-grant contrast: holds stream_ingest (passed as the caller
     # grant) but no event_append -> still rejected.
     ws3 = u()
     sl3 = seed_slice(conn, ws3, "si-only-2")
-    sE = fresh_session(conn)
+    sE = fresh_session(conn, driver="drv-sionly")
     seed_grant(conn, "g-eeff", ws3, sl3, "session", sE, "stream_ingest")
     g_e_si = seed_grant(conn, "g-esi", ws3, sl3, "session", sE, "stream_ingest")
     sE2, _, _, eE = chunk_fixture(conn, session_id=sE, grant_id="g-eeff")
-    r_si_only = append_chunks(conn, sE2, "cE-si", [chunk_entry(eE, "x", 0)],
-                              expected_seq=1, caller_grant_id=g_e_si)
+    r_si_only = append_chunks(conn, sE2, "cE-si",
+                              [chunk_entry(eE, "x", 0, stream=f"se-{u()[:8]}")],
+                              expected_seq=1, caller_grant_id=g_e_si,
+                              driver="drv-sionly")
     check("holds stream_ingest but not event_append -> CHUNK_ATTRIBUTION_INVALID",
-          r_si_only["code"] == "CHUNK_ATTRIBUTION_INVALID", r_si_only["code"])
+          r_si_only["code"] == "CHUNK_ATTRIBUTION_INVALID"
+          and "item 6i" in r_si_only["receipt"]["detail"], r_si_only)
 
     # (6)(iii) non-owner caller: both capabilities exist for a FOREIGN subject,
     # and the caller declares that foreign subject -> identity mismatch.
@@ -316,10 +341,12 @@ def test_chunk_attribution(conn) -> None:
     g_f_eff = seed_grant(conn, "g-feff", ws4, sl4, "session", sF, "event_append")
     seed_grant(conn, "g-feff2", ws4, sl4, "session", sF, "stream_ingest")
     sF2, _, _, eF = chunk_fixture(conn, session_id=sF, grant_id=g_f_eff)
-    r_nonowner = append_chunks(conn, sF2, "cF-nonowner", [chunk_entry(eF, "x", 0)],
+    r_nonowner = append_chunks(conn, sF2, "cF-nonowner",
+                               [chunk_entry(eF, "x", 0, stream=f"sf-{u()[:8]}")],
                                expected_seq=1, caller_subject=foreign_subj)
     check("non-owner caller (identity mismatch) -> CHUNK_ATTRIBUTION_INVALID",
-          r_nonowner["code"] == "CHUNK_ATTRIBUTION_INVALID", r_nonowner["code"])
+          r_nonowner["code"] == "CHUNK_ATTRIBUTION_INVALID"
+          and "item 6iii" in r_nonowner["receipt"]["detail"], r_nonowner)
 
 
 # ---------------------------------------------------------------------------

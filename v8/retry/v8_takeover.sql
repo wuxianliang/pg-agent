@@ -21,12 +21,15 @@
 -- takeover of an expired job lease).
 --
 -- G7b scope guards (explicit; the [LATER] dispositions land with G8/P1):
---   * grant/slice and catalog_generation models are absent, so the
---     eight-slot pre-lock set reduces to its reachable subset
---     session -> step -> effect -> attempt (lockless locate of the
---     immutable associations first, then tiered locks in that order,
---     each tier sorted). The generation-check deadlock assertion is
---     LATER with §4 (same reason as the G7a cohort gates).
+--   * G12 RETIRED the grant/generation scope guard: the eight-slot
+--     pre-lock set is complete (session -> grant/slice -> generation ->
+--     step -> effect -> attempt; the grant set explicitly includes
+--     eligible siblings' frozen grants; the generation tier is a shared
+--     read), the cohort authorization/generation checks are real (the
+--     shared sub-operation steps 3/4), and the entry refuses non-READ
+--     COMMITTED with ISOLATION_UNSUPPORTED (Conformance 8 (x)). Denials
+--     land in the step sub-result (allocation_denied) — the takeover and
+--     its settlements never roll back for a cohort gate denial.
 --   * execution permission gate (3(c) determination 1): driver_mode=
 --     quiescing forbids the known_failure retry disposition — with at
 --     least one taken-over attempt classifying known_failure the whole
@@ -122,7 +125,25 @@ DECLARE
     v_alloc jsonb;
     v_entry jsonb;
     v_end jsonb;
+    -- G12 full prelock tiers.
+    v_pre_grants text[];
+    v_pre_auth text[];
+    v_gen record;
 BEGIN
+    -- G12 (Conformance 8 (x)): the takeover protocol entry refuses any
+    -- isolation level other than READ COMMITTED with a stable rejection
+    -- (the recovery claim/rescan semantics are defined against READ
+    -- COMMITTED statement snapshots).
+    IF current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+        v_receipt := v8_reject_command(p_session_id, p_command_id,
+            'recovery_takeover', v_computed, 'rejected_mismatch',
+            'ISOLATION_UNSUPPORTED',
+            format('recovery takeover MUST run at READ COMMITTED (got %s)',
+                   current_setting('transaction_isolation')));
+        RETURN QUERY SELECT 'rejected_mismatch'::text, 'ISOLATION_UNSUPPORTED'::text, v_receipt;
+        RETURN;
+    END IF;
+
     SELECT * INTO v_adj FROM v8_command_adjudicate(
         p_session_id, p_command_id, 'recovery_takeover',
         p_payload_canonical, p_declared_hash);
@@ -160,10 +181,47 @@ BEGIN
 
     -- ------------------------------------------------------------------
     -- (1) pre-lock set: lockless locate of the immutable associations,
-    -- then the reachable subset of the eight-slot master order
-    -- session -> step -> effect -> attempt, each tier locked in sort
-    -- order (grant/slice + generation tiers absent in this stage).
+    -- then the FULL eight-slot master order (G12 — the G7b reachable
+    -- subset is completed): session -> grant/slice -> generation -> step
+    -- -> effect -> attempt, each tier locked in sort order. The grant set
+    -- explicitly covers EVERY frozen grant of the session's effects
+    -- (including the eligible failed_retryable siblings' grants, never
+    -- just the in-flight takeover targets') so the cohort authorization
+    -- check at step 3 re-judges under locks this transaction already
+    -- holds; a concurrent revocation of any member's grant (e.g. a
+    -- non-target sibling's GA) is serialized against this full lock set.
+    -- The generation tier is the shared read (FOR SHARE) the cohort
+    -- generation check consumes — recovery reads the step-1 pre-locked
+    -- generation rows and never补locks.
     -- ------------------------------------------------------------------
+    SELECT array_agg(DISTINCT er.grant_id) INTO v_pre_grants
+      FROM effect_requests er
+     WHERE er.session_id = p_session_id AND er.grant_id IS NOT NULL;
+    IF v_pre_grants IS NOT NULL THEN
+        PERFORM lj.grant_id FROM v_grant_lock_judge(
+            p_session_id, v_pre_grants, 'effect_submit',
+            NULL, NULL, NULL, NULL) lj;
+    END IF;
+    SELECT array_agg(DISTINCT er.authz_params->>'authorize_grant_id')
+      INTO v_pre_auth
+      FROM effect_requests er
+     WHERE er.session_id = p_session_id
+       AND er.authz_params->>'authorize_grant_id' IS NOT NULL;
+    IF v_pre_auth IS NOT NULL THEN
+        PERFORM lj.grant_id FROM v_grant_lock_judge(
+            p_session_id, v_pre_auth, 'authorize_effect',
+            NULL, NULL, NULL, NULL) lj;
+    END IF;
+    FOR v_gen IN
+        SELECT DISTINCT st.catalog_generation AS g
+          FROM steps st WHERE st.session_id = p_session_id
+          AND st.catalog_generation IS NOT NULL
+         ORDER BY 1
+    LOOP
+        PERFORM 1 FROM generations g WHERE g.generation_id = v_gen.g
+         FOR SHARE;
+    END LOOP;
+
     SELECT array_agg(DISTINCT er.step_id) INTO v_all_steps
       FROM effect_requests er WHERE er.session_id = p_session_id;
     FOREACH v_step_id IN ARRAY coalesce(v_all_steps, ARRAY[]::uuid[]) LOOP
@@ -470,13 +528,48 @@ BEGIN
             v_alloc := v_retry_cohort_allocation(p_session_id, v_step_id,
                                                   p_command_id);
             IF NOT (v_alloc->>'allocated')::boolean THEN
-                RAISE EXCEPTION
-                    'INFRA_PROTOCOL_VIOLATION: recovery takeover cohort '
-                    'allocation declined after a rule-5 judgment (step %): %',
-                    v_step_id, v_alloc;
+                -- G12 cohort gate denials (recovery entry contract, spec
+                -- L476 方案 1): the command stays accepted overall — the
+                -- takeover CAS and the old-attempt settlements above MUST
+                -- NOT roll back; the denial lands in the step sub-result.
+                IF v_alloc->>'reason' = 'grant_denied' THEN
+                    -- Final aggregation over the UN-ALLOCATED batch state
+                    -- (rule 5 -> step failed_retryable / session ready as
+                    -- ACTUAL state, derived by this transaction's final
+                    -- aggregation; the pre-allocation virtual rule-5
+                    -- 'ready' was a permission projection only).
+                    PERFORM v_apply_step_aggregation(
+                        p_session_id, v_step_id, v_agg.rule_no,
+                        v_agg.step_status, v_agg.outcome_code,
+                        v_agg.session_state, v_agg.failure_code,
+                        v_agg.closure_effect_ids, p_command_id, v_computed);
+                    v_steps_out := v_steps_out || jsonb_build_object(
+                        'step_id', v_step_id,
+                        'allocated', false,
+                        'allocation_denied', 'GRANT_DENIED',
+                        'denied', v_alloc->'denied',
+                        'rule_no', v_agg.rule_no,
+                        'step_status', v_agg.step_status,
+                        'session_state', v_agg.session_state,
+                        'failure_code', v_agg.failure_code);
+                ELSIF v_alloc->>'reason' = 'generation_revoked' THEN
+                    -- The shared post-denial final aggregation already ran
+                    -- inside the sub-operation (three-conjunction closure).
+                    v_steps_out := v_steps_out || jsonb_build_object(
+                        'step_id', v_step_id,
+                        'allocated', false,
+                        'allocation_denied', 'GENERATION_REVOKED',
+                        'closure', v_alloc->'closure');
+                ELSE
+                    RAISE EXCEPTION
+                        'INFRA_PROTOCOL_VIOLATION: recovery takeover cohort '
+                        'allocation declined after a rule-5 judgment (step %): %',
+                        v_step_id, v_alloc;
+                END IF;
+            ELSE
+                v_steps_out := v_steps_out
+                    || (jsonb_build_object('step_id', v_step_id) || v_alloc);
             END IF;
-            v_steps_out := v_steps_out
-                || (jsonb_build_object('step_id', v_step_id) || v_alloc);
         ELSE
             RAISE EXCEPTION
                 'INFRA_PROTOCOL_VIOLATION: recovery takeover batch judgment '

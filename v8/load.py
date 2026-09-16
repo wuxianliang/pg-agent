@@ -86,11 +86,13 @@ STAGE_THROUGH = {
     # non-known_success exemption negative vector — so its load set runs
     # through retry. The stream SQL itself sits at position 4 (after
     # grant, before events). Semantic note (merge reconciliation): the
-    # load set stops at v8_retry (position 10) and does NOT include
-    # takeover — the pre-G10 count 9 covered takeover; grant+plugin
-    # shifted the indices and test_stream has no takeover dependency, so
-    # the final count 10 stands (do not mirror the old count's semantics).
-    "stream": 10,
+    # pre-G10 count covered takeover; grant+plugin shifted the indices.
+    # G12 correction: G9b (test_observation.py) calls v_recovery_takeover
+    # for its takeover-settled observation vectors, so the stream stage
+    # load set runs through takeover (11) — the merge-time assumption
+    # "test_stream has no takeover dependency" held for test_stream.py
+    # only, not for test_observation.py sharing the same stage database.
+    "stream": 11,
     "effect": 7,
     "tools": 8,
     "retry": 11,
@@ -106,6 +108,10 @@ STAGE_THROUGH = {
     # G13: compat loads the full 14-file set (merge-order reconciled value
     # after grant/plugin inserted ahead of it).
     "compat": 14,
+    # G12 (gates) adds NO SQL of its own — it modifies the existing
+    # effect/tools/retry/takeover files in place — but its gate exercises
+    # the full pre-compat order (seal/dispatch/cohort/takeover/append).
+    "gates": 13,
 }
 
 

@@ -128,6 +128,10 @@ DECLARE
     v_match boolean;
     v_dec_ok boolean;
     v_plan_ok boolean;
+    -- G12 seal authorization stage.
+    v_gate record;
+    v_sub_grants text[];
+    v_authz_params jsonb[];
 BEGIN
     -- Step (ii) preamble: judgment order (1)-(4) with the session row lock
     -- (master lock order position 1) taken inside the adjudicator.
@@ -369,6 +373,61 @@ BEGIN
         RETURN;
     END IF;
 
+    -- Seal authorization stage (G12, first real-time gate; spec L165):
+    -- EVERY tool effect of this batch is authorized with concrete params
+    -- (valid authorize_effect grant AND valid effect_submit grant per
+    -- member) BEFORE any batch/effect/attempt creation; any member failure
+    -- rejects the WHOLE seal with zero side effects (binding + rejection
+    -- receipt only). The generation check follows immediately (§4 third
+    -- gate). Placement note (deviation A92): this stage runs AFTER the
+    -- step row lock above (the G6 replay/CAS split must be decided under
+    -- that lock), so grant/slice locks here follow the step lock rather
+    -- than precede it — the reverse of the canonical order; the
+    -- counterparty set that takes grant locks (operator revoke, other
+    -- seals/dispatches, the cohort gates) never takes step locks while
+    -- holding grant locks, so no deadlock cycle is constructible. The
+    -- initial decision seal and the dispatch gate take grant locks in the
+    -- canonical order (before any step lock).
+    IF p_slots IS NOT NULL AND jsonb_typeof(p_slots) = 'array' THEN
+        v_n := jsonb_array_length(p_slots);
+        v_sub_grants := ARRAY[]::text[];
+        v_authz_params := ARRAY[]::jsonb[];
+        FOR v_i IN 0 .. v_n - 1 LOOP
+            v_slot := p_slots -> v_i;
+            SELECT * INTO v_gate FROM v_gate_authorize(
+                p_session_id, 'seal_batch',
+                'tool:' || coalesce(v_slot->>'tool', ''),
+                'session/' || p_session_id::text || '/tool/'
+                    || coalesce(v_slot->>'tool_call_id', ''),
+                octet_length(coalesce(v_slot->>'payload_canonical', '')));
+            IF v_gate.authorize_grant_id IS NULL
+               OR v_gate.submit_grant_id IS NULL THEN
+                v_receipt := v8_reject_command(p_session_id, p_command_id, 'seal_batch',
+                    v_computed, 'rejected_mismatch', 'GRANT_DENIED',
+                    format('seal authorization stage: slot %s (%s) holds no valid %s grant',
+                           v_i, coalesce(v_slot->>'tool', '?'),
+                           CASE WHEN v_gate.authorize_grant_id IS NULL
+                                THEN 'authorize_effect' ELSE 'effect_submit' END));
+                RETURN QUERY SELECT 'rejected_mismatch'::text, 'GRANT_DENIED'::text, v_receipt;
+                RETURN;
+            END IF;
+            v_sub_grants := v_sub_grants || v_gate.submit_grant_id;
+            v_authz_params := v_authz_params
+                || (v_gate.params || jsonb_build_object(
+                        'authorize_grant_id', v_gate.authorize_grant_id));
+        END LOOP;
+        -- Generation check (§4 third gate, shared read; failed ->
+        -- GENERATION_REVOKED zero-side-effect rejection, retired passes,
+        -- no binding treated as non-failed).
+        IF v_step_generation_status(p_step_id) = 'failed' THEN
+            v_receipt := v8_reject_command(p_session_id, p_command_id, 'seal_batch',
+                v_computed, 'rejected_mismatch', 'GENERATION_REVOKED',
+                'seal generation check: the step-bound catalog generation is failed');
+            RETURN QUERY SELECT 'rejected_mismatch'::text, 'GENERATION_REVOKED'::text, v_receipt;
+            RETURN;
+        END IF;
+    END IF;
+
     -- Slot manifest validation (table CHECKs would abort the transaction
     -- and lose the receipt; reject classified instead). The manifest is an
     -- ordered array; the array position IS the frozen dispatch_ordinal.
@@ -477,14 +536,16 @@ BEGIN
             effect_id, session_id, step_id, batch_id, dispatch_ordinal, tool_call_id,
             effect_kind, execution_mode, driver, driver_epoch, session_fence,
             dispatch_session_fence, current_job_fence, request_hash, idempotency_key,
-            status, retry_class, max_attempts, attempt_no, dispatch_count)
+            status, retry_class, max_attempts, attempt_no, dispatch_count,
+            grant_id, authz_params)
         VALUES (
             v_effect_id, p_session_id, p_step_id, v_batch_id, v_i, v_tool_call_id,
             'tool', 'non_streaming', v_sess.driver, v_sess.driver_epoch,
             v_sess.session_fence, v_sess.session_fence, v_job_fence,
             v_slot->>'request_hash', v_slot->>'idempotency_key',
             'planned', v_slot->>'retry_class',
-            v8_entry_int(v_slot->'max_attempts')::bigint, 1, 0);
+            v8_entry_int(v_slot->'max_attempts')::bigint, 1, 0,
+            v_sub_grants[v_i + 1], v_authz_params[v_i + 1]);
 
         -- The first (and only) attempt creation entry point: same
         -- transaction, attempt_no=1, dispatch_job_fence frozen at the same

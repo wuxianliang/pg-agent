@@ -28,6 +28,7 @@ from v8.events.client import (
     create_session,
 )
 from v8.events.setup_db import DB, main as setup_db
+from v8.grant.fixtures import bind_chunk_provider
 
 SV, CV = "sv@1", "canon@1"
 U64MAX = 9223372036854775807  # 2^63 - 1
@@ -733,6 +734,12 @@ def chunk_fixture(conn, dispatched: bool = True) -> tuple[str, str, str]:
             " 'streaming', %s)",
             (effect, s, step, "dispatch_started" if dispatched else "ready"))
     conn.commit()
+    # G12: the A57 legacy downgrade is removed — bind the fixture effect to
+    # a grant-backed provider identity so accepted chunk appends pass the
+    # (3)/(6) conjunction through the default caller resolution. Negative
+    # vectors (items (1)/(2)/(4)/(5)) fire before the conjunction and are
+    # unaffected by the binding.
+    bind_chunk_provider(conn, s, effect)
     return s, turn, effect
 
 
