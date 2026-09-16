@@ -46,6 +46,7 @@ from v8.effect.client import (
     finish_session,
     prepare_step,
     recovery_claim_session,
+    yield_session,
 )
 from v8.events.client import (
     build_entry,
@@ -540,9 +541,38 @@ def acquire_lease(conn, session_id, *, driver: str = "drv",
     raise RuntimeError("lease acquisition did not converge")
 
 
+def yield_lease(conn, session_id, *, driver: str = "drv",
+                driver_epoch: int = 1, lease_owner: str | None = None) -> dict:
+    """G11: the coordinator's EXPLICIT yield. The NO_ACTIVE_GENERATION
+    assemble rejection never releases the lease itself (zero control-state
+    change); a rejected coordinator calls this independently to return the
+    session to ready and wait for the operator's pointer disposition."""
+    st = read_session(conn, session_id)
+    return yield_session(conn, session_id, driver, driver_epoch,
+                         st["session_fence"],
+                         lease_owner or st["lease_owner"])
+
+
 # ---------------------------------------------------------------------------
 # phase B steps (2)+(3): assemble + initial decision seal (one tx)
 # ---------------------------------------------------------------------------
+
+def assemble_generation(conn, session_id) -> dict:
+    """G11 §4 assemble-side pointer resolution: a new assemble binds the
+    session's active_catalog_generation to the CURRENT catalog active
+    pointer. While the pointer is cleared (operator explicit disposition)
+    the assemble is STABLY rejected NO_ACTIVE_GENERATION with ZERO
+    control-state change — the session keeps its state, coordination lease
+    and fence exactly as the requesting transaction found them; the
+    coordinator returns to ready only through an EXPLICIT yield
+    (yield_lease below)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT v_assemble_bind_generation(%s::uuid)",
+                    (str(session_id),))
+        out = cur.fetchone()[0]
+    conn.commit()
+    return out
+
 
 def assemble_prompt(conn, session_id, turn_id) -> dict:
     """P0B assemble: the open turn's DB-truth context.
@@ -934,6 +964,19 @@ def advance_session(
             actions.append("claim")
             _die_or_fire("after_claim", kill_after, on_boundary,
                          {"claim": claim})
+
+            # G11 §4: the assemble resolves the catalog active generation
+            # first — a cleared pointer is a STABLE NO_ACTIVE_GENERATION
+            # rejection with zero control-state change (the session keeps
+            # its claimed state, lease and fence; only an explicit yield
+            # returns it to ready).
+            gen_guard = assemble_generation(coord, session_id)
+            if gen_guard.get("code") == "NO_ACTIVE_GENERATION":
+                actions.append("assemble_rejected")
+                st_guard = read_session(coord, session_id)
+                return {"state": st_guard["state"], "progress": False,
+                        "actions": actions,
+                        "assemble_rejection": gen_guard}
 
             # (2)+(3) single tx: assemble + initial decision seal
             prompt = assemble_prompt(coord, session_id,

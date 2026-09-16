@@ -132,52 +132,14 @@ BEGIN
     -- transaction (no single-sided intermediate state). The database-internal
     -- cancellation produces no completion semantic event; the code
     -- ABORTED_BEFORE_DISPATCH is recorded on the audit row.
-    -- [LATER] the WORKSPACE_LOST failure-drain and §4 generation drain are
-    -- further trigger sources of this same sync; this stage exposes only the
-    -- request_cancel source.
-    FOR r IN
-        SELECT er.effect_id, er.step_id, er.attempt_no
-          FROM effect_requests er
-         WHERE er.session_id = p_session_id AND er.status = 'ready'
-         ORDER BY er.dispatch_ordinal
-    LOOP
-        UPDATE effect_requests SET
-            status = 'cancelled_before_dispatch', updated_at = now()
-         WHERE effect_id = r.effect_id;
-        UPDATE effect_attempts SET
-            status = 'cancelled_before_dispatch', completed_at = now()
-         WHERE effect_id = r.effect_id AND attempt_no = r.attempt_no;
-        INSERT INTO effect_audit(
-            audit_context_session_id, session_id, step_id, effect_id, attempt_no,
-            audit_key_kind, audit_key_value, result_fingerprint, reason)
-        VALUES (p_session_id, p_session_id, r.step_id, r.effect_id, r.attempt_no,
-                'canonical_binding', v_computed,
-                v_sha256_hex(p_command_id || ':' || r.effect_id::text),
-                'ABORTED_BEFORE_DISPATCH');
-        v_cancelled := v_cancelled || jsonb_build_object(
-            'effect_id', r.effect_id, 'attempt_no', r.attempt_no,
-            'code', 'ABORTED_BEFORE_DISPATCH');
-    END LOOP;
-
-    -- Recompute the aggregation counters of the session's steps from the
-    -- effect table (authoritative).
-    UPDATE steps st SET
-        pending_effect_count = (SELECT count(*) FROM effect_requests er
-                                 WHERE er.step_id = st.step_id
-                                   AND er.status IN ('planned', 'ready', 'dispatch_started')),
-        unknown_effect_count = (SELECT count(*) FROM effect_requests er
-                                 WHERE er.step_id = st.step_id
-                                   AND er.status = 'unknown_outcome'),
-        retryable_effect_count = (SELECT count(*) FROM effect_requests er
-                                   WHERE er.step_id = st.step_id
-                                     AND er.status = 'failed_retryable'),
-        terminal_effect_count = (SELECT count(*) FROM effect_requests er
-                                  WHERE er.step_id = st.step_id
-                                    AND er.status IN ('succeeded', 'failed_terminal',
-                                                      'cancelled_before_dispatch',
-                                                      'cancelled_after_dispatch')),
-        updated_at = now()
-     WHERE st.session_id = p_session_id;
+    -- G11: the sync (plus the authoritative step-counter recompute) moved to
+    -- the SHARED sub-operation v_pre_dispatch_cancel_sync — one
+    -- implementation for the three trigger sources (request_cancel here, the
+    -- §4 generation drain of the plugin stage and the WORKSPACE_LOST
+    -- failure-drain of the grant stage; final home grant/v8_grant.sql, see
+    -- deviation A62). [LATER] those two further trigger sources remain.
+    v_cancelled := v_pre_dispatch_cancel_sync(
+        p_session_id, p_command_id, 'canonical_binding', v_computed);
 
     -- ---- collapse decision ----
     -- The unique non-terminal step (single-active-step model; NULL when the
