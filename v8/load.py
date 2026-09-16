@@ -18,6 +18,14 @@ AGENT_ROOT = V8_ROOT.parent
 SQL_LOAD_ORDER: list[Path] = [
     V8_ROOT / "schema" / "v8_schema.sql",
     V8_ROOT / "schema" / "v8_keys.sql",
+    # G16: the audit stage's carriers (effect_audit full columns, the two
+    # occurrence child tables, internal_op_audits) plus the byte-level
+    # occurrence replay functions. It sits at position 3 — after the key
+    # functions and BEFORE the grant/events stages: the three rejection
+    # paths' key judgement is consumed by the public append path's
+    # receipt/binding ordering, and G17 (compact) only consumes
+    # internal_op_audits, never creates it.
+    V8_ROOT / "audit" / "v8_audit.sql",
     # G10: the grant stage (complete section 2.1/2.2 model) sits at position
     # 3 — the G9a stub's replacement (the stub DDL migrated here from
     # v8_stream.sql §2–§4) — and MUST load BEFORE the events stage: the
@@ -84,10 +92,12 @@ SQL_LOAD_ORDER: list[Path] = [
 
 STAGE_THROUGH = {
     "schema": 2,
+    # G16 audit: its own file at position 3 (schema, keys, audit).
+    "audit": 3,
     # G10 gate covers the append consumer (events stage) on top of its own
     # SQL, so its load set runs through events.
-    "grant": 5,
-    "events": 5,
+    "grant": 6,
+    "events": 6,
     # G9a: the stream gate exercises the consumers of the new foundation —
     # the public append path (events stage) for the chunk six-item
     # attribution, v_complete_effect (effect stage) for the stream_complete
@@ -101,35 +111,35 @@ STAGE_THROUGH = {
     # load set runs through takeover (11) — the merge-time assumption
     # "test_stream has no takeover dependency" held for test_stream.py
     # only, not for test_observation.py sharing the same stage database.
-    "stream": 11,
-    "effect": 7,
-    "tools": 8,
-    "retry": 11,
+    "stream": 12,
+    "effect": 8,
+    "tools": 9,
+    "retry": 12,
     # G5 (loop) adds no SQL: the runtime drives the effect-stage functions.
-    "loop": 7,
-    "repair": 12,
-    "cancel": 13,
+    "loop": 8,
+    "repair": 13,
+    "cancel": 14,
     # G11 plugin gate: the offline revocation drain consumes the effect
     # (late completion rejection), retry (aggregation rule closure
     # priority) and cancel (shared pre-dispatch sync caller) stages, so its
     # load set runs through the full pre-compat order (cancel last).
-    "plugin": 13,
+    "plugin": 14,
     # G13: compat loads the full pre-compat order plus its own file (the
     # G15 drain insertion shifted it from 14 to 15).
-    "compat": 15,
+    "compat": 16,
     # G15 (drain) adds the class (3) INFRA closure; its load set runs through
     # its own file (the insertion point is after cancel), so every consumer
     # it exercises — the shared pre-dispatch sync, the aggregation counters
     # and the retry-stop-reason CAS — is loaded.
-    "drain": 14,
+    "drain": 15,
     # G12 (gates) adds NO SQL of its own — it modifies the existing
     # effect/tools/retry/takeover files in place — but its gate exercises
     # the full pre-compat order (seal/dispatch/cohort/takeover/append).
-    "gates": 13,
+    "gates": 14,
     # G14 (concurrency) also adds NO SQL: it reuses the frozen gates load
     # set and exercises the lock-wait interleavings of the delivered
     # gates, so it carries the same position as `gates`.
-    "concurrency": 13,
+    "concurrency": 14,
 }
 
 

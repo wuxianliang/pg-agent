@@ -509,6 +509,43 @@ def test_integer_encoding() -> None:
             check(f"{label} raises ValueError", True)
 
 
+def test_audit_key_goldens() -> None:
+    """G16: the five versioned raw-byte audit keys' hard-coded goldens
+    (hand-computed by an independent script over fixed byte vectors; the key
+    algorithms live in this module's keys.py so their canonical-side
+    goldens are asserted here, A75 precedent)."""
+    from v8.canonical.keys import (
+        malformed_binding_fingerprint_v2,
+        raw_invalid_digest_v1,
+        received_result_fingerprint_v2,
+        rejection_fingerprint_v1,
+        transport_rejection_key_v1,
+    )
+    check("G16 rejection_fingerprint@v1 golden",
+          rejection_fingerprint_v1(b'{"b":1,"a":2}')
+          == "a1d46c3cdb4e5795c8d637f80daeb578ebb1a9a65dc1ed5f11f51794c3c89f3a")
+    check("G16 transport_rejection_key@v1 golden",
+          transport_rejection_key_v1(b"\x00\x01FRAMEBYTES\xff")
+          == "5c0dab010ab4cfc565bdaef0aea7aa01d0fb987c23b30d360dc10af355116bc7")
+    check("G16 raw_invalid_digest@v1 golden",
+          raw_invalid_digest_v1(b'{"a":')
+          == "ffb38b22ee3e0ca90325ebce953a9846990f292faf44c50498771602e31cb61f")
+    bind_vec = ([(b"session_id", "TEXT", b"s1")]
+                + [(w.encode(), "NULL", b"") for w in
+                   ("step_id", "effect_id", "attempt_no", "driver",
+                    "driver_epoch", "dispatch_session_fence", "job_fence",
+                    "request_hash", "idempotency_key")]
+                + [(b"zz", "TEXT", b"v")])
+    check("G16 malformed_binding_fingerprint@v2 golden",
+          malformed_binding_fingerprint_v2(bind_vec)
+          == "463f04584966709be5553a26aa4e0ae1a58b112ca3afc98dd128a581a830cb7f")
+    check("G16 received_result_fingerprint@v2 golden",
+          received_result_fingerprint_v2(
+              [(b"outcome", "TEXT", b"ok"), (b"arr", "JSON", b"[1,2]"),
+               (b"0", "NUMBER", b"1"), (b"1", "NUMBER", b"2")])
+          == "045c00d3d953771cb98af87fccd8f91045e612558864e099feb4a0a345684575")
+
+
 def main() -> int:
     test_canonical_golden()
     test_rejections()
@@ -518,6 +555,7 @@ def main() -> int:
     test_key_golden_vectors()
     test_identity_representation()
     test_integer_encoding()
+    test_audit_key_goldens()
     print("[G1] all gates passed")
     return 0
 
