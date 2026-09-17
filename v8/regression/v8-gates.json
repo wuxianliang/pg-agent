@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "suite_id": "v8-cumulative-keyless",
+  "entries": [
+    {
+      "gate_id": "G1",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/canonical/test_canonical.py"
+      ],
+      "database_group": null,
+      "required": true
+    },
+    {
+      "gate_id": "G2",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/schema/test_schema.py"
+      ],
+      "database_group": "agent_v8_schema",
+      "required": true
+    },
+    {
+      "gate_id": "G3",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/events/test_events.py"
+      ],
+      "database_group": "agent_v8_events",
+      "required": true
+    },
+    {
+      "gate_id": "G4",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/effect/test_effect.py"
+      ],
+      "database_group": "agent_v8_effect",
+      "required": true
+    },
+    {
+      "gate_id": "G5",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/loop/test_loop.py"
+      ],
+      "database_group": "agent_v8_loop",
+      "required": true
+    },
+    {
+      "gate_id": "G6",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/tools/test_tools.py"
+      ],
+      "database_group": "agent_v8_tools",
+      "required": true
+    },
+    {
+      "gate_id": "G7a",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/retry/test_retry.py"
+      ],
+      "database_group": "agent_v8_retry",
+      "required": true
+    },
+    {
+      "gate_id": "G7b",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/retry/test_takeover.py"
+      ],
+      "database_group": "agent_v8_retry",
+      "required": true
+    },
+    {
+      "gate_id": "G7c",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/repair/test_repair.py"
+      ],
+      "database_group": "agent_v8_repair",
+      "required": true
+    },
+    {
+      "gate_id": "G8a",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/cancel/test_cancel.py"
+      ],
+      "database_group": "agent_v8_cancel",
+      "required": true
+    },
+    {
+      "gate_id": "G8b",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/cancel/test_closure.py"
+      ],
+      "database_group": "agent_v8_cancel",
+      "required": true
+    },
+    {
+      "gate_id": "G9a",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/stream/test_stream.py"
+      ],
+      "database_group": "agent_v8_stream",
+      "required": true
+    },
+    {
+      "gate_id": "G10",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/grant/test_grant.py"
+      ],
+      "database_group": "agent_v8_grant",
+      "required": true
+    },
+    {
+      "gate_id": "G11",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/plugin/test_plugin.py"
+      ],
+      "database_group": "agent_v8_plugin",
+      "required": true
+    },
+    {
+      "gate_id": "G12",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/gates/test_gates.py"
+      ],
+      "database_group": "agent_v8_gates",
+      "required": true
+    },
+    {
+      "gate_id": "G13",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/compat/test_compat.py"
+      ],
+      "database_group": "agent_v8_compat",
+      "required": true
+    },
+    {
+      "gate_id": "G14",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/concurrency/test_concurrency.py"
+      ],
+      "database_group": "agent_v8_concurrency",
+      "required": true
+    },
+    {
+      "gate_id": "G9b",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/stream/test_observation.py"
+      ],
+      "database_group": "agent_v8_stream",
+      "required": true
+    },
+    {
+      "gate_id": "G16",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/audit/test_audit.py"
+      ],
+      "database_group": "agent_v8_audit",
+      "required": true
+    },
+    {
+      "gate_id": "G17",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/compact/test_compact.py"
+      ],
+      "database_group": "agent_v8_compact",
+      "required": true
+    },
+    {
+      "gate_id": "G15",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/drain/test_drain.py"
+      ],
+      "database_group": "agent_v8_drain",
+      "required": true
+    },
+    {
+      "gate_id": "G18",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/reconcile/test_reconcile.py"
+      ],
+      "database_group": "agent_v8_reconcile",
+      "required": true
+    },
+    {
+      "gate_id": "G19a",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/assemble/test_assemble.py"
+      ],
+      "database_group": "agent_v8_assemble",
+      "required": true
+    },
+    {
+      "gate_id": "G19b",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/closeout/test_closeout.py"
+      ],
+      "database_group": "agent_v8_closeout",
+      "required": true
+    }
+  ]
+}

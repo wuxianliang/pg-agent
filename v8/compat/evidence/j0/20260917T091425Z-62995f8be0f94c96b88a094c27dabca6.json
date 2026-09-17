@@ -1,0 +1,1820 @@
+{
+  "schema_version": 1,
+  "run_id": "20260917T091425Z-62995f8be0f94c96b88a094c27dabca6",
+  "started_at_utc": "2026-09-17T09:14:25.220909+00:00",
+  "ended_at_utc": "2026-09-17T09:15:15.412682+00:00",
+  "fresh": true,
+  "completed": true,
+  "interrupted": false,
+  "eligible": true,
+  "rebuilds_test_databases": true,
+  "manifest_path": "v8/regression/v8-gates.json",
+  "manifest_sha256": "c8012e30e416b888396e8743853b2f42a4fc3002031ac1b9260466eeee899f96",
+  "source_snapshot": {
+    "files": [
+      {
+        "path": "pyproject.toml",
+        "sha256": "b3751495ce0a1474715b8c50c80751310c7035b0b055e2ab049bda7a96ebd59f"
+      },
+      {
+        "path": "server.py",
+        "sha256": "aa1c1cd5e2e440383d2924faa4e5309461275cf472fa044117244d6c19684ed8"
+      },
+      {
+        "path": "uv.lock",
+        "sha256": "3163d60f86a8831759b057932681e6f56ebb33fe1efc98634b0acaf85b6f643e"
+      },
+      {
+        "path": "v8/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "v8/assemble/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "v8/assemble/setup_db.py",
+        "sha256": "9e46f0415eaf61f8a04868def6c895ca51c62e88c80c5017e14c11ebfda2126a"
+      },
+      {
+        "path": "v8/assemble/test_assemble.py",
+        "sha256": "c1054d8fbc32636dfe5ffb03b750c3142ee76ecc87b68edc66c15aa96c63f607"
+      },
+      {
+        "path": "v8/assemble/v8_assemble.sql",
+        "sha256": "3d69db2ce14a2c1d05feb0a9e81a6c4fa782df1c136a42c5b1895c3619f464de"
+      },
+      {
+        "path": "v8/audit/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "v8/audit/setup_db.py",
+        "sha256": "600e2aefa4a7990457c4e9b95aee2009a9c5c731b634910bce84ca991f38fe0c"
+      },
+      {
+        "path": "v8/audit/test_audit.py",
+        "sha256": "2db4eba55f36011ea5c0e6bf15ae5400797adcb3d31d5ffe1127def76b1aaa67"
+      },
+      {
+        "path": "v8/audit/v8_audit.sql",
+        "sha256": "16bba2a654becc869993076c159b66aea47b3089c51fcdb8f5217474fd9a0693"
+      },
+      {
+        "path": "v8/cancel/__init__.py",
+        "sha256": "2d55a4e576f1e3245e6e35f0150ffc1500532edee4e1ea0e043be7fc2cc001da"
+      },
+      {
+        "path": "v8/cancel/client.py",
+        "sha256": "e2d26b3868dc08d0a941f5e67039a0b078d56fec3467405b606ddbe941d3eba4"
+      },
+      {
+        "path": "v8/cancel/setup_db.py",
+        "sha256": "c80b98c7b1e14b0c185ecbfad692fdf9a6cc61dc37864ae35d78c6689d4613ba"
+      },
+      {
+        "path": "v8/cancel/test_cancel.py",
+        "sha256": "b7d51948dbb93fb2421f6f7adc5d2bc2215f89236edd3819504807844487a918"
+      },
+      {
+        "path": "v8/cancel/test_closure.py",
+        "sha256": "d5066f9f92e4712f0cd23e23b9fe124e7ecc401f16c820c4f5cf4d781cba1bfd"
+      },
+      {
+        "path": "v8/cancel/v8_cancel.sql",
+        "sha256": "0e1b9b7dba4bbe081bb76d44b73808232b07e1e28ff7175921313c509c283da9"
+      },
+      {
+        "path": "v8/cancel/v8_closure.sql",
+        "sha256": "99d5e927960191ba0a2e8bb79b26b510207fbe81ca39614a38f0687b90557e77"
+      },
+      {
+        "path": "v8/canonical/__init__.py",
+        "sha256": "5e56b29fc59466634d5bcec1f8347b8ef6aa4ccbce2708eeb7c3e3dfc8e212c1"
+      },
+      {
+        "path": "v8/canonical/canonical.py",
+        "sha256": "fcc4a3b9b7b2d2dcfba7ba11b5da94855ae237893e3341575936adc2d4e33dd0"
+      },
+      {
+        "path": "v8/canonical/keys.py",
+        "sha256": "4a71388024bfacf344c37d179cdffc677981012e0c7fdfc4c1f131fdbc2996d3"
+      },
+      {
+        "path": "v8/canonical/test_canonical.py",
+        "sha256": "f8ff8dfd99116554edb192b0adbd3c5cb5d82ff905d3fa2a1165bf892f25ccb7"
+      },
+      {
+        "path": "v8/closeout/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "v8/closeout/setup_db.py",
+        "sha256": "f5f6ceeb797b669984fb4aabf3d931de84a30051ba7aaed80337d8b87b813ed5"
+      },
+      {
+        "path": "v8/closeout/test_closeout.py",
+        "sha256": "02d881e3d08bd1f8261d12bb96200f866abdadc0eac6776c662a2ffb477602de"
+      },
+      {
+        "path": "v8/closeout/v8_closeout.sql",
+        "sha256": "5837734daf1ee32b81626fc7d0aa83f3fcc1b596f721121885590d329d285c4a"
+      },
+      {
+        "path": "v8/compact/__init__.py",
+        "sha256": "c834bbf04e600940ec936d0620b137576f0b40988de5692c68cf0a7bf13c29b9"
+      },
+      {
+        "path": "v8/compact/client.py",
+        "sha256": "abf03f2986bc6fc3b98279960604b60d4462c0e58ceded0e162f19a41f6884ae"
+      },
+      {
+        "path": "v8/compact/digests.py",
+        "sha256": "8e3684f0aac942d32b995c45140701ad71c4b0f3c84a1615f66155af5ff4213c"
+      },
+      {
+        "path": "v8/compact/setup_db.py",
+        "sha256": "effda2a638a69771262fa4450dc406129f2190cf60472ff6cbb2956cf2020355"
+      },
+      {
+        "path": "v8/compact/test_compact.py",
+        "sha256": "c5a60e6b72d51aca37d789f2d7f89b721142eb1a435c32f1a2f626fdd914eafe"
+      },
+      {
+        "path": "v8/compact/v8_compact.sql",
+        "sha256": "092312536fb55933f6bae9069810708ec06b2824f259a0469b20e28dbb90727a"
+      },
+      {
+        "path": "v8/compat/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "v8/compat/client.py",
+        "sha256": "106088ee86bc384d9a7559e20fa507e21d4c3da658c95e660c91f1fe7885b260"
+      },
+      {
+        "path": "v8/compat/p0c_report.py",
+        "sha256": "39469cf773b3b75095f9e1542f453679b1eb8e331b19d7c732ec865a67aeb84b"
+      },
+      {
+        "path": "v8/compat/pinned_host_manifest.json",
+        "sha256": "04b69ebf9a070d06fd8730f6fca69b0b2b8b4c8297c9a7200d2eff50def443ff"
+      },
+      {
+        "path": "v8/compat/setup_db.py",
+        "sha256": "8f7c9854563c33ddcd0e37cb4b0fcbe790b551c61788a2d090f1e3217f36cb14"
+      },
+      {
+        "path": "v8/compat/test_compat.py",
+        "sha256": "16c30e4ff0d8241af3e7074046350c47249ceece190c3cbcf01f2f48e1f637f2"
+      },
+      {
+        "path": "v8/compat/v8_compat.sql",
+        "sha256": "b8b3ae452727efc7c7e8b64512696e99fb387d12526e56ddda46e98ce0d5234b"
+      },
+      {
+        "path": "v8/concurrency/__init__.py",
+        "sha256": "ca973a4d0cbf3b6fa8628a0cd8fbf7a50037526695f69a9bd29cde6054b166cc"
+      },
+      {
+        "path": "v8/concurrency/setup_db.py",
+        "sha256": "81506d114089bb1928fd3cf752d3258cf632f77e6ac093970657739b5806fbff"
+      },
+      {
+        "path": "v8/concurrency/test_concurrency.py",
+        "sha256": "a8ad31810018744d7cb7dbc6e9fbc6b355496138034450f240f9d52063f1120c"
+      },
+      {
+        "path": "v8/drain/__init__.py",
+        "sha256": "c0c5b393a67240923d123ab010e006042b2ce1a8cd60036a90700cd0326df614"
+      },
+      {
+        "path": "v8/drain/setup_db.py",
+        "sha256": "e61eed0ddbab967c0078e48f6c18d50dfda7352ac1e5b87a3c2a4a629a4a5b54"
+      },
+      {
+        "path": "v8/drain/test_drain.py",
+        "sha256": "99ca18f14a555d1653a14d504f8c323cfcf5ace3f17431dc5f34e7e5fef6f406"
+      },
+      {
+        "path": "v8/drain/v8_drain.sql",
+        "sha256": "0eeea68012c49600b3aa8d0cb41a439e0a86adcfbb7005dbbbb22dd3df6249b8"
+      },
+      {
+        "path": "v8/effect/__init__.py",
+        "sha256": "fe0c9c4718a46de55c17a1336b8fe32cc41661dbc9341a3d091a4dbf1f0f732e"
+      },
+      {
+        "path": "v8/effect/client.py",
+        "sha256": "c917ec9a9fb519c804e1d99524de842506db855dabeee9c6fe906e13675914d1"
+      },
+      {
+        "path": "v8/effect/setup_db.py",
+        "sha256": "5345840b7a7b08f451616dc73d32363420b07450f505549c9e0acd88486bbdab"
+      },
+      {
+        "path": "v8/effect/test_effect.py",
+        "sha256": "4fe93bfd484702fc8cff746b5ae84a6cd7d14000b375344582fe98b5b055d37a"
+      },
+      {
+        "path": "v8/effect/v8_effect.sql",
+        "sha256": "2f5f46e66a0dfabdab1c07d7a8367e2549429312c5f2a4f84a4792e8c72c0a4d"
+      },
+      {
+        "path": "v8/events/__init__.py",
+        "sha256": "7599e8eda5ff1a0ac4244a122cc3dec9a668aa94efc3878f1a593b581ea72b00"
+      },
+      {
+        "path": "v8/events/canonicalizer.py",
+        "sha256": "4f6e8ebf9a2247050c11b8121fe3a1f64e1c5b199eeeab3a2928e3dc11862598"
+      },
+      {
+        "path": "v8/events/client.py",
+        "sha256": "3930630d28ff71dd895ab5742913703556116796200780c3448c76d082aed1fa"
+      },
+      {
+        "path": "v8/events/setup_db.py",
+        "sha256": "16a50679a72f9f8df446a76bff63022e2a621335709cf5d53b0a5770808f9d1d"
+      },
+      {
+        "path": "v8/events/test_events.py",
+        "sha256": "aaa071d259f548dc6b4167a1acf587c0a76b117b67e97095e7e9fc981e07b367"
+      },
+      {
+        "path": "v8/events/v8_append.sql",
+        "sha256": "874318beb760c8f652a78015613658dc0ec0fe80d239760e7fef6140171e822d"
+      },
+      {
+        "path": "v8/gates/__init__.py",
+        "sha256": "3cae68f342f96b2907667eca443611dd5c010dbcb0eded8433714d473735df4d"
+      },
+      {
+        "path": "v8/gates/setup_db.py",
+        "sha256": "8214980b79dde13818c0ad1d95714f46aa604e06eff4e24eafdd220fcb3d10a4"
+      },
+      {
+        "path": "v8/gates/test_gates.py",
+        "sha256": "c34c3b2a020ad8449b6b081dbbb0b47fe11ae8b5658dcc6ac283fbd49e1a66e9"
+      },
+      {
+        "path": "v8/grant/__init__.py",
+        "sha256": "7e51b763d7124988db15accd86be59e547934010819e71840b14160cf87963a4"
+      },
+      {
+        "path": "v8/grant/client.py",
+        "sha256": "e5ed3184a6199f77784b373dfab193546a36b7b6d23e127de2b78fd4f0c7676d"
+      },
+      {
+        "path": "v8/grant/fixtures.py",
+        "sha256": "1276fd0a32d4f7dffc24fc49c71978ee9fd29567e095ad4ee4c90fd24dcc40b8"
+      },
+      {
+        "path": "v8/grant/setup_db.py",
+        "sha256": "92b377170e84ba0a44cdea61b876e9ee71f90a72e644bfbeb930ab948472cc9c"
+      },
+      {
+        "path": "v8/grant/test_grant.py",
+        "sha256": "287a7ed473dc116eb7d1c0536d55a9f190e2d9c6e6e03d7b740680ddc064c2e5"
+      },
+      {
+        "path": "v8/grant/v8_grant.sql",
+        "sha256": "30b4b4e1f99e58c2f323cd93e04ffb238cdba7fa5cc8ee358d72248ad1da4085"
+      },
+      {
+        "path": "v8/load.py",
+        "sha256": "fcf1e5ef68e3ef56dcd7e277bbed81ec49ca1bd18db1b38fb0025e49fac36f15"
+      },
+      {
+        "path": "v8/loop/__init__.py",
+        "sha256": "d450cd7b3dad3250416b15987c991886e7c9c0181beb85b3086b060b1ee060ce"
+      },
+      {
+        "path": "v8/loop/runtime.py",
+        "sha256": "f03c3517e2271853449ea3a495c2d6ac73868d9def062b8f5deeef2c7fb5e689"
+      },
+      {
+        "path": "v8/loop/setup_db.py",
+        "sha256": "30e9e21f6de2b247e87bd798fc45b3089b5d73bfd81589e435111d6f059e65f6"
+      },
+      {
+        "path": "v8/loop/test_loop.py",
+        "sha256": "127d6f2ddd66b10391b44f3c454d297d248d09b87d7edf16e74c267d3c24003c"
+      },
+      {
+        "path": "v8/plugin/__init__.py",
+        "sha256": "4972eefc5d4a6b62ba8f35cba57d9ec756e89d978f93133453a868f07a1f8bdf"
+      },
+      {
+        "path": "v8/plugin/client.py",
+        "sha256": "1ec53bb9e887c58280fcc1c58fd8bcad863d6d32040e8285cfc18199f2775a82"
+      },
+      {
+        "path": "v8/plugin/setup_db.py",
+        "sha256": "d643b51af3501c59db62fa06cf29aaec5c15d8b6e440132ce2626b135952d86b"
+      },
+      {
+        "path": "v8/plugin/test_plugin.py",
+        "sha256": "decb265fe232eaccea9f70c83a97871ac156e996511c5a0aef2c150c64bc992d"
+      },
+      {
+        "path": "v8/plugin/v8_plugin.sql",
+        "sha256": "51781d740f537ff1b35d89452c5ef55c12df381a506930d3cb49d89f8f55197c"
+      },
+      {
+        "path": "v8/reconcile/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "v8/reconcile/fixtures.py",
+        "sha256": "b549c05bad562c6cccbd788aa57bc912b918b09a9f371b13927ca63596d19f29"
+      },
+      {
+        "path": "v8/reconcile/setup_db.py",
+        "sha256": "cc769190ad31d6eb7d41a1ea19631dabbd3604448322751532bf84f6c1971b18"
+      },
+      {
+        "path": "v8/reconcile/test_reconcile.py",
+        "sha256": "a92b727737a5ffbb649a00a4814941a7bdce2f3c4170656072c8dc67e260c8f5"
+      },
+      {
+        "path": "v8/reconcile/v8_reconcile.sql",
+        "sha256": "586cddaf1839db731d171e22cf0ef3714e8c0847de9193cb346f74dfec0c26e2"
+      },
+      {
+        "path": "v8/regression/run_baseline.py",
+        "sha256": "8d8d60cf80683e3e72a438732173bfc0075a78a45c0e0af6ee812fcce8de77b1"
+      },
+      {
+        "path": "v8/regression/test_baseline_runner.py",
+        "sha256": "9447cf1a104e85535b49936c0a9f3f7782479c17c1963aa18f0e93c71187197b"
+      },
+      {
+        "path": "v8/regression/v8-gates.json",
+        "sha256": "c8012e30e416b888396e8743853b2f42a4fc3002031ac1b9260466eeee899f96"
+      },
+      {
+        "path": "v8/repair/__init__.py",
+        "sha256": "0c20b2beae52837b75a575aa7ed2f922fa5e437cf18e4b509846b552104f28f6"
+      },
+      {
+        "path": "v8/repair/client.py",
+        "sha256": "01c7ad65f32099fd37e8a8ff7fc7922b95cdf214fd50009a956a60f05947ae27"
+      },
+      {
+        "path": "v8/repair/setup_db.py",
+        "sha256": "5b1a94639518edab5da8aae49f841f23784746a7cd5529cbef35a453b731fbb7"
+      },
+      {
+        "path": "v8/repair/test_repair.py",
+        "sha256": "ccb1dfc98dde87b8a10b3d7c1653b8597a7e34992017f776f57a6d94add34409"
+      },
+      {
+        "path": "v8/repair/v8_repair.sql",
+        "sha256": "3408f4884b02d882b20032ee42a33f2c14b7196e0a186d49a0fd10e5bcb182b5"
+      },
+      {
+        "path": "v8/retry/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "v8/retry/client.py",
+        "sha256": "e805806a684131638c4543f2197843577fb3d940d60a3cdfac19ec3bed367189"
+      },
+      {
+        "path": "v8/retry/setup_db.py",
+        "sha256": "b1052b6d20e698a81bb75fb32823677326053cef9b5eec5241e38b648ac63c20"
+      },
+      {
+        "path": "v8/retry/test_retry.py",
+        "sha256": "5ef1704228d7ff2e0881352e9e289a2bf3f1909a853a2447e9d0ade068d47521"
+      },
+      {
+        "path": "v8/retry/test_takeover.py",
+        "sha256": "5b2634ca89984379705fa1571bc18028972937cbb82dff9be552bcc675882ad5"
+      },
+      {
+        "path": "v8/retry/v8_retry.sql",
+        "sha256": "e96713cd34affe5a9c95bf636e45d2ee0af9fe13ff32c791438c9ab4cf1a2c1b"
+      },
+      {
+        "path": "v8/retry/v8_takeover.sql",
+        "sha256": "4f51a5562772b92e356c779b8ec245934b2b6b2356b8b2b61d649710f6807968"
+      },
+      {
+        "path": "v8/schema/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "v8/schema/setup_db.py",
+        "sha256": "2fb45d43e2d9589d03acda3ced4876d4b6d46fa7255323756b3baae67b2d24b6"
+      },
+      {
+        "path": "v8/schema/test_schema.py",
+        "sha256": "3ca23ade265731d5e611bd868731e29a7dabf9f549677432633ab5e48a9d243f"
+      },
+      {
+        "path": "v8/schema/v8_keys.sql",
+        "sha256": "48fa55c022359c14e735b576f40cf7363a78298faa2868de7c9ae422712afd4c"
+      },
+      {
+        "path": "v8/schema/v8_schema.sql",
+        "sha256": "de9f0ee03cd006c027958c5422d56db13de123a3f3f0458d18106700fe653fe7"
+      },
+      {
+        "path": "v8/stream/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "v8/stream/observation.py",
+        "sha256": "c8cc2a54d2a5a9b94c887d9afa728a74e7d3cd5754c91572b04b01fd076d1829"
+      },
+      {
+        "path": "v8/stream/setup_db.py",
+        "sha256": "8a097d58995b42ffd00a04d0895d41987468244a6c17a1f58d9ce6845d6a0208"
+      },
+      {
+        "path": "v8/stream/test_observation.py",
+        "sha256": "f619548f592617a8ef0251d1f3293ac3f007fc40607d98225c3f20b7a4d7986c"
+      },
+      {
+        "path": "v8/stream/test_stream.py",
+        "sha256": "3d9e480ab7fc027e8ae6f4a5a3285014f534c6d5e5dfd79a7968e4cbb141b772"
+      },
+      {
+        "path": "v8/stream/v8_stream.sql",
+        "sha256": "90b083659e920ee66d0c4179c6ef149ca94186a63ea31e23f5335f8434c829be"
+      },
+      {
+        "path": "v8/tools/__init__.py",
+        "sha256": "aad001f3f479ea770749a674535710ae7eb8a23427dae0485177e2f04993dbcf"
+      },
+      {
+        "path": "v8/tools/client.py",
+        "sha256": "cc60cb9e95d7b292cd7e1c5ea3b42bdf98be530f26ba5a5a959db352bb01af05"
+      },
+      {
+        "path": "v8/tools/setup_db.py",
+        "sha256": "00979866ca5f1c863e8d68e8fc5c6f218ad4106f359ba51aecc72dde30717809"
+      },
+      {
+        "path": "v8/tools/test_tools.py",
+        "sha256": "0b6d7ce5a70bdf57388f1862a686743e88662c1dcf6a51e9128d184b1368f986"
+      },
+      {
+        "path": "v8/tools/v8_tools.sql",
+        "sha256": "ad451403d2dccbc373b60f7a64885b4086990f122023547f27963f61f0ec67ab"
+      }
+    ],
+    "digest": "bc3c3ba989046f484092b4ea7581146105cf6f9f1e5daf3e9d8bfd599c3e26a2"
+  },
+  "source_snapshot_digest": "bc3c3ba989046f484092b4ea7581146105cf6f9f1e5daf3e9d8bfd599c3e26a2",
+  "source_drift": false,
+  "versions": {
+    "python": "3.12.13",
+    "uv": "uv 0.8.24 (252f88733 2025-10-07)",
+    "postgres": "18.4",
+    "pgembed": "0.3.0rc2"
+  },
+  "base_commit": "2b0edf64638872ab06157e5968186e6a814b571f",
+  "dirty_paths": [
+    "docs/designs/v11-dev.md",
+    "docs/plans/v6.1-code-file-workbench-plan-2026-09-17.md",
+    "docs/plans/v8-dsh-v10-joint-readiness-plan-2026-09-17.md",
+    "docs/plans/v8-j0-keyless-baseline-report-plan-2026-09-17.md",
+    "docs/plans/v8-p0c-compat-host-plan-2026-09-17.md",
+    "docs/reviews/v8-j0-keyless-baseline-plan-critique-2026-09-17.md",
+    "v8/compat/p0c_report.py",
+    "v8/compat/test_compat.py",
+    "v8/regression/run_baseline.py",
+    "v8/regression/test_baseline_runner.py",
+    "v8/regression/v8-gates.json"
+  ],
+  "g13_report": {
+    "report_schema_version": 2,
+    "rows": [
+      {
+        "subcase": "c1-db-receipt-idempotency",
+        "clause": 1,
+        "title": "compat surface command idempotency (compat_unmapped_audit replay/conflict; public append replays; seq no-hole)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "passed",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c1-db-occurrence-identity",
+        "clause": 1,
+        "title": "non-stream occurrence identity + chunk four-tuple on the compat append surface",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "passed",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c1-real-retry-single-batch",
+        "clause": 1,
+        "title": "network retries produce one batch/effect/completion via the real compat loop",
+        "boundary": "real",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c2-db-stale-writes",
+        "clause": 2,
+        "title": "stale dispatch snapshot / superseded fence / old coordinator writes rejected (shared SQL contract walked by compat fixtures)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "partial",
+        "not_run_reason": "",
+        "gap": "compat 生命周期套件未接线——数据库层合同由共享 SQL 层承载，compat 侧执行面随 pinned host 后补"
+      },
+      {
+        "subcase": "c3-db-scan-recovery",
+        "clause": 3,
+        "title": "DB scan recovery after lost wakeups (chaos-equivalent)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "partial",
+        "not_run_reason": "",
+        "gap": "G19b 已交付 DB wait/scan/NOTIFY hint；compat 侧恢复套件待 J3 接线（Native 证据不代替 portable）"
+      },
+      {
+        "subcase": "c3-real-dispatch-unknown-recovery",
+        "clause": 3,
+        "title": "dispatch-then-unknown / recovery takeover via the real loop",
+        "boundary": "real",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c5-db-classification-orthogonal",
+        "clause": 5,
+        "title": "evidence classification known/unknown on compat completions",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "partial",
+        "not_run_reason": "",
+        "gap": "compat 侧分类套件未接线（共享 SQL 判定函数；§5.1 完成面 覆盖 known_success/unknown 两形态）"
+      },
+      {
+        "subcase": "c5-real-cancel-unknown-classification",
+        "clause": 5,
+        "title": "cancel/unknown classification via the real loop",
+        "boundary": "real",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c6-db-cancel-compact",
+        "clause": 6,
+        "title": "cancel x dispatch linearization at the DB layer",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "partial",
+        "not_run_reason": "",
+        "gap": "G17 已交付 compact 三命令与终态 abort；cancel/compact compat 侧执行面待 J3 接线"
+      },
+      {
+        "subcase": "c6-real-cancel-linearization",
+        "clause": 6,
+        "title": "cancel linearization via the real loop",
+        "boundary": "real",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c7-db-parallel-ordinal",
+        "clause": 7,
+        "title": "reverse-order tool completion, identical trace by ordinal",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "partial",
+        "not_run_reason": "",
+        "gap": "compat tools 套件未接线（Native G6 覆盖共享 SQL 合同，不作 portable 证据）"
+      },
+      {
+        "subcase": "c8-db-generation",
+        "clause": 8,
+        "title": "generation refresh failure / retire drain",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "partial",
+        "not_run_reason": "",
+        "gap": "G11/G12/G14 世代域及并发门已交付；compat 套件待 J3 接线"
+      },
+      {
+        "subcase": "c9-db-hook-gates",
+        "clause": 9,
+        "title": "mandatory authorization timeout no-dispatch; advisory hook degraded continue; plugin direct table access refused",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "partial",
+        "not_run_reason": "",
+        "gap": "G10 RLS 与 G19a seam 已交付；mandatory hook timeout/error runtime/compat 测试仍待接线"
+      },
+      {
+        "subcase": "c10-db-s5-mapping",
+        "clause": 10,
+        "title": "section 5.1 mapping database layer (whitelist appends, chunk attribution with grants, stream_progress via complete_effect)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "passed",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c11-db-fork-cutoff",
+        "clause": 11,
+        "title": "fork cutoff stability three assertions (acceptance twins)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "passed",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c11-db-switch-positive",
+        "clause": 11,
+        "title": "switch positive subcase (SWITCH_DEFERRED guards, quiescing, finish_switch barrier, driver_epoch+1)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c11-db-unsupported-negative",
+        "clause": 11,
+        "title": "mandatory negative: begin_switch stably returns UNSUPPORTED on unsupported drivers, mode/fence/switch intent unchanged",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "passed",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c11-real-inflight-switch-closure",
+        "clause": 11,
+        "title": "in-flight switch closure via the real loop",
+        "boundary": "real",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c12-db-fake-suite",
+        "clause": 12,
+        "title": "deterministic fake suite stays authoritative (fake LLM/tool, fixed locale/timezone)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "passed",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c12-db-real-provider-protocol",
+        "clause": 12,
+        "title": "real provider DB protocol layer: protocol shape / idempotency / uncertain window (explicit opt-in --real-provider-smoke; credentials env-gated; the default keyless run records not_run/not_requested)",
+        "boundary": "db",
+        "requirement": "optional_smoke",
+        "state": "not_run",
+        "not_run_reason": "not_requested",
+        "gap": ""
+      },
+      {
+        "subcase": "c13-db-yield-workspace",
+        "clause": 13,
+        "title": "yield worker change / materialize / WORKSPACE_LOST fail-closed",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "partial",
+        "not_run_reason": "",
+        "gap": "G10 workspace_handles/WORKSPACE_LOST 已交付；compat 侧待 J3 接线"
+      },
+      {
+        "subcase": "c13-real-workspace-lost-inflight",
+        "clause": 13,
+        "title": "WORKSPACE_LOST in-flight completion/unknown via the real loop",
+        "boundary": "real",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c14-db-grant-denied",
+        "clause": 14,
+        "title": "grant-denied closure + chunk dual-grant conjunction via the stub surface (direct-inserted grants)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "passed",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c14-real-revoke-dispatch",
+        "clause": 14,
+        "title": "revoke x dispatch race via the real loop",
+        "boundary": "real",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c15-db-cancel-fixtures",
+        "clause": 15,
+        "title": "cancel/unknown fixture canonical outputs (reducer unit layer, shared canonicalizer)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "partial",
+        "not_run_reason": "",
+        "gap": "fixture 字节级双运行时比较需真实 loop；reducer 单元合同由共享 canonicalizer 承载"
+      },
+      {
+        "subcase": "c15-real-cancel-unknown-fixture",
+        "clause": 15,
+        "title": "cancel/unknown classification fixture via the real loop",
+        "boundary": "real",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c16-db-unmapped-audit",
+        "clause": 16,
+        "title": "compat_unmapped_audit unified command (idempotent replay / IDEMPOTENCY_CONFLICT / no semantic-result events / public append refusal)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "passed",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "c16-db-matrix-logic",
+        "clause": 16,
+        "title": "two-dimension capability matrix blocked-set union rules (GUC-seamed matrix logic)",
+        "boundary": "db",
+        "requirement": "mandatory",
+        "state": "passed",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "real-io-unlisted-forms",
+        "clause": 14,
+        "title": "remaining real-I/O forms incl. clause-14 revoke x dispatch real-loop shape and authorization-before-IO verification",
+        "boundary": "real",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      },
+      {
+        "subcase": "p0c-minimal-turn-dual-runtime",
+        "clause": 15,
+        "title": "P0C main goal: one minimal turn, identical observable trace on both runtimes",
+        "boundary": "real",
+        "requirement": "mandatory",
+        "state": "blocked",
+        "not_run_reason": "",
+        "gap": ""
+      }
+    ],
+    "counts": {
+      "passed": 9,
+      "failed": 0,
+      "blocked": 11,
+      "partial": 9,
+      "not_run": 1
+    },
+    "capability_matrix": {
+      "blocked": [
+        "c3-real-dispatch-unknown-recovery",
+        "c5-real-cancel-unknown-classification",
+        "c6-real-cancel-linearization",
+        "c11-real-inflight-switch-closure",
+        "c13-real-workspace-lost-inflight",
+        "c14-real-revoke-dispatch",
+        "c15-real-cancel-unknown-fixture",
+        "real-io-unlisted-forms",
+        "c11-db-switch-positive"
+      ],
+      "driver_switch": "unsupported",
+      "mandated_negative": [
+        "c11-db-unsupported-negative"
+      ],
+      "dispatch_interception": "none"
+    },
+    "external_blocked": [
+      "blocked:all-real-io-subcases",
+      "blocked:compat-only-t0-t4-participation",
+      "blocked:p0c-final-sign-off",
+      "blocked:p0c-minimal-turn-dual-runtime",
+      "blocked:pinned-five-piece-values",
+      "blocked:section-5.2-pre-verification"
+    ],
+    "pinned_unresolved": [
+      "pinned.dsh_package",
+      "pinned.node_version",
+      "pinned.profile_digest",
+      "pinned.adapter_version",
+      "pinned.canonicalizer_version",
+      "section_5_2_pre_verification.dispatch_interception"
+    ],
+    "unmapped_failed_fixtures": [],
+    "compat_only_excluded_from_portable": [],
+    "conclusions": {
+      "declared_support_surface_conformant": {
+        "passed": false,
+        "blockers": [
+          "pinned:pinned.adapter_version",
+          "pinned:pinned.canonicalizer_version",
+          "pinned:pinned.dsh_package",
+          "pinned:pinned.node_version",
+          "pinned:pinned.profile_digest",
+          "pinned:section_5_2_pre_verification.dispatch_interception",
+          "subcase:c13-db-yield-workspace:partial",
+          "subcase:c15-db-cancel-fixtures:partial",
+          "subcase:c2-db-stale-writes:partial",
+          "subcase:c3-db-scan-recovery:partial",
+          "subcase:c5-db-classification-orthogonal:partial",
+          "subcase:c6-db-cancel-compact:partial",
+          "subcase:c7-db-parallel-ordinal:partial",
+          "subcase:c8-db-generation:partial",
+          "subcase:c9-db-hook-gates:partial"
+        ]
+      },
+      "minimal_dual_loop_passed": {
+        "passed": false,
+        "blockers": [
+          "no_real_loop",
+          "subcase:p0c-minimal-turn-dual-runtime:blocked"
+        ]
+      },
+      "full_target_achieved": {
+        "passed": false,
+        "blockers": [
+          "declared_support_surface_conformant",
+          "mandatory:c1-real-retry-single-batch:blocked",
+          "mandatory:c11-db-switch-positive:blocked",
+          "mandatory:c11-real-inflight-switch-closure:blocked",
+          "mandatory:c13-db-yield-workspace:partial",
+          "mandatory:c13-real-workspace-lost-inflight:blocked",
+          "mandatory:c14-real-revoke-dispatch:blocked",
+          "mandatory:c15-db-cancel-fixtures:partial",
+          "mandatory:c15-real-cancel-unknown-fixture:blocked",
+          "mandatory:c2-db-stale-writes:partial",
+          "mandatory:c3-db-scan-recovery:partial",
+          "mandatory:c3-real-dispatch-unknown-recovery:blocked",
+          "mandatory:c5-db-classification-orthogonal:partial",
+          "mandatory:c5-real-cancel-unknown-classification:blocked",
+          "mandatory:c6-db-cancel-compact:partial",
+          "mandatory:c6-real-cancel-linearization:blocked",
+          "mandatory:c7-db-parallel-ordinal:partial",
+          "mandatory:c8-db-generation:partial",
+          "mandatory:c9-db-hook-gates:partial",
+          "mandatory:p0c-minimal-turn-dual-runtime:blocked",
+          "mandatory:real-io-unlisted-forms:blocked",
+          "minimal_dual_loop_passed",
+          "pinned:pinned.adapter_version",
+          "pinned:pinned.canonicalizer_version",
+          "pinned:pinned.dsh_package",
+          "pinned:pinned.node_version",
+          "pinned:pinned.profile_digest",
+          "pinned:section_5_2_pre_verification.dispatch_interception"
+        ]
+      }
+    },
+    "compat_contract_passed": false,
+    "compat_contract_passable": false,
+    "note": "host-agnostic half only: real-I/O rows hang blocked until the pinned DSH host lands (see v8/compat/pinned_host_manifest.json); the fake suite stays authoritative; script green != P0C complete",
+    "generated_at_utc": "2026-09-17T09:14:57.507075+00:00"
+  },
+  "g13_report_reason": "",
+  "conclusions": {
+    "declared_support_surface_conformant": {
+      "passed": false,
+      "blockers": [
+        "pinned:pinned.adapter_version",
+        "pinned:pinned.canonicalizer_version",
+        "pinned:pinned.dsh_package",
+        "pinned:pinned.node_version",
+        "pinned:pinned.profile_digest",
+        "pinned:section_5_2_pre_verification.dispatch_interception",
+        "subcase:c13-db-yield-workspace:partial",
+        "subcase:c15-db-cancel-fixtures:partial",
+        "subcase:c2-db-stale-writes:partial",
+        "subcase:c3-db-scan-recovery:partial",
+        "subcase:c5-db-classification-orthogonal:partial",
+        "subcase:c6-db-cancel-compact:partial",
+        "subcase:c7-db-parallel-ordinal:partial",
+        "subcase:c8-db-generation:partial",
+        "subcase:c9-db-hook-gates:partial"
+      ]
+    },
+    "minimal_dual_loop_passed": {
+      "passed": false,
+      "blockers": [
+        "no_real_loop",
+        "subcase:p0c-minimal-turn-dual-runtime:blocked"
+      ]
+    },
+    "full_target_achieved": {
+      "passed": false,
+      "blockers": [
+        "declared_support_surface_conformant",
+        "mandatory:c1-real-retry-single-batch:blocked",
+        "mandatory:c11-db-switch-positive:blocked",
+        "mandatory:c11-real-inflight-switch-closure:blocked",
+        "mandatory:c13-db-yield-workspace:partial",
+        "mandatory:c13-real-workspace-lost-inflight:blocked",
+        "mandatory:c14-real-revoke-dispatch:blocked",
+        "mandatory:c15-db-cancel-fixtures:partial",
+        "mandatory:c15-real-cancel-unknown-fixture:blocked",
+        "mandatory:c2-db-stale-writes:partial",
+        "mandatory:c3-db-scan-recovery:partial",
+        "mandatory:c3-real-dispatch-unknown-recovery:blocked",
+        "mandatory:c5-db-classification-orthogonal:partial",
+        "mandatory:c5-real-cancel-unknown-classification:blocked",
+        "mandatory:c6-db-cancel-compact:partial",
+        "mandatory:c6-real-cancel-linearization:blocked",
+        "mandatory:c7-db-parallel-ordinal:partial",
+        "mandatory:c8-db-generation:partial",
+        "mandatory:c9-db-hook-gates:partial",
+        "mandatory:p0c-minimal-turn-dual-runtime:blocked",
+        "mandatory:real-io-unlisted-forms:blocked",
+        "minimal_dual_loop_passed",
+        "pinned:pinned.adapter_version",
+        "pinned:pinned.canonicalizer_version",
+        "pinned:pinned.dsh_package",
+        "pinned:pinned.node_version",
+        "pinned:pinned.profile_digest",
+        "pinned:section_5_2_pre_verification.dispatch_interception"
+      ]
+    }
+  },
+  "entries": [
+    {
+      "gate_id": "G1",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/canonical/test_canonical.py"
+      ],
+      "database_group": null,
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 0.566,
+          "stdout_sha256": "a7513b4942a90515793baf06a9acf16e6e3441bec29b9a4c10383f8e9972ceed",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 196
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:25.568292+00:00",
+      "ended_at_utc": "2026-09-17T09:14:26.135805+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/canonical/test_canonical.py"
+      ]
+    },
+    {
+      "gate_id": "G2",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/schema/test_schema.py"
+      ],
+      "database_group": "agent_v8_schema",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 0.827,
+          "stdout_sha256": "a549f0b4d98e6de02888ee66a61e0b2bd08f1dbfde6b5881ddf6a1c08da9b810",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 86
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:26.137121+00:00",
+      "ended_at_utc": "2026-09-17T09:14:26.965136+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/schema/test_schema.py"
+      ]
+    },
+    {
+      "gate_id": "G3",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/events/test_events.py"
+      ],
+      "database_group": "agent_v8_events",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.118,
+          "stdout_sha256": "26f9c60016fcb4c6fb3bb14eebfe7ebed6c4e76748d58a982a4de9ebd2a24c94",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 130
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:26.966397+00:00",
+      "ended_at_utc": "2026-09-17T09:14:28.085293+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/events/test_events.py"
+      ]
+    },
+    {
+      "gate_id": "G4",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/effect/test_effect.py"
+      ],
+      "database_group": "agent_v8_effect",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.139,
+          "stdout_sha256": "1bbacb07b2274c38fa9465ecc80063d75dcd5cacf15cdb37dab644ebaba325e3",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 297
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:28.086822+00:00",
+      "ended_at_utc": "2026-09-17T09:14:29.227399+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/effect/test_effect.py"
+      ]
+    },
+    {
+      "gate_id": "G5",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/loop/test_loop.py"
+      ],
+      "database_group": "agent_v8_loop",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 6.131,
+          "stdout_sha256": "8e6671bdf949b6fef5954c5f2c4e3481bebba26bc3ede224c3dc013f4daeed9a",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 250
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:29.228858+00:00",
+      "ended_at_utc": "2026-09-17T09:14:35.361874+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/loop/test_loop.py"
+      ]
+    },
+    {
+      "gate_id": "G6",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/tools/test_tools.py"
+      ],
+      "database_group": "agent_v8_tools",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 8.591,
+          "stdout_sha256": "dcebc8430281c57490f4917b584858d77b20affa6992a3ffe68218236dd8f958",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 333
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:35.363416+00:00",
+      "ended_at_utc": "2026-09-17T09:14:43.955330+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/tools/test_tools.py"
+      ]
+    },
+    {
+      "gate_id": "G7a",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/retry/test_retry.py"
+      ],
+      "database_group": "agent_v8_retry",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.206,
+          "stdout_sha256": "19e1c3265ae96a50b120e862c60a8eb31d66b2a4c2e0ccf90da3c88d4c123e41",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 258
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:43.956552+00:00",
+      "ended_at_utc": "2026-09-17T09:14:45.163618+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/retry/test_retry.py"
+      ]
+    },
+    {
+      "gate_id": "G7b",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/retry/test_takeover.py"
+      ],
+      "database_group": "agent_v8_retry",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.001,
+          "stdout_sha256": "0f33b1540f5917135c741a3a0250196dfeadda6a60b2e3f1d31ad66aa3f777a2",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 134
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:45.164965+00:00",
+      "ended_at_utc": "2026-09-17T09:14:46.167537+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/retry/test_takeover.py"
+      ]
+    },
+    {
+      "gate_id": "G7c",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/repair/test_repair.py"
+      ],
+      "database_group": "agent_v8_repair",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.214,
+          "stdout_sha256": "eeef8486cc332d2e276d0a4897632ebce13136bdaec3d73847c63b985d90c5f8",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 214
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:46.168848+00:00",
+      "ended_at_utc": "2026-09-17T09:14:47.384216+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/repair/test_repair.py"
+      ]
+    },
+    {
+      "gate_id": "G8a",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/cancel/test_cancel.py"
+      ],
+      "database_group": "agent_v8_cancel",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.049,
+          "stdout_sha256": "3203f63410423849820c6769d85494e02e7a1d6953083509f94a86f148d83bb1",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 93
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:47.385530+00:00",
+      "ended_at_utc": "2026-09-17T09:14:48.435947+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/cancel/test_cancel.py"
+      ]
+    },
+    {
+      "gate_id": "G8b",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/cancel/test_closure.py"
+      ],
+      "database_group": "agent_v8_cancel",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.262,
+          "stdout_sha256": "5cf3b889abd4a7a13a3357e57e5ec12682dbf04b1324a93455c384c6c294f43c",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 222
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:48.437305+00:00",
+      "ended_at_utc": "2026-09-17T09:14:49.700219+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/cancel/test_closure.py"
+      ]
+    },
+    {
+      "gate_id": "G9a",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/stream/test_stream.py"
+      ],
+      "database_group": "agent_v8_stream",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.103,
+          "stdout_sha256": "5e65a0d46abbe95063bfe83fae10235438831048583f4cbb5397e1e49831bb24",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 51
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:49.701687+00:00",
+      "ended_at_utc": "2026-09-17T09:14:50.805975+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/stream/test_stream.py"
+      ]
+    },
+    {
+      "gate_id": "G10",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/grant/test_grant.py"
+      ],
+      "database_group": "agent_v8_grant",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 2.065,
+          "stdout_sha256": "c08add9a036a1ead1e4c68638b9bacf89609cbe509b86171e9069fddf5fff745",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 144
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:50.807677+00:00",
+      "ended_at_utc": "2026-09-17T09:14:52.873928+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/grant/test_grant.py"
+      ]
+    },
+    {
+      "gate_id": "G11",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/plugin/test_plugin.py"
+      ],
+      "database_group": "agent_v8_plugin",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.291,
+          "stdout_sha256": "9bc934a3316967c461918ef4c9d316b3ef1b91b80345b4495541864c5b97c061",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 207
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:52.875598+00:00",
+      "ended_at_utc": "2026-09-17T09:14:54.168044+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/plugin/test_plugin.py"
+      ]
+    },
+    {
+      "gate_id": "G12",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/gates/test_gates.py"
+      ],
+      "database_group": "agent_v8_gates",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 2.064,
+          "stdout_sha256": "8044658b6c26724c9c6f998df18469e8a43ba4115af33d82cbfe8a43404957b3",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 165
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:54.169625+00:00",
+      "ended_at_utc": "2026-09-17T09:14:56.235635+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/gates/test_gates.py"
+      ]
+    },
+    {
+      "gate_id": "G13",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/compat/test_compat.py"
+      ],
+      "database_group": "agent_v8_compat",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.31,
+          "stdout_sha256": "816b2e3a9b91ca0f665cf55abb841512620a41899e984c5ff9541e27ca90f339",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 181
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:56.237305+00:00",
+      "ended_at_utc": "2026-09-17T09:14:57.549025+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/compat/test_compat.py",
+        "--report-json",
+        "<private-run-dir>/g13-report.json"
+      ]
+    },
+    {
+      "gate_id": "G14",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/concurrency/test_concurrency.py"
+      ],
+      "database_group": "agent_v8_concurrency",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 8.853,
+          "stdout_sha256": "805c8bc2417f70311c571adda2e1575fa4daac879ac67d6cc6b04c43f3df7658",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 102
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:14:57.552780+00:00",
+      "ended_at_utc": "2026-09-17T09:15:06.407560+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/concurrency/test_concurrency.py"
+      ]
+    },
+    {
+      "gate_id": "G9b",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/stream/test_observation.py"
+      ],
+      "database_group": "agent_v8_stream",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.259,
+          "stdout_sha256": "b682b015bfc8cbd3b403b147d90f05792230a321e0097ade9d88aa91d1424933",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 72
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:15:06.409841+00:00",
+      "ended_at_utc": "2026-09-17T09:15:07.670679+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/stream/test_observation.py"
+      ]
+    },
+    {
+      "gate_id": "G16",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/audit/test_audit.py"
+      ],
+      "database_group": "agent_v8_audit",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.204,
+          "stdout_sha256": "7c725e797a20f335c87504bb649b8af103a07e2601ad94677516e2ff1bfa4d8c",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 106
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:15:07.672662+00:00",
+      "ended_at_utc": "2026-09-17T09:15:08.879023+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/audit/test_audit.py"
+      ]
+    },
+    {
+      "gate_id": "G17",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/compact/test_compact.py"
+      ],
+      "database_group": "agent_v8_compact",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.969,
+          "stdout_sha256": "bb41cc09fa0bda62eba7c7d4d15a9a660879201199b90dfd611654ec41a79bd6",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 86
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:15:08.881148+00:00",
+      "ended_at_utc": "2026-09-17T09:15:10.852538+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/compact/test_compact.py"
+      ]
+    },
+    {
+      "gate_id": "G15",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/drain/test_drain.py"
+      ],
+      "database_group": "agent_v8_drain",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.164,
+          "stdout_sha256": "ce2217e95b2aa57d6033fe6a87aa5371f3249c0fe87881cef4ad3203c96ee3a8",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 107
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:15:10.854646+00:00",
+      "ended_at_utc": "2026-09-17T09:15:12.020838+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/drain/test_drain.py"
+      ]
+    },
+    {
+      "gate_id": "G18",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/reconcile/test_reconcile.py"
+      ],
+      "database_group": "agent_v8_reconcile",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.221,
+          "stdout_sha256": "c010502848d070bd9b2dd233f599e2dcb9ea97ec0325e2013b2d64b2a8dc56b9",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 143
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:15:12.023208+00:00",
+      "ended_at_utc": "2026-09-17T09:15:13.246739+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/reconcile/test_reconcile.py"
+      ]
+    },
+    {
+      "gate_id": "G19a",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/assemble/test_assemble.py"
+      ],
+      "database_group": "agent_v8_assemble",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 0.995,
+          "stdout_sha256": "156a728c2f8ec24b93fb6e3142b4a6e08139ef9e58ac0ee37f05003474e828ff",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 35
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:15:13.248829+00:00",
+      "ended_at_utc": "2026-09-17T09:15:14.246188+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/assemble/test_assemble.py"
+      ]
+    },
+    {
+      "gate_id": "G19b",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/closeout/test_closeout.py"
+      ],
+      "database_group": "agent_v8_closeout",
+      "required": true,
+      "state": "passed",
+      "reason": "",
+      "attempts": [
+        {
+          "exit_code": 0,
+          "signal": null,
+          "state": "passed",
+          "reason": "",
+          "interrupted": false,
+          "cleanup_confirmed": true,
+          "duration_seconds": 1.159,
+          "stdout_sha256": "304655fc656482ae76e195063532387587f4b2cbfed8ece17a5ef6cca1aa5185",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "pass_line_count": 70
+        }
+      ],
+      "started_at_utc": "2026-09-17T09:15:14.248889+00:00",
+      "ended_at_utc": "2026-09-17T09:15:15.410407+00:00",
+      "executed_argv": [
+        "uv",
+        "run",
+        "python",
+        "v8/closeout/test_closeout.py"
+      ]
+    }
+  ],
+  "duration_seconds": 49.844,
+  "end_source_snapshot_digest": "bc3c3ba989046f484092b4ea7581146105cf6f9f1e5daf3e9d8bfd599c3e26a2",
+  "counts": {
+    "passed": 24,
+    "failed": 0,
+    "not_run": 0
+  }
+}

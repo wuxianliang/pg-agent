@@ -23,18 +23,32 @@ Covers (plan G13 row, all MUSTs):
     through the GUC seam (matrix logic only);
   * the P0C passed/failed/blocked reporter with the six fail-class
     refusals and the pinned-host unresolved-manifest rule;
-  * the real-provider (DeepSeek) DB protocol layer subcases,
-    credentials-env-gated (missing -> skip + blocked, exit 0; real calls
-    outside database transactions; the fake suite stays authoritative).
+  * the real-provider (DeepSeek) DB protocol layer subcases, an
+    EXPLICIT opt-in smoke: the default run is keyless (the adapter is
+    never constructed, the fake suite runs unconditionally),
+    `--real-provider-smoke` opts in (missing credentials -> not_run +
+    exit 2; started-but-failing -> failed + exit 1, never swallowed;
+    real calls always outside database transactions; the fake suite
+    stays authoritative).
+  * `--report-json <path>` writes the final honest build_report dict
+    (schema v2) atomically after it is produced — refusal/kill leaves
+    the file absent, which is itself the signal (runner contract).
+
+Exit codes: 0 = the must-run set (DB contract + fake + reporter) green
+(plus a passed opt-in smoke when requested); 1 = a failure (never
+swallowed); 2 = `--real-provider-smoke` requested but credentials
+absent (the explicit target did not execute).
 
 Spec: docs/designs/v8-dev.md sections 5/5.1/5.2, P0C, Conformance
 11/12/16; digests s31b (compat_unmapped_audit row), s2 (grant stub).
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import uuid
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import psycopg2
@@ -68,14 +82,33 @@ ADAPTER = "dsh-compat-adapter@1"
 SV, CV = "sv@1", "canon@1"
 
 RESULTS: dict[str, str] = {}
-EXTERNAL_BLOCKED = {
+NOT_RUN_REASONS: dict[str, str] = {}
+# The initial six-item host fact set (J0 plan §4.1): the working set is
+# REBUILT at every main() entry — never an empty set (the reporter's
+# allowlist validation would then reject legal sources), never the
+# previous run's residue (dynamically injected items would leak into
+# the next report). The reporter's EXTERNAL_BLOCKED is the ALLOWED
+# superset (7 items); this set is the CURRENT host fact set.
+INITIAL_EXTERNAL_BLOCKED = frozenset({
     "blocked:section-5.2-pre-verification",
     "blocked:all-real-io-subcases",
     "blocked:p0c-minimal-turn-dual-runtime",
     "blocked:pinned-five-piece-values",
     "blocked:compat-only-t0-t4-participation",
     "blocked:p0c-final-sign-off",
-}
+})
+EXTERNAL_BLOCKED: set[str] = set(INITIAL_EXTERNAL_BLOCKED)
+SMOKE_SUBCASE = "c12-db-real-provider-protocol"
+
+
+def _reset_state() -> None:
+    """Per-run state reset (J0 plan §4.1): two consecutive main()/test
+    runs never reuse the previous round's results or dynamic blocked
+    sources."""
+    RESULTS.clear()
+    NOT_RUN_REASONS.clear()
+    EXTERNAL_BLOCKED.clear()
+    EXTERNAL_BLOCKED.update(INITIAL_EXTERNAL_BLOCKED)
 
 
 def uri() -> str:
@@ -1070,20 +1103,77 @@ def test_matrix_logic(conn) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. real provider (DeepSeek) DB protocol layer — env-gated
+# 7. must-run fake suite + the opt-in real-provider smoke (J0 W1)
 # ---------------------------------------------------------------------------
 
-def test_deepseek(conn) -> bool:
+def test_fake_provider() -> None:
+    """The MUST-RUN fake suite (Conformance 12) — independent of any
+    provider credential since J0: two fresh FakeLLM instances, a fixed
+    seed input, full-object equality. The result is registered only
+    after the check succeeds; a failure raises immediately (never a
+    pre-registered green, never swallowed)."""
+    fa = FakeLLM().generate({"prompt": {"seed_text": "s"}})
+    fb = FakeLLM().generate({"prompt": {"seed_text": "s"}})
+    check("fake suite stays deterministic and authoritative", fa == fb)
+    RESULTS["c12-db-fake-suite"] = "passed"
+
+
+@dataclass(frozen=True)
+class SmokeOutcome:
+    """The immutable smoke result: state in {passed, failed, not_run},
+    reason in {none, not_requested, credentials_absent,
+    provider_failure}. provider_failure classifies the raising path — a
+    started smoke that fails never returns; its failure is kept in
+    RESULTS and the exception propagates (exit 1)."""
+
+    state: str
+    reason: str
+
+
+def test_real_provider_smoke(conn, *, requested: bool) -> SmokeOutcome:
+    """The opt-in real-provider (DeepSeek) DB protocol smoke. Default
+    (requested=False): the real adapter is NEVER constructed — no
+    credential is read, checked, or printed (J0 plan §4.3)."""
+    if not requested:
+        RESULTS[SMOKE_SUBCASE] = "not_run"
+        NOT_RUN_REASONS[SMOKE_SUBCASE] = "not_requested"
+        print("[SKIP] real-provider smoke not requested (default keyless; "
+              "pass --real-provider-smoke to opt in)")
+        return SmokeOutcome("not_run", "not_requested")
+
     adapter = DeepSeekLLM()
     if not adapter.credentials_present:
-        print("[SKIP] DeepSeek credentials absent "
-              "(DEEPSEEK_API_KEY / OPENAI_API_KEY) — real-provider "
-              "subcases count into the blocked list, exit code unchanged")
-        RESULTS["c12-db-real-provider-protocol"] = "partial"
+        RESULTS[SMOKE_SUBCASE] = "not_run"
+        NOT_RUN_REASONS[SMOKE_SUBCASE] = "credentials_absent"
         EXTERNAL_BLOCKED.add("blocked:real-provider-credentials")
-        return False
+        print("[SKIP] --real-provider-smoke requested but credentials "
+              "absent (DEEPSEEK_API_KEY / OPENAI_API_KEY) — the explicit "
+              "target did not execute, exit 2; generate() was never "
+              "called")
+        return SmokeOutcome("not_run", "credentials_absent")
 
-    # All real calls happen outside any open database transaction.
+    try:
+        # Protocol assertions may contain response objects as detail. Never
+        # emit these in stdout/stderr, even on a failed assertion.
+        import os
+        with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink), \
+                contextlib.redirect_stderr(sink):
+            _real_smoke_body(conn, adapter)
+    except Exception:
+        # A started smoke that fails keeps its failure (never swallowed,
+        # never downgraded to not_run). Only the safe state summary is
+        # recorded here; the exception itself propagates (exit 1) — no
+        # real response/request text may leak through this handler.
+        RESULTS[SMOKE_SUBCASE] = "failed"
+        raise RuntimeError("real-provider smoke failed") from None
+    RESULTS[SMOKE_SUBCASE] = "passed"
+    return SmokeOutcome("passed", "none")
+
+
+def _real_smoke_body(conn, adapter: DeepSeekLLM) -> None:
+    """The three real sub-cases (protocol shape / idempotency / the
+    uncertain window) plus their DB settlement halves. All real calls
+    happen outside any open database transaction."""
     conn.rollback()
     status_before = conn.status
     check("real provider call point: connection idle (no open tx)",
@@ -1122,11 +1212,14 @@ def test_deepseek(conn) -> bool:
     # (2) idempotency: two identical wire requests both produce
     # well-formed envelopes; the DATABASE side keeps one settlement per
     # command_id (receipt replay).
+    conn.rollback()
+    check("second provider call is outside a transaction", conn.status == 1)
     r2 = adapter.generate({"prompt": {"seed_text":
                                       "compat protocol probe"}})
     check("idempotency: identical request re-issued yields a well-formed "
           "envelope", r2["outcome"] == "succeeded"
           and r2["evidence"]["provider_receipt"]["receipt_id"], r2)
+    check("second provider returned outside a transaction", conn.status == 1)
     fx2 = compat_decision_fx(conn)
     cmd = f"cmp-{u()[:10]}"
     ca = complete_effect(
@@ -1154,12 +1247,15 @@ def test_deepseek(conn) -> bool:
 
     # (3) uncertain window: a real call abandoned before any terminal
     # receipt classifies unknown (provisional end, blocked session).
+    conn.rollback()
+    check("uncertain call is outside a transaction", conn.status == 1)
     abandoned = DeepSeekLLM(abandon_after=0.001)
     r3 = abandoned.generate({"prompt": {"seed_text": "compat window probe"}})
     check("uncertain window: abandoned call yields the unknown shape "
           "(no bound terminal provider receipt)",
           r3["outcome"] == "unknown_outcome"
           and r3["evidence"]["class"] == "timeout", r3)
+    check("uncertain call returned outside a transaction", conn.status == 1)
     fx3 = compat_decision_fx(conn)
     rc3 = complete_effect(
         conn, fx3["session"], f"cmp-{u()[:10]}", fx3["effect"], DRIVER_C, 1,
@@ -1177,127 +1273,295 @@ def test_deepseek(conn) -> bool:
           and json.loads(ends3[0][2]).get("outcome") == "unknown",
           (rc3["receipt"].get("classification"), ends3))
 
-    # The fake suite stays authoritative (Conformance 12).
-    fa, fb = FakeLLM().generate({"prompt": {"seed_text": "s"}}), \
-        FakeLLM().generate({"prompt": {"seed_text": "s"}})
-    check("fake suite stays deterministic and authoritative", fa == fb)
-
-    RESULTS["c12-db-real-provider-protocol"] = "passed"
-    RESULTS["c12-db-fake-suite"] = "passed"
-    return True
-
 
 # ---------------------------------------------------------------------------
-# 8. P0C reporter
+# 8. P0C reporter (schema v2): precise-code refusals + conclusions
 # ---------------------------------------------------------------------------
 
-def test_reporter(conn) -> None:
+@contextlib.contextmanager
+def synthetic_catalog(catalog):
+    """TEST ONLY: formula vectors are never returned as actual evidence."""
+    from unittest.mock import patch
+    with patch.object(p0c_report, "CATALOG", catalog), patch.object(
+            p0c_report, "BY_ID", {s.subcase_id: s for s in catalog}):
+        yield
+
+
+def refusal(code, fn):
+    try:
+        fn()
+    except p0c_report.ReportError as exc:
+        check(f"precise refusal {code}", exc.code == code, exc.code)
+    else:
+        check(f"precise refusal {code}", False, "no refusal")
+
+
+def test_reporter(conn) -> dict:
+    p = p0c_report
     matrix = compat.participation(conn, ADAPTER)["matrix"]
-
-    # The honest current report: host-agnostic green, real-I/O blocked.
     results = dict(RESULTS)
-    report = p0c_report.build_report(
-        results, matrix, real_loop_available=False,
-        external_blocked=frozenset(EXTERNAL_BLOCKED),
-        unmapped_failed_fixtures=("fx-unmapped-demo",))
-    c = report["counts"]
-    check("report covers every implemented subcase green",
-          c["failed"] == 0 and c["passed"] >= 6, c)
-    clauses = {r["clause"] for r in report["rows"]}
-    check("report covers Conformance clauses 1-16 (4 merged into 3)",
-          clauses >= set(range(1, 17)) - {4}, sorted(clauses))
-    check("fork + UNSUPPORTED negative are passed, never blocked",
+    options = dict(external_blocked=frozenset(EXTERNAL_BLOCKED),
+                   not_run_reasons=dict(NOT_RUN_REASONS))
+
+    def build(r=None, m=None, **kw):
+        return p.build_report(results if r is None else r,
+                              matrix if m is None else m, **(options | kw))
+
+    report = build()
+    check("honest report: no failures or synthetic unmapped fixture",
+          report["counts"]["failed"] == 0
+          and not report["unmapped_failed_fixtures"])
+    check("all clauses represented (4 merged into 3)",
+          {r["clause"] for r in report["rows"]} >= set(range(1, 17)) - {4})
+    check("mandatory fork and UNSUPPORTED negative passed",
           all(r["state"] == "passed" for r in report["rows"]
-              if r["subcase"] in (p0c_report.FORK_DB_ROW,
-                                  p0c_report.MANDATED_NEGATIVE)))
-    check("real-I/O rows are blocked, database-layer siblings do not"
-          " substitute",
+              if r["subcase"] in (p.FORK_DB_ROW, p.MANDATED_NEGATIVE)))
+    check("real layer blocked, unimplemented gaps retained",
           all(r["state"] == "blocked" for r in report["rows"]
-              if r["boundary"] == "real"))
-    check("unimplemented subclauses carry the yellow gap destination",
-          all(r["gap"] for r in report["rows"] if r["state"] == "partial"))
-    check("pinned-host unresolved items keep the compat contract un-passed",
-          report["compat_contract_passed"] is False
-          and report["pinned_unresolved"], report["pinned_unresolved"])
-    check("unmapped-audited fixture marked failed at the report level",
-          report["unmapped_failed_fixtures"] == ["fx-unmapped-demo"])
-    print(p0c_report.render(report))
+              if r["boundary"] == p.REAL)
+          and all(r["gap"] for r in report["rows"] if r["state"] == p.PARTIAL))
+    check("pinned unresolved: all actual conclusions false; no final signature",
+          bool(report["pinned_unresolved"])
+          and not any(c["passed"] for c in report["conclusions"].values())
+          and report["compat_contract_passed"] is False
+          and report["compat_contract_passable"] is False)
+    demo = build(unmapped_failed_fixtures=("fx-unmapped-demo",))
+    check("unmapped demo blocks conclusion, separate from actual report",
+          "unmapped_failed_fixtures" in demo["conclusions"][
+              "full_target_achieved"]["blockers"])
 
-    # ---- the six fail-class refusals ----
-    # (1) non-matrix blocked source.
-    try:
-        p0c_report.build_report(results, matrix,
-                                external_blocked=frozenset(
-                                    {"blocked:invented-source"}))
-        check("fail-class 1 refused", False, "no ReportError")
-    except p0c_report.ReportError:
-        check("fail-class 1 refused (non-matrix blocked source)", True)
+    audit = "c16-db-unmapped-audit"
+    real = "c1-real-retry-single-batch"
+    dropped = {k: v for k, v in results.items() if k != audit}
+    refusal(p.INVALID_BLOCK_SOURCE, lambda: build(
+        external_blocked=frozenset({"blocked:invented-source"})))
+    refusal(p.MISSING_RESULT, lambda: build(dropped))
+    refusal(p.NATIVE_EVIDENCE_AS_COMPAT, lambda: build(
+        native_evidence_only=frozenset({audit})))
+    # Isolate FC4/FC5 from the earlier unimplemented-pass check. Only this
+    # test-local target is implemented; the production catalog is untouched.
+    with synthetic_catalog([replace(s, implemented=True) if s.subcase_id == real
+                            else s for s in p.CATALOG]):
+        refusal(p.BLOCKED_REAL_MARKED_PASSED, lambda: build(
+            results | {real: p.PASSED}, real_loop_available=True))
+        sync = compat.matrix_blocked(conn, "sync_before_io", "supported")
+        refusal(p.REAL_PASS_WITHOUT_LOOP, lambda: build(
+            results | {real: p.PASSED}, sync,
+            external_blocked=frozenset(EXTERNAL_BLOCKED - {
+                "blocked:all-real-io-subcases"})))
+    unsup = compat.matrix_blocked(conn, "sync_before_io", "unsupported")
+    refusal(p.MANDATORY_NEGATIVE_NOT_PASSED, lambda: build(
+        results | {p.MANDATED_NEGATIVE: p.FAILED}, unsup))
+    refusal(p.MISSING_RESULT, lambda: build(
+        {k: v for k, v in results.items() if k != p.MANDATED_NEGATIVE}, unsup))
+    refusal(p.INVALID_RESULT_ID, lambda: build(results | {"unknown": p.PASSED}))
+    refusal(p.INVALID_RESULT_STATE, lambda: build(results | {audit: "blocked"}))
+    refusal(p.UNIMPLEMENTED_MARKED_PASSED, lambda: build(
+        results | {real: p.PASSED}))
+    refusal(p.INVALID_NOT_RUN_REASON, lambda: build(
+        results | {audit: p.NOT_RUN}))
+    for reason in ("not_requested", "credentials_absent", "unknown"):
+        refusal(p.INVALID_NOT_RUN_REASON, lambda: build(
+            results | {audit: p.NOT_RUN},
+            not_run_reasons=NOT_RUN_REASONS | {audit: reason}))
+    refusal(p.INVALID_NOT_RUN_REASON, lambda: build(
+        not_run_reasons=NOT_RUN_REASONS | {audit: "execution_interrupted"}))
+    # Dual-invalid vectors lock first-error-wins ordering.
+    refusal(p.INVALID_NOT_RUN_REASON, lambda: build(
+        dropped | {"c12-db-fake-suite": p.NOT_RUN}))
+    refusal(p.MISSING_RESULT, lambda: build(
+        dropped, native_evidence_only=frozenset({"c12-db-fake-suite"})))
+    with synthetic_catalog(p.CATALOG + [p.CATALOG[0]]):
+        refusal(p.INVALID_CATALOG, lambda: build())
+    with synthetic_catalog([s for s in p.CATALOG if s.clause != 10]):
+        refusal(p.MISSING_RESULT, lambda: build(
+            {k: v for k, v in results.items() if k in p.BY_ID}))
+    test_conclusion_formulas()
+    check("compat-only fixture excluded from portable",
+          compat.portable_claim_ok(conn, "drop-adapter@1", ["fx-drop-1"]) is False)
+    print(p.render(report))
+    return report
 
-    # (2) missing entries.
-    dropped = {k: v for k, v in results.items()
-               if k != "c16-db-unmapped-audit"}
-    try:
-        p0c_report.build_report(dropped, matrix,
-                                external_blocked=frozenset(EXTERNAL_BLOCKED))
-        check("fail-class 2 refused", False, "no ReportError")
-    except p0c_report.ReportError:
-        check("fail-class 2 refused (missing entry)", True)
 
-    # (3) Native green masquerading as portable.
-    try:
-        p0c_report.build_report(results, matrix,
-                                external_blocked=frozenset(EXTERNAL_BLOCKED),
-                                native_evidence_only=frozenset(
-                                    {"c1-db-receipt-idempotency"}))
-        check("fail-class 3 refused", False, "no ReportError")
-    except p0c_report.ReportError:
-        check("fail-class 3 refused (Native green as compat passed)", True)
+def test_conclusion_formulas():
+    """Synthetic all-implemented vectors; not runtime participation evidence."""
+    from unittest.mock import patch
+    p = p0c_report
+    with synthetic_catalog([replace(s, implemented=True) for s in p.CATALOG]), \
+            patch.object(p, "pinned_unresolved_items", return_value=[]):
+        results = {s.subcase_id: p.PASSED for s in p.CATALOG}
+        results[SMOKE_SUBCASE] = p.NOT_RUN
+        reasons = {SMOKE_SUBCASE: "not_requested"}
+        matrix = {"blocked": [], "mandated_negative": []}
 
-    # (4) real-I/O degradation recorded green while blocked.
-    rigged = dict(results)
-    rigged["c1-real-retry-single-batch"] = "passed"
-    try:
-        p0c_report.build_report(rigged, matrix,
-                                external_blocked=frozenset(EXTERNAL_BLOCKED))
-        check("fail-class 4 refused", False, "no ReportError")
-    except p0c_report.ReportError:
-        check("fail-class 4 refused (real-I/O downgraded to green)", True)
+        def build(r=None, **kw):
+            args = dict(real_loop_available=True, not_run_reasons=reasons)
+            return p.build_report(results if r is None else r, matrix, **(args | kw))
 
-    # (5) database-layer pass substituting the real-I/O sibling: with a
-    # sync+supported matrix (dispatch rows unblocked) a real row still
-    # cannot pass without a real loop.
-    sync_matrix = compat.matrix_blocked(conn, "sync_before_io", "supported")
-    try:
-        p0c_report.build_report(rigged, sync_matrix,
-                                external_blocked=frozenset(EXTERNAL_BLOCKED))
-        check("fail-class 5 refused", False, "no ReportError")
-    except p0c_report.ReportError:
-        check("fail-class 5 refused (DB pass replacing the real-I/O layer)",
-              True)
-
-    # (6) the mandatory negative exempted due to blocked.
-    unsync_matrix = compat.matrix_blocked(conn, "sync_before_io",
-                                          "unsupported")
-    no_negative = {k: v for k, v in results.items()
-                   if k != p0c_report.MANDATED_NEGATIVE}
-    try:
-        p0c_report.build_report(no_negative, unsync_matrix,
-                                external_blocked=frozenset(EXTERNAL_BLOCKED))
-        check("fail-class 6 refused", False, "no ReportError")
-    except p0c_report.ReportError:
-        check("fail-class 6 refused (negative exempted due to blocked)",
-              True)
-
-    # compat-only fixture never portable + fixture with an unmapped audit
-    # event fails (acceptance-level).
-    check("compat-only declared fixture is excluded from portable",
-          compat.portable_claim_ok(conn, "drop-adapter@1",
-                                   ["fx-drop-1"]) is False)
+        green = build()
+        check("TEST ONLY all-implemented formula permits optional absence",
+              all(c["passed"] for c in green["conclusions"].values())
+              and green["compat_contract_passable"]
+              and green["compat_contract_passed"] is False)
+        for reason in sorted(p.NOT_RUN_REASONS):
+            check(f"optional absence {reason} does not block formula",
+                  build(not_run_reasons={SMOKE_SUBCASE: reason})[
+                      "conclusions"]["full_target_achieved"]["passed"])
+        sid = "c16-db-unmapped-audit"
+        for state in (p.PARTIAL, p.NOT_RUN, p.FAILED):
+            rr = reasons | ({sid: "dependency_unavailable"} if state == p.NOT_RUN else {})
+            r = build(results | {sid: state}, not_run_reasons=rr)
+            check(f"mandatory {state} blocks support/full, minimal is independent",
+                  not r["conclusions"]["declared_support_surface_conformant"]["passed"]
+                  and not r["conclusions"]["full_target_achieved"]["passed"]
+                  and r["conclusions"]["minimal_dual_loop_passed"]["passed"])
+        failed = build(results | {SMOKE_SUBCASE: p.FAILED}, not_run_reasons={})
+        check("executed optional failure is not an absence",
+              not failed["conclusions"]["full_target_achieved"]["passed"])
+        matrix["blocked"] = [p.SWITCH_DB_ROW]
+        matrix["mandated_negative"] = [p.MANDATED_NEGATIVE]
+        reduced = build({k: v for k, v in results.items() if k != p.SWITCH_DB_ROW})
+        check("unsupported positive blocked tolerable only for support surface",
+              reduced["conclusions"]["declared_support_surface_conformant"]["passed"]
+              and not reduced["conclusions"]["full_target_achieved"]["passed"])
+        hidden = build(results | {p.SWITCH_DB_ROW: p.FAILED})
+        check("explicit failure hidden by blocked display still blocks conclusion",
+              not hidden["conclusions"]["declared_support_surface_conformant"]["passed"])
+        rendered = p.render(reduced) + p.render(failed) + p.render(r)
+        check("render understands five states and new conclusions",
+              all(s in rendered for s in ("passed", "failed", "blocked", "partial", "not_run"))
+              and "full target" in rendered)
 
 
 # ---------------------------------------------------------------------------
 
-def main() -> int:
+def test_keyless_branches():
+    """No DB/network: sentinels exercise orchestration, never a provider."""
+    import io
+    import os
+    from unittest.mock import patch
+    module = sys.modules[__name__]
+    saved = (dict(RESULTS), dict(NOT_RUN_REASONS), set(EXTERNAL_BLOCKED))
+    try:
+        for key in ("", "sentinel-j0-never-send"):
+            _reset_state()
+            with patch.dict(os.environ, {"DEEPSEEK_API_KEY": key,
+                                         "OPENAI_API_KEY": key}), \
+                    patch.object(module, "DeepSeekLLM", side_effect=AssertionError("live")), \
+                    patch.object(FakeLLM, "generate", autospec=True,
+                                 return_value={"full": [1, {"x": "same"}]}) as fake, \
+                    patch("urllib.request.urlopen", side_effect=AssertionError("network")):
+                test_fake_provider()
+                outcome = test_real_provider_smoke(None, requested=False)
+                check("keyless path: two fake calls, zero live, optional not requested",
+                      fake.call_count == 2
+                      and fake.call_args_list[0].args[0] is not fake.call_args_list[1].args[0]
+                      and outcome == SmokeOutcome("not_run", "not_requested"))
+        _reset_state()
+        with patch.object(FakeLLM, "generate", side_effect=[{"x": 1}, {"x": 2}]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            try:
+                test_fake_provider()
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError("unequal fake must fail")
+        check("failed fake never registered green", "c12-db-fake-suite" not in RESULTS)
+        with patch.object(module, "DeepSeekLLM") as adapter:
+            adapter.return_value.credentials_present = False
+            test_fake_provider()
+            missing = test_real_provider_smoke(None, requested=True)
+            check("requested absent credentials: no generate, fake still green",
+                  missing == SmokeOutcome("not_run", "credentials_absent")
+                  and not adapter.return_value.generate.called
+                  and RESULTS["c12-db-fake-suite"] == "passed")
+            adapter.return_value.credentials_present = True
+            for fail in (False, True):
+                _reset_state()
+                with patch.object(module, "_real_smoke_body",
+                                  side_effect=RuntimeError("sentinel-private-response") if fail else None):
+                    try:
+                        outcome = test_real_provider_smoke(None, requested=True)
+                    except RuntimeError as exc:
+                        check("started smoke fails safely, never downgraded",
+                              fail and RESULTS[SMOKE_SUBCASE] == "failed"
+                              and str(exc) == "real-provider smoke failed")
+                    else:
+                        check("fake adapter success branch registered", not fail and outcome.state == "passed")
+        EXTERNAL_BLOCKED.add("blocked:real-provider-credentials")
+        RESULTS["residue"] = "passed"
+        _reset_state()
+        check("per-run reset restores exactly initial six sources",
+              not RESULTS and not NOT_RUN_REASONS
+              and EXTERNAL_BLOCKED == set(INITIAL_EXTERNAL_BLOCKED))
+        # Execute main twice with all DB work stubbed; assert actual CLI
+        # exits, stale file removal, reset, closure and JSON atomic output.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            for name in ("setup_db", "test_unmapped_audit", "test_manifest",
+                         "test_s5_mapping", "test_fork_cutoff", "test_switch_negative",
+                         "test_matrix_logic", "test_keyless_branches"):
+                stack.enter_context(patch.object(module, name))
+            stack.enter_context(patch.object(module, "uri", return_value="unused"))
+            db = stack.enter_context(patch.object(psycopg2, "connect"))
+            reporter = stack.enter_context(patch.object(module, "test_reporter",
+                return_value={"report_schema_version": 2, "test_only": True}))
+            adapter = stack.enter_context(patch.object(module, "DeepSeekLLM"))
+            adapter.return_value.credentials_present = False
+            target = Path(tmp) / "report.json"
+            check("main explicit missing credentials exits 2",
+                  main(["--real-provider-smoke", "--report-json", str(target)]) == 2)
+            check("main default exits 0 after reset",
+                  main(["--report-json", str(target)]) == 0
+                  and "blocked:real-provider-credentials" not in EXTERNAL_BLOCKED
+                  and json.loads(target.read_text())["report_schema_version"] == 2)
+            reporter.side_effect = p0c_report.ReportError("refused", code=p0c_report.MISSING_RESULT)
+            try:
+                main(["--report-json", str(target)])
+            except p0c_report.ReportError:
+                check("refusal removes stale report and closes connection",
+                      not target.exists() and db.return_value.close.call_count == 3)
+            else:
+                raise AssertionError("report refusal swallowed")
+    finally:
+        RESULTS.clear()
+        RESULTS.update(saved[0])
+        NOT_RUN_REASONS.clear()
+        NOT_RUN_REASONS.update(saved[1])
+        EXTERNAL_BLOCKED.clear()
+        EXTERNAL_BLOCKED.update(saved[2])
+
+
+def write_report(path: Path, report: dict):
+    import os
+    import tempfile
+    from datetime import datetime, timezone
+    report = report | {"generated_at_utc": datetime.now(timezone.utc).isoformat()}
+    name = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                                         dir=path.parent, delete=False) as fh:
+            name = fh.name
+            json.dump(report, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(name, path)
+    finally:
+        if name and Path(name).exists():
+            Path(name).unlink()
+
+
+def main(argv=None) -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--real-provider-smoke", action="store_true")
+    parser.add_argument("--report-json", type=Path)
+    args = parser.parse_args(argv)
+    _reset_state()
+    if args.report_json:
+        args.report_json.unlink(missing_ok=True)  # failed rerun cannot leave old green
+    test_keyless_branches()
     setup_db()
     conn = psycopg2.connect(uri())
     try:
@@ -1307,13 +1571,26 @@ def main() -> int:
         test_fork_cutoff(conn)
         test_switch_negative(conn)
         test_matrix_logic(conn)
-        test_deepseek(conn)
-        test_reporter(conn)
+        test_fake_provider()
+        smoke = test_real_provider_smoke(conn, requested=args.real_provider_smoke)
+        report = test_reporter(conn)
+        if args.report_json:
+            write_report(args.report_json, report)
     finally:
         conn.close()
-    print("[G13] all gates passed")
+    if args.real_provider_smoke and smoke.state == "not_run":
+        return 2
+    print("[G13] all gates passed; script green != P0C complete")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Safe top-level diagnostic: no provider response, request, URI or
+    # exception message is printed. Exceptions still produce failure.
+    try:
+        code = main()
+    except Exception as exc:
+        safe_code = exc.code if isinstance(exc, p0c_report.ReportError) else "TEST_FAILURE"
+        print(f"[FAIL] G13 {type(exc).__name__} code={safe_code}", file=sys.stderr)
+        code = 1
+    raise SystemExit(code)
