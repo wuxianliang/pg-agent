@@ -312,29 +312,16 @@ BEGIN
     END LOOP;
 
     -- (3c) execution permission gate, structural form for this stage:
-    -- quiescing forbids the known_failure retry disposition, so with at
-    -- least one known_failure target the whole command refuses with zero
-    -- control state (nothing has been mutated yet).
-    -- G8b: the sticky cancel latch is NO LONGER a refusal here. The frozen
-    -- gate semantics ("a sticky hit MUST first run the shared cancel
-    -- closure") are satisfied in-transaction: the per-effect settlement
-    -- below proceeds through the normal retry_eligible split and the shared
-    -- aggregation rule 3 + applier then apply the closure exits (known
-    -- retryable failure -> cancelled_after_dispatch + RETRY_SUPPRESSED_BY_
-    -- CANCEL; a known terminal failure keeps failed_terminal) — the SAME
-    -- sub-operation the normal completion entry (α) runs, so the two entries
-    -- converge on identical effect/step/session facts.
-    -- TODO(P1): the quiescing disposition (controlled-edge closure) is the
-    -- driver-switch milestone.
-    IF 'known_failure' = ANY (v_t_class)
-       AND v_sess.driver_mode = 'quiescing' THEN
-        v_receipt := v8_reject_command(p_session_id, p_command_id,
-            'recovery_takeover', v_computed, 'rejected_mismatch',
-            'DRIVER_QUIESCING',
-            'driver_mode=quiescing: the known_failure retry disposition is forbidden (controlled-edge closure is G8)');
-        RETURN QUERY SELECT 'rejected_mismatch'::text, 'DRIVER_QUIESCING'::text, v_receipt;
-        RETURN;
-    END IF;
+    -- the sticky cancel latch is NO LONGER a refusal here (G8b) — the
+    -- settlement below runs the shared cancel closure through the
+    -- aggregation. G18 (A37 remaining leg): quiescing no longer refuses
+    -- the known_failure disposition structurally either — the gate now
+    -- lands as the §3.2.2 CONTROLLED EDGE in the per-effect settlement
+    -- below (known_failure + quiescing -> failed_terminal with audit
+    -- RETRY_STOPPED_BY_CLOSURE and the ordered retry_stop_reason), the
+    -- same three-layer result and codes the (α) completion entry
+    -- produces. No new attempt is ever created under the gate; the
+    -- batch judgment then closes through the shared rule-4 aggregation.
 
     -- ------------------------------------------------------------------
     -- (2)+(3)+(4) mutations, per step: settle EVERY target of the step
@@ -453,7 +440,41 @@ BEGIN
 
                 v_elig := v_retry_eligible(v_t_eff[v_i]);
                 v_fp := v_sha256_hex(v_ev::text);
-                IF v_elig THEN
+                IF v_elig AND v_sess.driver_mode = 'quiescing' THEN
+                    -- G18 (A37 remaining leg): the execution permission
+                    -- gate hit (driver_mode=quiescing, a non-sticky
+                    -- closing condition) — the known failure settles
+                    -- through the §3.2.2 controlled edge instead of
+                    -- staying failed_retryable: failed_terminal, the
+                    -- original failure facts kept, audit
+                    -- RETRY_STOPPED_BY_CLOSURE, retry_stop_reason
+                    -- persisted through the R-01 CAS writer. Identical
+                    -- effect/step/session facts to the (α) completion
+                    -- entry; no attempt is created.
+                    v_status := 'failed_terminal';
+                    UPDATE effect_requests SET
+                        status = 'failed_terminal',
+                        result_hash = v_fp,
+                        provider_request_id = v_rec_id,
+                        updated_at = now()
+                     WHERE effect_id = v_t_eff[v_i];
+                    UPDATE effect_attempts SET
+                        status = 'failed_terminal',
+                        result_hash = v_fp,
+                        provider_request_id = v_rec_id,
+                        completed_at = now()
+                     WHERE effect_id = v_t_eff[v_i]
+                       AND attempt_no = v_t_att[v_i];
+                    INSERT INTO effect_audit(
+                        audit_context_session_id, session_id, step_id,
+                        effect_id, attempt_no, audit_key_kind,
+                        audit_key_value, result_fingerprint, reason)
+                    VALUES (p_session_id, p_session_id, v_t_step[v_i],
+                            v_t_eff[v_i], v_t_att[v_i], 'canonical_binding',
+                            v_computed, v_fp, 'RETRY_STOPPED_BY_CLOSURE')
+                    ON CONFLICT DO NOTHING;
+                    v_reason := v_retry_stop_reason_cas(v_t_eff[v_i]);
+                ELSIF v_elig THEN
                     v_status := 'failed_retryable';
                     UPDATE effect_requests SET
                         status = 'failed_retryable',

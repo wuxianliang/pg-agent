@@ -301,18 +301,22 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- 3. driver-switch entry, negative-only (Conformance 11 (c), frozen):
---    begin_switch on an `unsupported` driver MUST stably return
---    UNSUPPORTED BEFORE any mode, fence or switch-intent mutation. The
---    positive switch machinery (SWITCH_DEFERRED guards, quiescing,
---    finish_switch barrier) is explicitly deferred (plan "明确不做");
---    a `supported` declaration therefore lands on a stable stage-local
---    not-implemented rejection -- still zero mutation.
+-- 3. driver-switch entry (Conformance 11 (c) frozen negative + A83
+--    convergence): begin_switch on an `unsupported` driver MUST stably
+--    return UNSUPPORTED BEFORE any mode, fence or switch-intent mutation.
+--    A `supported` declaration ROUTES into the shared G18 reconcile
+--    implementation (v_begin_switch_core — the single switch-guard
+--    implementation; the stage-local SWITCH_PROTOCOL_NOT_IMPLEMENTED
+--    stub is deleted, deviation A83 resolved). The native capability
+--    table is not consulted here: the compat manifest is the declared
+--    switch surface for compat drivers.
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION v_compat_begin_switch(
     p_session_id uuid, p_command_id text,
     p_driver text, p_driver_epoch bigint,
-    p_declared_hash text, p_payload_canonical text
+    p_declared_hash text, p_payload_canonical text,
+    p_target_driver text DEFAULT NULL,
+    p_lease_owner text DEFAULT NULL
 ) RETURNS TABLE(outcome text, code text, receipt_json jsonb)
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -372,14 +376,13 @@ BEGIN
         RETURN;
     END IF;
 
-    v_receipt := v8_reject_command(p_session_id, p_command_id,
-        'reconcile', v_computed, 'rejected_mismatch',
-        'SWITCH_PROTOCOL_NOT_IMPLEMENTED',
-        'driver declared driver_switch_capability=supported but the '
-        'positive switch machinery (SWITCH_DEFERRED guards, quiescing, '
-        'finish_switch barrier) is deferred -- see the deviation ledger');
-    RETURN QUERY SELECT 'rejected_mismatch'::text,
-                       'SWITCH_PROTOCOL_NOT_IMPLEMENTED'::text, v_receipt;
+    -- A83 convergence: a supported declaration routes into the SHARED
+    -- G18 begin_switch implementation (guards + quiescing entry — the one
+    -- switch-guard implementation; no stage-local second copy exists).
+    RETURN QUERY SELECT * FROM v_begin_switch_core(
+        p_session_id, p_command_id, v_computed, p_target_driver,
+        p_lease_owner);
+    RETURN;
 END;
 $$;
 

@@ -189,6 +189,13 @@ BEGIN
         RETURN jsonb_build_object('outcome', 'rejected_stale',
                                   'code', 'DRIVER_EPOCH_MISMATCH');
     END IF;
+    -- G18 (D5, §3.1.1 quiescing closed set): a NORMAL claim is new work
+    -- and is refused while driver_mode=quiescing (the recovery claim entry
+    -- serves the quiescing closure surface). Zero control state.
+    IF v_sess.driver_mode <> 'active' THEN
+        RETURN jsonb_build_object('outcome', 'rejected_mismatch',
+                                  'code', 'DRIVER_QUIESCING');
+    END IF;
     -- Optional old-fence CAS: NULL (the default) keeps the legacy unchecked
     -- call shape; a non-NULL value that differs from the current row makes
     -- this a stale claim with zero side effects (lease untouched).
@@ -237,6 +244,7 @@ LANGUAGE plpgsql AS $$
 DECLARE
     v_sess sessions%ROWTYPE;
     v_fence bigint;
+    v_has_intent boolean;
 BEGIN
     SELECT * INTO v_sess FROM sessions s WHERE s.session_id = p_session_id FOR UPDATE;
     IF NOT FOUND THEN
@@ -256,13 +264,32 @@ BEGIN
     -- failure-drain MAY be recovery-claimed for closure only (the drained
     -- in-flight/unknown residue settles through completion/repair under
     -- this claim); completed/cancelled and non-drain failures stay
-    -- rejected.
+    -- rejected. G18: the allowlist extends to the terminal matrix (b)
+    -- third drain family (§4 GENERATION_REVOKED) and to the terminal
+    -- matrix (d) row — ANY terminal session holding an existing switch
+    -- intent may be recovery-claimed, for reconcile(finish_switch) only.
+    -- The switch-intent lookup carries a to_regclass guard (A51
+    -- precedent): stage databases whose load set stops before the
+    -- reconcile stage have no session_switch_intents table.
+    -- The switch-intent lookup carries a to_regclass guard (A51
+    -- precedent): stage databases whose load set stops before the
+    -- reconcile stage have no session_switch_intents table. The guard and
+    -- the table read are SEPARATE statements — a single statement would
+    -- plan the table reference unconditionally.
+    v_has_intent := false;
+    IF to_regclass('public.session_switch_intents') IS NOT NULL THEN
+        PERFORM 1 FROM session_switch_intents i
+         WHERE i.session_id = p_session_id;
+        v_has_intent := FOUND;
+    END IF;
     IF v_sess.state IN ('completed', 'failed', 'cancelled')
        AND NOT (v_sess.state = 'failed'
                 AND v_sess.failure_code IS NOT NULL
                 AND v_sess.failure_code IN ('WORKSPACE_LOST',
                                             'INFRA_ASSEMBLY_FAILED',
-                                            'INFRA_PROTOCOL_VIOLATION')) THEN
+                                            'INFRA_PROTOCOL_VIOLATION',
+                                            'GENERATION_REVOKED'))
+       AND NOT v_has_intent THEN
         RETURN jsonb_build_object('outcome', 'rejected_mismatch',
                                   'code', 'SESSION_TERMINAL', 'state', v_sess.state);
     END IF;
@@ -866,6 +893,16 @@ BEGIN
             format('expected session_fence %s does not match current %s',
                    coalesce(p_session_fence::text, 'NULL'), v_sess.session_fence));
         RETURN QUERY SELECT 'rejected_stale'::text, 'SESSION_FENCE_STALE'::text, v_receipt;
+        RETURN;
+    END IF;
+    -- G18 (D5, §3.1.1 quiescing closed set): dispatch is new work and is
+    -- refused while driver_mode=quiescing, before any business mutation
+    -- (the session row lock is already held above).
+    IF v_sess.driver_mode <> 'active' THEN
+        v_receipt := v8_reject_command(p_session_id, p_command_id, 'dispatch_effect',
+            v_computed, 'rejected_mismatch', 'DRIVER_QUIESCING',
+            'dispatch requires driver_mode=active');
+        RETURN QUERY SELECT 'rejected_mismatch'::text, 'DRIVER_QUIESCING'::text, v_receipt;
         RETURN;
     END IF;
     IF v_sess.cancellation_epoch > 0 THEN
@@ -2443,6 +2480,16 @@ BEGIN
             format('expected session_fence %s does not match current %s',
                    coalesce(p_session_fence::text, 'NULL'), v_sess.session_fence));
         RETURN QUERY SELECT 'rejected_stale'::text, 'SESSION_FENCE_STALE'::text, v_receipt;
+        RETURN;
+    END IF;
+    -- G18 (D5, §3.1.1 quiescing closed set): finish progression is
+    -- refused while driver_mode=quiescing (a quiescing session terminates
+    -- only through the closure entries, never through finish_session).
+    IF v_sess.driver_mode <> 'active' THEN
+        v_receipt := v8_reject_command(p_session_id, p_command_id, 'finish_session',
+            v_computed, 'rejected_mismatch', 'DRIVER_QUIESCING',
+            'finish_session requires driver_mode=active');
+        RETURN QUERY SELECT 'rejected_mismatch'::text, 'DRIVER_QUIESCING'::text, v_receipt;
         RETURN;
     END IF;
     -- completed only enters from claimed (transition table row).

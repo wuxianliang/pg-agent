@@ -277,6 +277,7 @@ DECLARE
     v_er record;
     v_terminal boolean;
     v_quiescing boolean;
+    v_epoch_note jsonb := NULL;
     v_event_type text;
     v_class text;
     v_sv text;
@@ -373,15 +374,32 @@ BEGIN
     -- Envelope driver/epoch guard (L4-U03; NOT exempted by the all-duplicate
     -- batch special case). IS DISTINCT FROM so a NULL envelope leg (omitted
     -- driver/driver_epoch) is a mismatch, never a silent pass — every write
-    -- command MUST carry both fields (spec 3.1.2). The quiescing heartbeat
-    -- epoch downgrade is LATER.
+    -- command MUST carry both fields (spec 3.1.2). G18 (D5, heartbeat
+    -- lifecycle matrix note (iv)): under driver_mode=quiescing a batch of
+    -- ONLY session/heartbeat entries downgrades the mismatch to a recorded
+    -- difference (the old-epoch heartbeat is accepted, zero control state,
+    -- the submitted epoch lands in the receipt); active keeps the standard
+    -- contract, terminal rejects below.
     IF p_driver IS DISTINCT FROM v_sess.driver
        OR p_driver_epoch IS DISTINCT FROM v_sess.driver_epoch THEN
-        v_receipt := v8_reject_command(p_session_id, p_command_id, 'append_events',
-            v_computed, 'rejected_stale', 'DRIVER_EPOCH_STALE',
-            'envelope driver/driver_epoch does not match the session control row');
-        RETURN QUERY SELECT 'rejected_stale'::text, 'DRIVER_EPOCH_STALE'::text, v_receipt;
-        RETURN;
+        IF v_sess.driver_mode = 'quiescing'
+           AND p_entries IS NOT NULL
+           AND jsonb_typeof(p_entries) = 'array'
+           AND jsonb_array_length(p_entries) > 0
+           AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p_entries) e
+                            WHERE e->>'event_type' <> 'session/heartbeat')
+        THEN
+            v_epoch_note := jsonb_build_object(
+                'submitted_driver', p_driver,
+                'submitted_driver_epoch', p_driver_epoch,
+                'epoch_mismatch_recorded', true);
+        ELSE
+            v_receipt := v8_reject_command(p_session_id, p_command_id, 'append_events',
+                v_computed, 'rejected_stale', 'DRIVER_EPOCH_STALE',
+                'envelope driver/driver_epoch does not match the session control row');
+            RETURN QUERY SELECT 'rejected_stale'::text, 'DRIVER_EPOCH_STALE'::text, v_receipt;
+            RETURN;
+        END IF;
     END IF;
 
     v_terminal := v_sess.state IN ('completed', 'failed', 'cancelled');
@@ -1184,6 +1202,7 @@ BEGIN
                         'last_seq', v_first_seq + v_new_count - 1,
                         'count', v_new_count)
                  END)
+      || coalesce(v_epoch_note, '{}'::jsonb)
       INTO v_receipt;
 
     -- Actual-outcome first occupation (step (4) of the judgment order):

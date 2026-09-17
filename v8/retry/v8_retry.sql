@@ -1127,6 +1127,17 @@ BEGIN
         RETURN QUERY SELECT 'rejected_mismatch'::text, 'SESSION_TERMINAL'::text, v_receipt;
         RETURN;
     END IF;
+    -- G18 (D5, §3.1.1 quiescing closed set): retry creates the next
+    -- attempt — new work — and is refused while driver_mode=quiescing
+    -- (the closure entries, not a new attempt, are the quiescing exit).
+    IF v_sess.driver_mode <> 'active' THEN
+        v_receipt := v8_reject_command(p_session_id, p_command_id,
+            'retry_effect', v_computed, 'rejected_mismatch',
+            'DRIVER_QUIESCING',
+            'retry_effect requires driver_mode=active');
+        RETURN QUERY SELECT 'rejected_mismatch'::text, 'DRIVER_QUIESCING'::text, v_receipt;
+        RETURN;
+    END IF;
     IF v_sess.cancellation_epoch > 0 THEN
         v_receipt := v8_reject_command(p_session_id, p_command_id,
             'retry_effect', v_computed, 'rejected_mismatch',

@@ -940,17 +940,36 @@ def test_switch_negative(conn) -> None:
           r2["outcome"] == "rejected_mismatch"
           and r2["code"] == "UNSUPPORTED", r2)
 
-    # A supported declaration lands on the deferred-positive rejection,
-    # still zero mutation (the positive machinery is out of scope here).
+    # A83 convergence (G18): a supported declaration ROUTES into the shared
+    # reconcile implementation — no stage-local SWITCH_PROTOCOL_NOT_IMPLEMEN
+    # TED stub remains. Without a lease the shared core refuses (proof of
+    # the routing: the receipt is the shared core's, not a stage stub).
     sp = fresh_session(conn, driver="dsh-compat-probe")
     before_p = session_row(conn, sp)
     rp = compat.begin_switch(conn, sp, f"bsw-{u()[:10]}", "dsh-compat-probe",
                              1)
-    check("supported driver: positive machinery deferred"
-          " (SWITCH_PROTOCOL_NOT_IMPLEMENTED), zero mutation",
-          rp["outcome"] == "rejected_mismatch"
-          and rp["code"] == "SWITCH_PROTOCOL_NOT_IMPLEMENTED"
+    check("supported driver without a lease -> the shared core's"
+          " NO_VALID_LEASE (routed, zero mutation)",
+          rp["outcome"] == "rejected_stale"
+          and rp["code"] == "NO_VALID_LEASE"
           and session_row(conn, sp) == before_p, rp)
+
+    # With the lease held, the shared core executes the real begin:
+    # quiescing entered, the switch intent persisted, fence advanced.
+    rc = claim_session(conn, sp, "dsh-compat-probe", 1,
+                       lease_owner="compat-op")
+    rp2 = compat.begin_switch(conn, sp, f"bsw-{u()[:10]}", "dsh-compat-probe",
+                              1, target_driver="dsh-compat-next",
+                              lease_owner="compat-op")
+    check("supported driver + lease -> real begin_switch through the shared"
+          " core (accepted, quiescing)",
+          rp2["outcome"] == "accepted"
+          and one(conn, "SELECT driver_mode, session_fence, lease_owner"
+                        " FROM sessions WHERE session_id=%s", (sp,))
+          == ("quiescing", rc["session_fence"] + 1, None), rp2)
+    check("the switch intent persisted through the shared core",
+          one(conn, "SELECT count(*) FROM session_switch_intents"
+                    " WHERE session_id=%s", (sp,))[0] == 1)
 
     # A driver without a compat manifest declaration has no switch surface.
     sn = fresh_session(conn, driver="native-drv")

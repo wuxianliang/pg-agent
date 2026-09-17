@@ -545,18 +545,34 @@ def test_guards(conn) -> None:
     check("sticky closure: no new attempt allocated (attempt_no stays 1)",
           effect_row(conn, fx3["effect"])[1] == 1)
 
-    # Quiescing gate (structural form; the controlled-edge disposition is the
-    # driver-switch milestone, TODO(P1)).
+    # Quiescing gate — G18 (A37 remaining leg): the known_failure
+    # disposition under quiescing settles through the §3.2.2 controlled
+    # edge (failed_terminal + RETRY_STOPPED_BY_CLOSURE + not_retry_eligible,
+    # no new attempt), no longer a structural whole-command refusal.
     fx5 = decision_fx(conn, retry_class="verifiable_no_effect", max_attempts=3)
     exec_sql_local(conn, "UPDATE sessions SET driver_mode='quiescing'"
                          " WHERE session_id=%s", (fx5["session"],))
     r = takeover(conn, fx5["session"],
                  evidence={fx5["effect"]: bound(fail_evidence(),
                                                 fx5["effect"])})
-    check("quiescing + known_failure -> DRIVER_QUIESCING (zero state)",
-          r["outcome"] == "rejected_mismatch"
-          and r["code"] == "DRIVER_QUIESCING"
-          and effect_row(conn, fx5["effect"])[0] == "dispatch_started", r)
+    tk5 = [a for a in r["receipt"]["attempts"]
+           if a["disposition"] == "taken_over"]
+    check("quiescing + known_failure -> controlled-edge settlement"
+          " (failed_terminal, no new attempt)",
+          r["outcome"] == "accepted"
+          and len(tk5) == 1
+          and tk5[0]["settled_status"] == "failed_terminal"
+          and effect_row(conn, fx5["effect"])[0] == "failed_terminal"
+          and effect_row(conn, fx5["effect"])[1] == 1, r)
+    check("quiescing controlled edge: RETRY_STOPPED_BY_CLOSURE audit"
+          " + not_retry_eligible + rule-4 session closure",
+          one(conn, "SELECT count(*) FROM effect_audit WHERE effect_id=%s"
+                    " AND reason='RETRY_STOPPED_BY_CLOSURE'",
+              (fx5["effect"],))[0] == 1
+          and one(conn, "SELECT retry_stop_reason FROM effect_requests"
+                        " WHERE effect_id=%s", (fx5["effect"],))[0]
+          == "not_retry_eligible"
+          and session_row(conn, fx5["session"])[0] == "failed", r)
     exec_sql_local(conn, "UPDATE sessions SET driver_mode='active'"
                          " WHERE session_id=%s", (fx5["session"],))
 

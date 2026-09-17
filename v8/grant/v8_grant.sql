@@ -1413,9 +1413,33 @@ $$;
 -- the child session); live handles are never inherited. The Conformance
 -- 11 (a) three assertions are implemented here and accepted by the G13
 -- gate (whose load order includes the repair/closer tables).
+--
+-- G18 (D9): the fork metadata persists in the session_fork_provenance
+-- companion table — parent_session_id / parent_through_seq (the cross-
+-- session source {session_id, seq}), fork_depth, the manifest version and
+-- the inherited_event_count CACHE (the authoritative count is the child
+-- event rows themselves). The child's control plane stays the frozen
+-- fresh initial state (driver_epoch=1, session_fence=1,
+-- driver_mode=active; no lease / switch intent / cancellation latch /
+-- compact lock / job is ever inherited — those live only in the parent),
+-- and the parent's control state is untouched (a parent in quiescing or
+-- a terminal state can still be forked; the fork never reads or writes
+-- the parent's switch intent).
+CREATE TABLE session_fork_provenance (
+    session_id            uuid PRIMARY KEY REFERENCES sessions(session_id),
+    parent_session_id     uuid NOT NULL REFERENCES sessions(session_id),
+    parent_through_seq    bigint NOT NULL CHECK (parent_through_seq >= 1),
+    fork_depth            bigint NOT NULL CHECK (fork_depth >= 0),
+    manifest_version      text NOT NULL,
+    inherited_event_count bigint NOT NULL DEFAULT 0
+                          CHECK (inherited_event_count >= 0),
+    created_at            timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE FUNCTION v_fork_session(
     p_parent_session_id uuid, p_parent_through_seq bigint,
-    p_driver text DEFAULT NULL
+    p_driver text DEFAULT NULL,
+    p_manifest_version text DEFAULT 'assembly-manifest@v1'
 ) RETURNS jsonb
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -1454,7 +1478,22 @@ BEGIN
                               AND se.seq <= p_parent_through_seq
                               AND se.event_type = 'turn/end'
                               AND coalesce(se.payload::jsonb ->> 'outcome', '')
-                                  <> 'unknown') THEN
+                                  <> 'unknown')
+           -- G18 (Conformance 11 (a)2): a provisional unknown is also
+           -- resolved in-prefix when a repair closer LANDED INSIDE the
+           -- cutoff (the closer is self-describing in its event payload —
+           -- "closer": true with the resolution triple, the canonicalizer's
+           -- own consumption model, §1.2; a repair after the cutoff leaves
+           -- no in-prefix closer and stays unstable — the stability
+           -- judgment never borrows a post-cutoff resolution). Judging
+           -- from the events themselves also keeps forked children
+           -- forkable: they inherit the closer events verbatim.
+           AND NOT EXISTS (
+                SELECT 1 FROM session_events se2
+                 WHERE se2.session_id = p_parent_session_id
+                   AND se2.turn_id = t.turn_id
+                   AND se2.seq <= p_parent_through_seq
+                   AND se2.payload::jsonb ->> 'closer' = 'true') THEN
             RETURN jsonb_build_object('outcome', 'rejected_mismatch',
                                       'code', 'FORK_CUTOFF_UNSTABLE',
                                       'detail', 'unresolved unknown inside the cutoff');
@@ -1531,7 +1570,23 @@ BEGIN
                 AND g.subject_id IS NOT DISTINCT FROM v_parent.active_step_id::text));
 
     SELECT count(*) INTO v_count FROM session_events WHERE session_id = v_child;
+    -- G18 (D9): the child's seq allocator resumes AFTER the inherited
+    -- prefix (the insert above numbered the prefix 1..v_count; leaving the
+    -- default next_seq=1 would collide the child's first own append with
+    -- seq 1).
+    UPDATE sessions SET next_seq = v_count + 1, updated_at = now()
+     WHERE session_id = v_child;
     SELECT count(*) INTO v_gcount FROM grants WHERE subject_id = v_child::text;
+    -- G18 (D9): fork metadata persistence. fork_depth = parent depth + 1
+    -- (a parent without a provenance row is a root session, depth 0).
+    INSERT INTO session_fork_provenance(
+        session_id, parent_session_id, parent_through_seq, fork_depth,
+        manifest_version, inherited_event_count)
+    VALUES (v_child, p_parent_session_id, p_parent_through_seq,
+            coalesce((SELECT f.fork_depth + 1
+                        FROM session_fork_provenance f
+                       WHERE f.session_id = p_parent_session_id), 1),
+            p_manifest_version, v_count);
     INSERT INTO grant_ops_audit(operator_id, action, target_id, details)
     VALUES ('system', 'fork_session', v_child::text,
             jsonb_build_object('parent_session_id', p_parent_session_id,
@@ -1541,7 +1596,12 @@ BEGIN
     RETURN jsonb_build_object('outcome', 'accepted',
                               'child_session_id', v_child,
                               'inherited_event_count', v_count,
-                              'inherited_grant_count', v_gcount);
+                              'inherited_grant_count', v_gcount,
+                              'fork_depth',
+                              coalesce((SELECT f.fork_depth
+                                          FROM session_fork_provenance f
+                                         WHERE f.session_id = v_child), 0),
+                              'manifest_version', p_manifest_version);
 END;
 $$;
 

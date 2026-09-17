@@ -93,7 +93,9 @@ def compat_unmapped_audit(
 
 
 def begin_switch(conn, session_id, command_id: str, driver: str,
-                 driver_epoch: int, declared_hash: str | None = None) -> dict:
+                 driver_epoch: int, declared_hash: str | None = None,
+                 target_driver: str | None = None,
+                 lease_owner: str | None = None) -> dict:
     session_id = str(session_id)
     request = {
         "command_kind": "reconcile",
@@ -103,15 +105,17 @@ def begin_switch(conn, session_id, command_id: str, driver: str,
         "driver": driver,
         "driver_epoch": driver_epoch,
     }
+    if target_driver is not None:
+        request["target_driver"] = target_driver
     canonical_text, computed = _canon(request)
     declared = computed if declared_hash is None else declared_hash
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT outcome, code, receipt_json FROM v_compat_begin_switch("
-                "%s::uuid, %s, %s, %s, %s, %s)",
+                "%s::uuid, %s, %s, %s, %s, %s, %s, %s)",
                 (session_id, command_id, driver, driver_epoch, declared,
-                 canonical_text))
+                 canonical_text, target_driver, lease_owner))
             outcome, code, receipt = cur.fetchone()
         conn.commit()
     except Exception:

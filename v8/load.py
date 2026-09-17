@@ -81,12 +81,21 @@ SQL_LOAD_ORDER: list[Path] = [
     # database does not include this file. Bodies are late-bound, so the
     # drain file may reference anything loaded before it either way.
     V8_ROOT / "drain" / "v8_drain.sql",
-    # G13: the P0C dsh-compat host-agnostic contract surface, appended at
-    # the END of the load order (no mid-order insertion — every existing
-    # stage keeps its file set and count). It depends only on the
-    # schema/keys/events foundations and the slice/grant stub surface, so
-    # appending is safe for all earlier stages (their load sets stop
-    # before this entry).
+    # G18: the reconcile stage's SQL — the §3.1.1 driver-switch positive
+    # protocol (driver_switch_capabilities, session_switch_intents, the
+    # shared begin/finish switch cores and the unified v_reconcile entry).
+    # It sits AFTER the drain stage (the takeover controlled edge and the
+    # failure-drain closures it cooperates with load before it) and
+    # BEFORE compat (whose begin_switch routes into the shared core —
+    # compat's load set includes this file). The effect/retry stage
+    # functions it guards (claim/recovery-claim/dispatch/retry/finish)
+    # reference session_switch_intents only through to_regclass guards,
+    # so lower-stage databases keep loading unchanged.
+    V8_ROOT / "reconcile" / "v8_reconcile.sql",
+    # G13: the P0C dsh-compat host-agnostic contract surface. It depends
+    # only on the schema/keys/events foundations, the slice/grant stub
+    # surface AND (since G18) the shared switch core in the reconcile
+    # stage, which loads immediately before it.
     V8_ROOT / "compat" / "v8_compat.sql",
     # G17: the compact control plane (§3.3's three commands + the frozen
     # compactions DDL). Appended at the END of the order (no mid-order
@@ -133,14 +142,20 @@ STAGE_THROUGH = {
     # priority) and cancel (shared pre-dispatch sync caller) stages, so its
     # load set runs through the full pre-compat order (cancel last).
     "plugin": 14,
-    # G13: compat loads the full pre-compat order plus its own file (the
-    # G15 drain insertion shifted it from 14 to 15).
-    "compat": 16,
+    # G13: compat loads the full pre-compact order plus its own file (the
+    # G15 drain and G18 reconcile insertions shifted it from 14 to 15 to
+    # 17).
+    "compat": 17,
     # G15 (drain) adds the class (3) INFRA closure; its load set runs through
     # its own file (the insertion point is after cancel), so every consumer
     # it exercises — the shared pre-dispatch sync, the aggregation counters
     # and the retry-stop-reason CAS — is loaded.
     "drain": 15,
+    # G18 (reconcile) adds the driver-switch protocol; its load set runs
+    # through its own file (the insertion point is after drain, before
+    # compat), covering the quiescing guards, the takeover controlled edge
+    # and the fork provenance it exercises.
+    "reconcile": 16,
     # G12 (gates) adds NO SQL of its own — it modifies the existing
     # effect/tools/retry/takeover files in place — but its gate exercises
     # the full pre-compat order (seal/dispatch/cohort/takeover/append).
@@ -152,8 +167,9 @@ STAGE_THROUGH = {
     # G17 (compact): its own file at the END of the order — the compact gate
     # exercises the seal/dispatch/cohort paths (through cancel), the shared
     # pre-dispatch sync and the G16 internal_op_audits carrier, so its load
-    # set is the full list through its own last entry.
-    "compact": 17,
+    # set is the full list through its own last entry (the G18 reconcile
+    # insertion shifted it from 17 to 18).
+    "compact": 18,
 }
 
 
