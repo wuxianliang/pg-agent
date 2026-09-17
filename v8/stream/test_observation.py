@@ -101,7 +101,12 @@ def observe(conn, s, effect, *, attempt=1, payload='{"stream_complete":false}',
     computed = computed or f"c{u().replace('-', '')}"
     with conn.cursor() as cur:
         if window_exhausted:
-            cur.execute("SELECT set_config('v8.stream_window_exhausted','on',true)")
+            # G19b D13: the GUC channel is retired; the real window is the
+            # attempt's job lease — arm it and let it be expired.
+            cur.execute(
+                "UPDATE effect_requests SET lease_owner='w',"
+                " lease_until=now() - interval '10 seconds'"
+                " WHERE effect_id=%s", (str(effect),))
         cur.execute(
             "SELECT outcome, code, receipt_json FROM v_stream_observe("
             "%s::uuid, %s, %s::uuid, %s, %s, 'sv@1', 'canon@1', %s)",

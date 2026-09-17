@@ -1551,8 +1551,14 @@ BEGIN
     -- returned above (quiescing is not one of the five gates and does NOT
     -- block a non-terminal observation). Reaching this point means a TERMINAL
     -- settlement — a quiescing driver stably rejects it (zero control state,
-    -- receipt + audit only).
-    IF v_sess.driver_mode = 'quiescing' THEN
+    -- receipt + audit only). G19b (D10): the reconcile result-receipt entry
+    -- is the ONE legal terminal settlement path under quiescing (X01) — it
+    -- sets the transaction-local v8.reconcile_result_entry GUC and this gate
+    -- stands down for that single caller (the GUC is the seam channel, the
+    -- v8.slot_protected_write precedent; no public entry ever sets it).
+    IF v_sess.driver_mode = 'quiescing'
+       AND coalesce(current_setting('v8.reconcile_result_entry', true), '')
+           <> 'on' THEN
         v_receipt := v8_reject_command(p_session_id, p_command_id, 'complete_effect',
             v_computed, 'rejected_mismatch', 'DRIVER_QUIESCING',
             'terminal completion while driver_mode=quiescing (W01)');

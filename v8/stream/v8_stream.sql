@@ -158,13 +158,13 @@ BEGIN
         RETURN;
     END IF;
     -- (4) unknown_outcome, or the waiting window already exhausted. The
-    --     waiting window is the lease/timeout semantic of s32b (7): the real
-    --     sweep is LATER, so the stage models its outcome through the
-    --     transaction-local GUC v8.stream_window_exhausted (the same channel
-    --     as v8.slot_protected_write). A live window (unset / off) is the
-    --     default.
+    --     waiting window is the attempt's REAL job lease (s32b (7), G19b
+    --     D13): a lease that was armed and has expired exhausts the
+    --     window; an unarmed lease (never taken, or revoked by a takeover
+    --     CAS) leaves the window to the lease/timeout sweep. The
+    --     transaction-local GUC channel is retired.
     IF v_att.status = 'unknown_outcome'
-       OR coalesce(current_setting('v8.stream_window_exhausted', true), '') = 'on' THEN
+       OR (v_er.lease_until IS NOT NULL AND v_er.lease_until <= now()) THEN
         v_receipt := jsonb_build_object(
             'command_kind', 'complete_effect',
             'command_id', p_command_id,

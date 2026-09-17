@@ -114,6 +114,11 @@ SQL_LOAD_ORDER: list[Path] = [
     # internal_op_audits (the compact_terminal_abort carrier) is created by
     # the G16 audit stage at position 3; this stage only consumes it.
     V8_ROOT / "compact" / "v8_compact.sql",
+    # G19b: the closeout stage — the wait/wake layer (transition_wait +
+    # the scan, NOTIFY only a hint), the attempt/heartbeat protected
+    # observation split, FORCE_JOB_TAKEOVER and the reconcile
+    # result-receipt entry. Appended at the END of the order.
+    V8_ROOT / "closeout" / "v8_closeout.sql",
 ]
 
 STAGE_THROUGH = {
@@ -177,6 +182,10 @@ STAGE_THROUGH = {
     # set and exercises the lock-wait interleavings of the delivered
     # gates, so it carries the same position as `gates`.
     "concurrency": 15,
+    # G19b (closeout): its own file at the very END of the order — the
+    # closeout gate exercises the full accumulated surface plus its own
+    # wait/heartbeat/force/reconcile-result machinery.
+    "closeout": 20,
     # G17 (compact): its own file at the END of the order — the compact gate
     # exercises the seal/dispatch/cohort paths (through cancel), the shared
     # pre-dispatch sync and the G16 internal_op_audits carrier, so its load

@@ -211,12 +211,37 @@ BEGIN
      WHERE tes.session_id = p_session_id AND tes.turn_id = p_turn_id
      FOR UPDATE;
     IF NOT FOUND THEN
-        -- Unreachable in this stage (every unknown settlement creates the
-        -- provisional slot); the create-when-absent mode is LATER.
-        RETURN QUERY SELECT 'rejected'::text, 'REPAIR_TARGET_INVALID'::text,
-            NULL::text, NULL::bigint, NULL::bigint, NULL::text, NULL::text,
-            false;
-        RETURN;
+        -- G19b (D11, A41 resolved): create-when-absent. The turn's chain
+        -- EVENT (the provisional unknown end) locates the initial head;
+        -- the row is created in the standard provisional shape —
+        -- turn_end_key derived from (session_id, turn_id), never
+        -- caller-supplied, resolution NULL, version 1 — and the update
+        -- proceeds through the normal protected flow. Concurrent
+        -- double-writes converge on UNIQUE(session_id, turn_id). A turn
+        -- with NO chain event at all keeps the stable classified
+        -- rejection (nothing can be superseded).
+        SELECT event_key INTO v_key
+          FROM session_events se
+         WHERE se.session_id = p_session_id AND se.turn_id = p_turn_id
+           AND se.event_type = 'turn/end'
+           AND se.payload::jsonb ->> 'outcome' = 'unknown'
+         ORDER BY se.seq DESC LIMIT 1;
+        IF v_key IS NULL THEN
+            RETURN QUERY SELECT 'rejected'::text, 'REPAIR_TARGET_INVALID'::text,
+                NULL::text, NULL::bigint, NULL::bigint, NULL::text, NULL::text,
+                false;
+            RETURN;
+        END IF;
+        INSERT INTO turn_end_slots(
+            session_id, turn_id, turn_end_key, head_event_key, slot_status,
+            resolution_identity_canonical, version)
+        VALUES (
+            p_session_id, p_turn_id, v_turn_end_key(p_session_id, p_turn_id),
+            v_key, 'provisional', NULL, 1)
+        ON CONFLICT (session_id, turn_id) DO NOTHING;
+        SELECT * INTO v_slot FROM turn_end_slots tes
+         WHERE tes.session_id = p_session_id AND tes.turn_id = p_turn_id
+         FOR UPDATE;
     END IF;
 
     -- (v)(2): idempotency pre-check (digest + canonical two-level), BEFORE

@@ -278,6 +278,15 @@ class DeepSeekLLM:
 
         prompt = (descriptor.get("prompt") or {})
         seed = prompt.get("seed_text") or ""
+        # G19b D14 (Conformance 12 / A87): with the credential env absent
+        # the adapter is a BLOCKED capability source — it MUST refuse
+        # before any socket opens; a missing credential can never trigger
+        # a real call.
+        if not self.api_key:
+            raise RuntimeError(
+                "DeepSeekLLM: no provider credential in the environment"
+                " (DEEPSEEK_API_KEY / OPENAI_API_KEY); the real-call"
+                " capability is blocked")
         request = {
             "model": self.model,
             "messages": [{"role": "user", "content": seed or "ping"}],
