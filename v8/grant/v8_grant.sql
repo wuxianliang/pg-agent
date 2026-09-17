@@ -204,7 +204,11 @@ CREATE TABLE grant_ops_audit (
                                    -- G15: the §3.1.1 fail_session class (3)
                                    -- INFRA closure (same shape as
                                    -- ws_lost_drain, different failure code).
-                                   'infra_drain')),
+                                   'infra_drain',
+                                   -- G19a: the §2 seam authorization-reject
+                                   -- audit rows (namespace-outside, the G10
+                                   -- authorization-denial pattern).
+                                   'seam_denied', 'tool_resolve_denied')),
     target_id    text NOT NULL,
     workspace_id uuid,
     reason       text,

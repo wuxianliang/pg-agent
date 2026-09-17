@@ -36,6 +36,14 @@ SQL_LOAD_ORDER: list[Path] = [
     # bodies are late-bound, so its position before the cancel stage that
     # G11 rewires carries no call-order risk).
     V8_ROOT / "grant" / "v8_grant.sql",
+    # G19a: the assemble stage — the §2 seam checkpoints (six
+    # same-transaction grant checks) and the two-phase assemble manifest
+    # snapshot (v10's Plan/Bind prerequisite). It sits right after the
+    # grant stage: the seams consume the grant model (v_grant_find_valid)
+    # and the INFRA_ASSEMBLY_FAILED closure core (v_failure_drain_core);
+    # loading it before stream/events keeps every later stage's set
+    # unchanged in ORDER (their counts shift by one, renumbered in place).
+    V8_ROOT / "assemble" / "v8_assemble.sql",
     # G9a/G9b: the streaming foundation — now only the session_events stream
     # columns and the G9b observation path (the slice/grant stub moved to
     # grant/v8_grant.sql by G10). Loading it after the events stage would
@@ -114,8 +122,13 @@ STAGE_THROUGH = {
     "audit": 3,
     # G10 gate covers the append consumer (events stage) on top of its own
     # SQL, so its load set runs through events.
-    "grant": 6,
-    "events": 6,
+    "grant": 7,
+    # G19a assemble: its own file sits at position 5 (right after grant),
+    # but its gate exercises tool_resolve's frozen-catalog judgment against
+    # the plugin generation tables — so the stage load set runs through
+    # the plugin stage (8).
+    "assemble": 8,
+    "events": 7,
     # G9a: the stream gate exercises the consumers of the new foundation —
     # the public append path (events stage) for the chunk six-item
     # attribution, v_complete_effect (effect stage) for the stream_complete
@@ -129,47 +142,47 @@ STAGE_THROUGH = {
     # load set runs through takeover (11) — the merge-time assumption
     # "test_stream has no takeover dependency" held for test_stream.py
     # only, not for test_observation.py sharing the same stage database.
-    "stream": 12,
-    "effect": 8,
-    "tools": 9,
-    "retry": 12,
+    "stream": 13,
+    "effect": 9,
+    "tools": 10,
+    "retry": 13,
     # G5 (loop) adds no SQL: the runtime drives the effect-stage functions.
-    "loop": 8,
-    "repair": 13,
-    "cancel": 14,
+    "loop": 9,
+    "repair": 14,
+    "cancel": 15,
     # G11 plugin gate: the offline revocation drain consumes the effect
     # (late completion rejection), retry (aggregation rule closure
     # priority) and cancel (shared pre-dispatch sync caller) stages, so its
     # load set runs through the full pre-compat order (cancel last).
-    "plugin": 14,
+    "plugin": 15,
     # G13: compat loads the full pre-compact order plus its own file (the
     # G15 drain and G18 reconcile insertions shifted it from 14 to 15 to
     # 17).
-    "compat": 17,
+    "compat": 18,
     # G15 (drain) adds the class (3) INFRA closure; its load set runs through
     # its own file (the insertion point is after cancel), so every consumer
     # it exercises — the shared pre-dispatch sync, the aggregation counters
     # and the retry-stop-reason CAS — is loaded.
-    "drain": 15,
+    "drain": 16,
     # G18 (reconcile) adds the driver-switch protocol; its load set runs
     # through its own file (the insertion point is after drain, before
     # compat), covering the quiescing guards, the takeover controlled edge
     # and the fork provenance it exercises.
-    "reconcile": 16,
+    "reconcile": 17,
     # G12 (gates) adds NO SQL of its own — it modifies the existing
     # effect/tools/retry/takeover files in place — but its gate exercises
     # the full pre-compat order (seal/dispatch/cohort/takeover/append).
-    "gates": 14,
+    "gates": 15,
     # G14 (concurrency) also adds NO SQL: it reuses the frozen gates load
     # set and exercises the lock-wait interleavings of the delivered
     # gates, so it carries the same position as `gates`.
-    "concurrency": 14,
+    "concurrency": 15,
     # G17 (compact): its own file at the END of the order — the compact gate
     # exercises the seal/dispatch/cohort paths (through cancel), the shared
     # pre-dispatch sync and the G16 internal_op_audits carrier, so its load
     # set is the full list through its own last entry (the G18 reconcile
     # insertion shifted it from 17 to 18).
-    "compact": 18,
+    "compact": 19,
 }
 
 
