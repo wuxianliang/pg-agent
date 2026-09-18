@@ -1,14 +1,14 @@
-"""One-shot probe: learn which OpenRouter request mode jev-1.13 speaks.
+"""One-shot live probe: confirm OpenRouter Jev access end to end.
 
 NOT a gate — this is a manual, network-calling utility (gates stay offline
-by repo rule). Run it once with your key:
+by repo rule). Run with the key in the environment:
 
-    OPENROUTER_API_KEY=sk-or-... uv run python v12/probe_jev.py
+    uv run python v12/probe_jev.py            # reads OPENROUTER_API_KEY
 
-It sends one minimal Noul question through each candidate mode
-(wrapped / native / system_user), prints what comes back, and tells you
-which mode to pin via V12_JEV_OPENROUTER_MODE=... for JevClient.
-Cost: three tiny requests (~300 tokens each at $0.042/M ≈ $0.00004 total).
+Sends ONE minimal request (a Noul + a Choice) to the decisions endpoint
+via JevClient — the same code path production workers use — and prints
+provider, resolved model, answers, usage and cost. A 200 with typed
+answers means everything is wired correctly (~$0.00002 per run).
 """
 from __future__ import annotations
 
@@ -19,38 +19,37 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from v12.jev_client import OpenRouterBackend, JevError
+from v12.jev_client import JevClient, JevError
 
-STATE = {"note": "The meeting was moved to Thursday."}
+STATE = {"ticket": "My flight was cancelled. Can I get a refund?",
+         "policy": "Cancelled flights are eligible for a full refund."}
 QUESTIONS = {
-    "moved": {"type": "noul",
-              "instructions": "Was the meeting rescheduled according to `note`?"},
+    "refund_requested": {"type": "noul",
+                         "instructions": "Does `ticket` request a refund?"},
+    "request_type": {"type": "choice",
+                     "instructions": "What is the main request in `ticket`?",
+                     "criteria": {
+                         "refund": "The customer wants money returned.",
+                         "rebooking": "The customer wants a replacement flight.",
+                         "information": "The customer asks for information only."}},
 }
-
-
-def try_mode(mode: str) -> bool:
-    print(f"\n=== mode: {mode} ===")
-    be = OpenRouterBackend(mode=mode)
-    try:
-        resp = be.ask(STATE, QUESTIONS)
-    except JevError as exc:
-        print("FAILED:", str(exc)[:500])
-        return False
-    print("OK — answers:", json.dumps(resp.get("answers"), ensure_ascii=False))
-    print("    usage:", resp.get("usage"))
-    return True
 
 
 def main() -> int:
     if not os.environ.get("OPENROUTER_API_KEY"):
         print("set OPENROUTER_API_KEY first (this script talks to the network)")
         return 2
-    winners = [m for m in ("wrapped", "native", "system_user") if try_mode(m)]
-    if not winners:
-        print("\nNo mode worked. Raw formats may have changed — inspect the "
-              "error payloads above and extend OpenRouterBackend._body.")
+    client = JevClient()  # auto-selects openrouter with the key present
+    try:
+        resp = client.ask(STATE, QUESTIONS)
+    except JevError as exc:
+        print("FAILED:", exc)
         return 1
-    print(f"\nPin it: export V12_JEV_OPENROUTER_MODE={winners[0]}")
+    print("provider :", client.provider)
+    print("model    :", resp.get("model"))
+    print("answers  :", json.dumps(resp.get("answers"), indent=1,
+                                   ensure_ascii=False))
+    print("usage    :", resp.get("usage"))
     return 0
 
 

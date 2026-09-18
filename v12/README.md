@@ -48,22 +48,24 @@ v12/
   schema/ decide/ act/ turn/ fanout/
 ```
 
-## Provider 配置（OpenRouter 为主）
+## Provider 配置（OpenRouter 为主，已实测打通）
 
 `JevClient` 按「显式参数 > OPENROUTER_API_KEY > TYPESAFE_API_KEY」选择后端，
 `ask(state, questions)` 接口与 FakeJev 完全一致，gate 不受影响。
 
-- **OpenRouter（主）**：模型 `typesafe/jev-1.13`（`~typesafe/jev-latest`
-  是前端别名，API 只认规范 id），modality `text->decisions`，
-  $0.042/M input、output $0，2026-09-18 上架。其请求映射尚无官方文档，
-  客户端内置三种模式（wrapped / native / system_user）——
-  首次使用先跑一次 `OPENROUTER_API_KEY=... uv run python v12/probe_jev.py`
-  （约 $0.00004），按输出的建议 `export V12_JEV_OPENROUTER_MODE=<mode>` 固定。
-- **TypeSafe 直连（备）**：`api.typesafe.ai/v1/systemone` 原生格式，
-  设 `TYPESAFE_API_KEY` 即启用；字段保真的参考实现。
-- 注意：OpenRouter 聚合目录（`GET /api/v1/models`）截至 2026-09-18
-  尚未收录该模型，依赖 models 列表做校验的 SDK 可能报「未知模型」——
-  直接指定 model id 调用即可。
+- **OpenRouter（主）**：模型 `typesafe/jev-1.13`，走专用决策端点
+  **`POST /api/alpha/decisions`**（chat/completions 会明确拒绝决策模型）。
+  请求/响应与 TypeSafe 原生 systemone 格式**逐字段一致**——
+  `{model, state, questions}` 进、`{model, answers, usage, id, provider}` 出，
+  `usage` 额外带 `cost`。2026-09-18 实测：单 Noul 问题 $0.000016，
+  完整 turn 批（9 问）$0.000042 / 延迟约 3.7s。
+  注意两点：聚合目录（`GET /api/v1/models`）尚未收录该模型，直接指定
+  model id 调用即可；请求里 **`criteria` 为空必须整键省略**——
+  schema 是 `criteria?: object`，显式 `null` 会被 400 拒绝
+  （`v12_request_payload` 已按此构建，worker 也统一从它取请求对象）。
+- **TypeSafe 直连（备）**：`api.typesafe.ai/v1/systemone`，设
+  `TYPESAFE_API_KEY` 即启用，作字段保真的参考实现。
+- 连通性自检：`uv run python v12/probe_jev.py`（真实调用，约 $0.00002）。
 
 ## 风险规避（对应 Jev 已知短板）
 

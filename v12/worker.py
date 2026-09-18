@@ -49,13 +49,13 @@ class TurnRunner:
     # ------------------------------------------------------------------ decide plane
     def _ask_batch(self, batch_id: str) -> None:
         """If the batch is ready, call the client and record answers.
-        Cached/answered batches already carry their decisions."""
+        Cached/answered batches already carry their decisions. The request
+        object comes from v12_request_payload — the single source that also
+        feeds request_hash, so state/questions can never drift apart."""
         row = self._one(
-            "SELECT status, state, (SELECT jsonb_object_agg(question_id, "
-            " jsonb_build_object('type', kind, 'instructions', instructions, "
-            " 'criteria', criteria)) FROM jev_questions q "
-            " WHERE q.batch_id = jev_batches.batch_id) "
-            "FROM jev_batches WHERE batch_id = %s", (batch_id,))
+            "SELECT b.status, p -> 'state', p -> 'questions' "
+            "FROM jev_batches b, LATERAL v12_request_payload(b.batch_id) p "
+            "WHERE b.batch_id = %s", (batch_id,))
         status, state, questions = row
         if status == "ready":
             t0 = time.monotonic()

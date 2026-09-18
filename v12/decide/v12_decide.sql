@@ -10,15 +10,22 @@
 -- audit key — the raw request/answer/usage always stay in the tables.
 
 -- The exact object sent to the model: {"state":..., "questions": {...}}.
+-- A NULL criteria (noul questions) is OMITTED, not serialized as null —
+-- the live API schema is criteria?: object; explicit null is rejected.
 CREATE FUNCTION v12_request_payload(p_batch uuid) RETURNS jsonb
 LANGUAGE sql STABLE AS $$
     SELECT jsonb_build_object(
         'state', b.state,
         'questions', (SELECT jsonb_object_agg(
                             q.question_id,
-                            jsonb_build_object('type', q.kind,
-                                               'instructions', q.instructions,
-                                               'criteria', q.criteria))
+                            CASE WHEN q.criteria IS NULL THEN
+                                jsonb_build_object('type', q.kind,
+                                                   'instructions', q.instructions)
+                            ELSE
+                                jsonb_build_object('type', q.kind,
+                                                   'instructions', q.instructions,
+                                                   'criteria', q.criteria)
+                            END)
                       FROM jev_questions q
                      WHERE q.batch_id = p_batch))
     FROM jev_batches b
