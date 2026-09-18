@@ -7,7 +7,12 @@
 
 ## 设计一句话
 
-**SQL 管算术与顺序，Jev 管语义与判断，LLM 只管生成。**
+**SQL 管算术与顺序，Jev 管语义与判断（经 pg_typesafe 可入 SQL），LLM 只管生成。**
+
+三种 Jev 接入方式并存：inline Python 客户端（G4）、队列 worker（G6）、
+库内 pg_typesafe（G7，`v12_decide_in_db` 一条 SQL 完成整个 decide；
+经 GUC 指向 OpenRouter，已实测）。分工基线：纯判断可进事务，副作用
+（工具/LLM 生成）永远在库外 worker。
 
 - 提问是 INSERT（问题即行）、回答是 INSERT（答案即行）、路由是
   带阈值的 VIEW（阈值是数据不是代码）。
@@ -33,6 +38,7 @@
 | G4 turn | `v12/turn/test_turn.py` | 有界 turn 端到端（sql/tool/llm/human/护栏/预算/崩溃恢复） |
 | G5 fanout | `v12/fanout/test_fanout.py` | 一个 Choice 排 ≤255 行、两遍窗口、存在性 Noul |
 | G6 queue | `v12/queue/test_queue.py` | PGMQ 模式：唤醒队列、IO worker、SQL-only driver、扫描恢复 |
+| G7 indb | `v12/indb/test_indb.py` | 判断平面入库（pg_typesafe）：一条 SQL 完成 decide，mock 离线确定性 |
 
 ## 两种运行方式
 

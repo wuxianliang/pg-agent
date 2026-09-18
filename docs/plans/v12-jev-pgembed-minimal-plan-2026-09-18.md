@@ -53,6 +53,12 @@
   `QueueDriver`（纯 SQL 步进入队）；`v12_requeue_stale` 扫描恢复；SQL 版
   `v12_uuid_v5`/`v12_effect_id` 与 inline 模式逐字节一致。inline TurnRunner
   原样保留，两种方式共用全部 SQL 与不变量。
+- **M7 indb（G7，追加于 2026-09-18）**：建立在本地 pgembed 最新代码
+  （`bb491da`，捆绑 pg_typesafe）之上——判断平面入库：`typesafe_ask` 驱动
+  `v12_ask_in_db` / `v12_decide_in_db`（一条 SQL 完成 fold→建题→seal→
+  问 Jev→路由）/ `v12_guardrail_in_db`；gate 以 `typesafe.mock_response`
+  保持离线确定性。不变量演化：**纯判断 IO 允许进事务，副作用 IO 仍留
+  worker**。OpenRouter 经 GUC（endpoint/api_key/model）切换，已实测。
 
 ## 4. 收尾工件（每里程碑）
 

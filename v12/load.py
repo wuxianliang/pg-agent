@@ -34,8 +34,12 @@ SQL_LOAD_ORDER: list[Path] = [
     # over up to 255 line ids + existence Noul, two-pass windowing beyond.
     V12_ROOT / "fanout" / "v12_fanout.sql",
     # M6: the queue mode — pgmq wake-up queue, scan-based requeue, SQL-side
-    # deterministic effect identity. Appended at the END of the order.
+    # deterministic effect identity.
     V12_ROOT / "queue" / "v12_queue.sql",
+    # M7: the decision plane in-DB via pg_typesafe (bundled with local
+    # pgembed): typesafe_ask drives v12_record_answers from SQL; side
+    # effects stay in the queue worker. Appended at the END of the order.
+    V12_ROOT / "indb" / "v12_indb.sql",
 ]
 
 STAGE_THROUGH = {
@@ -45,6 +49,7 @@ STAGE_THROUGH = {
     "turn": 4,
     "fanout": 5,
     "queue": 6,
+    "indb": 7,
 }
 
 
