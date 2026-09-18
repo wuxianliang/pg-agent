@@ -41,11 +41,29 @@
 ```
 v12/
   load.py          SQL_LOAD_ORDER + STAGE_THROUGH
-  jev_client.py    真实 Jev HTTP 客户端（gate 永不调用）
+  jev_client.py    Jev 客户端：OpenRouter 为主 provider，TypeSafe 直连为备
+  probe_jev.py     一次性探针（手动跑，非 gate）：测定 OpenRouter 的请求格式
   fake_jev.py      确定性脚本化 Jev（gate 专用）
   worker.py        TurnRunner：唯一发生外部 IO 的地方
   schema/ decide/ act/ turn/ fanout/
 ```
+
+## Provider 配置（OpenRouter 为主）
+
+`JevClient` 按「显式参数 > OPENROUTER_API_KEY > TYPESAFE_API_KEY」选择后端，
+`ask(state, questions)` 接口与 FakeJev 完全一致，gate 不受影响。
+
+- **OpenRouter（主）**：模型 `typesafe/jev-1.13`（`~typesafe/jev-latest`
+  是前端别名，API 只认规范 id），modality `text->decisions`，
+  $0.042/M input、output $0，2026-09-18 上架。其请求映射尚无官方文档，
+  客户端内置三种模式（wrapped / native / system_user）——
+  首次使用先跑一次 `OPENROUTER_API_KEY=... uv run python v12/probe_jev.py`
+  （约 $0.00004），按输出的建议 `export V12_JEV_OPENROUTER_MODE=<mode>` 固定。
+- **TypeSafe 直连（备）**：`api.typesafe.ai/v1/systemone` 原生格式，
+  设 `TYPESAFE_API_KEY` 即启用；字段保真的参考实现。
+- 注意：OpenRouter 聚合目录（`GET /api/v1/models`）截至 2026-09-18
+  尚未收录该模型，依赖 models 列表做校验的 SDK 可能报「未知模型」——
+  直接指定 model id 调用即可。
 
 ## 风险规避（对应 Jev 已知短板）
 
