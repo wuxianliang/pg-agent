@@ -78,7 +78,8 @@ $$;
 -- Plane 2: decision — Jev questions and answers as rows.
 --
 -- Signal semantics (frozen here, consumed by the routing view in M2):
---   choice/score -> answer.confidence ; noul -> answer.noul
+--   choice -> answer.confidence ; score -> answer.score (0..levels-1) ;
+--   noul   -> answer.noul
 -- Verdict semantics: signal >= act_min -> 'act'; >= review_min -> 'review';
 -- else -> thresholds.fallback. Per-question thresholds only; the system
 -- never combines a probability with its complement (Jev gives no identity

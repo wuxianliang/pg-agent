@@ -201,13 +201,18 @@ BEGIN
 END;
 $$;
 
--- Signal extraction (frozen semantics from the schema comment) plus the
--- threshold routing view. Verdicts: act / review / fallback.
+-- Signal extraction (frozen semantics): the signal is the question's
+-- MEASUREMENT, not its meta-quality —
+--   choice -> confidence (the chosen option is categorical; confidence
+--             is the only graded signal)
+--   score  -> the score value itself (0..levels-1; e.g. risk 2.6/3)
+--   noul   -> the noul probability
 CREATE FUNCTION v12_signal(p_kind text, p_answer jsonb) RETURNS numeric
 LANGUAGE sql IMMUTABLE AS $$
-    SELECT CASE WHEN p_kind = 'noul'
-                THEN (p_answer ->> 'noul')::numeric
-                ELSE (p_answer ->> 'confidence')::numeric
+    SELECT CASE
+             WHEN p_kind = 'noul'   THEN (p_answer ->> 'noul')::numeric
+             WHEN p_kind = 'score'  THEN (p_answer ->> 'score')::numeric
+             ELSE                        (p_answer ->> 'confidence')::numeric
            END;
 $$;
 

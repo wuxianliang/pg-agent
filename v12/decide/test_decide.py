@@ -183,16 +183,17 @@ def main() -> int:
         "SELECT question_id, signal, verdict FROM v12_routes "
         "WHERE batch_id = %s ORDER BY question_id", (b1,))
     rows = {r[0]: (float(r[1]), r[2]) for r in cur.fetchall()}
-    check("routes: choice act (0.9 >= 0.8)", rows["pick"] == (0.9, "act"), rows)
-    check("routes: score act (0.8 >= 0.8)", rows["rate"] == (0.8, "act"), rows)
+    check("routes: choice act (conf 0.9 >= 0.8)", rows["pick"] == (0.9, "act"), rows)
+    check("routes: score act (score 1.5 >= 0.8; signal is the score value)",
+          rows["rate"] == (1.5, "act"), rows)
     check("routes: noul signal uses noul value (0.95)",
           rows["yes"] == (0.95, "act"), rows)
 
     b5 = open_batch(cur, sid, {"ticket": "band test"}, qs)
     mid = good_answers()
-    mid["pick"]["confidence"] = 0.6   # review band
-    mid["rate"]["confidence"] = 0.2   # below review -> fallback
-    mid["yes"]["noul"] = 0.55         # review band
+    mid["pick"]["confidence"] = 0.6   # choice: review band (signal = confidence)
+    mid["rate"]["score"] = 0.2        # score: below review (signal = score value)
+    mid["yes"]["noul"] = 0.55         # noul: review band
     cur.execute("SELECT v12_seal_batch(%s)", (b5,))
     cur.execute("SELECT v12_record_answers(%s, %s)", (b5, json.dumps(mid)))
     cur.execute(
