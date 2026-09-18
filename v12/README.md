@@ -32,6 +32,16 @@
 | G3 act | `v12/act/test_act.py` | effect_id 幂等、fence/lease/接管、unknown 墙 |
 | G4 turn | `v12/turn/test_turn.py` | 有界 turn 端到端（sql/tool/llm/human/护栏/预算/崩溃恢复） |
 | G5 fanout | `v12/fanout/test_fanout.py` | 一个 Choice 排 ≤255 行、两遍窗口、存在性 Noul |
+| G6 queue | `v12/queue/test_queue.py` | PGMQ 模式：唤醒队列、IO worker、SQL-only driver、扫描恢复 |
+
+## 两种运行方式
+
+- **inline（G4）**：`TurnRunner` 单进程直驱——最简部署，外部 IO 在本进程。
+- **queue（G6，v3–v6 架构）**：`QueueDriver` 只用 SQL 推进状态机并入队唤醒；
+  `QueueWorker` 轮询 PGMQ `v12_work`，访问 OpenRouter→Jev / 工具 / LLM，
+  结果落回行。两者可分机部署、worker 可多副本；消息只是唤醒，
+  `v12_requeue_stale()` 从表重建积压。同一逻辑动作在两种模式下推导出
+  相同 effect_id（G6 断言 SQL `v12_uuid_v5` == Python `uuid5`）。
 
 每个 stage 的 `setup_db.py` DROP/CREATE 自己的库（`agent_v12_*`），
 按 `v12/load.py` 的 `SQL_LOAD_ORDER` 累计加载（纯末尾追加）。

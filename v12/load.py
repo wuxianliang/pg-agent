@@ -33,6 +33,9 @@ SQL_LOAD_ORDER: list[Path] = [
     # M5: set-based fanout ranking (semantic_find pattern) — one Choice
     # over up to 255 line ids + existence Noul, two-pass windowing beyond.
     V12_ROOT / "fanout" / "v12_fanout.sql",
+    # M6: the queue mode — pgmq wake-up queue, scan-based requeue, SQL-side
+    # deterministic effect identity. Appended at the END of the order.
+    V12_ROOT / "queue" / "v12_queue.sql",
 ]
 
 STAGE_THROUGH = {
@@ -41,6 +44,7 @@ STAGE_THROUGH = {
     "act": 3,
     "turn": 4,
     "fanout": 5,
+    "queue": 6,
 }
 
 

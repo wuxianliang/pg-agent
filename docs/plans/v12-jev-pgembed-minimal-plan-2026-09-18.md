@@ -48,6 +48,11 @@
 - **M5 fanout（G5）**：行集排序演示（semantic_find 模式）：≤255 行单遍
   Choice 排序 + 存在性 Noul；>255 行两遍（窗口 Choice → 窗内排序）。
   DuckDB 以 postgres_scanner 读同一批表的扩展点记录于 README，不在 gate 内。
+- **M6 queue（G6，追加于 2026-09-18）**：v3–v6 架构回归 v12——PGMQ `v12_work`
+  唤醒队列 + `QueueWorker`（轮询 → OpenRouter→Jev / 工具 / LLM → 落库）+
+  `QueueDriver`（纯 SQL 步进入队）；`v12_requeue_stale` 扫描恢复；SQL 版
+  `v12_uuid_v5`/`v12_effect_id` 与 inline 模式逐字节一致。inline TurnRunner
+  原样保留，两种方式共用全部 SQL 与不变量。
 
 ## 4. 收尾工件（每里程碑）
 

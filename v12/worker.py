@@ -22,14 +22,56 @@ import uuid
 import psycopg2
 
 
-class TurnRunner:
+class _Base:
+    """SQL-side stepping shared by the inline TurnRunner and the queue
+    QueueDriver: every transition is durable (append event / settle row)
+    before the next one, so any process can resume from the tables."""
+
     MAX_CYCLES = 3
+
+    def __init__(self, conn):
+        self.conn = conn
+        self.cur = conn.cursor()
+
+    def _one(self, sql: str, params: tuple = ()):
+        self.cur.execute(sql, params)
+        return self.cur.fetchone()
+
+    def _append_event(self, session_id: str, type_: str, payload: dict) -> int:
+        seq = self._one("SELECT v12_append_event(%s, %s, %s)",
+                        (session_id, type_, json.dumps(payload)))[0]
+        self.conn.commit()
+        return seq
+
+    def _last_event(self, session_id: str, type_: str, after_user=True):
+        sql = ("SELECT payload FROM events WHERE session_id = %s AND type = %s "
+               + ("AND seq > v12_last_user_seq(%s) " if after_user else "")
+               + "ORDER BY seq DESC LIMIT 1")
+        params = (session_id, type_, session_id) if after_user else (session_id, type_)
+        row = self._one(sql, params)
+        return row[0] if row else None
+
+    def _close(self, session_id: str, delivered: bool, reason: str) -> None:
+        self._one("SELECT v12_close_turn(%s, %s, %s)",
+                  (session_id, delivered, reason))
+        self.conn.commit()
+
+    def _force_human(self, session_id: str, reason: str) -> None:
+        self._one("SELECT v12_set_status(%s, 'awaiting_human')", (session_id,))
+        self.conn.commit()
+        self._close(session_id, False, reason)
+
+
+class TurnRunner(_Base):
+    """Inline mode: drives the state machine AND does the external IO in
+    this process. The queue mode (v12/queue_driver.py + v12/queue_worker.py)
+    keeps the same SQL steps but moves IO to a PGMQ worker."""
+
     LEASE_SECONDS = 300
 
     def __init__(self, conn, client, tool_impls: dict | None = None,
                  llm_fn=None, worker_name: str = "v12-worker"):
-        self.conn = conn
-        self.cur = conn.cursor()
+        super().__init__(conn)
         self.client = client          # .ask(state, questions) -> {"answers": ...}
         self.tool_impls = tool_impls or {}
         self.llm_fn = llm_fn
@@ -129,24 +171,6 @@ class TurnRunner:
         return job_id, self._run_job(job_id, kind, payload)
 
     # ------------------------------------------------------------------ routes
-    def _last_event(self, session_id: str, type_: str, after_user=True):
-        sql = ("SELECT payload FROM events WHERE session_id = %s AND type = %s "
-               + ("AND seq > v12_last_user_seq(%s) " if after_user else "")
-               + "ORDER BY seq DESC LIMIT 1")
-        params = (session_id, type_, session_id) if after_user else (session_id, type_)
-        row = self._one(sql, params)
-        return row[0] if row else None
-
-    def _close(self, session_id: str, delivered: bool, reason: str) -> None:
-        self._one("SELECT v12_close_turn(%s, %s, %s)",
-                  (session_id, delivered, reason))
-        self.conn.commit()
-
-    def _force_human(self, session_id: str, reason: str) -> None:
-        self._one("SELECT v12_set_status(%s, 'awaiting_human')", (session_id,))
-        self.conn.commit()
-        self._close(session_id, False, reason)
-
     def _execute_route(self, session_id: str, route_payload: dict) -> None:
         route = route_payload["route"]
         if route == "human":
