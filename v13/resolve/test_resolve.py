@@ -78,6 +78,27 @@ def poison(cur) -> None:
     cur.execute("SELECT set_config('typesafe.timeout_ms', '200', true)")
 
 
+def wait_until_lock(watch, box, pid_key, timeout=8.0) -> bool:
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        pid = box.get(pid_key)
+        if pid:
+            watch.execute(
+                "SELECT bool_or(NOT granted) FROM pg_locks "
+                "WHERE locktype='advisory' AND pid=%s", (pid,))
+            row = watch.fetchone()
+            if row and row[0] is True:
+                return True
+            watch.execute(
+                "SELECT wait_event_type, wait_event FROM pg_stat_activity "
+                "WHERE pid=%s", (pid,))
+            row = watch.fetchone()
+            if row and (row[0] == "Lock" or (row[1] or "").lower() == "advisory"):
+                return True
+        time.sleep(0.02)
+    return False
+
+
 def mock_from_needed(cur, sid, **over) -> str:
     cur.execute(
         "SELECT signal, kind, criteria FROM v13_needed_judgments(%s)", (sid,))
@@ -260,13 +281,20 @@ def main() -> int:
     kp.execute("INSERT INTO sessions (session_id) VALUES (%s)", (sid4,))
     append_user(kp, sid4, "conc")
     mock4 = mock_from_needed(kp, sid4)
+    kp.execute("SELECT v13_judgment_envelope(%s)->>'candidate_set_hash'", (sid4,))
+    csh4 = kp.fetchone()[0]
     cprep.commit()
     cprep.close()
     result = {}
+    hold = psycopg2.connect(server.get_uri(DB))
+    hk = hold.cursor()
+    hk.execute("SELECT pg_advisory_xact_lock(v13_lock_key(%s, %s))", (sid4, csh4))
 
     def parse_a():
         c = psycopg2.connect(server.get_uri(DB))
         k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        result["a_pid"] = k.fetchone()[0]
         k.execute("SELECT set_config('typesafe.mock_response', %s, true)", (mock4,))
         k.execute("SELECT v13_parse(%s)", (sid4,))
         result["a"] = k.fetchone()[0]
@@ -274,18 +302,33 @@ def main() -> int:
         c.close()
 
     def parse_b():
-        time.sleep(0.05)
         c = psycopg2.connect(server.get_uri(DB))
         k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        result["b_pid"] = k.fetchone()[0]
         poison(k)
         k.execute("SELECT v13_parse(%s)", (sid4,))
         result["b"] = k.fetchone()[0]
         c.commit()
         c.close()
 
-    tA = threading.Thread(target=parse_a)
-    tB = threading.Thread(target=parse_b)
-    tA.start(); tB.start(); tA.join(); tB.join()
+    tA = threading.Thread(target=parse_a, daemon=True)
+    tB = threading.Thread(target=parse_b, daemon=True)
+    tA.start()
+    a_blk = wait_until_lock(cur, result, "a_pid")
+    tB.start()
+    b_blk = wait_until_lock(cur, result, "b_pid")
+    hold.rollback()
+    hold.close()
+    tA.join(15); tB.join(15)
+    check("M2-4: A blocked on advisory lock", a_blk, result.get("a_pid"))
+    b_detail = result.get("b_pid")
+    if result.get("b_pid"):
+        cur.execute(
+            "SELECT wait_event_type, wait_event, state, left(query,80) "
+            "FROM pg_stat_activity WHERE pid=%s", (result["b_pid"],))
+        b_detail = cur.fetchone()
+    check("M2-4: B blocked on advisory lock", b_blk, b_detail)
     check("M2-4: B failed=false", result["b"]["failed"] is False, result["b"])
     check("M2-4: B asked=0", result["b"]["asked_questions"] == 0, result["b"])
     cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s", (sid4,))
@@ -351,13 +394,13 @@ def main() -> int:
     before = cur.fetchone()[0]
     cur.execute("SELECT v13_parse(%s)", (sid7,))
     o7 = cur.fetchone()[0]
-    check("M2-7: malformed returns (not raise)", True)
+    check("M2-7: malformed returns (not raise)", isinstance(o7, dict), o7)
     check("M2-7: malformed failed=true", o7["failed"] is True, o7)
     cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s", (sid7,))
     check("M2-7: malformed zero new rows", cur.fetchone()[0] == before)
-    # timeout form: V3001 already covers failed=true; HTTP 57014 not deliverable
-    check("M2-7: timeout form via #45(b) V3001 (TIMEOUT_57014="
-          f"{TIMEOUT_57014})", True)
+    print("[NOTE] M2-7: TIMEOUT_57014="
+          f"{TIMEOUT_57014}; DP1 frozen on #45(b) V3001 — pg_typesafe HTTP "
+          "wait is not statement_timeout/pg_cancel interruptible")
     sid7c = new_session(cur)
     append_user(cur, sid7c)
     set_mock(cur, mock_from_needed(cur, sid7c))
@@ -408,12 +451,20 @@ def main() -> int:
     assert_export("M2-9 failed", o7 if o7.get("failed") else o9)
 
     # --- M2-10 ACL ------------------------------------------------------------
+    cur.execute("SELECT current_setting('typesafe.model')")
+    check("M2-10: typesafe.model pinned", cur.fetchone()[0] == "jev-latest")
     cur.execute("SET ROLE v13_recall")
     cur.execute("SELECT v13_canonical_state(%s)", (sid9,))
+    cs9 = cur.fetchone()[0]
     cur.execute("SELECT count(*) FROM v13_needed_judgments(%s)", (sid9,))
+    n9 = cur.fetchone()[0]
     cur.execute("SELECT v13_snapshot(%s)", (sid9,))
+    sn9 = cur.fetchone()[0]
     cur.execute("SELECT v13_judgment_envelope(%s)", (sid9,))
-    check("M2-10: recall EXECUTE read chain", True)
+    env9 = cur.fetchone()[0]
+    check("M2-10: recall EXECUTE read chain",
+          isinstance(cs9, dict) and n9 >= 1 and isinstance(sn9, dict)
+          and isinstance(env9, dict), (n9, list(env9)[:4] if env9 else None))
     fails_with(cur, "SELECT v13_parse(%s)", (sid9,), "permission",
                "M2-10: recall parse denied")
     fails_with(cur, "SELECT v13_resolve_judgments('{}'::jsonb, 1)", (),
@@ -650,8 +701,8 @@ def main() -> int:
         check("M2-15(c): bad endpoint raises", exc.pgcode != "P0001" or True,
               exc.pgcode)
         cur.execute("ROLLBACK TO SAVEPOINT sp_15")
-    check("M2-15(a)/(b): degraded to contract note (#45(b), HTTP not interruptible)",
-          True)
+    print("[NOTE] M2-15(a)/(b): #45(b) frozen — pg_typesafe HTTP wait is not "
+          "statement_timeout/pg_cancel interruptible; failed=true via V3001")
 
     # --- M2-16 same question different signals --------------------------------
     cur.execute(

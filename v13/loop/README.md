@@ -15,3 +15,9 @@ Gate: `uv run python v13/loop/test_loop.py`（退出码 0 = 通过）
 4. worker 出站携带 idempotency_key。
 5. 双登录：判断面 resolve_login，建账面 route_login。
 6. 调用 advance 前设 lock_timeout≈250ms / statement_timeout≈5s。
+
+## 台账
+
+- **`GRANT SELECT ON effects TO v13_route`**：INVOKER 读行所需的矩阵补正
+  （Oracle ACCEPT；定义在 `v13_core.sql`）。
+- **#45(b) 回退已激活**：见 `v13/resolve/README.md`。

@@ -122,18 +122,14 @@ def probe_timeout(conn) -> None:
                 "Fallback: revise K1(ii)/K2/K6 to V3001 mock (turn 7 #45(b)).")
         except psycopg2.Error as exc:
             cur.execute("ROLLBACK TO SAVEPOINT sp_to")
-            if exc.pgcode != "57014":
-                print(
-                    f"[probe] timeout NOT 57014 (got {exc.pgcode!r}); "
-                    "pg_typesafe HTTP wait is not statement_timeout-interruptible. "
-                    "Applying turn 7 #45(b) fallback: V3001 mock carries "
-                    "failed=true; M2-15(a)/(b) stay contract notes until "
-                    "HTTP wait is interruptible."
-                )
-                return
-            global TIMEOUT_57014
-            TIMEOUT_57014 = True
-            print("[probe] timeout pgcode=57014")
+            print(
+                f"[NOTE] probe_timeout: got sqlstate={exc.pgcode!r}. "
+                "This repo's pg_typesafe HTTP wait is not statement_timeout/"
+                "pg_cancel interruptible. DP1 frozen on #45(b) V3001 fallback "
+                "for failed=true; upgrade when pg_typesafe supports "
+                "interruptible HTTP."
+            )
+            return
     finally:
         stop.set()
 

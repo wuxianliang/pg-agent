@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import psycopg2
 
@@ -55,6 +56,45 @@ def poison(cur):
     cur.execute("SELECT set_config('typesafe.endpoint', 'http://127.0.0.1:1/', true)")
     cur.execute("SELECT set_config('typesafe.api_key', 'probe', true)")
     cur.execute("SELECT set_config('typesafe.timeout_ms', '200', true)")
+
+
+def connect_as(server, user):
+    uri = server.get_uri(DB)
+    host = (parse_qs(urlparse(uri).query).get("host") or [None])[0]
+    return psycopg2.connect(host=host, dbname=DB, user=user)
+
+
+def claim_pinned(cur, eid, worker="w1", lease_ms=60000):
+    cur.execute(
+        "UPDATE effects SET status='cancelled' "
+        "WHERE status='ready' AND effect_id IS DISTINCT FROM %s",
+        (eid,))
+    cur.execute("SELECT v13_claim(%s, %s)", (worker, lease_ms))
+    row = cur.fetchone()[0]
+    check("claim pinned",
+          row is not None and str(row["effect_id"]) == str(eid), row)
+    return row
+
+
+def wait_until_lock(watch, box, pid_key, timeout=8.0) -> bool:
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        pid = box.get(pid_key)
+        if pid:
+            watch.execute(
+                "SELECT bool_or(NOT granted) FROM pg_locks "
+                "WHERE locktype='advisory' AND pid=%s", (pid,))
+            row = watch.fetchone()
+            if row and row[0] is True:
+                return True
+            watch.execute(
+                "SELECT wait_event_type, wait_event FROM pg_stat_activity "
+                "WHERE pid=%s", (pid,))
+            row = watch.fetchone()
+            if row and (row[0] == "Lock" or (row[1] or "").lower() == "advisory"):
+                return True
+        time.sleep(0.02)
+    return False
 
 
 def mock_from_needed(cur, sid, **over) -> str:
@@ -139,34 +179,49 @@ def main() -> int:
     cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s", (sid,))
     check("G-ctx1-3: zero new decisions", cur.fetchone()[0] == n0)
 
-    # G-ctx1-4 concurrent parse (reuse M2-4 shape)
+    # G-ctx1-4 concurrent parse (forced overlap)
     conn.commit()
     sid4 = new_session(cur)
     append_user(cur, sid4, "conc")
     mock4 = sql_mock(cur, sid4)
+    cur.execute("SELECT v13_judgment_envelope(%s)->>'candidate_set_hash'", (sid4,))
+    csh4 = cur.fetchone()[0]
     conn.commit()
     result = {}
+    hold4 = psycopg2.connect(server.get_uri(DB))
+    hk4 = hold4.cursor()
+    hk4.execute("SELECT pg_advisory_xact_lock(v13_lock_key(%s, %s))", (sid4, csh4))
 
     def parse_a():
         c = psycopg2.connect(server.get_uri(DB))
         k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        result["a_pid"] = k.fetchone()[0]
         set_mock(k, mock4)
         k.execute("SELECT v13_parse(%s)", (sid4,))
         result["a"] = k.fetchone()[0]
         c.commit(); c.close()
 
     def parse_b():
-        time.sleep(0.05)
         c = psycopg2.connect(server.get_uri(DB))
         k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        result["b_pid"] = k.fetchone()[0]
         poison(k)
         k.execute("SELECT v13_parse(%s)", (sid4,))
         result["b"] = k.fetchone()[0]
         c.commit(); c.close()
 
-    tA = threading.Thread(target=parse_a)
-    tB = threading.Thread(target=parse_b)
-    tA.start(); tB.start(); tA.join(); tB.join()
+    tA = threading.Thread(target=parse_a, daemon=True)
+    tB = threading.Thread(target=parse_b, daemon=True)
+    tA.start()
+    a_blk = wait_until_lock(cur, result, "a_pid")
+    tB.start()
+    b_blk = wait_until_lock(cur, result, "b_pid")
+    hold4.rollback(); hold4.close()
+    tA.join(15); tB.join(15)
+    check("G-ctx1-4: A blocked on advisory lock", a_blk)
+    check("G-ctx1-4: B blocked on advisory lock", b_blk)
     check("G-ctx1-4: B failed=false asked=0",
           result["b"]["failed"] is False and result["b"]["asked_questions"] == 0,
           result["b"])
@@ -176,6 +231,7 @@ def main() -> int:
     # G-ctx1-1 events INSERT not blocked by parse advisory lock
     sid1 = new_session(cur)
     append_user(cur, sid1)
+    mock1 = sql_mock(cur, sid1)
     cur.execute("SELECT v13_judgment_envelope(%s)->>'candidate_set_hash'", (sid1,))
     csh = cur.fetchone()[0]
     conn.commit()
@@ -183,6 +239,21 @@ def main() -> int:
     kC = cC.cursor()
     kC.execute("SELECT pg_advisory_xact_lock(v13_lock_key(%s, %s))", (sid1, csh))
     blocked = {}
+    parse_box = {}
+
+    def do_parse_a():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        parse_box["pid"] = k.fetchone()[0]
+        set_mock(k, mock1)
+        try:
+            k.execute("SELECT v13_parse(%s)", (sid1,))
+            parse_box["out"] = k.fetchone()[0]
+            c.commit()
+        except Exception as exc:
+            parse_box["e"] = str(exc)
+        c.close()
 
     def do_append():
         c = psycopg2.connect(server.get_uri(DB))
@@ -195,13 +266,26 @@ def main() -> int:
         blocked["dt"] = time.time() - t0
         c.commit(); c.close()
 
+    tP = threading.Thread(target=do_parse_a)
+    tP.start()
+    check("G-ctx1-1: parse A blocked", wait_until_lock(cur, parse_box, "pid"))
     t = threading.Thread(target=do_append)
     t.start(); t.join(5)
-    check("G-ctx1-1: append during parse-lock <5s",
+    check("G-ctx1-1: append during blocked parse <5s",
           t.is_alive() is False and blocked.get("dt", 9) < 5, blocked)
+    check("G-ctx1-1: A still uncommitted", "out" not in parse_box, parse_box)
+    t0c = time.time()
+    cctrl = psycopg2.connect(server.get_uri(DB))
+    kctrl = cctrl.cursor()
+    kctrl.execute("SELECT v13_append_event(%s, %s, 'user/message', %s::jsonb)",
+                  (sid1, u(), json.dumps({"text": "ctrl"})))
+    dt_ctrl = time.time() - t0c
+    cctrl.commit(); cctrl.close()
+    check("G-ctx1-1: control append fast", dt_ctrl < 0.5, dt_ctrl)
     cC.rollback(); cC.close()
+    tP.join(10)
 
-    # G-ctx1-2 poison advance succeeds (no ask in lock)
+    # G-ctx1-2 poison advance + lock-hold probe
     sid2 = new_session(cur)
     append_user(cur, sid2)
     set_mock(cur, sql_mock(cur, sid2))
@@ -213,7 +297,106 @@ def main() -> int:
     r2 = cur.fetchone()[0]
     dt = time.time() - t0
     check("G-ctx1-2: poison advance succeeds", r2 in ("progressed", "waiting", "terminal"), r2)
-    check("G-ctx1-2: advance wall <2s", dt < 2.0, dt)
+    check("G-ctx1-2: poison advance wall <500ms", dt < 0.5, dt)
+
+    sid2b = new_session(cur)
+    append_user(cur, sid2b)
+    snap2b = None
+    set_mock(cur, sql_mock(cur, sid2b))
+    cur.execute("SELECT v13_parse(%s)", (sid2b,))
+    snap2b = cur.fetchone()[0]
+    conn.commit()
+    cur.execute("""
+        CREATE OR REPLACE FUNCTION v13_gctx_pause() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(879033);
+          RETURN NEW;
+        END $$;
+    """)
+    cur.execute("DROP TRIGGER IF EXISTS trg_gctx_pause ON effects")
+    cur.execute("CREATE TRIGGER trg_gctx_pause BEFORE INSERT ON effects "
+                "FOR EACH ROW EXECUTE FUNCTION v13_gctx_pause()")
+    conn.commit()
+    hold2 = psycopg2.connect(server.get_uri(DB))
+    hk2 = hold2.cursor()
+    hk2.execute("SELECT pg_advisory_xact_lock(879033)")
+    box2 = {}
+    happ = {}
+
+    def run_adv2():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        box2["pid"] = k.fetchone()[0]
+        try:
+            k.execute("SELECT v13_advance(%s, %s::jsonb)",
+                      (sid2b, json.dumps(snap2b)))
+            box2["r"] = k.fetchone()[0]
+            c.commit()
+        except Exception as exc:
+            box2["e"] = str(exc)
+        c.close()
+
+    def run_h():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        happ["pid"] = k.fetchone()[0]
+        t0h = time.time()
+        k.execute("SELECT v13_append_event(%s, %s, 'user/message', %s::jsonb)",
+                  (sid2b, u(), json.dumps({"text": "H"})))
+        happ["dt"] = time.time() - t0h
+        c.commit(); c.close()
+
+    ta2 = threading.Thread(target=run_adv2)
+    ta2.start()
+    check("G-ctx1-2: advance blocked in effects INSERT",
+          wait_until_lock(cur, box2, "pid"))
+    th = threading.Thread(target=run_h)
+    th.start()
+    check("G-ctx1-2: H waits in window", wait_until_lock(cur, happ, "pid"))
+    hold2.rollback(); hold2.close()
+    th.join(8); ta2.join(8)
+    check("G-ctx1-2: H returned after window", "dt" in happ, happ)
+    cur.execute("DROP TRIGGER IF EXISTS trg_gctx_pause ON effects")
+    cur.execute("DROP FUNCTION IF EXISTS v13_gctx_pause()")
+    conn.commit()
+
+    sid2c = new_session(cur)
+    append_user(cur, sid2c)
+    set_mock(cur, sql_mock(cur, sid2c))
+    cur.execute("SELECT v13_parse(%s)", (sid2c,))
+    s2c = cur.fetchone()[0]
+    conn.commit()
+    happc = {}
+
+    def run_adv2c():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        k.execute("SELECT v13_advance(%s, %s::jsonb)", (sid2c, json.dumps(s2c)))
+        k.fetchone()
+        c.commit(); c.close()
+
+    def run_hc():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        try:
+            t0h = time.time()
+            k.execute("SELECT v13_append_event(%s, %s, 'user/message', %s::jsonb)",
+                      (sid2c, u(), json.dumps({"text": "fast"})))
+            happc["dt"] = time.time() - t0h
+            c.commit()
+        except Exception as exc:
+            happc["e"] = str(exc)
+        c.close()
+
+    tad = threading.Thread(target=run_adv2c, daemon=True)
+    thc = threading.Thread(target=run_hc, daemon=True)
+    tad.start(); thc.start()
+    tad.join(10); thc.join(10)
+    check("G-ctx1-2: unprobed append wait <500ms",
+          happc.get("dt", 9) < 0.5, happc)
 
     # K3 requeue_stale
     sidk = new_session(cur)
@@ -226,8 +409,7 @@ def main() -> int:
     check("K3: requeue has keys",
           set(rq) >= {"reclaimed_ready", "walled_unknown", "lease_exhausted",
                       "woken_ready", "walls_total"}, rq)
-    cur.execute("SELECT v13_claim('w', 1)")  # 1ms lease
-    cl = cur.fetchone()[0]
+    cl = claim_pinned(cur, hid, worker="w", lease_ms=1)
     time.sleep(0.05)
     cur.execute("UPDATE effects SET lease_until = clock_timestamp() - interval '1s' "
                 "WHERE effect_id=%s", (cl["effect_id"],))
@@ -237,27 +419,76 @@ def main() -> int:
     cur.execute("SELECT status FROM effects WHERE effect_id=%s", (cl["effect_id"],))
     check("K3: human expired -> unknown", cur.fetchone()[0] == "unknown")
 
-    # K5 judge reclaim
+    # K5 judge reclaim + (a1') lease exhaustion
+    for i in range(20):
+        spec = {"p1": {"question": f"K5Q{i}?", "stated": "S?", "options": {"a": "A", "b": "B"}},
+                "p2": {"question": f"K5R{i}?", "stated": "T?", "options": {"a": "A", "b": "B"}}}
+        cur.execute("INSERT INTO tools (name, description, kind, handler, param_spec) "
+                    "VALUES (%s,'Tool.', 'tool', 'worker:x', %s::jsonb)",
+                    (f"k5_{i}", json.dumps(spec)))
     sidj = new_session(cur)
     append_user(cur, sidj)
-    cur.execute("SELECT v13_enqueue_effect(%s, 'judge', %s::jsonb)",
-                (sidj, json.dumps({"needed": []})))
+    set_mock(cur, mock_from_needed(cur, sidj))
+    cur.execute("SELECT v13_parse(%s)", (sidj,))
+    pj = cur.fetchone()[0]
+    check("K5: remaining>0", pj["remaining"] > 0, pj["remaining"])
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sidj, json.dumps(pj)))
+    check("K5: waiting judge", cur.fetchone()[0] == "waiting")
+    cur.execute("SELECT effect_id FROM effects WHERE session_id=%s AND kind='judge'",
+                (sidj,))
     jid = cur.fetchone()[0]
-    cur.execute("SELECT v13_claim('w', 1)")
-    cj = cur.fetchone()[0]
-    old_a, old_f = cj["attempt_no"], cj["fence"]
+    last_tok = None
+    for i in range(3):
+        cj = claim_pinned(cur, jid)
+        last_tok = cj
+        cur.execute("UPDATE effects SET lease_until = clock_timestamp() - interval '1s' "
+                    "WHERE effect_id=%s", (jid,))
+        cur.execute("SELECT v13_requeue_stale()")
+        rqj = cur.fetchone()[0]
+        check(f"K5: (a1) round {i+1} reclaimed_ready", rqj["reclaimed_ready"] >= 1, rqj)
+        cur.execute("SELECT status, attempt_no, fence FROM effects WHERE effect_id=%s",
+                    (jid,))
+        st, att, fn = cur.fetchone()
+        check(f"K5: (a1) round {i+1} ready attempt={i+1}",
+              st == "ready" and att == i + 1, (st, att, fn))
+    cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', '{}'::jsonb)",
+                (jid, last_tok["attempt_no"], last_tok["fence"]))
+    check("K5: old token after (a1) stale", cur.fetchone()[0] == "stale")
+    cj4 = claim_pinned(cur, jid)
+    check("K5: 4th claim attempt=4", cj4["attempt_no"] == 4, cj4)
     cur.execute("UPDATE effects SET lease_until = clock_timestamp() - interval '1s' "
                 "WHERE effect_id=%s", (jid,))
     cur.execute("SELECT v13_requeue_stale()")
-    rqj = cur.fetchone()[0]
-    check("K5: judge reclaimed_ready", rqj["reclaimed_ready"] >= 1, rqj)
-    cur.execute("SELECT status, attempt_no, fence FROM effects WHERE effect_id=%s", (jid,))
-    st, att, fn = cur.fetchone()
-    check("K5: judge ready fence+1 attempt unchanged",
-          st == "ready" and att == old_a and fn == old_f + 1, (st, att, fn))
+    rq4 = cur.fetchone()[0]
+    check("K5: (a1') lease_exhausted=1", rq4["lease_exhausted"] == 1, rq4)
+    cur.execute("SELECT status, attempt_no, error->>'code' FROM effects "
+                "WHERE effect_id=%s", (jid,))
+    st4, att4, code4 = cur.fetchone()
+    check("K5: (a1') failed lease_exhausted attempt=4",
+          st4 == "failed" and att4 == 4 and code4 == "lease_exhausted",
+          (st4, att4, code4))
     cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', '{}'::jsonb)",
-                (jid, old_a, old_f))
-    check("K5: old token stale", cur.fetchone()[0] == "stale")
+                (jid, cj4["attempt_no"], cj4["fence"]))
+    check("K5: dead worker token stale", cur.fetchone()[0] == "stale")
+    set_mock(cur, mock_from_needed(cur, sidj))
+    cur.execute("SELECT v13_parse(%s)", (sidj,))
+    pj2 = cur.fetchone()[0]
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sidj, json.dumps(pj2)))
+    check("K5: settle terminal", cur.fetchone()[0] == "terminal")
+    cur.execute("SELECT payload->>'reason', payload->>'attempts_exhausted' "
+                "FROM events WHERE session_id=%s AND type='turn/end'", (sidj,))
+    reason, exh = cur.fetchone()
+    check("K5: turn/end judge_attempts",
+          reason == "judge_attempts" and exh == "true", (reason, exh))
+    cur.execute("SELECT status FROM sessions WHERE session_id=%s", (sidj,))
+    check("K5: session failed", cur.fetchone()[0] == "failed")
+    cur.execute("SELECT count(*) FILTER (WHERE type='effect_done'), "
+                "count(*) FILTER (WHERE type='turn/end') "
+                "FROM events WHERE session_id=%s", (sidj,))
+    edk, tek = cur.fetchone()
+    check("K5: effect_done 0 turn/end 1", edk == 0 and tek == 1, (edk, tek))
+    for i in range(20):
+        cur.execute("DELETE FROM tools WHERE name=%s", (f"k5_{i}",))
 
     # K4 source scan
     resolve_sql = code_lines(V13 / "resolve" / "v13_resolve.sql")
@@ -298,17 +529,19 @@ def main() -> int:
     check("K6: resolve/failed == cap", cur.fetchone()[0] == 2)
     cur.execute("SELECT count(*) FROM effects WHERE session_id=%s AND kind='human'", (sid6,))
     check("K6: one human effect", cur.fetchone()[0] == 1)
+    cur.execute("SELECT request->>'reason' FROM effects "
+                "WHERE session_id=%s AND kind='human'", (sid6,))
+    check("K6: reason=resolve_budget", cur.fetchone()[0] == "resolve_budget")
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s "
+                "AND kind IN ('judge','tool','llm')", (sid6,))
+    check("K6: zero judge/tool/llm effects", cur.fetchone()[0] == 0)
 
     # K7 complete human -> terminal
     cur.execute("SELECT effect_id FROM effects "
                 "WHERE session_id=%s AND kind='human'", (sid6,))
     he = cur.fetchone()[0]
-    cur.execute(
-        "UPDATE effects SET status='claimed', attempt_no=attempt_no+1, "
-        "fence=fence+1, lease_owner='w', lease_until=clock_timestamp() + interval '60s' "
-        "WHERE effect_id=%s AND status='ready' "
-        "RETURNING attempt_no, fence", (he,))
-    ha, hf = cur.fetchone()
+    ck7 = claim_pinned(cur, he)
+    ha, hf = ck7["attempt_no"], ck7["fence"]
     cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', '{}'::jsonb)",
                 (he, ha, hf))
     check("K7: human complete accepted", cur.fetchone()[0] == "accepted")
@@ -328,8 +561,7 @@ def main() -> int:
     cur.execute("SELECT v13_enqueue_effect(%s, 'llm', %s::jsonb)",
                 (sid8, json.dumps({"prompt": "x"})))
     lid = cur.fetchone()[0]
-    cur.execute("SELECT v13_claim('w', 60000)")
-    cl8 = cur.fetchone()[0]
+    cl8 = claim_pinned(cur, lid, worker="w")
     append_user(cur, sid8, "B")  # turn B
     cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', %s::jsonb)",
                 (lid, cl8["attempt_no"], cl8["fence"], json.dumps({"text": "old"})))
@@ -342,24 +574,133 @@ def main() -> int:
     check("K8: straggler does not finish", rt.get("action") != "finish", rt)
     cur.execute("SELECT v13_canonical_state(%s)::text", (sid8,))
     ctx = cur.fetchone()[0]
-    check("K8: canonical omits straggler text or keeps going", True)
+    check("K8: canonical omits straggler text", "old" not in ctx, ctx)
 
-    # K1 kill-during-insert: simulate with exception trigger + terminate
-    # Lightweight: before-insert trigger taking a lock, other conn terminates.
-    # Skip live terminate if too flaky; assert decisions unchanged on rollback.
+    sid8b = new_session(cur)
+    seq_a8 = append_user(cur, sid8b, "A")
+    append_user(cur, sid8b, "B")
+    cur.execute("SELECT v13_append_event(%s, %s, 'resolve/failed', %s::jsonb)",
+                (sid8b, u(), json.dumps({"origin_user_seq": seq_a8})))
+    set_mock(cur, sql_mock(cur, sid8b))
+    cur.execute("SELECT v13_parse(%s)", (sid8b,))
+    p8b = cur.fetchone()[0]
+    check("K8: old-anchor resolve/failed does not eat new turn budget",
+          p8b["abandon"] is False and p8b["failed"] is False, p8b)
+
+    sid8c = new_session(cur)
+    append_user(cur, sid8c, "C")
+    cur.execute("SELECT v13_enqueue_effect(%s, 'llm', %s::jsonb)",
+                (sid8c, json.dumps({"prompt": "late"})))
+    lidc = cur.fetchone()[0]
+    clc = claim_pinned(cur, lidc, worker="w")
+    cur.execute("UPDATE sessions SET status='cancelled' WHERE session_id=%s", (sid8c,))
+    cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', %s::jsonb)",
+                (lidc, clc["attempt_no"], clc["fence"], json.dumps({"text": "late"})))
+    cur.fetchone()
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s", (sid8c,))
+    ef8 = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s AND type='turn/route'",
+                (sid8c,))
+    rt8 = cur.fetchone()[0]
+    set_mock(cur, sql_mock(cur, sid8c))
+    cur.execute("SELECT v13_parse(%s)", (sid8c,))
+    p8c = cur.fetchone()[0]
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid8c, json.dumps(p8c)))
+    check("K8: cancelled + late complete -> terminal", cur.fetchone()[0] == "terminal")
+    cur.execute("SELECT status FROM sessions WHERE session_id=%s", (sid8c,))
+    check("K8: stays cancelled", cur.fetchone()[0] == "cancelled")
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s", (sid8c,))
+    check("K8: zero new effects", cur.fetchone()[0] == ef8)
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s AND type='turn/route'",
+                (sid8c,))
+    check("K8: zero new turn/route", cur.fetchone()[0] == rt8)
+
+    # K1 kill-during-insert
     sidk1 = new_session(cur)
     append_user(cur, sidk1)
+    mockk1 = sql_mock(cur, sidk1)
     cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s", (sidk1,))
-    base = cur.fetchone()[0]
-    cur.execute("SAVEPOINT spk1")
-    try:
-        cur.execute("SELECT 1/0")
-    except psycopg2.Error:
-        cur.execute("ROLLBACK TO SAVEPOINT spk1")
-    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s", (sidk1,))
-    check("K1: rollback leaves zero dirty decisions", cur.fetchone()[0] == base)
+    base_d = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s", (sidk1,))
+    base_e = cur.fetchone()[0]
+    conn.commit()
+    cur.execute("""
+        CREATE OR REPLACE FUNCTION v13_k1_pause() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(879011);
+          RETURN NEW;
+        END $$;
+    """)
+    cur.execute("DROP TRIGGER IF EXISTS trg_k1_pause ON decisions")
+    cur.execute("CREATE TRIGGER trg_k1_pause BEFORE INSERT ON decisions "
+                "FOR EACH ROW EXECUTE FUNCTION v13_k1_pause()")
+    conn.commit()
+    holdk = psycopg2.connect(server.get_uri(DB))
+    hkk = holdk.cursor()
+    hkk.execute("SELECT pg_advisory_xact_lock(879011)")
+    boxk = {}
 
-    # K2 slow-path handoff: remaining>0 judge + claim + resolve_judgments loop
+    def run_k1():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        boxk["pid"] = k.fetchone()[0]
+        set_mock(k, mockk1)
+        try:
+            k.execute("SELECT v13_parse(%s)", (sidk1,))
+            boxk["out"] = k.fetchone()[0]
+            c.commit()
+        except Exception as exc:
+            boxk["e"] = str(exc)
+        try:
+            c.close()
+        except Exception:
+            pass
+
+    tk1 = threading.Thread(target=run_k1)
+    tk1.start()
+    check("K1: parse blocked in decisions INSERT",
+          wait_until_lock(cur, boxk, "pid"))
+    cur.execute("SELECT pg_terminate_backend(%s)", (boxk["pid"],))
+    tk1.join(8)
+    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s", (sidk1,))
+    check("K1: zero dirty decisions", cur.fetchone()[0] == base_d)
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s", (sidk1,))
+    check("K1: zero dirty effects", cur.fetchone()[0] == base_e)
+    cur.execute("SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid=%s",
+                (boxk["pid"],))
+    check("K1: advisory locks gone with rollback", cur.fetchone()[0] == 0)
+    holdk.rollback(); holdk.close()
+    cur.execute("DROP TRIGGER IF EXISTS trg_k1_pause ON decisions")
+    cur.execute("DROP FUNCTION IF EXISTS v13_k1_pause()")
+    conn.commit()
+    cur.execute("SELECT count(*) FROM v13_needed_judgments(%s)", (sidk1,))
+    gapk = cur.fetchone()[0]
+    set_mock(cur, mockk1)
+    poison(cur)
+    cur.execute("SELECT set_config('typesafe.mock_response', %s, true)", (mockk1,))
+    cur.execute("SELECT v13_parse(%s)", (sidk1,))
+    pka = cur.fetchone()[0]
+    check("K1 (i-a): asked=gap", pka["asked_questions"] == gapk, (pka, gapk))
+    cur.execute("SELECT v13_parse(%s)", (sidk1,))
+    pkb = cur.fetchone()[0]
+    check("K1 (i-b): asked=0",
+          pkb["asked_questions"] == 0 and pkb["failed"] is False, pkb)
+    sidk1b = new_session(cur)
+    append_user(cur, sidk1b)
+    badk = json.dumps({"model": "x", "answers": {"intent": {"type": "choice"}}})
+    set_mock(cur, badk)
+    cur.execute("SELECT v13_parse(%s)", (sidk1b,))
+    pkc = cur.fetchone()[0]
+    check("K1 (ii): V3001 failed=true", pkc["failed"] is True, pkc)
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sidk1b, json.dumps(pkc)))
+    check("K1 (ii): advance progressed", cur.fetchone()[0] == "progressed")
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s AND type='resolve/failed'",
+                (sidk1b,))
+    check("K1 (ii): exactly one resolve/failed", cur.fetchone()[0] == 1)
+
+    # K2 slow-path handoff: v13_claim + resolve_login loop
     for i in range(20):
         spec = {"p1": {"question": f"Q{i}?", "stated": "S?", "options": {"a": "A", "b": "B"}},
                 "p2": {"question": f"R{i}?", "stated": "T?", "options": {"a": "A", "b": "B"}}}
@@ -374,39 +715,118 @@ def main() -> int:
     check("K2: fast path 32", pk2["asked_questions"] == 32, pk2["asked_questions"])
     cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sidk2, json.dumps(pk2)))
     check("K2: waiting judge", cur.fetchone()[0] == "waiting")
-    cur.execute("SELECT effect_id, request FROM effects WHERE session_id=%s AND kind='judge'",
-                (sidk2,))
-    je, jreq = cur.fetchone()
+    cur.execute("SELECT effect_id, request, idempotency_key FROM effects "
+                "WHERE session_id=%s AND kind='judge'", (sidk2,))
+    je, jreq, ik2 = cur.fetchone()
     check("K2: request has envelope", "envelope" in jreq or "needed" in jreq, list(jreq))
-    cur.execute(
-        "UPDATE effects SET status='claimed', attempt_no=attempt_no+1, "
-        "fence=fence+1, lease_owner='worker', "
-        "lease_until=clock_timestamp() + interval '60s' "
-        "WHERE effect_id=%s AND status='ready' RETURNING attempt_no, fence",
-        (je,))
-    cj2 = {"attempt_no": None, "fence": None}
-    cj2["attempt_no"], cj2["fence"] = cur.fetchone()
+    check("K2: idempotency_key stable", bool(ik2), ik2)
     conn.commit()
+    wc = connect_as(server, "v13_route_login")
+    wcur = wc.cursor()
+    wcur.execute(
+        "UPDATE effects SET status='cancelled' "
+        "WHERE status='ready' AND effect_id IS DISTINCT FROM %s", (je,))
+    wcur.execute("SELECT v13_claim('worker', 60000)")
+    cj2 = wcur.fetchone()[0]
+    check("K2: v13_claim pinned", str(cj2["effect_id"]) == str(je), cj2)
+    wc.commit()
     env = jreq.get("envelope", jreq)
     remaining = 1
     rounds = 0
     while remaining and rounds < 10:
-        c = psycopg2.connect(server.get_uri(DB))
-        k = c.cursor()
-        set_mock(k, mock_from_needed(k, sidk2))
-        k.execute("SELECT v13_resolve_judgments(%s::jsonb, 1)", (json.dumps(env),))
-        out = k.fetchone()[0]
+        rc = connect_as(server, "v13_resolve_login")
+        rk = rc.cursor()
+        rk.execute("SET typesafe.model = 'jev-latest'")
+        set_mock(rk, mock_from_needed(rk, sidk2))
+        rk.execute("SELECT v13_resolve_judgments(%s::jsonb, 1)", (json.dumps(env),))
+        out = rk.fetchone()[0]
         remaining = out["remaining"]
-        k.execute("SELECT v13_renew_lease(%s, %s, 60000)", (je, cj2["fence"]))
-        check("K2: renew true", k.fetchone()[0] is True)
-        c.commit(); c.close()
+        rc.commit(); rc.close()
+        wcur.execute("SELECT v13_renew_lease(%s, %s, 60000)", (je, cj2["fence"]))
+        check("K2: renew true", wcur.fetchone()[0] is True)
+        wc.commit()
         rounds += 1
     check("K2: drained remaining", remaining == 0, (remaining, rounds))
+    wcur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', '{}'::jsonb)",
+                 (je, cj2["attempt_no"], cj2["fence"]))
+    check("K2: complete accepted", wcur.fetchone()[0] == "accepted")
+    wc.commit()
+    wcur.execute("SELECT v13_renew_lease(%s, %s, 60000)", (je, cj2["fence"] + 99))
+    check("K2: renew mismatch false", wcur.fetchone()[0] is False)
+    wc.close()
+
+    sidk2f = new_session(cur)
+    append_user(cur, sidk2f)
+    set_mock(cur, mock_from_needed(cur, sidk2f))
+    cur.execute("SELECT v13_parse(%s)", (sidk2f,))
+    pkf2 = cur.fetchone()[0]
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sidk2f, json.dumps(pkf2)))
+    cur.fetchone()
+    cur.execute("SELECT effect_id FROM effects WHERE session_id=%s AND kind='judge'",
+                (sidk2f,))
+    jef = cur.fetchone()[0]
+    cjf = claim_pinned(cur, jef)
+    conn.commit()
+    rc = connect_as(server, "v13_resolve_login")
+    rk = rc.cursor()
+    rk.execute("SET typesafe.model = 'jev-latest'")
+    rk.execute("SELECT set_config('typesafe.mock_response', %s, true)",
+               (json.dumps({"model": "x", "answers": {"intent": {"type": "choice"}}}),))
+    cur.execute("SELECT request FROM effects WHERE effect_id=%s", (jef,))
+    envf = cur.fetchone()[0].get("envelope")
+    rk.execute("SELECT v13_resolve_judgments(%s::jsonb, 1)", (json.dumps(envf),))
+    outf = rk.fetchone()[0]
+    check("K2 fail half: resolve failed", outf["failed"] is True, outf)
+    rc.commit(); rc.close()
+    cur.execute("SELECT v13_complete(%s, %s, %s, 'failed', NULL)",
+                (jef, cjf["attempt_no"], cjf["fence"]))
+    check("K2 fail half: complete failed", cur.fetchone()[0] == "accepted")
+    set_mock(cur, mock_from_needed(cur, sidk2f))
+    cur.execute("SELECT v13_parse(%s)", (sidk2f,))
+    pnr = cur.fetchone()[0]
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sidk2f, json.dumps(pnr)))
+    check("K2 fail half: rehang waiting", cur.fetchone()[0] == "waiting")
     cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', '{}'::jsonb)",
-                (je, cj2["attempt_no"], cj2["fence"]))
-    check("K2: complete accepted", cur.fetchone()[0] == "accepted")
-    cur.execute("SELECT v13_renew_lease(%s, %s, 60000)", (je, cj2["fence"] + 99))
-    check("K2: renew mismatch false", cur.fetchone()[0] is False)
+                (jef, cjf["attempt_no"], cjf["fence"]))
+    check("K2 fail half: old token stale", cur.fetchone()[0] == "stale")
+    for i in range(20):
+        cur.execute("DELETE FROM tools WHERE name=%s", (f"w{i}",))
+
+    set_mock(cur, sql_mock(cur, sidk2))
+    cur.execute("SELECT v13_parse(%s)", (sidk2,))
+    pks = cur.fetchone()[0]
+    check("K2: after judge remaining=0", pks["remaining"] == 0, pks["remaining"])
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sidk2, json.dumps(pks)))
+    check("K2: sql progressed", cur.fetchone()[0] == "progressed")
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+                (sidk2,))
+    check("K2: tool/result in projection", cur.fetchone()[0] >= 1)
+    set_mock(cur, mock_from_needed(
+        cur, sidk2,
+        intent={"type": "choice", "choice": "llm_generate",
+                "probabilities": {"llm_generate": 0.9}, "confidence": 0.9},
+        gate_action={"type": "noul", "noul": 0.9}))
+    cur.execute("SELECT v13_parse(%s)", (sidk2,))
+    pkl = cur.fetchone()[0]
+    check("K2: llm parse remaining=0", pkl["remaining"] == 0, pkl["remaining"])
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sidk2, json.dumps(pkl)))
+    check("K2: llm waiting", cur.fetchone()[0] == "waiting")
+    cur.execute("SELECT effect_id FROM effects WHERE session_id=%s AND kind='llm' "
+                "AND status='ready'", (sidk2,))
+    lid2 = cur.fetchone()[0]
+    cll = claim_pinned(cur, lid2)
+    cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', %s::jsonb)",
+                (lid2, cll["attempt_no"], cll["fence"],
+                 json.dumps({"text": "final answer"})))
+    check("K2: llm complete", cur.fetchone()[0] == "accepted")
+    set_mock(cur, mock_from_needed(cur, sidk2))
+    cur.execute("SELECT v13_parse(%s)", (sidk2,))
+    pkf = cur.fetchone()[0]
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sidk2, json.dumps(pkf)))
+    check("K2: P0 finish terminal", cur.fetchone()[0] == "terminal")
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s AND type='turn/end'",
+                (sidk2,))
+    check("K2: turn/end", cur.fetchone()[0] >= 1)
 
     conn.commit()
     conn.close()

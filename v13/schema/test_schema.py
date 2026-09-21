@@ -77,6 +77,18 @@ def append_user(cur, sid, text="hello"):
     return cur.fetchone()[0]
 
 
+def claim_pinned(cur, eid, worker="w1", lease_ms=60000):
+    cur.execute(
+        "UPDATE effects SET status='cancelled' "
+        "WHERE status='ready' AND effect_id IS DISTINCT FROM %s",
+        (eid,))
+    cur.execute("SELECT v13_claim(%s, %s)", (worker, lease_ms))
+    row = cur.fetchone()[0]
+    check("claim pinned",
+          row is not None and str(row["effect_id"]) == str(eid), row)
+    return row
+
+
 def main() -> int:
     setup_db()
     server = get_server()
@@ -174,7 +186,9 @@ def main() -> int:
         "context, request_hash) VALUES (%s, 'n1', 'noul', 'Is it?', "
         "NULL, %s::jsonb, 'h6')",
         (sid4, ctx))
-    check("M1-4: noul SQL NULL criteria accepted", True)
+    cur.execute("SELECT criteria IS NULL FROM decisions "
+                "WHERE session_id=%s AND signal='n1'", (sid4,))
+    check("M1-4: noul SQL NULL criteria accepted", cur.fetchone()[0] is True)
     cur.execute(
         "UPDATE decisions SET answer = %s::jsonb WHERE session_id = %s "
         "AND request_hash = 'h1'",
@@ -216,9 +230,8 @@ def main() -> int:
                (sid5, json.dumps({"prompt": "x"})),
                "single_active", "M1-5: second ready effect rejected")
     # succeeded replay
-    cur.execute("SELECT v13_claim('w1', 60000)")
-    claimed = cur.fetchone()[0]
-    check("M1-5: claim returns effect", claimed["effect_id"] == hid, claimed)
+    claimed = claim_pinned(cur, hid)
+    check("M1-5: claim returns effect", str(claimed["effect_id"]) == str(hid), claimed)
     cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', %s::jsonb)",
                 (hid, claimed["attempt_no"], claimed["fence"], json.dumps({"ok": True})))
     check("M1-5: complete succeeded", cur.fetchone()[0] == "accepted")
@@ -234,8 +247,7 @@ def main() -> int:
     cur.execute("SELECT v13_enqueue_effect(%s, 'human', %s::jsonb)",
                 (sid5b, json.dumps({"reason": "r2"})))
     hid2 = cur.fetchone()[0]
-    cur.execute("SELECT v13_claim('w1', 60000)")
-    c2 = cur.fetchone()[0]
+    c2 = claim_pinned(cur, hid2)
     old_attempt, old_fence = c2["attempt_no"], c2["fence"]
     cur.execute("SELECT v13_complete(%s, %s, %s, 'failed', NULL)",
                 (hid2, old_attempt, old_fence))
@@ -255,8 +267,7 @@ def main() -> int:
     check("M1-5: stale complete zero status change", cur.fetchone()[0] == "ready")
 
     # unknown refuse reentry
-    cur.execute("SELECT v13_claim('w1', 60000)")
-    c3 = cur.fetchone()[0]
+    c3 = claim_pinned(cur, hid2)
     cur.execute("SELECT v13_complete(%s, %s, %s, 'unknown', NULL)",
                 (c3["effect_id"], c3["attempt_no"], c3["fence"]))
     check("M1-5: complete unknown", cur.fetchone()[0] == "accepted")
@@ -290,8 +301,7 @@ def main() -> int:
     cur.execute("SELECT v13_enqueue_effect(%s, 'human', %s::jsonb)", (sid5d, req))
     hid3 = cur.fetchone()[0]
     for _ in range(2):
-        cur.execute("SELECT v13_claim('w1', 60000)")
-        ck = cur.fetchone()[0]
+        ck = claim_pinned(cur, hid3)
         cur.execute("SELECT v13_complete(%s, %s, %s, 'failed', NULL)",
                     (hid3, ck["attempt_no"], ck["fence"]))
         cur.fetchone()
@@ -304,6 +314,8 @@ def main() -> int:
     fence_at_cap = fn_cap
     cur.execute("SELECT count(*) FROM events WHERE session_id = %s", (sid5d,))
     ev_before = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM pgmq.q_v13_work")
+    q_before = cur.fetchone()[0]
     cur.execute("SELECT v13_enqueue_effect(%s, 'human', %s::jsonb)", (sid5d, req))
     check("M1-5: cap enqueue returns same id", cur.fetchone()[0] == hid3)
     cur.execute("SELECT status, fence FROM effects WHERE effect_id = %s", (hid3,))
@@ -313,8 +325,7 @@ def main() -> int:
     cur.execute("SELECT count(*) FROM events WHERE session_id = %s", (sid5d,))
     check("M1-5: cap rehang zero events", cur.fetchone()[0] == ev_before)
     cur.execute("SELECT count(*) FROM pgmq.q_v13_work")
-    # wake is M3; M1 enqueue does not send work
-    check("M1-5: cap rehang noted", True)
+    check("M1-5: cap rehang zero wake", cur.fetchone()[0] == q_before)
 
     # missing key fail-loud (turn 10 fixture order)
     cur.execute(
@@ -363,8 +374,7 @@ def main() -> int:
                (u(),),
                "unknown effect", "M1-6: missing effect RAISE")
 
-    cur.execute("SELECT v13_claim('w1', 60000)")
-    c6 = cur.fetchone()[0]
+    c6 = claim_pinned(cur, e6)
     cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', %s::jsonb)",
                 (e6, c6["attempt_no"], c6["fence"], json.dumps({"ok": 1})))
     check("M1-6: accepted", cur.fetchone()[0] == "accepted")
@@ -387,8 +397,7 @@ def main() -> int:
     cur.execute("SELECT v13_enqueue_effect(%s, 'judge', %s::jsonb)",
                 (sid6j, json.dumps({"needed": []})))
     ej = cur.fetchone()[0]
-    cur.execute("SELECT v13_claim('w1', 60000)")
-    cj = cur.fetchone()[0]
+    cj = claim_pinned(cur, ej)
     cur.execute("SELECT v13_complete(%s, %s, %s, 'failed', NULL)",
                 (ej, cj["attempt_no"], cj["fence"]))
     check("M1-6: judge fail accepted", cur.fetchone()[0] == "accepted")
@@ -408,8 +417,7 @@ def main() -> int:
     cur.execute("SELECT v13_enqueue_effect(%s, 'tool', %s::jsonb, 'session_stats')",
                 (sid6t, json.dumps({"tool": "session_stats", "params": {}})))
     et = cur.fetchone()[0]
-    cur.execute("SELECT v13_claim('w1', 60000)")
-    ct = cur.fetchone()[0]
+    ct = claim_pinned(cur, et)
     cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', %s::jsonb)",
                 (et, ct["attempt_no"], ct["fence"], json.dumps({"n": 1})))
     cur.fetchone()
@@ -429,8 +437,7 @@ def main() -> int:
     cur.execute("SELECT v13_enqueue_effect(%s, 'llm', %s::jsonb)",
                 (sid6l, json.dumps({"prompt": "hi"})))
     el = cur.fetchone()[0]
-    cur.execute("SELECT v13_claim('w1', 60000)")
-    cl = cur.fetchone()[0]
+    cl = claim_pinned(cur, el)
     cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', %s::jsonb)",
                 (el, cl["attempt_no"], cl["fence"], json.dumps({"text": "hello"})))
     check("M1-6: llm good shape accepted", cur.fetchone()[0] == "accepted")
@@ -446,8 +453,7 @@ def main() -> int:
         cur.execute("SELECT v13_enqueue_effect(%s, 'llm', %s::jsonb)",
                     (sidb, json.dumps({"prompt": f"b{i}"})))
         eb = cur.fetchone()[0]
-        cur.execute("SELECT v13_claim('w1', 60000)")
-        cb = cur.fetchone()[0]
+        cb = claim_pinned(cur, eb)
         result = None if bad is None else json.dumps(bad)
         cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', %s)",
                     (eb, cb["attempt_no"], cb["fence"], result))
@@ -472,7 +478,8 @@ def main() -> int:
     cur.execute("SELECT count(*) FROM tools")
     cur.execute("SELECT count(*) FROM v13_policies")
     cur.execute("SELECT count(*) FROM v13_tools_meta")
-    check("M1-7: recall SELECT seven tables", True)
+    n_meta = cur.fetchone()[0]
+    check("M1-7: recall SELECT seven tables", isinstance(n_meta, int) and n_meta >= 1, n_meta)
     fails_with(cur, "INSERT INTO decisions (session_id, signal, kind, question, "
                "context, request_hash) VALUES (%s, 'x', 'noul', 'Q', '{}'::jsonb, 'z')",
                (sid4,), "permission", "M1-7: recall INSERT decisions denied")
@@ -508,9 +515,11 @@ def main() -> int:
                 "'v13_enqueue_effect(uuid,text,jsonb,text)', 'EXECUTE')")
     check("M1-7: route EXECUTE enqueue", cur.fetchone()[0] is True)
     cur.execute("SELECT count(*) FROM v_routes")
-    check("M1-7: route SELECT v_routes", True)
+    n_routes = cur.fetchone()[0]
+    check("M1-7: route SELECT v_routes", isinstance(n_routes, int) and n_routes >= 0, n_routes)
     cur.execute("SELECT count(*) FROM v13_route_policies")
-    check("M1-7: route SELECT route_policies", True)
+    n_pol = cur.fetchone()[0]
+    check("M1-7: route SELECT route_policies", isinstance(n_pol, int) and n_pol >= 1, n_pol)
     fails_with(cur, "SELECT * FROM v13_remote_sqlstates", (),
                "permission", "M1-7: route SELECT remote_sqlstates denied")
     cur.execute("RESET ROLE")
@@ -659,17 +668,11 @@ def main() -> int:
     core_code = "\n".join(
         l for l in core.splitlines() if not l.lstrip().startswith("--"))
     check("M1-10: typesafe_ask absent from core", "typesafe_ask" not in core_code)
-    # recall/pure-read functions in this file
     for fn in ("v13_last_user_seq", "v13_cycle_no", "v13_signal",
                "v13_uuid_v5", "v13_tool_session_stats", "v13_policy"):
-        # crude: body should not call append_event or UPDATE sessions
-        pass
-    check("M1-10: last_user_seq has no append_event",
-          "v13_append_event" not in core.split("CREATE FUNCTION v13_last_user_seq")[1]
-          .split("CREATE FUNCTION")[0])
-    check("M1-10: cycle_no has no append_event",
-          "v13_append_event" not in core.split("CREATE FUNCTION v13_cycle_no")[1]
-          .split("CREATE FUNCTION")[0])
+        part = core.split(f"CREATE FUNCTION {fn}")[1].split("CREATE FUNCTION")[0]
+        check(f"M1-10: {fn} has no append_event", "v13_append_event" not in part)
+        check(f"M1-10: {fn} has no UPDATE sessions", "UPDATE sessions" not in part)
 
     # --- M1-11 thresholds version immutable -----------------------------------
     fails_with(cur,
@@ -684,12 +687,15 @@ def main() -> int:
     cur.execute("INSERT INTO thresholds (policy_name, policy_version, signal, "
                 "band_no, lo, hi, action) VALUES "
                 "('tnew',1,'intent',1,0.5,'Infinity','pass')")
-    check("M1-11: INSERT new version band ok", True)
+    cur.execute("SELECT count(*) FROM thresholds WHERE policy_name='tnew'")
+    check("M1-11: INSERT new version band ok", cur.fetchone()[0] == 1)
     cur.execute("INSERT INTO v13_route_policies (policy_name, policy_version) "
                 "VALUES ('default', 99)")
     cur.execute("UPDATE v13_route_policies SET state='frozen' "
                 "WHERE policy_name='default' AND policy_version=99")
-    check("M1-11: empty frozen version 99", True)
+    cur.execute("SELECT state FROM v13_route_policies "
+                "WHERE policy_name='default' AND policy_version=99")
+    check("M1-11: empty frozen version 99", cur.fetchone()[0] == "frozen")
 
     # --- M1-12 thresholds lifecycle + concurrent freeze -----------------------
     fails_with(cur,
@@ -702,7 +708,8 @@ def main() -> int:
     cur.execute("INSERT INTO thresholds (policy_name, policy_version, signal, "
                 "band_no, lo, hi, action) VALUES "
                 "('t2',1,'intent',1,0.5,'Infinity','pass')")
-    check("M1-12: insert into draft t2 ok", True)
+    cur.execute("SELECT count(*) FROM thresholds WHERE policy_name='t2'")
+    check("M1-12: insert into draft t2 ok", cur.fetchone()[0] == 1)
     cur.execute("UPDATE v13_route_policies SET state='frozen' "
                 "WHERE policy_name='t2' AND policy_version=1")
     cur.execute("SELECT frozen_at IS NOT NULL FROM v13_route_policies "
@@ -733,13 +740,17 @@ def main() -> int:
                "route_policy_version) VALUES (%s, 'nope', 1)",
                (u(),), "frozen", "M1-12: INSERT session missing policy rejected")
     sid12 = new_session(cur, policy=("t2", 1))
-    check("M1-12: INSERT session frozen ok", True)
+    cur.execute("SELECT route_policy_name, route_policy_version FROM sessions "
+                "WHERE session_id=%s", (sid12,))
+    check("M1-12: INSERT session frozen ok", cur.fetchone() == ("t2", 1))
     fails_with(cur,
                "UPDATE sessions SET route_policy_version=1, "
                "route_policy_name='tnew' WHERE session_id=%s",
                (sid12,), "frozen", "M1-12: UPDATE session to draft rejected")
     cur.execute("UPDATE sessions SET status='waiting' WHERE session_id=%s", (sid12,))
-    check("M1-12: UPDATE status does not trip policy guard", True)
+    cur.execute("SELECT status FROM sessions WHERE session_id=%s", (sid12,))
+    check("M1-12: UPDATE status does not trip policy guard",
+          cur.fetchone()[0] == "waiting")
 
     # concurrent INSERT vs freeze
     conn.commit()
@@ -977,11 +988,14 @@ def main() -> int:
                 "'Answer questions about this conversation itself: "
                 "message counts, pending effects, session status.' "
                 "WHERE name='session_stats'")
-    check("M1-14: legal sql handler description update ok", True)
+    cur.execute("SELECT description LIKE 'Answer questions%' FROM tools "
+                "WHERE name='session_stats'")
+    check("M1-14: legal sql handler description update ok", cur.fetchone()[0] is True)
     cur.execute(
         "INSERT INTO tools (name, description, kind, handler) "
         "VALUES ('email2', 'Send mail.', 'tool', 'worker:send')")
-    check("M1-14: kind=tool skips handler check", True)
+    cur.execute("SELECT kind FROM tools WHERE name='email2'")
+    check("M1-14: kind=tool skips handler check", cur.fetchone()[0] == "tool")
 
     # disabled isolation
     cur.execute(
@@ -992,14 +1006,18 @@ def main() -> int:
         "VALUES ('dropme', 'Throwaway.', 'sql', 'v13_drop_fn', true)")
     cur.execute("DROP FUNCTION v13_drop_fn(uuid, jsonb)")
     cur.execute("UPDATE tools SET enabled=false WHERE name='dropme'")
-    check("M1-14: disable after DROP handler ok", True)
+    cur.execute("SELECT enabled FROM tools WHERE name='dropme'")
+    check("M1-14: disable after DROP handler ok", cur.fetchone()[0] is False)
     fails_with(cur,
                "UPDATE tools SET enabled=true WHERE name='dropme'",
                (), "not found", "M1-14: re-enable without handler rejected")
     cur.execute(
         "INSERT INTO tools (name, description, kind, handler, enabled) "
         "VALUES ('sick', 'Disabled sick.', 'sql', 'nope_fn', false)")
-    check("M1-14: disabled sql missing handler insert ok", True)
+    cur.execute("SELECT enabled, handler FROM tools WHERE name='sick'")
+    en, hd = cur.fetchone()
+    check("M1-14: disabled sql missing handler insert ok",
+          en is False and hd == "nope_fn", (en, hd))
 
     cur.execute("SELECT revision FROM v13_tools_meta")
     r_before_bad = cur.fetchone()[0]

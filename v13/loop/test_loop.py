@@ -75,6 +75,39 @@ def poison(cur):
     cur.execute("SELECT set_config('typesafe.timeout_ms', '200', true)")
 
 
+def claim_pinned(cur, eid, worker="w1", lease_ms=60000):
+    cur.execute(
+        "UPDATE effects SET status='cancelled' "
+        "WHERE status='ready' AND effect_id IS DISTINCT FROM %s",
+        (eid,))
+    cur.execute("SELECT v13_claim(%s, %s)", (worker, lease_ms))
+    row = cur.fetchone()[0]
+    check("claim pinned",
+          row is not None and str(row["effect_id"]) == str(eid), row)
+    return row
+
+
+def wait_until_lock(watch, box, pid_key, timeout=8.0) -> bool:
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        pid = box.get(pid_key)
+        if pid:
+            watch.execute(
+                "SELECT bool_or(NOT granted) FROM pg_locks "
+                "WHERE locktype='advisory' AND pid=%s", (pid,))
+            row = watch.fetchone()
+            if row and row[0] is True:
+                return True
+            watch.execute(
+                "SELECT wait_event_type, wait_event FROM pg_stat_activity "
+                "WHERE pid=%s", (pid,))
+            row = watch.fetchone()
+            if row and (row[0] == "Lock" or (row[1] or "").lower() == "advisory"):
+                return True
+        time.sleep(0.02)
+    return False
+
+
 def mock_from_needed(cur, sid, **over) -> str:
     cur.execute("SELECT signal, kind, criteria FROM v13_needed_judgments(%s)", (sid,))
     answers = {}
@@ -186,23 +219,27 @@ def main() -> int:
     seq = append_user(cur, sid4)
     snap4 = answers_sql(cur, sid4)
     poison(cur)
+    cur.execute("SELECT count(*) FROM pgmq.q_v13_work")
+    q4 = cur.fetchone()[0]
     cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid4, json.dumps(snap4)))
     r4 = cur.fetchone()[0]
-    check("M3-4: sql advance progressed or waiting", r4 in ("progressed", "waiting", "terminal"), r4)
-    cur.execute("SELECT status, request, origin_user_seq FROM effects "
+    check("M3-4: sql advance progressed", r4 == "progressed", r4)
+    cur.execute("SELECT status, request, origin_user_seq, effect_id FROM effects "
                 "WHERE session_id=%s ORDER BY created_at DESC LIMIT 1", (sid4,))
-    st, req4, orig = cur.fetchone()
-    if r4 != "waiting":
-        check("M3-4: sql effect succeeded", st == "succeeded", st)
-        check("M3-4: request has tool+params no handler",
-              "tool" in req4 and "params" in req4 and "handler" not in req4, req4)
-        check("M3-4: origin_user_seq", orig == seq, orig)
-        cur.execute("SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
-                    (sid4,))
-        check("M3-4: tool/result event", cur.fetchone()[0] >= 1)
-        cur.execute("SELECT count(*) FROM pgmq.q_v13_work")
-        # may have leftover; check delta hard — just >=0
-        check("M3-4: sql path ran", True)
+    st, req4, orig, eid4 = cur.fetchone()
+    check("M3-4: sql effect succeeded", st == "succeeded", st)
+    check("M3-4: request has tool+params no handler",
+          "tool" in req4 and "params" in req4 and "handler" not in req4, req4)
+    check("M3-4: origin_user_seq", orig == seq, orig)
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+                (sid4,))
+    check("M3-4: tool/result event", cur.fetchone()[0] == 1)
+    cur.execute("SELECT source_effect_id FROM events "
+                "WHERE session_id=%s AND type='tool/result'", (sid4,))
+    check("M3-4: tool/result source_effect_id",
+          str(cur.fetchone()[0]) == str(eid4))
+    cur.execute("SELECT count(*) FROM pgmq.q_v13_work")
+    check("M3-4: pgmq queue depth unchanged", cur.fetchone()[0] == q4)
 
     # M3-8 stale
     sid8 = new_session(cur)
@@ -273,6 +310,37 @@ def main() -> int:
     check("M3-6: finish terminal", cur.fetchone()[0] == "terminal")
     cur.execute("SELECT status FROM sessions WHERE session_id=%s", (sid6,))
     check("M3-6: session completed", cur.fetchone()[0] == "completed")
+
+    sid6a = new_session(cur)
+    last6a = append_user(cur, sid6a)
+    cur.execute("SELECT v13_append_event(%s, %s, 'tool/result', %s::jsonb)",
+                (sid6a, u(), json.dumps({"ok": True, "origin_user_seq": last6a})))
+    snap6a = parse(cur, sid6a)
+    cur.execute("SELECT v13_route(%s, %s::jsonb)",
+                (sid6a, json.dumps(snap6a["envelope"])))
+    check("M3-6: tool/result does not finish",
+          cur.fetchone()[0].get("action") != "finish")
+
+    sid6b = new_session(cur)
+    last6b = append_user(cur, sid6b)
+    append_user(cur, sid6b, "turn2")
+    cur.execute("SELECT v13_append_event(%s, %s, 'llm/message', %s::jsonb)",
+                (sid6b, u(), json.dumps({"text": "old", "origin_user_seq": last6b})))
+    snap6b = parse(cur, sid6b)
+    cur.execute("SELECT v13_route(%s, %s::jsonb)",
+                (sid6b, json.dumps(snap6b["envelope"])))
+    check("M3-6: old origin higher seq does not finish",
+          cur.fetchone()[0].get("action") != "finish")
+
+    sid6c = new_session(cur)
+    append_user(cur, sid6c)
+    cur.execute("SELECT v13_append_event(%s, %s, 'llm/message', %s::jsonb)",
+                (sid6c, u(), json.dumps({"text": "no-anchor"})))
+    snap6c = parse(cur, sid6c)
+    cur.execute("SELECT v13_route(%s, %s::jsonb)",
+                (sid6c, json.dumps(snap6c["envelope"])))
+    check("M3-6: no origin field does not finish",
+          cur.fetchone()[0].get("action") != "finish")
 
     # M3-11 env_decision + branches
     sid11 = new_session(cur)
@@ -384,6 +452,55 @@ def main() -> int:
     cur.execute("SELECT v13_route(%s, %s::jsonb)", (sid10, json.dumps(snap10["envelope"])))
     check("M3-10: empty bands human", cur.fetchone()[0]["reason"] == "low_intent_confidence")
 
+    s_tu = new_session(cur)
+    append_user(cur, s_tu)
+    snap_tu = parse(cur, s_tu,
+                    intent={"type": "choice", "choice": "tool_action",
+                            "probabilities": {"tool_action": 0.9}, "confidence": 0.9},
+                    gate_action={"type": "noul", "noul": 0.9},
+                    tool={"type": "choice", "choice": "send_summary_email",
+                          "probabilities": {"send_summary_email": 0.9}, "confidence": 0.9},
+                    risk={"type": "score", "score": 0.5, "confidence": 0.9},
+                    **{"param::send_summary_email::tone": {
+                        "type": "choice", "choice": "formal",
+                        "probabilities": {"formal": 0.9}, "confidence": 0.9},
+                       "param::send_summary_email::audience": {
+                        "type": "choice", "choice": "team",
+                        "probabilities": {"team": 0.9}, "confidence": 0.9},
+                       "stated::send_summary_email::tone": {"type": "noul", "noul": 0.9},
+                       "stated::send_summary_email::audience": {"type": "noul", "noul": 0.9}})
+    env_tu = snap_tu["envelope"]
+    for t in env_tu["tools_catalog"]:
+        if t["name"] == "send_summary_email":
+            t["enabled"] = False
+    cur.execute("SELECT v13_route(%s, %s::jsonb)", (s_tu, json.dumps(env_tu)))
+    rt_tu = cur.fetchone()[0]
+    check("M3-10: disabled tool fail-closed",
+          rt_tu.get("reason") == "tool_unavailable", rt_tu)
+
+    s_term = new_session(cur)
+    seq_term = append_user(cur, s_term)
+    for _ in range(2):
+        cur.execute("SELECT v13_append_event(%s, %s, 'resolve/failed', %s::jsonb)",
+                    (s_term, u(), json.dumps({"origin_user_seq": seq_term})))
+    poison(cur)
+    snap_term = parse(cur, s_term)
+    check("M3-10: abandon snapshot", snap_term["abandon"] is True, snap_term)
+    cur.execute("UPDATE sessions SET status='completed' WHERE session_id=%s",
+                (s_term,))
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s", (s_term,))
+    ev_term = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s", (s_term,))
+    ef_term = cur.fetchone()[0]
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)",
+                (s_term, json.dumps(snap_term)))
+    check("M3-10: terminal session + abandon -> terminal",
+          cur.fetchone()[0] == "terminal")
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s", (s_term,))
+    check("M3-10: terminal abandon zero new events", cur.fetchone()[0] == ev_term)
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s", (s_term,))
+    check("M3-10: terminal abandon zero new effects", cur.fetchone()[0] == ef_term)
+
     # M3-12 ACL
     cur.execute("SET ROLE v13_route")
     cur.execute("SELECT has_function_privilege('v13_advance(uuid,jsonb)','EXECUTE')")
@@ -450,6 +567,146 @@ def main() -> int:
     cur.execute("DELETE FROM tools WHERE name='boom'")
     cur.execute("DROP FUNCTION v13_boom(uuid, jsonb)")
 
+    cur.execute("""
+        CREATE FUNCTION v13_slow(uuid, jsonb) RETURNS jsonb
+        LANGUAGE plpgsql STABLE AS $$
+        BEGIN
+          PERFORM pg_sleep(5);
+          RETURN '{"slow":true}'::jsonb;
+        END $$;
+    """)
+    cur.execute("GRANT EXECUTE ON FUNCTION v13_slow(uuid, jsonb) TO v13_route")
+    cur.execute("INSERT INTO tools (name, description, kind, handler) "
+                "VALUES ('slow', 'Slow tool.', 'sql', 'v13_slow')")
+    sid15b = new_session(cur)
+    append_user(cur, sid15b)
+    cur.execute("SET statement_timeout = '200ms'")
+    t0 = time.time()
+    snap15b = parse(cur, sid15b,
+                    intent={"type": "choice", "choice": "sql_answer",
+                            "probabilities": {"sql_answer": 0.9}, "confidence": 0.9},
+                    gate_action={"type": "noul", "noul": 0.9},
+                    tool={"type": "choice", "choice": "slow",
+                          "probabilities": {"slow": 0.9}, "confidence": 0.9})
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid15b, json.dumps(snap15b)))
+    r15b = cur.fetchone()[0]
+    dt15b = time.time() - t0
+    check("M3-15 morph2: progressed", r15b == "progressed", r15b)
+    check("M3-15 morph2: wall <1s", dt15b < 1.0, dt15b)
+    cur.execute("SELECT status, error->>'sqlstate' FROM effects "
+                "WHERE session_id=%s AND kind='tool' "
+                "ORDER BY created_at DESC LIMIT 1", (sid15b,))
+    st15, ss15 = cur.fetchone()
+    check("M3-15 morph2: sqlstate 57014",
+          st15 == "failed" and ss15 == "57014", (st15, ss15))
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+                (sid15b,))
+    check("M3-15 morph2: zero tool/result", cur.fetchone()[0] == 0)
+    for _ in range(2):
+        snap15b = parse(cur, sid15b,
+                        intent={"type": "choice", "choice": "sql_answer",
+                                "probabilities": {"sql_answer": 0.9}, "confidence": 0.9},
+                        gate_action={"type": "noul", "noul": 0.9},
+                        tool={"type": "choice", "choice": "slow",
+                              "probabilities": {"slow": 0.9}, "confidence": 0.9})
+        cur.execute("SELECT v13_advance(%s, %s::jsonb)",
+                    (sid15b, json.dumps(snap15b)))
+        check("M3-15 morph2: retry progressed", cur.fetchone()[0] == "progressed")
+    cur.execute("SET statement_timeout = 0")
+    snap15b = parse(cur, sid15b,
+                    intent={"type": "choice", "choice": "sql_answer",
+                            "probabilities": {"sql_answer": 0.9}, "confidence": 0.9},
+                    gate_action={"type": "noul", "noul": 0.9},
+                    tool={"type": "choice", "choice": "slow",
+                          "probabilities": {"slow": 0.9}, "confidence": 0.9})
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)",
+                (sid15b, json.dumps(snap15b)))
+    check("M3-15 morph2: budget waiting", cur.fetchone()[0] == "waiting")
+    cur.execute("SELECT request->>'reason' FROM effects "
+                "WHERE session_id=%s AND kind='human'", (sid15b,))
+    check("M3-15 morph2: budget_exhausted",
+          cur.fetchone()[0] == "budget_exhausted")
+
+    sid15n = new_session(cur)
+    append_user(cur, sid15n)
+    snap15n = parse(cur, sid15n,
+                    intent={"type": "choice", "choice": "sql_answer",
+                            "probabilities": {"sql_answer": 0.9}, "confidence": 0.9},
+                    gate_action={"type": "noul", "noul": 0.9},
+                    tool={"type": "choice", "choice": "slow",
+                          "probabilities": {"slow": 0.9}, "confidence": 0.9})
+    conn.commit()
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s", (sid15n,))
+    ev_n = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s", (sid15n,))
+    ef_n = cur.fetchone()[0]
+    neg = {}
+
+    def run_neg():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        k.execute("SET statement_timeout = 0")
+        k.execute("SELECT pg_backend_pid()")
+        neg["pid"] = k.fetchone()[0]
+        try:
+            k.execute("SELECT v13_advance(%s, %s::jsonb)",
+                      (sid15n, json.dumps(snap15n)))
+            neg["r"] = k.fetchone()[0]
+            c.commit()
+        except Exception as exc:
+            neg["e"] = exc
+        c.close()
+
+    tn = threading.Thread(target=run_neg)
+    tn.start()
+    t_wait = time.time()
+    while time.time() - t_wait < 3 and not neg.get("pid"):
+        time.sleep(0.02)
+    time.sleep(0.3)
+    cur.execute("SELECT pg_cancel_backend(%s)", (neg["pid"],))
+    tn.join(8)
+    check("M3-15 negative: raised not progressed",
+          "e" in neg and getattr(neg["e"], "pgcode", None) == "57014",
+          neg)
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s", (sid15n,))
+    check("M3-15 negative: zero new events", cur.fetchone()[0] == ev_n)
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s", (sid15n,))
+    check("M3-15 negative: zero new effects", cur.fetchone()[0] == ef_n)
+
+    sid15c = new_session(cur)
+    append_user(cur, sid15c)
+    snap15c = answers_sql(cur, sid15c)
+    conn.commit()
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s", (sid15c,))
+    ev_c = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s", (sid15c,))
+    ef_c = cur.fetchone()[0]
+    cL = psycopg2.connect(server.get_uri(DB))
+    kL = cL.cursor()
+    kL.execute("BEGIN")
+    kL.execute("SELECT 1 FROM sessions WHERE session_id=%s FOR UPDATE", (sid15c,))
+    cur.execute("SAVEPOINT sp_lock")
+    cur.execute("SET LOCAL lock_timeout = '250ms'")
+    try:
+        cur.execute("SELECT v13_advance(%s, %s::jsonb)",
+                    (sid15c, json.dumps(snap15c)))
+        check("M3-15 morph3: expected 55P03", False, cur.fetchone()[0])
+    except psycopg2.Error as exc:
+        check("M3-15 morph3: 55P03", exc.pgcode == "55P03", exc.pgcode)
+        cur.execute("ROLLBACK TO SAVEPOINT sp_lock")
+    cL.rollback()
+    cL.close()
+    cur.execute("SELECT count(*) FROM events WHERE session_id=%s", (sid15c,))
+    check("M3-15 morph3: zero new events", cur.fetchone()[0] == ev_c)
+    cur.execute("SELECT count(*) FROM effects WHERE session_id=%s", (sid15c,))
+    check("M3-15 morph3: zero new effects", cur.fetchone()[0] == ef_c)
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)",
+                (sid15c, json.dumps(snap15c)))
+    check("M3-15 morph3: replay after unlock",
+          cur.fetchone()[0] in ("progressed", "waiting", "terminal"))
+    cur.execute("DELETE FROM tools WHERE name='slow'")
+    cur.execute("DROP FUNCTION v13_slow(uuid, jsonb)")
+
     # M3-21 handler body drift
     sid21 = new_session(cur); append_user(cur, sid21)
     snap21 = answers_sql(cur, sid21)
@@ -484,18 +741,201 @@ def main() -> int:
         $$;
     """)
 
-    # M3-22 timing smoke
-    t0 = time.time()
-    sid22 = new_session(cur); append_user(cur, sid22)
-    snap22 = answers_sql(cur, sid22)
-    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid22, json.dumps(snap22)))
-    cur.fetchone()
-    dt = time.time() - t0
-    check("M3-22: advance <500ms (order-of-magnitude)", dt < 5.0, dt)
+    # M3-14 succeeded human replay
+    sid14 = new_session(cur)
+    append_user(cur, sid14)
+    cur.execute("SELECT v13_enqueue_effect(%s, 'human', %s::jsonb)",
+                (sid14, json.dumps({"reason": "resolve_budget"})))
+    h14 = cur.fetchone()[0]
+    c14 = claim_pinned(cur, h14)
+    cur.execute("SELECT v13_complete(%s, %s, %s, 'succeeded', '{}'::jsonb)",
+                (h14, c14["attempt_no"], c14["fence"]))
+    check("M3-14: human succeeded", cur.fetchone()[0] == "accepted")
+    cur.execute("SELECT v13_last_user_seq(%s)", (sid14,))
+    seq14 = cur.fetchone()[0]
+    for _ in range(2):
+        cur.execute("SELECT v13_append_event(%s, %s, 'resolve/failed', %s::jsonb)",
+                    (sid14, u(), json.dumps({"origin_user_seq": seq14})))
+    poison(cur)
+    snap14 = parse(cur, sid14)
+    check("M3-14: abandon", snap14["abandon"] is True, snap14)
+    cur.execute("SELECT count(*) FROM pgmq.q_v13_work")
+    q14 = cur.fetchone()[0]
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid14, json.dumps(snap14)))
+    check("M3-14: succeeded human -> terminal", cur.fetchone()[0] == "terminal")
+    cur.execute("SELECT type, payload FROM events WHERE session_id=%s AND type='turn/end'",
+                (sid14,))
+    te = cur.fetchone()
+    check("M3-14: turn/end", te and te[0] == "turn/end", te)
+    cur.execute("SELECT status FROM sessions WHERE session_id=%s", (sid14,))
+    check("M3-14: session failed", cur.fetchone()[0] == "failed")
+    cur.execute("SELECT count(*) FROM pgmq.q_v13_work")
+    check("M3-14: zero new wake", cur.fetchone()[0] == q14)
 
-    # remaining gates abbreviated but present
-    check("M3-14/20 escalation covered by attempt cap in M1", True)
-    check("M3-19 freeze catalog covered by M3-9 stale on tools DML", True)
+    # M3-19 freeze catalog
+    sid19 = new_session(cur)
+    append_user(cur, sid19)
+    snap19 = answers_sql(cur, sid19)
+    cur.execute("""
+        CREATE FUNCTION v13_h2(uuid, jsonb) RETURNS jsonb
+        LANGUAGE sql STABLE AS $$ SELECT '{"via":"h2"}'::jsonb $$;
+    """)
+    cur.execute("GRANT EXECUTE ON FUNCTION v13_h2(uuid, jsonb) TO v13_route")
+    cur.execute("UPDATE tools SET handler='v13_h2' WHERE name='session_stats'")
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid19, json.dumps(snap19)))
+    check("M3-19: H2 after E -> stale", cur.fetchone()[0] == "stale")
+    snap19b = answers_sql(cur, sid19)
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid19, json.dumps(snap19b)))
+    check("M3-19: E' executes H2", cur.fetchone()[0] == "progressed")
+    cur.execute("SELECT result->>'via' FROM effects "
+                "WHERE session_id=%s AND kind='tool' "
+                "ORDER BY created_at DESC LIMIT 1", (sid19,))
+    check("M3-19: H2 result", cur.fetchone()[0] == "h2")
+    cur.execute("UPDATE tools SET handler='v13_tool_session_stats' "
+                "WHERE name='session_stats'")
+
+    sid19t = new_session(cur)
+    append_user(cur, sid19t)
+    snap19t = answers_sql(cur, sid19t)
+    conn.commit()
+    cur.execute("""
+        CREATE OR REPLACE FUNCTION v13_fx_pause() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(879022);
+          RETURN NEW;
+        END $$;
+    """)
+    cur.execute("DROP TRIGGER IF EXISTS trg_fx_pause ON effects")
+    cur.execute("CREATE TRIGGER trg_fx_pause BEFORE INSERT ON effects "
+                "FOR EACH ROW EXECUTE FUNCTION v13_fx_pause()")
+    conn.commit()
+    hold19 = psycopg2.connect(server.get_uri(DB))
+    hk19 = hold19.cursor()
+    hk19.execute("SELECT pg_advisory_xact_lock(879022)")
+    box19 = {}
+
+    def run_adv19():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        box19["pid"] = k.fetchone()[0]
+        try:
+            k.execute("SELECT v13_advance(%s, %s::jsonb)",
+                      (sid19t, json.dumps(snap19t)))
+            box19["r"] = k.fetchone()[0]
+            c.commit()
+        except Exception as exc:
+            box19["e"] = str(exc)
+        c.close()
+
+    t19 = threading.Thread(target=run_adv19)
+    t19.start()
+    check("M3-19: advance blocked in effects INSERT",
+          wait_until_lock(cur, box19, "pid"))
+    cur.execute("UPDATE tools SET handler='v13_h2' WHERE name='session_stats'")
+    conn.commit()
+    hold19.rollback()
+    hold19.close()
+    t19.join(10)
+    check("M3-19: in-flight still H1 not stale",
+          box19.get("r") == "progressed", box19)
+    cur.execute("SELECT result->>'via' FROM effects "
+                "WHERE session_id=%s AND kind='tool'", (sid19t,))
+    row19 = cur.fetchone()
+    check("M3-19: in-flight result is H1",
+          row19 is None or row19[0] != "h2", row19)
+    cur.execute("UPDATE tools SET handler='v13_tool_session_stats' "
+                "WHERE name='session_stats'")
+    cur.execute("DROP TRIGGER IF EXISTS trg_fx_pause ON effects")
+    cur.execute("DROP FUNCTION IF EXISTS v13_fx_pause()")
+    cur.execute("DROP FUNCTION IF EXISTS v13_h2(uuid, jsonb)")
+
+    # M3-20 human=2 full chain
+    sid20 = new_session(cur)
+    seq20 = append_user(cur, sid20)
+    for _ in range(2):
+        cur.execute("SELECT v13_append_event(%s, %s, 'resolve/failed', %s::jsonb)",
+                    (sid20, u(), json.dumps({"origin_user_seq": seq20})))
+    poison(cur)
+    snap20 = parse(cur, sid20)
+    check("M3-20: parse1 abandon", snap20["abandon"] is True)
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid20, json.dumps(snap20)))
+    check("M3-20: advance1 waiting", cur.fetchone()[0] == "waiting")
+    cur.execute("SELECT effect_id FROM effects WHERE session_id=%s AND kind='human'",
+                (sid20,))
+    h20 = cur.fetchone()[0]
+    ck = claim_pinned(cur, h20)
+    cur.execute("SELECT v13_complete(%s, %s, %s, 'failed', NULL)",
+                (h20, ck["attempt_no"], ck["fence"]))
+    cur.fetchone()
+    poison(cur)
+    snap20 = parse(cur, sid20)
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid20, json.dumps(snap20)))
+    check("M3-20: cap-in rehang waiting", cur.fetchone()[0] == "waiting")
+    cur.execute("SELECT status, fence, attempt_no FROM effects WHERE effect_id=%s",
+                (h20,))
+    st20, fn20, at20 = cur.fetchone()
+    check("M3-20: rehang ready attempt 1",
+          st20 == "ready" and at20 == 1, (st20, fn20, at20))
+    ck = claim_pinned(cur, h20)
+    cur.execute("SELECT v13_complete(%s, %s, %s, 'failed', NULL)",
+                (h20, ck["attempt_no"], ck["fence"]))
+    cur.fetchone()
+    poison(cur)
+    snap20 = parse(cur, sid20)
+    cur.execute("SELECT count(*) FROM pgmq.q_v13_work")
+    q20 = cur.fetchone()[0]
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid20, json.dumps(snap20)))
+    check("M3-20: cap terminal", cur.fetchone()[0] == "terminal")
+    cur.execute("SELECT status FROM sessions WHERE session_id=%s", (sid20,))
+    check("M3-20: session failed", cur.fetchone()[0] == "failed")
+    cur.execute("SELECT payload->>'attempts_exhausted' FROM events "
+                "WHERE session_id=%s AND type='turn/end'", (sid20,))
+    check("M3-20: attempts_exhausted", cur.fetchone()[0] == "true")
+    cur.execute("SELECT count(*) FILTER (WHERE type='effect_done'), "
+                "count(*) FILTER (WHERE type='resolve/failed'), "
+                "count(*) FILTER (WHERE type='turn/end') "
+                "FROM events WHERE session_id=%s", (sid20,))
+    ed20, rf20, te20 = cur.fetchone()
+    check("M3-20: event ledger",
+          ed20 == 2 and rf20 == 2 and te20 == 1, (ed20, rf20, te20))
+    cur.execute("SELECT count(*) FROM pgmq.q_v13_work")
+    check("M3-20: zero wake after refuse", cur.fetchone()[0] == q20)
+
+    # M3-22 step-0 probe O(index)
+    sid22 = new_session(cur)
+    append_user(cur, sid22)
+    cur.execute(
+        "INSERT INTO events (session_id, seq, event_id, type, turn_no, "
+        "payload, payload_hash) "
+        "SELECT %s, gs, gen_random_uuid(), 'tool/result', 1, "
+        "jsonb_build_object('n', gs), encode(digest(gs::text, 'sha256'), 'hex') "
+        "FROM generate_series(1, 100000) gs",
+        (sid22,))
+    cur.execute("UPDATE sessions SET next_seq = 100001 WHERE session_id=%s",
+                (sid22,))
+    for i in range(20):
+        cur.execute(
+            "INSERT INTO tools (name, description, kind, handler) "
+            "VALUES (%s, 'Fixture tool.', 'sql', 'v13_tool_session_stats')",
+            (f"m22_{i}",))
+    snap22 = answers_sql(cur, sid22)
+    t_snap = time.time()
+    cur.execute("SELECT v13_snapshot(%s)", (sid22,))
+    cur.fetchone()
+    dt_snap = time.time() - t_snap
+    t_adv = time.time()
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid22, json.dumps(snap22)))
+    r22 = cur.fetchone()[0]
+    dt_adv = time.time() - t_adv
+    check("M3-22: sql advance progressed", r22 == "progressed", r22)
+    check("M3-22: advance <500ms", dt_adv < 0.5, dt_adv)
+    print(f"[NOTE] M3-22 snapshot {dt_snap:.3f}s vs advance {dt_adv:.3f}s")
+    check("M3-22: probe vs snapshot magnitude", dt_adv < dt_snap or dt_adv < 0.5,
+          (dt_adv, dt_snap))
+    for i in range(20):
+        cur.execute("DELETE FROM tools WHERE name=%s", (f"m22_{i}",))
 
     conn.commit()
     conn.close()

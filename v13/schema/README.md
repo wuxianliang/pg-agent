@@ -29,3 +29,8 @@ Gate: `uv run python v13/schema/test_schema.py`（退出码 0 = 通过）
 6. 驱动侧时间护栏：调用 advance 前设 `lock_timeout` / `statement_timeout`
    （建议起点 250ms / 5s）。sql 快路 handler 阻塞的执法点在调用层。
    `effect_attempt_cap` 翻新：新版本必含全五键，降 cap 需清场。
+
+## 台账
+
+- **`GRANT SELECT ON effects TO v13_route`**：INVOKER 读行所需的矩阵补正
+  （Oracle ACCEPT）。enqueue/claim/complete 以 INVOKER 读 `effects` 行。
