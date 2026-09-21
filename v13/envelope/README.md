@@ -43,3 +43,15 @@ Gate: `uv run python v13/envelope/test_envelope.py`（退出码 0 = 通过）
   G-ctx1-5(b) 对 `v13/**/*.sql` 扫 `set_config` 子串（`test_twophase.py`），
   禁改 dp1 测试。`SET LOCAL` 与 `set_config(..., true)` 同为事务局部，
   语义等价。
+- **`tools.kind` 限定**：needed 查询 `tools.kind IN ('sql','tool')`，因
+  `RETURNS TABLE(..., kind text, ...)` 使裸 `kind` 指 OUT 参数。无此限定会
+  `42702`。查询集合与 DP1 resolve 旧体一致，零行为分叉。
+- **`timeout_ms` 空串 `NULLIF`**：信封与 calls 落行把 GUC 空串规范成 SQL
+  NULL。空串 `::int` 会 `22P02`；NULL = 未声明，与 A9 / 可空列一致。
+- **β/γ' 用 `q->'criteria'`**：第三参是 jsonb；`->>` 产 text 再往返。与 C4
+  「实参回读自 payload」同向。
+- **`judgment_calls` GRANT 仅 INSERT**：`v13_resolve_judgments` 的
+  `INSERT … RETURNING call_id` 需要列 SELECT。E1 有缺口路径在 gate 内
+  `GRANT SELECT ON judgment_calls TO v13_resolve` 后走函数落行。SQL 文件
+  未改（本轮只收测试保真）；后续可把 catalog 授权改成与 cache 同形的
+  `SELECT, INSERT`。

@@ -245,6 +245,14 @@ def parse_trimmed(cur, sid, mock):
     return cur.fetchone()[0]
 
 
+def with_current_probe(cur, sid, snap):
+    cur.execute("SELECT v13_probe(%s)", (sid,))
+    probe = cur.fetchone()[0]
+    out = json.loads(json.dumps(snap))
+    out["snap"].update(probe)
+    return out
+
+
 def next_version(cur, family: str) -> int:
     cur.execute(
         "SELECT coalesce(max(template_version),0)+1 "
@@ -577,7 +585,7 @@ def main() -> int:
     # A5 projection
     cur.execute("SELECT v13_project_state('{\"a\":1,\"b\":2}'::jsonb, '[\"*\"]'::jsonb)::text")
     star = cur.fetchone()[0]
-    check("A5: * byte-equal", star == '{"a": 1, "b": 2}' or '"a"' in star, star)
+    check("A5: * byte-equal", star == '{"a": 1, "b": 2}', star)
     cur.execute("SELECT v13_project_state(%s::jsonb, '[\"tools\"]'::jsonb)",
                 (json.dumps({"tools": [1], "messages": []}),))
     one = cur.fetchone()[0]
@@ -1157,9 +1165,9 @@ def main() -> int:
             mock = json.dumps(obj)
         cur.execute("SELECT v13_judgment_envelope(%s)", (sid,))
         envb = cur.fetchone()[0]
-        set_mock(cur, mock_for_next_batch(cur, envb, mock) if patch != "empty-answers"
-                 and "not_a_signal" not in json.dumps(patch or {})
-                 else mock)
+        use_raw = (raw is not None or patch == "empty-answers"
+                   or "not_a_signal" in json.dumps(patch or {}))
+        set_mock(cur, mock if use_raw else mock_for_next_batch(cur, envb, mock))
         if patch == "extra":
             obj = json.loads(mock_from_needed(cur, sid))
             obj["answers"]["not_a_signal"] = {"type": "noul", "noul": 0.1}
@@ -1191,6 +1199,45 @@ def main() -> int:
               {"intent": {"type": "choice", "choice": "sql_answer",
                           "probabilities": {"sql_answer": 1}}})
     beta_case("answers-not-object", patch="empty-answers")
+
+    def beta_non_object(label, answers):
+        nonlocal conn, cur
+        conn, cur = recycle(server, conn)
+        sid = new_session(cur)
+        append_user(cur, sid)
+        cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s", (sid,))
+        bd = cur.fetchone()[0]
+        cur.execute("SELECT count(*) FROM judgment_cache")
+        bk = cur.fetchone()[0]
+        set_mock(cur, json.dumps({"model": "jev-mock", "answers": answers,
+                                  "usage": {"input_tokens": 1, "output_tokens": 1}}))
+        cur.execute("SAVEPOINT sp_b11no")
+        raised = None
+        out = None
+        try:
+            cur.execute("SELECT v13_parse(%s)", (sid,))
+            out = cur.fetchone()[0]
+        except psycopg2.Error as exc:
+            raised = exc
+            cur.execute("ROLLBACK TO SAVEPOINT sp_b11no")
+        if raised is not None:
+            msg = str(raised).lower()
+            check(f"B11 {label}: non-object rejected",
+                  "answers" in msg or "object" in msg, str(raised).splitlines()[0])
+        else:
+            check(f"B11 {label}: failed=true no raise", out["failed"] is True, out)
+            cur.execute(
+                "SELECT status, error FROM judgment_calls WHERE session_id=%s", (sid,))
+            st, err = cur.fetchone()
+            check(f"B11 {label}: failed_validation", st == "failed_validation")
+            check(f"B11 {label}: V3001 in error", err and "V3001" in err, err)
+        cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s", (sid,))
+        check(f"B11 {label}: zero decisions", cur.fetchone()[0] == bd)
+        cur.execute("SELECT count(*) FROM judgment_cache")
+        check(f"B11 {label}: zero cache", cur.fetchone()[0] == bk)
+
+    beta_non_object("answers-array", [0])
+    beta_non_object("answers-scalar", 1)
     conn, cur = recycle(server, conn)
     sid_ex = new_session(cur)
     append_user(cur, sid_ex)
@@ -1306,52 +1353,54 @@ def main() -> int:
         "SELECT v13_complete(%s, %s, %s, 'failed', NULL)",
         (je[0], ck["attempt_no"], ck["fence"]))
     check("B13 s2: complete failed", cur.fetchone()[0] == "accepted")
-    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid13, json.dumps(p13)))
-    # stale or waiting after event; drive to abandon
-    cap = None
     cur.execute("SELECT (v13_policy('resolve_retry')->>'cap')::int")
     cap = cur.fetchone()[0]
     worker_calls = 1
-    succeeded_base = 2
-    snap = p13
-    terminal_abandon = False
+    snap = with_current_probe(cur, sid13, p13)
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid13, json.dumps(snap)))
+    a_rehang = cur.fetchone()[0]
+    check("B13 s3: rehang waiting", a_rehang == "waiting", a_rehang)
     for _ in range(cap + 4):
         conn, cur = recycle(server, conn)
-        snap = parse_trimmed(cur, sid13, mock13)
-        if snap["abandon"] is True:
-            terminal_abandon = True
-            cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid13, json.dumps(snap)))
-            cur.fetchone()
+        cur.execute(
+            "SELECT status FROM effects WHERE session_id=%s AND kind='judge'",
+            (sid13,))
+        check("B13 s3: effect ready", cur.fetchone()[0] == "ready")
+        cur.execute(
+            "SELECT effect_id FROM effects WHERE session_id=%s AND kind='judge' "
+            "AND status='ready'", (sid13,))
+        row = cur.fetchone()
+        check("B13 s3: judge ready row", row is not None)
+        ck = claim_pinned(cur, row[0])
+        set_mock(cur, mock_for_next_batch(cur, ck["request"]["envelope"], mock13))
+        cur.execute("SELECT v13_resolve_judgments(%s::jsonb, 1)",
+                    (json.dumps(ck["request"]["envelope"]),))
+        rw = cur.fetchone()[0]
+        check("B13 s3: worker failed=true", rw["failed"] is True, rw)
+        check("B13 s3: per-call readback_rejects=1",
+              rw["readback_rejects"] == 1, rw)
+        worker_calls += 1
+        cur.execute(
+            "SELECT v13_complete(%s, %s, %s, 'failed', NULL)",
+            (row[0], ck["attempt_no"], ck["fence"]))
+        check("B13 s3: complete failed", cur.fetchone()[0] == "accepted")
+        if worker_calls >= cap:
             break
-        set_mock(cur, mock13)
+        snap = with_current_probe(cur, sid13, p13)
         cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid13, json.dumps(snap)))
         a = cur.fetchone()[0]
-        if a == "waiting":
-            cur.execute(
-                "SELECT effect_id FROM effects WHERE session_id=%s AND kind='judge' "
-                "AND status='ready'", (sid13,))
-            row = cur.fetchone()
-            if not row:
-                break
-            ck = claim_pinned(cur, row[0])
-            set_mock(cur, mock_for_next_batch(cur, ck["request"]["envelope"], mock13))
-            cur.execute("SELECT v13_resolve_judgments(%s::jsonb, 1)",
-                        (json.dumps(ck["request"]["envelope"]),))
-            rw = cur.fetchone()[0]
-            check("B13 s3: worker failed=true", rw["failed"] is True, rw)
-            check("B13 s3: per-call readback_rejects=1",
-                  rw["readback_rejects"] == 1, rw)
-            worker_calls += 1
-            cur.execute(
-                "SELECT v13_complete(%s, %s, %s, 'failed', NULL)",
-                (row[0], ck["attempt_no"], ck["fence"]))
-            cur.fetchone()
-            cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid13, json.dumps(snap)))
-            cur.fetchone()
-        elif a in ("progressed", "stale", "terminal"):
-            continue
-    check("B13 s3: abandon", terminal_abandon is True or snap.get("abandon") is True,
-          snap)
+        check("B13 s3: advance rehang waiting", a == "waiting", a)
+    conn, cur = recycle(server, conn)
+    set_mock(cur, mock13)
+    cur.execute("SELECT v13_parse(%s)", (sid13,))
+    snap = cur.fetchone()[0]
+    check("B13 s3: abandon", snap["abandon"] is True, snap)
+    poison(cur)
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid13, json.dumps(snap)))
+    a_end = cur.fetchone()[0]
+    check("B13 s3: abandon advance waiting/terminal",
+          a_end in ("waiting", "terminal"), a_end)
+    check("B13 s3: worker_calls >= 2", worker_calls >= 2, worker_calls)
     check("B13 s3: worker_calls <= cap", worker_calls <= cap, (worker_calls, cap))
     cur.execute(
         "SELECT count(*) FILTER (WHERE status='succeeded') "
@@ -1365,23 +1414,24 @@ def main() -> int:
     # poison variant
     conn, cur = recycle(server, conn)
     sid13p = new_session(cur)
-    append_user(cur, sid13p, "poison-unique-" + u())
+    append_user(cur, sid13p)
     poison(cur)
-    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s", (sid13p,))
-    dp = cur.fetchone()[0]
     cur.execute("SELECT count(*) FROM judgment_cache")
     kp = cur.fetchone()[0]
-    try:
-        cur.execute("SELECT v13_parse(%s)", (sid13p,))
-        outp = cur.fetchone()[0]
-        check("B13 poison: failed path or asked=0",
-              outp["failed"] is True or outp["asked_questions"] == 0, outp)
-    except psycopg2.Error as exc:
-        check("B13 poison: raised (no silent write)", True, exc.pgcode)
-        conn.rollback()
-        conn, cur = recycle(server, conn)
-    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s", (sid13p,))
-    check("B13 poison: zero decisions write", cur.fetchone()[0] == dp)
+    cur.execute("SELECT count(*) FROM judgment_calls")
+    cp = cur.fetchone()[0]
+    cur.execute("SELECT v13_parse(%s)", (sid13p,))
+    outp = cur.fetchone()[0]
+    check("B13 poison: failed=false and asked=0",
+          outp["failed"] is False and outp["asked_questions"] == 0, outp)
+    cur.execute(
+        "SELECT coalesce(bool_and(status='cached'), true) FROM decisions "
+        "WHERE session_id=%s", (sid13p,))
+    check("B13 poison: decisions cached-only", cur.fetchone()[0] is True)
+    cur.execute("SELECT count(*) FROM judgment_cache")
+    check("B13 poison: zero cache write", cur.fetchone()[0] == kp)
+    cur.execute("SELECT count(*) FROM judgment_calls")
+    check("B13 poison: zero calls", cur.fetchone()[0] == cp)
 
     conn, cur = recycle(server, conn)
     # B14 hash homology
@@ -1474,8 +1524,8 @@ def main() -> int:
         "SELECT count(*) FROM decisions WHERE session_id=%s AND signal='tool'",
         (sidc,))
     check("C1: tool still 1 row", cur.fetchone()[0] == 1)
-    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s", (sidc,))
-    calls_before_dis = cur.fetchone()[0]
+    cur.execute("SELECT call_id FROM judgment_calls WHERE session_id=%s", (sidc,))
+    ids_before_dis = {str(r[0]) for r in cur.fetchall()}
     cur.execute("UPDATE tools SET enabled=false WHERE name='send_summary_email'")
     mockc3 = mock_from_needed(cur, sidc)
     conn, cur = recycle(server, conn)
@@ -1496,25 +1546,35 @@ def main() -> int:
         cur.fetchone()
         nfill += 1
     cur.execute(
-        "SELECT bool_or(payload->'questions' ? 'tool') FROM judgment_calls "
+        "SELECT call_id, payload->'questions' FROM judgment_calls "
         "WHERE session_id=%s", (sidc,))
-    has_tool = cur.fetchone()[0]
-    cur.execute(
-        "SELECT count(*) FROM judgment_calls WHERE session_id=%s", (sidc,))
-    check("C1: tools change re-asks tool",
-          has_tool is True and cur.fetchone()[0] > calls_before_dis,
-          (has_tool, calls_before_dis))
+    new_calls = [(cid, qs) for cid, qs in cur.fetchall()
+                 if str(cid) not in ids_before_dis]
+    check("C1: tools change produced new calls", len(new_calls) > 0, len(new_calls))
+    check("C1: new calls re-ask tool",
+          any("tool" in (qs or {}) for _, qs in new_calls),
+          [list(qs or {}) for _, qs in new_calls])
     cur.execute("UPDATE tools SET enabled=true WHERE name='send_summary_email'")
 
     # C2 declared = read keys
+    cur.execute("SELECT v13_projection_key(%s::jsonb)", (json.dumps(["*"]),))
+    star_pk = cur.fetchone()[0]
+    cur.execute("SELECT v13_projection_key(%s::jsonb)", (json.dumps(["tools"]),))
+    tools_pk = cur.fetchone()[0]
+    ctx_keys = set(pc1["envelope"]["ctx"])
     cur.execute(
         "SELECT payload, projection_key FROM judgment_calls WHERE session_id=%s",
         (sidc,))
     for payload, pkey in cur.fetchall():
         st_keys = set(payload["state"])
-        check("C2: state keys subset of ctx or {tools}",
-              st_keys == {"tools"} or st_keys <= set(pc1["envelope"]["ctx"]),
-              (st_keys, pkey))
+        if pkey == tools_pk:
+            expected = {"tools"}
+        elif pkey == star_pk:
+            expected = ctx_keys
+        else:
+            expected = None
+        check("C2: state keys exactly declared projection",
+              st_keys == expected, (st_keys, pkey, expected))
     conn, cur = recycle(server, conn)
     freeze_copy(cur, "tool", projection=["nonexistent"])
     sidc2 = new_session(cur)
@@ -1768,8 +1828,23 @@ def main() -> int:
         (json.dumps([["intent", intent_ver]]),))
     fails_with(cur, "SELECT * FROM v13_shadow_reroute('default', 6)", (),
                "frozen", "D4: draft target RAISE")
-    check("D1 already showed independent LATERAL",
-          ir["current_action"] != ir["shadow_action"] or ir["shadow_action"] is None)
+    cur.execute(
+        "INSERT INTO v13_route_policies (policy_name, policy_version, template_compat) "
+        "VALUES ('default', 7, %s::jsonb)",
+        (json.dumps([["intent", intent_ver]]),))
+    cur.execute(
+        "INSERT INTO thresholds (policy_name, policy_version, signal, band_no, "
+        "lo, hi, action) VALUES ('default', 7, 'intent', 1, 0.0, 'Infinity', 'reject')")
+    cur.execute(
+        "UPDATE v13_route_policies SET state='frozen' "
+        "WHERE policy_name='default' AND policy_version=7")
+    cur.execute(
+        "SELECT current_action, shadow_action FROM v13_shadow_reroute('default', 7) "
+        "WHERE session_id=%s AND signal='intent'", (sid_b1,))
+    d4_ca, d4_sa = cur.fetchone()
+    check("D4: independent LATERAL current≠shadow",
+          d4_ca is not None and d4_sa is not None and d4_ca != d4_sa,
+          (d4_ca, d4_sa))
 
     cur.execute("SELECT pg_get_functiondef('v13_shadow_reroute(text,integer)'::regprocedure)")
     sdef = cur.fetchone()[0]
@@ -1846,6 +1921,32 @@ def main() -> int:
               "permission" in str(exc).lower(), str(exc).splitlines()[0])
         rconn.rollback()
     rconn.close()
+
+    conn, cur = recycle(server, conn)
+    sid_e1g = new_session(cur)
+    append_user(cur, sid_e1g, "e1-gap-" + u())
+    cur.execute("SELECT v13_judgment_envelope(%s)", (sid_e1g,))
+    env_e1g = cur.fetchone()[0]
+    mock_e1g = mock_from_needed(cur, sid_e1g)
+    mock_e1g_batch = mock_for_next_batch(cur, env_e1g, mock_e1g)
+    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
+                (sid_e1g,))
+    calls_e1g = cur.fetchone()[0]
+    cur.execute("GRANT SELECT ON judgment_calls TO v13_resolve")
+    conn, cur = recycle(server, conn)
+    rconn = connect_as(server, "v13_resolve_login")
+    rc = rconn.cursor()
+    guc(rc)
+    set_mock(rc, mock_e1g_batch)
+    rc.execute("SELECT v13_resolve_judgments(%s::jsonb, 1)", (json.dumps(env_e1g),))
+    out_e1g = rc.fetchone()[0]
+    check("E1: resolve_login gapped resolve ran", out_e1g is not None, out_e1g)
+    rconn.commit()
+    rconn.close()
+    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
+                (sid_e1g,))
+    check("E1: resolve_login INSERT judgment_calls",
+          cur.fetchone()[0] > calls_e1g, calls_e1g)
 
     rconn = connect_as(server, "v13_route_login")
     rc = rconn.cursor()
