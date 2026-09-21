@@ -30,7 +30,12 @@ OPENROUTER_MODEL = "typesafe/jev-1.13"
 
 
 class JevError(RuntimeError):
-    pass
+    """transient=True marks retryable transport failures (network, 429/529,
+    5xx); the queue worker uses it to decide redelivery vs terminal fail."""
+
+    def __init__(self, msg: str, transient: bool = False):
+        super().__init__(msg)
+        self.transient = transient
 
 
 class _Backend:
@@ -50,14 +55,16 @@ class _Backend:
                 if retryable and attempt < self.retries:
                     time.sleep(0.5 * (2 ** attempt))
                     continue
-                raise JevError(f"{self.name}: HTTP {exc.code}: {detail}") from exc
+                raise JevError(f"{self.name}: HTTP {exc.code}: {detail}",
+                               transient=retryable) from exc
             except urllib.error.URLError as exc:
                 last_exc = exc
                 if attempt < self.retries:
                     time.sleep(0.5 * (2 ** attempt))
                     continue
-                raise JevError(f"{self.name}: {exc}") from exc
-        raise JevError(f"{self.name}: exhausted retries") from last_exc
+                raise JevError(f"{self.name}: {exc}", transient=True) from exc
+        raise JevError(f"{self.name}: exhausted retries",
+                               transient=True) from last_exc
 
     def ask(self, state, questions: dict) -> dict:
         if not self.api_key:
