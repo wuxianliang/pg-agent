@@ -1064,13 +1064,13 @@ BEGIN
   BEGIN
     FOR r IN
       SELECT n.nspname AS sch, p.proname AS fn,
-             pg_get_function_identity_arguments(p.oid) AS args
+             oidvectortypes(p.proargtypes) AS args
         FROM pg_event_trigger_ddl_commands() c
         JOIN pg_proc p ON p.oid = c.objid
         JOIN pg_namespace n ON n.oid = p.pronamespace
        WHERE c.command_tag IN ('CREATE FUNCTION','CREATE ROUTINE','ALTER FUNCTION','ALTER ROUTINE')
     LOOP
-      IF r.args = 'uuid, jsonb'   -- 契约签名精确(handler 集唯一合法形态)
+      IF r.args = 'uuid, jsonb'   -- 契约签名精确(oidvectortypes; named params ok)
          AND EXISTS (SELECT 1 FROM tools t
                       WHERE t.kind = 'sql'
                         AND t.handler IN (r.fn, r.sch || '.' || r.fn)) THEN
