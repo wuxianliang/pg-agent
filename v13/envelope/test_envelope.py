@@ -1932,7 +1932,6 @@ def main() -> int:
     cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
                 (sid_e1g,))
     calls_e1g = cur.fetchone()[0]
-    cur.execute("GRANT SELECT ON judgment_calls TO v13_resolve")
     conn, cur = recycle(server, conn)
     rconn = connect_as(server, "v13_resolve_login")
     rc = rconn.cursor()

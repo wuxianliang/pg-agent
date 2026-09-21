@@ -990,7 +990,7 @@ GRANT SELECT ON judgment_templates, v13_judgment_template_versions,
   TO v13_recall, v13_resolve, v13_route;
 GRANT SELECT, INSERT ON judgment_cache TO v13_resolve;
 GRANT SELECT ON judgment_cache TO v13_recall;
-GRANT INSERT ON judgment_calls TO v13_resolve;
+GRANT SELECT, INSERT ON judgment_calls TO v13_resolve;
 GRANT SELECT ON judgment_calls TO v13_recall;
 GRANT SELECT ON v13_route_policies TO v13_recall;
 
