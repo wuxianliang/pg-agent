@@ -579,8 +579,17 @@ def main() -> int:
     sid8b = new_session(cur)
     seq_a8 = append_user(cur, sid8b, "A")
     append_user(cur, sid8b, "B")
-    cur.execute("SELECT v13_append_event(%s, %s, 'resolve/failed', %s::jsonb)",
-                (sid8b, u(), json.dumps({"origin_user_seq": seq_a8})))
+    for _ in range(2):
+        cur.execute("SELECT v13_append_event(%s, %s, 'resolve/failed', %s::jsonb)",
+                    (sid8b, u(), json.dumps({"origin_user_seq": seq_a8})))
+    cur.execute("SELECT count(*) FROM events "
+                "WHERE session_id=%s AND type='resolve/failed'", (sid8b,))
+    check("K8: planted >=cap old-anchor resolve/failed", cur.fetchone()[0] >= 2)
+    cur.execute("SELECT count(*) FROM events "
+                "WHERE session_id=%s AND type='resolve/failed' "
+                "AND (payload->>'origin_user_seq')::bigint = v13_last_user_seq(%s)",
+                (sid8b, sid8b))
+    check("K8: current-turn resolve/failed filtered count=0", cur.fetchone()[0] == 0)
     set_mock(cur, sql_mock(cur, sid8b))
     cur.execute("SELECT v13_parse(%s)", (sid8b,))
     p8b = cur.fetchone()[0]

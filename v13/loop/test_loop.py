@@ -763,10 +763,12 @@ def main() -> int:
     q14 = cur.fetchone()[0]
     cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid14, json.dumps(snap14)))
     check("M3-14: succeeded human -> terminal", cur.fetchone()[0] == "terminal")
-    cur.execute("SELECT type, payload FROM events WHERE session_id=%s AND type='turn/end'",
-                (sid14,))
+    cur.execute("SELECT type, payload->>'delivered', payload->>'reason' "
+                "FROM events WHERE session_id=%s AND type='turn/end'", (sid14,))
     te = cur.fetchone()
     check("M3-14: turn/end", te and te[0] == "turn/end", te)
+    check("M3-14: turn/end delivered=false", te and te[1] == "false", te)
+    check("M3-14: turn/end reason=resolve_budget", te and te[2] == "resolve_budget", te)
     cur.execute("SELECT status FROM sessions WHERE session_id=%s", (sid14,))
     check("M3-14: session failed", cur.fetchone()[0] == "failed")
     cur.execute("SELECT count(*) FROM pgmq.q_v13_work")

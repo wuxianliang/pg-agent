@@ -21,3 +21,4 @@ Gate: `uv run python v13/loop/test_loop.py`（退出码 0 = 通过）
 - **`GRANT SELECT ON effects TO v13_route`**：INVOKER 读行所需的矩阵补正
   （Oracle ACCEPT；定义在 `v13_core.sql`）。
 - **#45(b) 回退已激活**：见 `v13/resolve/README.md`。
+- **P4d（tool_unavailable）** 是单快照信封下的防御性背板；M3-10 的信封内 `enabled=false` 变异是唯一合法构造，plan 原「活表 disable」措辞按 #38 后语义作废。
