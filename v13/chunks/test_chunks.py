@@ -67,15 +67,31 @@ def fails_with(cur, sql, params, needle, label, pgcode=None):
     try:
         cur.execute(sql, params)
     except psycopg2.Error as exc:
-        if pgcode:
-            ok = exc.pgcode == pgcode
-        else:
-            ok = needle.lower() in str(exc).lower()
-        check(label, ok, str(exc).splitlines()[0])
+        msg_ok = needle.lower() in str(exc).lower() if needle else True
+        code_ok = exc.pgcode == pgcode if pgcode else True
+        check(label, msg_ok and code_ok,
+              f"pgcode={exc.pgcode} {str(exc).splitlines()[0]}")
         cur.execute("ROLLBACK TO SAVEPOINT sp")
         return exc
     cur.execute("ROLLBACK TO SAVEPOINT sp")
-    raise AssertionError(f"{label}: expected failure containing {needle!r}")
+    raise AssertionError(
+        f"{label}: expected failure containing {needle!r} pgcode={pgcode!r}")
+
+
+_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
+
+
+def strip_sql_comments(src: str) -> str:
+    return _SQL_LINE_COMMENT.sub(" ", _SQL_BLOCK_COMMENT.sub(" ", src))
+
+
+def with_current_probe(cur, sid, snap):
+    cur.execute("SELECT v13_probe(%s)", (sid,))
+    probe = cur.fetchone()[0]
+    out = json.loads(json.dumps(snap))
+    out["snap"].update(probe)
+    return out
 
 
 def connect_as(server, user):
@@ -283,6 +299,29 @@ def wait_box_lock(watch, box, key="pid", timeout=8.0) -> bool:
     return False
 
 
+def wait_ungranted_advisory(watch, pid, timeout=8.0) -> bool:
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        watch.execute(
+            "SELECT bool_or(NOT granted) FROM pg_locks "
+            "WHERE locktype='advisory' AND pid=%s", (pid,))
+        row = watch.fetchone()
+        if row and row[0] is True:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def wait_box_advisory(watch, box, key="pid", timeout=8.0) -> bool:
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        pid = box.get(key)
+        if pid and wait_ungranted_advisory(watch, pid, timeout=0.12):
+            return True
+        time.sleep(0.02)
+    return False
+
+
 def succeed_tool(cur, sid=None):
     sid = sid or new_session(cur)
     append_user(cur, sid, "ingest-op")
@@ -317,6 +356,223 @@ def land_context(cur, content_hash, eid=None, sid=None):
         "SELECT v13_artifact_land(%s, 'context', %s::jsonb)",
         (eid, json.dumps(inline)))
     return cur.fetchone()[0], eid
+
+
+def run_j1(cur, conn, corpus, tag):
+    body = para_doc(10, 40, f"{tag}-quasar")
+    out, _, _ = ingest_doc(cur, body, corpus)
+    conn.commit()
+    src = out["source_hash"]
+    cur.execute(
+        "SELECT content_hash FROM chunks WHERE source_hash=%s "
+        "ORDER BY chunk_no LIMIT 1", (src,))
+    h = cur.fetchone()[0]
+    land_context(cur, h)
+    conn.commit()
+    cur.execute("SELECT v13_rebuild_chunks(%s)", (corpus,))
+    rb = cur.fetchone()[0]
+    cur.execute(
+        "SELECT count(*) FROM chunks WHERE source_hash=%s AND content_hash=%s",
+        (src, h))
+    check(f"{tag}: referenced row survives rebuild", cur.fetchone()[0] >= 1)
+    check(f"{tag}: locked incremented", rb["locked"] >= 1, rb)
+    conn.commit()
+
+
+def run_j2(server, cur, conn, corpus, tag):
+    body = para_doc(8, 30, f"{tag}-quasar")
+    out, eid, _ = ingest_doc(cur, body, corpus)
+    conn.commit()
+    src = out["source_hash"]
+    cur.execute(
+        "SELECT content_hash FROM chunks WHERE source_hash=%s "
+        "ORDER BY chunk_no LIMIT 1", (src,))
+    h = cur.fetchone()[0]
+    box = {}
+
+    def hold_ref():
+        c = psycopg2.connect(server.get_uri(DB))
+        c.autocommit = False
+        k = c.cursor()
+        guc(k)
+        k.execute("SELECT pg_backend_pid()")
+        box["hold_pid"] = k.fetchone()[0]
+        inline = {"query_side": {"candidates": [{"content_hash": h}]}}
+        k.execute("SELECT v13_artifact_land(%s,'context',%s::jsonb)",
+                  (eid, json.dumps(inline)))
+        k.fetchone()
+        box["held"] = True
+        while not box.get("release"):
+            time.sleep(0.02)
+        c.commit()
+        c.close()
+
+    def run_rebuild():
+        c = psycopg2.connect(server.get_uri(DB))
+        c.autocommit = False
+        k = c.cursor()
+        guc(k)
+        k.execute("SELECT pg_backend_pid()")
+        box["pid"] = k.fetchone()[0]
+        try:
+            k.execute("SELECT v13_rebuild_chunks(%s)", (corpus,))
+            box["rb"] = k.fetchone()[0]
+            c.commit()
+            box["ok"] = True
+        except Exception as exc:
+            box["err"] = str(exc)
+            c.rollback()
+        c.close()
+
+    t_hold = threading.Thread(target=hold_ref)
+    t_hold.start()
+    t0 = time.time()
+    while time.time() - t0 < 5 and not box.get("held"):
+        time.sleep(0.02)
+    check(f"{tag}: holder acquired", box.get("held") is True, box)
+    t_rb = threading.Thread(target=run_rebuild)
+    t_rb.start()
+    blocked = wait_box_advisory(cur, box, timeout=6)
+    aux = False
+    pid = box.get("pid")
+    if pid:
+        cur.execute(
+            "SELECT wait_event_type FROM pg_stat_activity WHERE pid=%s", (pid,))
+        row = cur.fetchone()
+        aux = bool(row and row[0] == "Lock")
+    check(f"{tag}: rebuild pid ungranted advisory", blocked,
+          {"box": box, "aux_Lock": aux})
+    box["release"] = True
+    t_hold.join(8)
+    t_rb.join(15)
+    check(f"{tag}: rebuild finished", box.get("ok") is True, box)
+    cur.execute(
+        "SELECT count(*) FROM chunks WHERE source_hash=%s AND content_hash=%s",
+        (src, h))
+    check(f"{tag}: row survived TOCTOU window", cur.fetchone()[0] >= 1)
+    conn.commit()
+
+
+def run_j3(server, cur, conn, corpus, tag, reverse=False):
+    body = para_doc(6, 25, f"{tag}-quasar")
+    out, eid, _ = ingest_doc(cur, body, corpus)
+    conn.commit()
+    src = out["source_hash"]
+    box = {}
+
+    def hold_rebuild():
+        c = psycopg2.connect(server.get_uri(DB))
+        c.autocommit = False
+        k = c.cursor()
+        guc(k)
+        k.execute("SELECT pg_backend_pid()")
+        box["hold_pid"] = k.fetchone()[0]
+        k.execute("SELECT v13_rebuild_chunks(%s)", (corpus,))
+        k.fetchone()
+        box["held"] = True
+        while not box.get("release"):
+            time.sleep(0.02)
+        c.commit()
+        c.close()
+
+    def hold_ingest():
+        c = psycopg2.connect(server.get_uri(DB))
+        c.autocommit = False
+        k = c.cursor()
+        guc(k)
+        k.execute("SELECT pg_backend_pid()")
+        box["hold_pid"] = k.fetchone()[0]
+        try:
+            k.execute("SELECT v13_ingest_document(%s,%s,%s)",
+                      (eid, corpus, body))
+            box["out"] = k.fetchone()[0]
+            box["held"] = True
+            while not box.get("release"):
+                time.sleep(0.02)
+            c.commit()
+        except Exception as exc:
+            box["err"] = str(exc)
+            box["pgcode"] = getattr(exc, "pgcode", None)
+            c.rollback()
+        c.close()
+
+    def run_ingest():
+        c = psycopg2.connect(server.get_uri(DB))
+        c.autocommit = False
+        k = c.cursor()
+        guc(k)
+        k.execute("SELECT pg_backend_pid()")
+        box["pid"] = k.fetchone()[0]
+        try:
+            k.execute("SELECT v13_ingest_document(%s,%s,%s)",
+                      (eid, corpus, body))
+            box["out"] = k.fetchone()[0]
+            c.commit()
+            box["ok"] = True
+        except Exception as exc:
+            box["err"] = str(exc)
+            box["pgcode"] = getattr(exc, "pgcode", None)
+            c.rollback()
+        c.close()
+
+    def run_rebuild():
+        c = psycopg2.connect(server.get_uri(DB))
+        c.autocommit = False
+        k = c.cursor()
+        guc(k)
+        k.execute("SELECT pg_backend_pid()")
+        box["pid"] = k.fetchone()[0]
+        try:
+            k.execute("SELECT v13_rebuild_chunks(%s)", (corpus,))
+            box["rb"] = k.fetchone()[0]
+            c.commit()
+            box["ok"] = True
+        except Exception as exc:
+            box["err"] = str(exc)
+            box["pgcode"] = getattr(exc, "pgcode", None)
+            c.rollback()
+        c.close()
+
+    if reverse:
+        t_h = threading.Thread(target=hold_ingest)
+        t_w = threading.Thread(target=run_rebuild)
+        hold_lbl = f"{tag}: ingest holding"
+        wait_lbl = f"{tag}: rebuild queued behind ingest"
+        done_lbl = f"{tag}: rebuild done no 23505"
+    else:
+        t_h = threading.Thread(target=hold_rebuild)
+        t_w = threading.Thread(target=run_ingest)
+        hold_lbl = f"{tag}: rebuild holding"
+        wait_lbl = f"{tag}: ingest queued behind rebuild"
+        done_lbl = f"{tag}: ingest done no 23505"
+
+    t_h.start()
+    t0 = time.time()
+    while time.time() - t0 < 8 and not box.get("held"):
+        time.sleep(0.02)
+    check(hold_lbl, box.get("held") is True, box)
+    t_w.start()
+    blocked = wait_box_lock(cur, box, timeout=6)
+    check(wait_lbl, blocked, box)
+    box["release"] = True
+    t_h.join(8)
+    t_w.join(15)
+    check(done_lbl,
+          box.get("ok") is True and box.get("pgcode") != "23505", box)
+    cur.execute(
+        "SELECT count(*), count(DISTINCT chunker_version), "
+        "bool_and(content_hash = v13_body_hash(body)) "
+        "FROM chunks WHERE source_hash=%s", (src,))
+    nj, nver, selfc = cur.fetchone()
+    cur.execute("SELECT v13_chunker_slice(%s, %s::jsonb)",
+                (body, json.dumps(PARA_V1)))
+    expect_n = len(cur.fetchone()[0])
+    check(f"{tag}: one generation of slices",
+          nj == expect_n and nver == 1, (nj, nver, expect_n))
+    check(f"{tag}: self-cert", selfc is True)
+    cur.execute("SELECT v13_verify_chunks(false)")
+    check(f"{tag}: verify green", cur.fetchone()[0]["all_ok"] is True)
+    conn.commit()
 
 
 def para_doc(n=20, width=80, tag="quasar"):
@@ -389,7 +645,7 @@ def main() -> int:
                "VALUES (%s, 9999, 'other-body', %s, 0, 'docs', 'para_v1', 'tsv_english_1')",
                (sh, ch),
                "v13_chunks_hash_selfcheck",
-               "A2: bad hash rejected")
+               "A2: bad hash rejected", pgcode="23514")
     cur.execute("SELECT v13_body_hash(%s)", ("no-artifact-body",))
     ghost = cur.fetchone()[0]
     fails_with(cur,
@@ -399,12 +655,12 @@ def main() -> int:
                "'tsv_english_1')",
                (sh, ghost),
                "kind='chunk' artifact",
-               "A2: missing artifact rejected")
+               "A2: missing artifact rejected", pgcode="V3004")
 
     fails_with(cur, "UPDATE chunks SET corpus='x' WHERE source_hash=%s",
-               (sh,), "immutable", "A4: UPDATE rejected")
+               (sh,), "immutable", "A4: UPDATE rejected", pgcode="V3004")
     fails_with(cur, "TRUNCATE chunks", (), "TRUNCATE chunks is forbidden",
-               "A4: TRUNCATE rejected")
+               "A4: TRUNCATE rejected", pgcode="V3004")
 
     bump_policy(cur, "chunks_ingest", WHOLE_V1)
     whole_body = "quasar whole document body"
@@ -497,17 +753,52 @@ def main() -> int:
     check("B5b: gc skips retired source", cur.fetchone()[0] == 0)
     bump_policy(cur, "chunk_gc", {"mode": "dry-run-only"})
     fails_with(cur, "UPDATE v13_sources SET corpus='x' WHERE source_hash=%s",
-               (old_src,), "append-only", "B5b: corpus mutate rejected")
+               (old_src,), "append-only", "B5b: corpus mutate rejected",
+               pgcode="V3004")
     fails_with(cur, "UPDATE v13_sources SET superseded_by=%s WHERE source_hash=%s",
                (u().replace("-", ""), old_src), "append-only",
-               "B5b: superseded_by rewrite rejected")
+               "B5b: superseded_by rewrite rejected", pgcode="V3004")
     fails_with(cur, "DELETE FROM v13_sources WHERE source_hash=%s",
-               (old_src,), "append-only", "B5b: DELETE rejected")
+               (old_src,), "append-only", "B5b: DELETE rejected",
+               pgcode="V3004")
+    conn.commit()
+
+    body_mix = para_doc(24, 200, "mix-quasar")
+    out_mix, _, _ = ingest_doc(cur, body_mix, "mix")
+    old_mix = out_mix["source_hash"]
+    cur.execute(
+        "SELECT content_hash FROM chunks WHERE source_hash=%s ORDER BY chunk_no",
+        (old_mix,))
+    mix_hashes = [r[0] for r in cur.fetchall()]
+    check("B5mix: multiple chunks", len(mix_hashes) >= 2, len(mix_hashes))
+    href, hdead = mix_hashes[0], mix_hashes[1]
+    land_context(cur, href)
+    conn.commit()
+    body_mix2 = para_doc(24, 200, "mix-beta")
+    ingest_doc(cur, body_mix2, "mix", supersedes=old_mix)
+    cur.execute(
+        "SELECT count(*) FROM chunks WHERE source_hash=%s AND content_hash=%s",
+        (old_mix, href))
+    check("B5mix: referenced row lives", cur.fetchone()[0] == 1)
+    cur.execute(
+        "SELECT count(*) FROM chunks WHERE source_hash=%s AND content_hash=%s",
+        (old_mix, hdead))
+    check("B5mix: unreferenced sibling gone", cur.fetchone()[0] == 0)
+    cur.execute("SELECT count(*) FROM chunks WHERE source_hash=%s", (old_mix,))
+    n_left = cur.fetchone()[0]
+    check("B5mix: only referenced remain", n_left >= 1, n_left)
+    bump_policy(cur, "chunks_ingest", {**PARA_V1, "target_bytes": 512})
+    cur.execute("SELECT v13_rebuild_chunks()")
+    cur.fetchone()
+    cur.execute("SELECT count(*) FROM chunks WHERE source_hash=%s", (old_mix,))
+    check("B5mix: rebuild adds no rows to retired", cur.fetchone()[0] == n_left)
+    bump_policy(cur, "chunks_ingest", PARA_V1)
     conn.commit()
 
     fails_with(cur, "SELECT v13_ingest_document(%s,%s,%s)",
                (eid_a, "other-corpus", body_a),
-               "already bound to another corpus", "B6: corpus conflict")
+               "already bound to another corpus", "B6: corpus conflict",
+               pgcode="V3004")
 
     # ----- C -----
     cjk = "前quasar后"
@@ -576,7 +867,7 @@ def main() -> int:
     check("D1: unreferenced false", cur.fetchone()[0] is False)
 
     fails_with(cur, "DELETE FROM chunks WHERE content_hash=%s", (h1,),
-               "referenced", "D2: referenced delete rejected")
+               "referenced", "D2: referenced delete rejected", pgcode="V3004")
     out_del, _, _ = ingest_doc(cur, "quasar disposable-delete", "tmp")
     cur.execute("DELETE FROM chunks WHERE source_hash=%s", (out_del["source_hash"],))
     check("D2: unreferenced delete ok", cur.rowcount > 0)
@@ -646,7 +937,8 @@ def main() -> int:
 
     fails_with(cur, "SELECT v13_ingest_document(%s,%s,%s)",
                (eid_a, "replay", body_da),
-               "retention-locked", "D5: locked rejects different slice")
+               "retention-locked", "D5: locked rejects different slice",
+               pgcode="V3004")
     bump_policy(cur, "chunks_ingest", PARA_V1)
     conn.commit()
 
@@ -699,7 +991,7 @@ def main() -> int:
     check("E4: reference_resolvable red", byn.get("reference_resolvable") is False, byn)
     check("E4: artifact_backref red", byn.get("artifact_backref") is False, byn)
     fails_with(cur, "SELECT v13_verify_chunks(true)", (),
-               "verify_chunks failed", "E4: p_raise V3004")
+               "verify_chunks failed", "E4: p_raise V3004", pgcode="V3004")
     cur.execute("ROLLBACK TO SAVEPOINT e4")
     conn.commit()
 
@@ -789,15 +1081,20 @@ def main() -> int:
     cur.execute("UPDATE v13_policies SET active=false WHERE name='assemble_manifest' AND active")
     fails_with(cur, "SELECT v13_context_required(%s)", (sid_g,),
                "no active assemble_manifest policy (seed lost?)",
-               "G4: assemble RAISE retained")
+               "G4: assemble RAISE retained", pgcode="P0001")
     bump_policy(cur, "assemble_manifest", seed_asm())
     fails_with(cur, "DELETE FROM v13_chunks_meta WHERE singleton", (),
-               "cannot be deleted", "G4: meta DELETE rejected")
+               "cannot be deleted", "G4: meta DELETE rejected", pgcode="V3004")
     fails_with(cur, "UPDATE v13_chunks_meta SET generation = generation - 1 WHERE singleton",
-               (), "monotonic", "G4: generation lower rejected")
+               (), "monotonic", "G4: generation lower rejected", pgcode="V3004")
     conn.commit()
 
-    src_sql = (V13 / "chunks" / "v13_chunks.sql").read_text()
+    g5_fix = "-- v13_probe hidden\nSELECT 1 /* v13_advance */"
+    g5_stripped = strip_sql_comments(g5_fix)
+    check("G5: strip drops comment identifiers",
+          "v13_probe" not in g5_stripped and "v13_advance" not in g5_stripped,
+          g5_stripped)
+    src_sql = strip_sql_comments((V13 / "chunks" / "v13_chunks.sql").read_text())
     check("G5: no v13_probe", "v13_probe" not in src_sql)
     check("G5: no v13_judgment_envelope", "v13_judgment_envelope" not in src_sql)
     check("G5: no v13_advance", "v13_advance" not in src_sql)
@@ -835,7 +1132,7 @@ def main() -> int:
     def bad_ingest(val, needle, label):
         bump_policy(cur, "chunks_ingest", val)
         fails_with(cur, "SELECT v13_ingest_document(%s,%s,%s)",
-                   (eid_bulk, "docs", "quasar x"), needle, label)
+                   (eid_bulk, "docs", "quasar x"), needle, label, pgcode="V3004")
         bump_policy(cur, "chunks_ingest", PARA_V1)
 
     bad_ingest({**PARA_V1, "mode": 1}, "invalid chunks_ingest",
@@ -852,14 +1149,16 @@ def main() -> int:
     missing_tgt.pop("target_bytes")
     fails_with(cur, "SELECT v13_chunker_slice(%s, %s::jsonb)",
                ("hello", json.dumps(missing_tgt)),
-               "invalid chunks_ingest", "G8: missing target_bytes rejected")
+               "invalid chunks_ingest", "G8: missing target_bytes rejected",
+               pgcode="V3004")
     fails_with(cur, "SELECT v13_span_unit(%s,%s,1,2,%s::jsonb)",
                ("ab" * 32, "abcd", json.dumps({"boundary": "word"})),
-               "invalid span opts", "G8: boundary word rejected")
+               "invalid span opts", "G8: boundary word rejected", pgcode="V3004")
     fails_with(cur, "SELECT v13_assemble_spans(%s::jsonb, %s::jsonb)",
                (json.dumps([{"content_hash": "a"*64, "body": "x", "spans": [[1, 1]]}]),
                 json.dumps({"context_bytes": "wide"})),
-               "invalid span_assembly", "G8: context_bytes string rejected")
+               "invalid span_assembly", "G8: context_bytes string rejected",
+               pgcode="V3004")
     conn.commit()
 
     # ----- H -----
@@ -874,6 +1173,8 @@ def main() -> int:
 
     sid_h2 = new_session(cur)
     append_user(cur, sid_h2, "h2")
+    snap_h2 = answers_sql(cur, sid_h2)
+    conn.commit()
     cHold = psycopg2.connect(server.get_uri(DB))
     cHold.autocommit = False
     kHold = cHold.cursor()
@@ -890,8 +1191,10 @@ def main() -> int:
         box_h2["pid"] = k.fetchone()[0]
         k.execute("SET lock_timeout = '2s'")
         try:
-            k.execute("SELECT v13_context_required(%s)", (sid_h2,))
-            box_h2["tok"] = k.fetchone()[0]
+            live = with_current_probe(k, sid_h2, snap_h2)
+            k.execute("SELECT v13_advance(%s, %s::jsonb)",
+                      (sid_h2, json.dumps(live)))
+            box_h2["act"] = k.fetchone()[0]
             box_h2["ok"] = True
         except Exception as exc:
             box_h2["err"] = str(exc)
@@ -905,12 +1208,13 @@ def main() -> int:
     while time.time() - twait < 1 and "pid" not in box_h2:
         time.sleep(0.02)
     blocked = wait_box_lock(cur, box_h2, timeout=0.4)
-    check("H2: advance/token not blocked by ingest txn",
+    check("H2: advance not blocked by ingest txn",
           blocked is False, {"blocked": blocked, "box": box_h2})
     cHold.commit()
     cHold.close()
     th.join(8)
-    check("H2: token read succeeded", box_h2.get("ok") is True, box_h2)
+    check("H2: advance succeeded", box_h2.get("ok") is True, box_h2)
+    check("H2: advance returned", box_h2.get("act") is not None, box_h2)
 
     cur.execute("SET ROLE v13_recall")
     cur.execute("SELECT count(*) FROM chunks")
@@ -1072,21 +1376,28 @@ def main() -> int:
     check("I3: fence wins over table", mchunk.startswith(b"```") and mchunk.endswith(b"```"), mchunk)
 
     utf_doc = "ab世界cd"
+    p_s, p_e, ctx = 6, 6, 1
+    raw = utf_doc.encode("utf-8")
+    win_start = p_s - ctx
+    check("I4: fixture start window is continuation",
+          128 <= raw[win_start - 1] <= 191, raw[win_start - 1])
     cur.execute("SELECT octet_length(%s)", (utf_doc,))
     blen = cur.fetchone()[0]
     cur.execute(
-        "SELECT v13_span_unit(%s,%s,3,4,%s::jsonb)",
-        ("u"*64, utf_doc, json.dumps({"context_bytes": 1, "boundary": "none",
-                                       "fence_aware": False, "table_aware": False})))
+        "SELECT v13_span_unit(%s,%s,%s,%s,%s::jsonb)",
+        ("u"*64, utf_doc, p_s, p_e,
+         json.dumps({"context_bytes": ctx, "boundary": "none",
+                     "fence_aware": False, "table_aware": False})))
     uout = cur.fetchone()[0]
     us, ue = uout[0]["offsets"][0]
     cur.execute("SELECT get_byte(convert_to(%s,'UTF8'), %s)", (utf_doc, us - 1))
     lead = cur.fetchone()[0]
+    check("I4: start adsorbed off continuation", us != win_start, (us, win_start))
     check("I4: start not continuation", not (128 <= lead <= 191), (us, ue, lead, blen))
-    if ue < blen:
-        cur.execute("SELECT get_byte(convert_to(%s,'UTF8'), %s)", (utf_doc, ue))
-        nxt = cur.fetchone()[0]
-        check("I4: end not mid-char leftover", True, nxt)
+    check("I4: has byte after end", ue < blen, (us, ue, blen))
+    cur.execute("SELECT get_byte(convert_to(%s,'UTF8'), %s)", (utf_doc, ue))
+    nxt = cur.fetchone()[0]
+    check("I4: end not mid-char leftover", not (128 <= nxt <= 191), nxt)
 
     cur.execute(
         "SELECT v13_assemble_spans(%s::jsonb, %s::jsonb)",
@@ -1096,155 +1407,17 @@ def main() -> int:
     check("I: whole_chunk empty body skipped", empty_whole == [], empty_whole)
 
     # ----- J -----
-    body_j = para_doc(10, 40, "jlock-quasar")
-    out_j, _, _ = ingest_doc(cur, body_j, "j")
-    conn.commit()
-    src_j = out_j["source_hash"]
-    cur.execute(
-        "SELECT content_hash FROM chunks WHERE source_hash=%s ORDER BY chunk_no LIMIT 1",
-        (src_j,))
-    hj = cur.fetchone()[0]
-    land_context(cur, hj)
-    conn.commit()
-    cur.execute("SELECT v13_rebuild_chunks(%s)", ("j",))
-    rbj = cur.fetchone()[0]
-    cur.execute("SELECT count(*) FROM chunks WHERE source_hash=%s AND content_hash=%s",
-                (src_j, hj))
-    check("J1: referenced row survives rebuild", cur.fetchone()[0] >= 1)
-    check("J1: locked incremented", rbj["locked"] >= 1, rbj)
-    conn.commit()
+    run_j1(cur, conn, "j", "J1")
 
-    body_j2 = para_doc(8, 30, "j2-quasar")
-    out_j2, eid_j2, _ = ingest_doc(cur, body_j2, "j2")
-    conn.commit()
-    src_j2 = out_j2["source_hash"]
-    cur.execute(
-        "SELECT content_hash FROM chunks WHERE source_hash=%s ORDER BY chunk_no LIMIT 1",
-        (src_j2,))
-    h2 = cur.fetchone()[0]
-    box_j2 = {}
+    run_j2(server, cur, conn, "j2", "J2")
 
-    def hold_ref():
-        c = psycopg2.connect(server.get_uri(DB))
-        c.autocommit = False
-        k = c.cursor()
-        guc(k)
-        k.execute("SELECT pg_backend_pid()")
-        box_j2["hold_pid"] = k.fetchone()[0]
-        inline = {"query_side": {"candidates": [{"content_hash": h2}]}}
-        k.execute("SELECT v13_artifact_land(%s,'context',%s::jsonb)",
-                  (eid_j2, json.dumps(inline)))
-        k.fetchone()
-        box_j2["held"] = True
-        while not box_j2.get("release"):
-            time.sleep(0.02)
-        c.commit()
-        c.close()
+    run_j3(server, cur, conn, "j3", "J3", reverse=False)
+    run_j3(server, cur, conn, "j3r", "J3-rev", reverse=True)
 
-    def run_rebuild():
-        c = psycopg2.connect(server.get_uri(DB))
-        c.autocommit = False
-        k = c.cursor()
-        guc(k)
-        k.execute("SELECT pg_backend_pid()")
-        box_j2["pid"] = k.fetchone()[0]
-        try:
-            k.execute("SELECT v13_rebuild_chunks(%s)", ("j2",))
-            box_j2["rb"] = k.fetchone()[0]
-            c.commit()
-            box_j2["ok"] = True
-        except Exception as exc:
-            box_j2["err"] = str(exc)
-            c.rollback()
-        c.close()
-
-    t_hold = threading.Thread(target=hold_ref)
-    t_hold.start()
-    t0 = time.time()
-    while time.time() - t0 < 5 and not box_j2.get("held"):
-        time.sleep(0.02)
-    check("J2: holder acquired", box_j2.get("held") is True, box_j2)
-    t_rb = threading.Thread(target=run_rebuild)
-    t_rb.start()
-    blocked_j2 = wait_box_lock(cur, box_j2, timeout=6)
-    check("J2: rebuild blocked on in-flight ref", blocked_j2, box_j2)
-    box_j2["release"] = True
-    t_hold.join(8)
-    t_rb.join(15)
-    check("J2: rebuild finished", box_j2.get("ok") is True, box_j2)
-    cur.execute("SELECT count(*) FROM chunks WHERE source_hash=%s AND content_hash=%s",
-                (src_j2, h2))
-    check("J2: row survived TOCTOU window", cur.fetchone()[0] >= 1)
-    conn.commit()
-
-    body_j3 = para_doc(6, 25, "j3-quasar")
-    out_j3, eid_j3, _ = ingest_doc(cur, body_j3, "j3")
-    conn.commit()
-    src_j3 = out_j3["source_hash"]
-    box_j3 = {}
-
-    def hold_rebuild():
-        c = psycopg2.connect(server.get_uri(DB))
-        c.autocommit = False
-        k = c.cursor()
-        guc(k)
-        k.execute("SELECT pg_backend_pid()")
-        box_j3["hold_pid"] = k.fetchone()[0]
-        k.execute("SELECT v13_rebuild_chunks(%s)", ("j3",))
-        k.fetchone()
-        box_j3["held"] = True
-        while not box_j3.get("release"):
-            time.sleep(0.02)
-        c.commit()
-        c.close()
-
-    def run_ingest():
-        c = psycopg2.connect(server.get_uri(DB))
-        c.autocommit = False
-        k = c.cursor()
-        guc(k)
-        k.execute("SELECT pg_backend_pid()")
-        box_j3["pid"] = k.fetchone()[0]
-        try:
-            k.execute("SELECT v13_ingest_document(%s,%s,%s)",
-                      (eid_j3, "j3", body_j3))
-            box_j3["out"] = k.fetchone()[0]
-            c.commit()
-            box_j3["ok"] = True
-        except Exception as exc:
-            box_j3["err"] = str(exc)
-            box_j3["pgcode"] = getattr(exc, "pgcode", None)
-            c.rollback()
-        c.close()
-
-    t_hr = threading.Thread(target=hold_rebuild)
-    t_hr.start()
-    t0 = time.time()
-    while time.time() - t0 < 8 and not box_j3.get("held"):
-        time.sleep(0.02)
-    check("J3: rebuild holding", box_j3.get("held") is True, box_j3)
-    t_ing = threading.Thread(target=run_ingest)
-    t_ing.start()
-    blocked_j3 = wait_box_lock(cur, box_j3, timeout=6)
-    check("J3: ingest queued behind rebuild", blocked_j3, box_j3)
-    box_j3["release"] = True
-    t_hr.join(8)
-    t_ing.join(15)
-    check("J3: ingest done no 23505",
-          box_j3.get("ok") is True and box_j3.get("pgcode") != "23505", box_j3)
-    cur.execute(
-        "SELECT count(*), count(DISTINCT chunker_version), "
-        "bool_and(content_hash = v13_body_hash(body)) "
-        "FROM chunks WHERE source_hash=%s", (src_j3,))
-    nj, nver, selfc = cur.fetchone()
-    cur.execute("SELECT v13_chunker_slice(%s, %s::jsonb)",
-                (body_j3, json.dumps(PARA_V1)))
-    expect_n = len(cur.fetchone()[0])
-    check("J3: one generation of slices", nj == expect_n and nver == 1, (nj, nver, expect_n))
-    check("J3: self-cert", selfc is True)
-    cur.execute("SELECT v13_verify_chunks(false)")
-    check("J3: verify green", cur.fetchone()[0]["all_ok"] is True)
-    conn.commit()
+    for i in range(3):
+        run_j1(cur, conn, f"j4j1{i}", f"J4.J1[{i}]")
+        run_j2(server, cur, conn, f"j4j2{i}", f"J4.J2[{i}]")
+        run_j3(server, cur, conn, f"j4j3{i}", f"J4.J3[{i}]", reverse=False)
 
     def j4_round():
         box = {"err": None}

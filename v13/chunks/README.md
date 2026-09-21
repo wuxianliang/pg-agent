@@ -41,7 +41,9 @@ chunks 是可重建投影（行自证 / 重摄取同事务 / 外部只记 conten
    GC 入台账，触发 = 超限语料真实出现 / 扫描恢复成本实测超标。
 9. **锁协议**：rebuild/GC(delete) 与同源 ingest 排队是预期（持有期=事务尾）。
    引用端触发器自动取锁。批量候选落行 = 单引用集并集升序预锁或拆单引用集事务
-   （不变量 9 / DP5 ⑧ / DP6 ①）。
+   （不变量 9 / DP5 ⑧ / DP6 ①）。**DP6 纪律（plan §1.4 DP6 ① / 不变量 9）**：
+   decisions 多行事务须引用集并集升序预锁或拆单引用集事务——触发器只保证行内序，
+   行间序是写者契约；否则行序非升序可与删除端（source 升序）成环。
 10. **装配四配置与策略五键**：`span_assembly` 行
     `mode/context_bytes/merge_gap_bytes/boundary/fence_aware/table_aware`。
     `mode='whole_chunk'` 整 chunk 开关；空 body 跳过（不产 `[1,0]`）。
@@ -74,3 +76,17 @@ chunks 是可重建投影（行自证 / 重摄取同事务 / 外部只记 conten
   避开 M4 `V13.rglob("*.sql")` 对 `set_config` 子串扫描（G-ctx1-5(b)）。
 - **⑧ DP3 G6 下标**：`SQL_LOAD_ORDER[-1]` 改 `[5]`。末尾追加是 DP4 合同；
   原断言把前缀位写成树终态。SQL 零改。
+- **⑨ P1-A 悬置（plan erratum；循环纪律不改 plan）**：§1.1 封闭清单写「恰两处」
+  OR REPLACE（`v13_context_required` + artifacts/decisions 各一 BEFORE 触发器）。
+  实现另有第三处 `CREATE OR REPLACE FUNCTION v13_manifest_validate`（同签名、仅
+  `required_revision` 八键 + corpus≥0）。机制必须保留（否则 G2 真链路 V3003）。
+  权威=plan 不是 README ⑤；本条只登记悬置，由父循环收尾呈用户裁定是否补 plan
+  erratum。不改 SQL。
+- **⑩ dp4 尾债收口（测试-only）**：I4 续字节窗（核=「界」前导、`context_bytes=1`
+  落「世」末续字节；吸附后 start 与 end 后一字节均非 0x80–0xBF；删恒真枝）。
+  J3 ingest-first 反向；J4 按表 J1–J3 各三轮 + 异 source 并行 ingest 冒烟（与
+  plan 字面 1:1，无收敛）。J2 主断言=目标 PID 在 `pg_locks` 未授予 advisory
+  （Lock 等待仅辅记录）。承重负向 `fails_with` 传 pgcode（CHECK=`23514` /
+  chunks RAISE=`V3004` / `v13_context_required` 种子丢失=`P0001`）。H2 另一连接走带当前 probe 的真 `v13_advance`。G5 先剥
+  `--` / `/* */` 再扫标识符。B5 混合退役+引用 fixture（引用行存活、无引用兄弟
+  死亡、rebuild 不给退役源添行）。
