@@ -1742,3 +1742,73 @@ COMMIT;
 - **异常块清单**:α/β 逐字保留(§3.6 标注;α 分类门字面与 DP1 一致);(γ) consult 站与 **(γ') read-back 站(turn 14 新增)**为第二/三捕获站,同只捕 V3001、同函数 v13_validate_answer、降级方向 fail-safe(γ→miss 重问;γ'→拒落 decisions——v_valid 标志形态,异常块内零控制流);V3002=判断契约族守卫码,无人捕获、一律穿透响亮(β/γ/γ' 的 WHEN 均为字面 'V3001',不匹配 V3002);OTHERS 不捕 query_canceled 的引擎事实(DP1 turn 10 实测)在 α 的显式分支形态上无回归;resolver 的 EXIT 均在 LOOP 体层(非 FOR 内),α/β 的 EXIT 语义与 DP1 同(退出外层 LOOP);γ' 的 CONTINUE 在 FOR 层、异常块外。**turn 15 增量**:no-progress IF 分支(步 (8))位于外层 LOOP 体、任何 BEGIN/EXCEPTION 之外——不新增捕获站,γ' 站仍 V3001-only 捕获;其 EXIT 在 LOOP 体层(与 α/β 的 EXIT 同层语义,退出外层 LOOP);新分支零 RAISE,V3002 穿透面无扰。
 - **哈希同源清单(写入/读取/fixture/契约四列,自检 #6)**:判断面——写入=resolve 两处 decisions INSERT+cache INSERT(同一 v_hash=v13_judgment_hash);session 读取=v13_gap、v13_env_decision(DP1 函数,经 OR REPLACE 后的同 OID judgment_hash);canonical 读取=resolve consult(同函数);payload=v13_question_wire+组态(与材料同源);fixture=gate 只经 v13_judgment_hash/v13_request_hash 构造预期(A4/B14);契约=§1.4 DP6 行(builders 是唯一哈希路径,DP6 不得旁路)。signal 材料首位(DP1 #43)在 v13_judgment_material 构造第一成员,gate A4 断言敏感性。**effect 身份面(turn 14 新增)**:写入=enqueue 内部(DP1 代码,经 OR REPLACE 后的同 OID effect_id);读取=claim/complete/fence 比对(DP1 零改动);fixture=DP1 M1 直调(DP1 库不加载本文件)+本稿 E4 豁免等值;**豁免路径封闭清单={envelope.timeout_ms,envelope.budget}——与判断哈希材料零交集(budget/timeout 不进 request_hash 材料,只随 request 携带),两平面分离已写明(§3.5 effect_id 注/effect_envelope 注/映射 #8/E4)**。
 - **移动=增+删墓碑**:三处 DROP(v13_snapshot/v13_judgment_envelope/v13_needed_judgments)+墓碑注释;不在本文件重加旧形态;DP1 文件的旧定义不改动(加载序后定义覆盖)。**turn 14 修订的增删面**:effect_envelope 剔除列表删去 '-timeout_ms'/'-budget' 两段(turn 13 稿新加、turn 14 撤回——冻结值改为随 request 携带+effect_id 豁免);resolve 的 v13_policy 活读一行删去(改信封 budget 消费,替换为 fail-closed 五行);A2/A6/A8/A9/B3/B5/B8/B13/C 头/C2/D1/D3/E1/E2/E3/E4 十六处 gate 行整行或半行替换(旧形态不保留);映射 #6/#8/#9/#16 重写;附 A 增 #11–#13。新增对象零删除(guc_required/ALTER route_policies/γ' 站/effect_id OR REPLACE)。**turn 15 编辑面(P1-1)**:§3.6 resolve 函数体四处(v_landed 声明/批前清零/FOR 内计数/批尾 IF 分支)+流程注步 (8)+failed 第三来源句+γ' 注尾句+worker 契约 no-progress 句;§1.5 不变量 5 尾句;映射 #6 末句重写;§5「canonical 错误答案全局扩散」行有界性子句重写(「有界 abandon」适用面);B13 重构(parse 轮注混合批、直调轮加 failed=true、新增 worker 层终态段);README 收尾「DP2 五条→六条」+§4.1 行同步;附 B 本轮增量。零 DDL/种子/ACL 改动,零新顶层语句。
+
+## v2 对齐修订(2026-09-21)
+
+> 日期:2026-09-21。本轮**只追加本节**,上文一字不删、不改写。
+> 对齐输入(只读):
+> - `docs/analysis/repoprompt-native-on-v13-feasibility-v2-2026-09-21.md`(v2 主文档:§1 七条 I-file 不变量 / §4 R6 / §7 冲突登记)
+> - `docs/reviews/repoprompt-native-context-oracle-r1-r3-2026-09-21.md`(裁决记录 D5)
+> 纪律:与 v2 冲突的原文以 `ERRATUM:` 行标注并指向 v2 §7 对应行;既有 gate 一律不弱化(含 A1–A9 / B2/B3/B14 / C1–C4 / E3);新增断言只加不减。本轮不 invent 新里程碑实现、不改 SQL 代码。
+
+### 对齐总表(v2 条款 → 本计划改动点 → 换体登记)
+
+| # | v2 条款 | 本计划改动点 | 换体登记 |
+|---|---|---|---|
+| A4 | I-file-2 开放世界:`bootstrap_done=false` 禁 file 存在性 Noul | 判断信封增补:file corpus 存在性 Noul 仅 `bootstrap_done=true` 才允许;问题文本=「已注册子集是否已足够」;`no` 不得短路为「仓库无答案」、不得跳过整批 per-chunk Score;封闭绑定 `(ws_id, corpus_epoch, files_cutoff, secret/admission policy 版本)`;旧答案不跨 epoch 复用 | 不适用(信封问题文本/短路语义/论域闸增补) |
+| A5 | D5 epoch/HEAD 禁入 `candidate_set_hash` | `request_hash` 与 `candidate_set_hash` 定义不动;文件 `source_epoch` / git HEAD 禁入两者材料;封闭世界 file Noul 上线时 `corpus_epoch` 进 judgment_template 的 projection 声明字段,仍不进 csh | 不适用(禁令登记;两哈希定义不换) |
+
+`ERRATUM (L4 修复 2026-09-21):` 总表 A5「文件 `source_epoch` / git HEAD 禁入两者材料」对 **request_hash** 的绝对禁令**已废止**。现行口径:不进 csh;进 file-Noul 的 request 材料(完整封闭绑定 canonical digest)。见 A4/A5 下「L4 修复」。
+
+### A4 / I-file-2 · 判断信封:开放世界禁 file 存在性 Noul
+
+v2 §1 I-file-2 + §7 行「v13 §4.5 存在性 Noul 先行 | erratum(论域)」:仅 `bootstrap_done=true` 后先行;开放世界期间「已注册子集是否足够」的 no 不得短路为「仓库无答案」。§4 R6 把 `bootstrap_done` / `corpus_epoch` / `files_cutoff` / secret/admission 策略版本接到 manifest 根——本 DP 的信封论域闸与之对齐,不在本 DP 实现 R6。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面、不改 §3.8 七族种子题文):
+
+1. **论域闸**:file corpus 的存在性 Noul 仅在 `bootstrap_done=true` 才允许;`bootstrap_done=false` 期间禁止对该论域发存在性 Noul(信封 `needed` 不得含 file corpus 存在性问;计数必须为 0)。本 DP 既有七族(intent / gate_action / gate_off_topic / risk / tool / param / stated)不因此删减。
+2. **问题文本**:未来 file corpus 存在性 Noul 的题文须为「已注册子集是否已足够」形态,不得写成「仓库有无答案 / 要不要全库扫」。
+3. **短路禁令**:该问的 `no` **不得短路**为「仓库无答案」;不得跳过整批 per-chunk Score。开放世界的 `no` 只证「已注册子集不足」,后续仍走发现/注册/逐 chunk Score(DP6 消费本信封时同纪律)。
+4. **封闭绑定**:封闭语义绑定 `(ws_id, corpus_epoch, files_cutoff, secret/admission policy 版本)`;任一变化即失效。
+5. **缓存世代**:file corpus 存在性 Noul 的旧答案**不跨 epoch** 复用——`corpus_epoch` 变化 ⇒ 封闭绑定失效 ⇒ `judgment_cache` 对该问不得命中旧行(既有七族非 file 论域的 B2/B3 跨 session 命中面不动)。
+6. **request_hash / 缓存匹配(L4 修复 2026-09-21)**:file 存在性 Noul 的 **request_hash / 缓存匹配条件必须含完整封闭绑定** canonical digest `hash(ws_id, corpus_epoch, files_cutoff, secret_policy_version, admission_policy_version)`(或等价缓存匹配条件)。仅声明绑定而不把 digest 纳入 request 材料,旧答案不能失效。
+
+`ERRATUM:` §2 约 L92–93「§4.5 per-chunk 缓存键…」/「§4.5 跨 session 缓存拆分」与 §1.4 DP6 约 L65「per-chunk Score/Noul 必须经同一族机制」——若被解读为无条件承接设计 §4.5「存在性 Noul 先行、语料无答案时 1 次调用替代 k 次」:论域收窄为仅封闭世界(`bootstrap_done=true`)后对 file corpus 先行;开放世界禁 file 存在性 Noul;`no` 不得短路整批 Score。指向 v2 §7 行「v13 §4.5 存在性 Noul 先行」(增加论域条件:仅 bootstrap_done=true 后先行;**erratum(论域)**)。
+
+`ERRATUM:` §1.3 OQ1 约 L47–48「judgment_cache(request_hash PRIMARY KEY, …)(全局内容寻址)」与 §1.4 DP8 约 L67「fork 后判断重问成本由 canonical 缓存吸收(内容寻址跨 session 命中)」与 §3.10 #3「全局缓存键=request_hash 本体」与 §6 约 L1693「同 request_hash … 旧答案可重放」——对 file corpus 存在性 Noul,旧答案不跨 epoch 复用;封闭绑定失效即 miss。既有七族 B2/B3 不弱化。指向同一 v2 §7 行「v13 §4.5 存在性 Noul 先行」。
+
+`ERRATUM:` 同上「仓库无答案」短路若被读成「去扫全库」——遵守 v2 §7 行「v13 §6.7 / §6.2 触点 3」(全库扫触发禁 Noul);问题文本锁在「已注册子集是否已足够」。
+
+既有 gate 不动:A1 七族种子题文逐字 / A4 构建器与七参直调 / A8 needed 五列与 required 族 / B2 同态重 parse / B3 跨 session canonical 命中(非 file 论域) / B14 哈希同源 / C1–C4 G-ctx7 一律保留。新增论域闸与短路禁令只加不减。
+
+### A5 / D5 · 信封 / csh 登记
+
+v2 用户拍板 + 最终合成 D5:epoch 不进 `candidate_set_hash`;禁止 epoch/HEAD 并入 csh。§4 R6 的 `files_source_epoch` / 装配期 `source_epoch` 是 manifest/收据平面,不进本 DP 两哈希材料。
+
+`ERRATUM (L4 修复 2026-09-21):` 上句「不进本 DP 两哈希材料」对 **csh** 继续有效;对 file 存在性 Noul 的 **request_hash** 不再是绝对禁令——封闭绑定 canonical digest(含 `files_cutoff` / `corpus_epoch`)必须进入该问的 request 材料 / 缓存匹配。见下「L4 修复」。
+
+**`request_hash` 与 `candidate_set_hash` 定义不动**:
+
+- `request_hash` 仍是七参 `v13_request_hash(p_signal,p_kind,p_question,p_criteria,p_context,p_provider,p_model)`(§1.2 契约 1;§3.5;材料=§3.3 `v13_judgment_material` 的 signal+wire+state+provider/model+wire/canon 常量)。
+- `candidate_set_hash` 仍是 hash(needed)=digest((SELECT n FROM needed)::text)(§3.4 约 L787「candidate_set_hash 公式不变」;§3.10 #12;§1.5 不变量 4)。
+
+**明文登记禁令**:文件 `source_epoch` / git HEAD 禁入两者材料。不得把 `workspace_files.source_epoch`、`workspace_git_tips.git_head`、sessions.`files_cutoff`、stat 启发式并入 `v13_judgment_material` 或 needed 行字节。禁止 epoch/HEAD 并入 `candidate_set_hash`;同禁并入 `request_hash` 材料闭集。
+
+`ERRATUM (L4 修复 2026-09-21):` 上句「同禁并入 `request_hash` 材料闭集」及对 sessions.`files_cutoff` **绝对不得进 request hash** **已废止(针对 file 存在性 Noul)**。现行口径:`source_epoch` / git HEAD / `files_cutoff` **不进 csh**;`files_cutoff`(随封闭绑定) **进 file-Noul 的 request 材料**。csh 定义不动。见下「L4 修复」。
+
+**复核触发条件**:封闭世界 file Noul 上线时,`corpus_epoch` 进 judgment_template 的 projection 声明字段(经 `v13_project_state` 进组态、从而进 `request_hash` 的 p_context——七参签名与材料键集不动),**仍不进 csh**。csh 与 cgr 分工维持(映射 #12:csh 管 needed 内容、cgr 管推导面;仅改 projection 声明不改 needed 字节时 csh 静止)。步 0 是否另立比对键由后续 DP 立法;本 DP 探针七键不扩。
+
+**(L4 修复确认)**:上款「`corpus_epoch` 经 projection 进 `request_hash` 的 p_context」与封闭绑定 digest 同向;须扩为完整封闭绑定 canonical digest `hash(ws_id, corpus_epoch, files_cutoff, secret_policy_version, admission_policy_version)`(或等价),不仅 `corpus_epoch` 单字段。`files_cutoff` 进 file-Noul request 材料,不进 csh。
+
+`ERRATUM:` 无直接改写上文 `request_hash` 七参 / `candidate_set_hash`=digest(needed::text) 的冲突句——§3.5 / §3.4 / §3.10 #12 的定义继续有效;本条是禁扩 **csh** 材料的正向登记(D5)。若后续把文件 `source_epoch` / git HEAD / `files_cutoff` 读进 **csh**,以本禁令+v2 用户拍板/合成口径「epoch 不进 candidate_set_hash」「禁止 epoch/HEAD 并入 candidate_set_hash」为准。封闭绑定的 `corpus_epoch` 落点见本条「corpus_epoch 进 judgment_template 的 projection 声明字段」,与 v2 §7 行「v13 §4.5 存在性 Noul 先行」的论域条件同批上线,仍不进 csh;file-Noul 的 request_hash 现行口径见下「L4 修复」。
+
+既有 gate 不动:A4 七参直调 / A5 projection 引擎 / B2/B3/B14 / C1(声明路径外不击穿)/C4 同源 / E3 cgr 步 0(csh 静止+cgr 检出)一律保留。禁扩材料与声明字段复核只加不减。
+
+### L4 修复(2026-09-21) · F1 corpus_epoch 哈希规则统一(A4/A5)
+
+**(现行口径;取代 A5「files_cutoff / epoch/HEAD 同禁并入 request_hash」绝对禁令)**
+
+1. **csh 禁并入(定义不动)**:`source_epoch` / git HEAD / `files_cutoff` **不得进入 `candidate_set_hash`**。csh 定义本身不变:仍是 hash(needed)=digest((SELECT n FROM needed)::text)。`request_hash` 七参签名不动。
+2. **file 存在性 Noul 的 request_hash / 缓存匹配必须含完整封闭绑定**:canonical digest = `hash(ws_id, corpus_epoch, files_cutoff, secret_policy_version, admission_policy_version)`(或等价缓存匹配条件)。与 A4「封闭绑定」合取:任一变化 ⇒ 绑定失效 ⇒ 对该问 miss。
+3. **files_cutoff 落点**:不进 csh;**进 file-Noul 的 request 材料**(经封闭绑定 canonical digest / 等价缓存匹配,例如经 `v13_project_state` 进 p_context)。禁止再写「files_cutoff 不得进 request hash」作为对本问的绝对禁令。
+4. 既有 gate 不动:A4 七参直调 / A5 projection / B2/B3/B14 / C1/C4 / E3 一律保留。禁扩 **csh** 材料与声明字段复核只加不减。

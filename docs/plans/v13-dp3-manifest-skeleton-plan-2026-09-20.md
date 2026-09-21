@@ -1656,3 +1656,120 @@ GRANT SELECT ON v13_goals, artifacts TO v13_route, v13_resolve, v13_recall;
 - 设计审查(今日):`docs/reviews/v13-context-on-pg-design-review-by-stepfun-2026-09-20.md`(F1 判断点默认分支/F3 被引用内容保留/F11 artifact 存储经济——本轮 P1-6/P0-4 处置的引证源)。
 - loop memory:`prompt-exports/loop-orchestrate-v13-deep-plans-runs.md`(分解表 DP3 行/turn 1-17 台账/turn 12 用户裁决)。
 - 惯例参照:`docs/plans/v12-jev-pgembed-minimal-plan-2026-09-18.md`(stage 四件/命令形态/收尾纪律)。
+
+## v2 对齐修订(2026-09-21)
+
+> 日期:2026-09-21。本轮**只追加本节**,上文一字不删、不改写。
+> 对齐输入(只读):
+> - `docs/analysis/repoprompt-native-on-v13-feasibility-v2-2026-09-21.md`(v2 主文档:§1 七条 I-file 不变量,尤其 I-file-1 / §4 R6 / §7 冲突登记)
+> - `docs/reviews/repoprompt-native-context-oracle-r1-r3-2026-09-21.md`(裁决记录 I-file-1 / D5 混代;轮 1「est_tokens 推迟到装配后」已否决)
+> 纪律:与 v2 冲突的原文以 `ERRATUM:` 行标注并指向 v2 §7 对应行;既有 gate 一律不弱化(含 B2 骨架三 kind 九键 / B5 四种 skip / C2 装箱 / D1–D3 三种回放 identity 基 / G10 blob 冻结 / 不变量 1 零外部 IO / 不变量 4 recompute 永不落库);新增断言只加不减。本轮不 invent 新里程碑实现、不改 SQL 代码。
+
+### 对齐总表(v2 条款 → 本计划改动点 → 换体登记)
+
+| # | v2 条款 | 本计划改动点 | 换体登记 |
+|---|---|---|---|
+| A6 | I-file-1 身份三元组;exact replay 只解冻 hash;G-file-replay 三回放落文件面 | exact replay 只解冻 context artifact 所记 content_hash、不读 FS;三种回放落文件面(exact 零 FS effect / recompute 允许 register / fresh fork 新 cutoff);【L4】根字段六名 `ws_id`/`files_source_epoch`/`files_cutoff`/`bootstrap_done`/`secret_policy_version`/`admission_policy_version`+§6.1 freeze(迟到 decision 不得回写已冻结 manifest);recompute 不自建 effect,`file_register`=advance/system SQL enqueue | 不适用(语义立法,非换体;OQ5 identity 基 mode 判定不删) |
+| A7 | R6 manifest file section 字段族+skipped 闭集 | 立法登记 `kind='file'` 字段族(`content_hash`+`payload_ref` 非路径 / `est_tokens` / `ws_id`·`normalized_path`·`population`·`git_head`·`source_epoch`·`receipt_id` / `replay=exact\|recompute\|fresh` / `applied\|skipped`+reason;skipped 闭集 7 值);【L4】**manifest 根**字段族同上六名+§6.1 freeze;runtime validator 必须显式扩展 file 分支 | 不适用(立法登记,不改上文 SQL 字面;B2 骨架三 kind 不扩词表)【L4 标注:「不扩词表」废止——runtime validator 的 kind 闭集必须显式扩展 file 分支;B2 原三种正向 gate 保留】 |
+| A8 | est_tokens 注册时写入,装配禁现估 | 装配期禁止现估,只消费注册时已写入的估计;缺估计不得当 0 进 Plan 的 Σest_tokens;超窗 → skipped/budget | 不适用(消费侧约束;骨架 octet_length 公式对 goal/history/tools 不删) |
+| A13 | render 只读 artifact bytes | `render(manifest, policy, provider)` 只读 artifact bytes,禁止打开源路径 | 不适用(纯函数输入约束;render 本体仍归 DP8) |
+
+### A6 / I-file-1 · 三种回放落文件面
+
+v2 §1 I-file-1:模型可见身份=`(ws_id, canonical_path, content_hash)`;stat 只许当失效启发式,禁作身份/缓存键/replay 键。进 manifest/render/exact replay 的字节必须已冻结为 `kind='file'` artifact;exact replay 只解冻当时 context artifact 所记 hash。§4 R6 + G-file-replay:三种回放显式标注。§7 行「ch01「模型可见 ⟺ 已落行」」=增量适用到文件字节;「v13 §4.3 / G-ctx1」=增量适用到 FS/git(零锁内 IO)。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面):
+
+1. exact replay **只解冻** context artifact 所记 `content_hash`,不读 FS。骨架 `v13_replay`「纯读旧 context artifact 原字节 / 永不重跑 assemble」(OQ5)继续有效;文件面收紧为:解冻的是当时清单记下的 hash 所指向的已冻结 `kind='file'` artifact,零 live open/stat/readpath/git。
+2. **三种回放**语义落文件面(与 OQ5 identity 基 mode 判定并存,不互相取代):
+   - exact:零 FS effect(把重读 FS 标 exact → 红,G-file-replay)
+   - recompute:允许 register(可建 `file_register` effect;装配仍不改写已 settle 的 context artifact / sessions 指针——不变量 4 不弱化)
+     【L4 标注(F3)】「可建 `file_register` effect」**不是** assemble/recompute 本体自建——`file_register` 由 **advance/system SQL enqueue**(v2 §3.1:调用者=`system`(SQL 派生));recompute/assemble 本体仍只读,**不得自建 effect**。
+   - fresh:fork 新 cutoff(`files_cutoff` 冻结复制,执行面归 DP8)
+3. stat(mtime,size) 不得写入 replay 键 / content_hash / prefix_identity。
+4. 【L4 补齐(F2)】**manifest 根**字段族(与 A7/R6 同列,非 section 键):`ws_id` / `files_source_epoch` / `files_cutoff` / `bootstrap_done` / `secret_policy_version` / `admission_policy_version`。**freeze 纪律**与 §6.1 同口径:迟到 decision **不得回写已冻结 manifest**(迟到结果留在原 request/epoch 下,仅供完全相同信封复用,只进下一版 manifest)。
+
+`ERRATUM:` OQ4 约 L105–107「mode∈{fresh,recompute};exact_replay 只出现在 v13_replay 的返回视图」——装配产物 mode 词表与 exact 只出视图的骨架裁决不删;文件面增量登记 `replay=exact|recompute|fresh`,exact=零 FS effect、只解冻 context artifact 所记 content_hash。指向 v2 §7 行「ch01「模型可见 ⟺ 已落行」」(增量适用到文件字节)。
+
+`ERRATUM:` OQ5 约 L146「recompute … **只读返回,不写 sessions/artifacts**」+ 不变量 4「recompute 永不落库写 sessions/artifacts」——骨架 recompute 仍只读不落库(不变量 4 / D2 零指针变化不弱化);文件面 recompute **允许 register**(建 file_register effect,IO 在 worker,不在 assemble 持锁内读盘)。指向 v2 §7 行「v13 §4.3 / G-ctx1」(增量适用到 FS/git,零锁内 IO)。【L4 标注(F3)】「建 file_register effect」收窄为:`file_register` 由 **advance/system SQL enqueue**;recompute/assemble 本体仍只读,**不得自建 effect**。recompute *mode* 允许消费/等待已入队的 register(工作面 worker 执行),不授权 `v13_assemble_manifest` / recompute 读者 INSERT effects。
+
+`ERRATUM:` OQ5 / D3「fresh = prefix_identity 变」——identity 基判定不删;文件面 fresh 另含 fork 新 cutoff,不得把 cutoff/git HEAD 写进 exact 解冻路径。指向同一 v2 §7 行「ch01「模型可见 ⟺ 已落行」」。
+
+既有 gate 不动:D1 exact replay 视图覆盖 / D2 recompute 只读不落库 / D3 identity 基 fresh / G10 被引用正文逐字节回取 / 不变量 4 一律保留。后续 G-file-id / G-file-replay 只加不减。
+
+### A7 / R6 · manifest 增 file section 字段族
+
+v2 §4 R6 file section 增字段族。§7 行「ch07「文件=artifacts」」=人侧真相 FS+git,模型侧=artifacts;「v13 §4.5 存在性 Noul 先行」=论域 erratum(仅 `bootstrap_done=true` 后先行)。
+
+**本计划改动点**(可立法、不改上文 SQL 字面):
+
+file section 字段族(上线时只加行不改骨架 9 键结构;B2 `kind∈{goal,history,tools}` 词表不扩)【L4 标注(F3):「词表不扩」废止——runtime validator 的 kind 闭集**必须显式扩展 file 分支**;B2 原三种正向 gate 保留】:
+
+```
+kind='file'; content_hash+payload_ref(非路径); est_tokens
+ws_id/normalized_path/population/git_head/source_epoch/receipt_id
+replay=exact|recompute|fresh; applied|skipped+reason
+skipped 闭集至少: mixed_vintage/veto/blocked_secret/admission/budget/open_world_no_body/stale_stat
+```
+
+【L4 补齐(F2)】**manifest 根**字段族(非 section 键;与 v2 §4 R6「manifest 根增」同列):
+`ws_id` / `files_source_epoch` / `files_cutoff` / `bootstrap_done` / `secret_policy_version` / `admission_policy_version`
+**freeze 纪律**(与 §6.1 同口径):迟到 decision **不得回写已冻结 manifest**。
+
+装配(变更相纯 SQL)只 applied:`content_hash` 非空 ∧ clean ∧ ¬veto ∧ epoch≤cutoff;`content_hash IS NULL` 禁进 manifest。跨文件 distinct source_epoch>1 → 整批 skipped/`mixed_vintage`。开放世界无正文 → skipped/`open_world_no_body`。
+
+`ERRATUM:` OQ4 约 L93–94「骨架三 kind:goal/history/tools;DP4–DP7 增 kind 只加行不改结构」——骨架三 kind 与 B2 词表不删;file 面 `kind='file'` 在本 DP **立法登记**(结构仍是只加行),不得把「模型可见文件」写成源路径或未冻结 FS 字节。指向 v2 §7 行「ch07「文件=artifacts」」(模型侧=artifacts)。【L4 标注(F3)】「词表不删」≠ validator 不扩——`v13_manifest_validate` 的 kind 闭集**必须显式扩展 file 分支**;B2 原三种正向 gate(合法 `goal`/`history`/`tools` 三段直调 validate 必过)一律保留。
+
+`ERRATUM:` OQ4 约 L111–113「payload_ref 形态:{kind:'goal',seq} | {kind:'blob',content_hash}」+ 不变量 5「payload_ref 只指不可变正文(v13_goals 行/内容寻址 blob)」——骨架两形态不删;file section 的 payload_ref 仍是内容寻址、**非路径**,指向已冻结 `kind='file'` artifact。指向同一 v2 §7 行「ch07「文件=artifacts」」。
+
+`ERRATUM:` OQ4 约 L116–118 / §2 约 L192「预算截断/Never 优先级/禁用 kind 三种 skip 原因」+ B5 四种 skip 词表——骨架四种 reason 不删不弱化;file section 另立 skipped 闭集(含 `mixed_vintage` / `open_world_no_body` 等,见上)。指向 v2 §7 行「v13 §4.5 存在性 Noul 先行」(erratum(论域);开放世界无正文不得装成 applied 文件段)。
+
+既有 gate 不动:B2 三段九键 / B5 四种 skip 正向 / C3–C6 skip 原因 / validate 词表封闭一律保留。file section 上线时校验词表与 gate **只加不减**。
+
+### L4 修复(2026-09-21)
+
+> 本小节只追加、不删 A6/A7 上文。F2/F3 为 L4 终审 FAIL 并集修复。既有 gate 一律不弱化(B2 原三种正向 / B5 / C3–C6 / D1–D3 / F1 / G10 / 不变量 4)。
+
+**F2 · manifest 根字段补齐 + freeze 纪律**
+
+A7/R6 原立法登记的是 file *section* 字段族;v2 §4 R6 另要求 **manifest 根**增字段族(上线只加键,B1 外层 10 键恰等上线时只加不减)。A6/A7 现明文根字段族(六名全列):
+
+`ws_id` / `files_source_epoch` / `files_cutoff` / `bootstrap_done` / `secret_policy_version` / `admission_policy_version`
+
+**freeze 纪律**(与 §6.1 同口径,不弱化 F1 / 不变量 4):final manifest 只消费 freeze 前状态为 complete 的精确 decision_id;迟到 decision **不得回写已冻结 manifest**(迟到结果留在原 request/epoch 下,仅供完全相同信封复用,只进下一版 manifest)。`files_cutoff` 随 freeze 钉死;迟到/乱序 receipt 不越 cutoff(G-file-cutoff)。骨架 F1「manifest freeze 后迟到 decision 不得回写」与 artifacts append-only 结构性执法一律保留。
+
+**F3 · 词表与 recompute 边界**
+
+1. **runtime validator 的 kind 闭集必须显式扩展 file 分支**。这不是「不扩词表」。A7 总表「B2 骨架三 kind 不扩词表」与正文「B2 `kind∈{goal,history,tools}` 词表不扩」作废止性标注:骨架三 kind 与 B2 **原三种正向 gate**(合法 `goal`/`history`/`tools` 三段直调 `v13_manifest_validate` 必过)一律保留、不弱化;上线 `kind='file'` 时 `v13_manifest_validate` **必须显式扩展 file 分支**(kind 闭集含 `file` + file section 字段/skipped 闭集校验),不得把 file 段拒在词表外,也不得把「立法登记 kind='file'」写成「validator 不扩」。校验词表与 gate **只加不减**。
+2. **recompute/assemble 本体仍只读**——`file_register` 由 **advance/system SQL enqueue**(v2 §3.1:`file_register` 调用者=`system`(SQL 派生);已知路径→确定性 SQL 建)。recompute **不得自建 effect**;assemble 持锁内零 FS IO。A6「recompute:允许 register(可建 file_register effect」收窄为:recompute *mode* 允许消费/等待已由 advance/system SQL 入队的 register,不授权 assemble/`v13_assemble_manifest` 或 recompute 读者函数 INSERT effects。不变量 4「recompute 永不落库写 sessions/artifacts」/ D2 零指针变化不弱化;IO 在 worker,不在 assemble 持锁内读盘。
+
+### A8 · est_tokens 消费侧约束
+
+v2 §4 R6:`est_tokens`(注册时写入,禁装配期现估);超窗 → skipped/budget。G-file-est:超预算→skipped/budget。Oracle 轮 1 P1:「est_tokens 推迟到装配后」已否决。§7 行「ch01「模型可见 ⟺ 已落行」」=估计必须来自已落收据/指针行,不得装配期读盘重估。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面):
+
+1. 装配期**禁止现估**,只消费**注册时**已写入的估计(`file_receipts` / `workspace_files.est_tokens`)。
+2. 缺估计不得当 0 进 Plan 的 Σest_tokens(缺估计=不可装箱,不得静默当 0 凑预算)。
+3. 超窗 → `skipped/budget`(与 C2 `reason='budget'` 同词,文件面沿用)。
+4. 骨架 goal/history/tools 的 octet_length 公式(OQ4 / B2 对照重算)对这三段**不删**;该公式不是 file section 的消费规则。
+
+`ERRATUM:` OQ4 约 L131–134「est_tokens 确定性公式:((octet_length(段规范字节)+est_bytes_per_token-1)/est_bytes_per_token)」+ B2「est_tokens>0 且=((octet_length+div-1)/div) 对照重算」——骨架三段公式与 B2 对照不删;file section **禁止现估**,只消费注册时已写入的 est_tokens,不得在 assemble 内按源路径/活 FS 字节重算,缺估计不得当 0 进 Σest_tokens。指向 v2 §7 行「ch01「模型可见 ⟺ 已落行」」(增量适用到文件字节;估计随已落行,不随装配现算)。
+
+`ERRATUM:` §1.4 DP7 行「est_tokens 公式版本随 assemble_manifest 策略行」——策略行换公式仍=新版本+recompute 语义(骨架不变量);file 面消费的是注册时写入值,换公式不授权装配期打开源路径重估。指向 v2 §7 行「v13 §4.3 / G-ctx1」(零锁内 IO)。
+
+既有 gate 不动:B2 骨架 est 对照 / C2 预算截断(reason='budget') / C3 Never 不占预算。后续 G-file-est 只加不减。
+
+### A13 · render 纯函数输入约束
+
+v2 §4 R6:render 只读 artifact bytes。I-file-4:manifest/render 只读已冻结行。§7 行「ch01「模型可见 ⟺ 已落行」」+「ch07「文件=artifacts」」+「v13 §4.3 / G-ctx1」。
+
+**本计划改动点**(只立法;render 本体仍归 DP8,§7 台账不提前实现):
+
+`render(manifest, policy, provider)` **只读 artifact bytes**,**禁止打开源路径**。输入闭集=已冻结 context artifact / `kind='file'` artifact / section blob(经 payload_ref 回取);不得 open/stat/readpath 源文件,不得把 `normalized_path` 当读盘句柄。§1.4 DP8 行「经 payload_ref 回取 blob 正文」收窄为只读 artifact bytes。上文签名 `render(manifest, render_policy_version, provider)` 不删。
+
+`ERRATUM:` §1.4 DP8 行约 L171「canonical render = render(manifest, render_policy_version, provider) 纯函数 … **经 payload_ref 回取 blob 正文**」+ §7「render(manifest→wire bytes)本体 | DP8」——本体仍归 DP8、纯函数签名不删;输入论域收窄为**只读 artifact bytes**,**禁止打开源路径**。指向 v2 §7 行「ch01「模型可见 ⟺ 已落行」」(增量适用到文件字节)。
+
+`ERRATUM:` 同上 DP8 行 / §7 台账——模型侧文件字节=artifacts,render 不得把 payload_ref 或 normalized_path 解释为源路径读句柄。指向 v2 §7 行「ch07「文件=artifacts」」(模型侧=artifacts)与「v13 §4.3 / G-ctx1」(零锁内 IO)。
+
+既有 gate 不动:G10 payload_ref 回取 blob / D1 exact 不重跑 assemble / 不变量 1 装配零外部 IO / §7 render 本体归 DP8。后续若加锁内 open 探针(G-ctx1-file),只加不减。

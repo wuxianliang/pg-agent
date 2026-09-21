@@ -3090,3 +3090,139 @@ P2 顺手:§2 悬空 #26→#23;blocked_unknown 注预留(教程 ch1:35-36 词表
 改动区机械扫:两处 tag 名单逐 tag 对照一致(ddl_command_end:WHEN=体内 WHERE={CREATE FUNCTION, CREATE ROUTINE, ALTER FUNCTION, ALTER ROUTINE};sql_drop:WHEN={DROP FUNCTION, DROP ROUTINE},面 (b) 无 tag 过滤、按 object_type 取证,不涉同步面);改动区引号/括号无新增失衡;L3 七节在位。
 
 复核通过。
+
+---
+
+## v2 对齐修订(2026-09-21)
+
+> 日期:2026-09-21。本轮**只追加本节**,上文一字不删、不改写。
+> 对齐输入(只读):
+> - `docs/analysis/repoprompt-native-on-v13-feasibility-v2-2026-09-21.md`(v2 主文档:§1 七条 I-file 不变量 / §2 探针 / §3.3 单源 / §7 冲突登记)
+> - `docs/reviews/repoprompt-native-context-oracle-r1-r3-2026-09-21.md`(裁决记录 D2/D5)
+> 纪律:与 v2 冲突的原文以 `ERRATUM:` 行标注并指向 v2 §7 对应行;既有 gate 一律不弱化(含 M3-4 / M3-12 / M3-19 / M3-22 / 探针七键);新增断言只加不减。本轮不 invent 新里程碑实现、不改 SQL 代码。
+
+### 对齐总表(v2 条款 → 本计划改动点 → 换体登记)
+
+| # | v2 条款 | 本计划改动点 | 换体登记 |
+|---|---|---|---|
+| A1 | I-file-4 变更相零 FS/git IO;sql 快路=读已冻结行 | advance ④ sql 快路语义修正为「只读已落行(artifacts/chunks/指针)」;新增不变量「变更相(`v13_advance` 持锁期间)禁一切 FS/git IO」 | 不适用(语义修正,非换体) |
+| A2 | I-file-5 `v13_visible_tools` 单源 | needed 的 tool Choice 候选与 advance ④ 路由改读唯一函数 `v13_visible_tools(p_sid)`;合取 `enabled ∧ (wb IS NULL ∨ wb∈active) ∧ name∈ws.tool_scope` | **换体**:替换 needed 约 L1316–1319 `FROM tools WHERE enabled AND kind IN ('sql','tool')` 与 advance ④ 对活表/冻结目录的可见性读法;`v13_wb_visible_tools` 并入本函数,不得并列 |
+| A3 | D2 七键不动;workspaces DML→`tools_revision`+`ws_scope_changed` | 探针纪律登记第三类 bump 来源(未来 workspaces 作用域列 DML);对 DP1 **零结构增量**(七键不动);明文禁止第八键 `ws_revision` | 不适用(纪律登记;七键集合不换体) |
+| A4 | I-file-2 开放世界:`bootstrap_done=false` 禁 file 存在性 Noul | needed 生成条件增补:`bootstrap_done=false` 期间不得生成 file corpus 的存在性 Noul | 不适用(生成条件增补) |
+| A5 | D5 epoch/HEAD 禁入 `candidate_set_hash` | csh 定义不动(仍是 hash(查询×候选集)=hash(needed));明文登记「文件 `source_epoch` / git HEAD 不得并入 csh 材料」;封闭世界 file Noul 上线时 `corpus_epoch` 进信封声明字段、仍不进 csh | 不适用(禁令登记;csh 定义不换) |
+| 缝 | R0a sessions 增列(v2 §2.1/§8) | 登记未来增列 `ws_id`、`files_cutoff`;R0a 与 DP1 加载序协调;**不加 `ws_revision`**(呼应 D2) | 不适用(未来增列缝,非本 DP 实现) |
+
+### A1 / I-file-4 · sql 快路语义与变更相零 FS/git IO
+
+v2 §1 I-file-4(轮 3 改写)+§0 封面四句「读盘不是 sql 快路」:快路=**读已冻结行**;任何 live FS 读=effect。§7 行「v13 §4.3 / G-ctx1」=增量适用到 FS/git(零锁内 IO)。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面):
+
+1. advance ④ sql 快路语义修正为:handler **只读已落行(artifacts/chunks/指针)**。不得 open/stat/readpath/git。live FS/git 一律走 effect worker(I-file-4),不进快路。
+2. 新增不变量(与 §1.4 不变量 3 同级,只加不减):**变更相(`v13_advance` 持锁期间)禁一切 FS/git IO**。G-ctx1 既有「锁内零外部 IO / 锁内零判断 IO」增量适用到 FS/git。
+3. 持锁内仍可跑 handler——「不把 handler 移出会话锁」的工程位相保留;收窄的是 handler 的读论域(已冻结行),不是执行位相。M3-4「同事务执行只读 handler」**不删不弱化**;「只读」收窄为已落行,禁 FS/git。
+
+`ERRATUM:` §3.5 约 L2400「教程 sql 快路本就在变更相内;**不把 handler 移出会话锁**」——handler 仍可在变更相/持锁内跑,但只能读已冻结行,不得 FS/git。指向 v2 §7 行「v13 §4.3 / G-ctx1」(增量适用到 FS/git,零锁内 IO)。
+
+`ERRATUM:` M3-4「④ sql 快路:route=sql → 同事务执行只读 handler」——「只读」=只读已落行(artifacts/chunks/指针);同事务/持锁执行面不动。指向同一 v2 §7 行「v13 §4.3 / G-ctx1」。
+
+既有 gate 不动:M3-4 / M3-15(handler 异常/超时出口) / G-ctx1-2(持锁时长) / G-ctx1-3(全命中零外部调用)一律保留。若后续加锁内 open/stat/git 探针计数(v2 G-ctx1-file),只加不减。
+
+### A2 / I-file-5 · `v13_visible_tools` 单源(换体)
+
+v2 §1 I-file-5 + §3.3:模型可见、advance 可建 effect 的工具集只来自 `v13_visible_tools(p_sid)`。§7 行「v13.1 v13_wb_visible_tools | 并入 v13_visible_tools」。
+
+**合取**(字面冻结):
+
+```
+v13_visible_tools(p_sid) = enabled ∧ (wb IS NULL ∨ wb∈active) ∧ name∈ws.tool_scope
+```
+
+- `kind IN ('sql','tool')` 仍是 needed Choice 的候选过滤(与现草案一致),但行集必须先经本函数,不得另写 `FROM tools WHERE enabled…`。
+- wb 表不存在时 `(wb IS NULL ∨ wb∈active)` **恒真**(R0 可先于 v13.1 加载;v2 §3.3)。
+- `v13_wb_visible_tools` **并入** `v13_visible_tools`,不得并列第二份过滤 SQL(G-file-vis:needed=advance=函数输出)。
+
+**换体登记**(替换,非并列):
+
+| 原文落点 | 原文读法 | 换体后 |
+|---|---|---|
+| `v13_needed_judgments` 约 L1316–1319 | `FROM tools WHERE enabled AND kind IN ('sql','tool')` | `FROM v13_visible_tools(p_sid)` 再滤 kind(或函数内已约束 kind) |
+| advance ④ 路由可见性(活表 / 信封冻结目录 `tools_catalog`) | ④ 对活表直查,或只按冻结目录 enabled 面判定「可建 effect」 | 可见性只读 `v13_visible_tools(p_sid)`;信封冻结 `tools_catalog` 的可见性行集改由本函数物化;冻结目录仍供 handler/param_spec 执行面(M3-12「源文无 `FROM tools` 直查」、M3-19 冻结读零 TOCTOU 不弱化) |
+| `v13_canonical_state` ctx.tools 约 L1257–1260 | `FROM tools WHERE enabled` | 同改读 `v13_visible_tools`(模型可见面,I-file-5;无第二份过滤) |
+| v13.1 `v13_wb_visible_tools` | 独立函数 | 并入 `v13_visible_tools`,不得并列 |
+
+本轮只登记换体,函数体随 v2 §8 R0b 与 DP1 加载序协调落地——不在 M1–M4 另开实现里程碑。
+
+`ERRATUM:` v2 §7「v13.1 v13_wb_visible_tools | 并入 v13_visible_tools」——本计划若出现并列 `v13_wb_visible_tools` 读法,以 `v13_visible_tools` 为唯一源,不得并列。
+
+### A3 / D2 · 探针七键零结构增量;禁第八键
+
+v2 §2.1 探针(D2)+§7 行「DP1 探针七键 | 轮 3 后:零结构增量(D2 收敛)」;裁决记录 D2:七键不动;workspaces 作用域列 DML → `tools_revision` bump + 分型审计事件;grok 撤回 `ws_revision`。
+
+**探针七键**(§3.5 / turn 9 #59,本轮**不动**):
+
+1. `session_version`
+2. `max_event_seq`
+3. `goal_hash`
+4. `route_policy_name`
+5. `route_policy_version`
+6. `tools_revision`
+7. `candidate_generation_revision`
+
+**第三类 bump 来源**(未来 R0;对 DP1 **零结构增量**):workspaces 表作用域列 DML → `tools_revision` bump(**statement AFTER 触发器,与 workbenches 同构**)+分型审计事件 `type='ws_scope_changed'`(payload:`ws_id` / 变更列集 / 新旧 revision)。审计归因靠分型事件,不靠探针键。既有两类 bump(tools 行级 AFTER → revision;DDL event trigger → revision / cgr)保留。
+
+**明文禁止第八键 `ws_revision`**。探针纪律**不得新增第八键**;不得以 `ws_revision` 扩 `v13_probe` / 步 0 比对集 / 信封冻结键。D2 收敛后 gpt 版第八键已撤(v2 §7)。
+
+`ERRATUM:` v2 §7「DP1 探针七键 | 轮 3 后:零结构增量(D2 收敛)」——上文七键清单与 M3-22「探针七键全索引读」保持;workspaces 作用域变更走 `tools_revision`+`ws_scope_changed`,不扩第八键。
+
+既有 gate 不动:M3-8/9/18/19/21/22(步 0 七键比对与 O(索引)守门)一律保留。
+
+### A4 / I-file-2 · `bootstrap_done=false` 禁 file 存在性 Noul
+
+v2 §1 I-file-2 + §7 行「v13 §4.5 存在性 Noul 先行 | erratum(论域)」:仅 `bootstrap_done=true` 后先行;开放世界期间「已注册子集是否足够」的 no 不得短路为「仓库无答案」。
+
+**needed 生成条件增补**:`bootstrap_done=false` 期间不得生成 file corpus 的存在性 Noul。本 DP 既有 needed 行集(intent / gate_action / gate_off_topic / risk / tool+param / stated)不因此删减;增补的是未来 file 论域问的生成闸——`bootstrap_done=false` 时 file 存在性 Noul 计数必须为 0。
+
+`ERRATUM:` v2 §7「v13 §4.5 存在性 Noul 先行 | erratum(论域)」——§1.3 / needed 候选推导若被解读为「存在性 Noul 无条件先行」,论域收窄为仅封闭世界(`bootstrap_done=true`)后对 file corpus 先行;开放世界禁 file 存在性 Noul。
+
+既有 needed / gap / M2 gate 不弱化。
+
+### A5 / D5 · csh 禁并入 epoch/HEAD
+
+v2 用户拍板 + 最终合成 D5:epoch 不进 `candidate_set_hash`;禁止 epoch/HEAD 并入 csh。§2.1:`workspace_git_tips` 热路径只 SELECT;混代在变更相纯 SQL。
+
+**csh 定义不动**:`candidate_set_hash` 仍是 hash(查询×候选集)=hash(needed)(§3.2 信封 `digest((SELECT n FROM needed)::text)`;§1.3「定义不变」硬契约)。
+
+**明文登记禁令**:文件 `source_epoch` / git HEAD 不得并入 csh 材料。`candidate_set_hash` 材料闭集=needed 行集字节;不得把 `source_epoch`、`workspace_git_tips.git_head`、sessions.`files_cutoff`、stat 启发式并入 digest。禁止 epoch/HEAD 并入 `candidate_set_hash`。
+
+**复核触发条件**:封闭世界 file Noul 上线时,`corpus_epoch` 进判断信封**声明字段**(与 `tools_revision` 同属水位/声明族,经 `v13_effect_envelope` 剔除、不入 request 哈希),**仍不进 csh**。步 0 是否另立比对键由后续 DP 立法;本 DP 七键不动(A3)。
+
+`ERRATUM (L4 修复 2026-09-21):` 上句「经 `v13_effect_envelope` 剔除、不入 request 哈希」**已废止,不再是现行规则**。该类比误把 `corpus_epoch` / `files_cutoff` 等同水位族(`tools_revision`)。**仍不进 csh**半句继续有效。现行口径见下「L4 修复」。
+
+`ERRATUM:` 无直接改写上文 csh 公式的冲突句——§3.2 / §1.3 的 hash(needed) 定义继续有效;本条是禁扩材料的正向登记(D5)。若后续把 epoch/HEAD 读进 csh,以本禁令+v2 合成口径为准。
+
+既有 M2-9 出口 schema / M3-3 语义信封键集 / 步 0「csh 由 revision/cgr 蕴含」论证不弱化。
+
+### L4 修复(2026-09-21) · F1 corpus_epoch 哈希规则统一
+
+**(现行口径;取代 A5「不入 request 哈希」)**
+
+1. **csh 禁并入(定义不动)**:`source_epoch` / git HEAD / `files_cutoff` **不得进入 `candidate_set_hash`**。csh 定义本身不变:仍是 hash(查询×候选集)=hash(needed)(§3.2 / §1.3)。
+2. **file 存在性 Noul 的 request_hash / 缓存匹配必须含完整封闭绑定**:canonical digest = `hash(ws_id, corpus_epoch, files_cutoff, secret_policy_version, admission_policy_version)`(或等价缓存匹配条件)。缺此 digest 则旧答案不能失效。
+3. **声明字段 vs request 材料**:封闭世界 file Noul 上线时,`corpus_epoch` / `files_cutoff` 仍进判断信封**声明字段**且**仍不进 csh**;但 file 存在性 Noul 的 **request 材料 / 缓存匹配条件必须含上述封闭绑定 canonical digest**——不得再把「不入 request 哈希」当现行规则。步 0 是否另立比对键由后续 DP 立法;本 DP 七键不动(A3)。既有 M2-9 / M3-3 / 步 0 论证不弱化。
+
+### sessions 未来增列缝(R0a × DP1 加载序)
+
+v2 §2.1 / §8 R0a:sessions 增列 `ws_id NOT NULL`、`files_cutoff jsonb {git_head, worktree_id, max_file_epoch}`(spawn/fork 时冻结;fork 复制父值)。**不加 `ws_revision`**(D2 裁决,呼应 A3 明文禁止第八键 `ws_revision` / 不得新增第八键)。
+
+登记为**未来增列缝**,不在 DP1 M1 sessions DDL(约 L109–123)本轮改写:
+
+| 列 | 语义 | 何时落地 |
+|---|---|---|
+| `ws_id` | session 引用静态 workspace;引用后语义列禁原地 DML | R0a,与 DP1 `SQL_LOAD_ORDER` 纯末尾追加协调 |
+| `files_cutoff` | spawn/fork 冻结 `{git_head, worktree_id, max_file_epoch}` | 同上 |
+| `ws_revision` | — | **不加**(不得新增第八键;审计走 `ws_scope_changed`) |
+
+R0a 将与 DP1 加载序协调:workspaces+sessions 增列+两张文件表+tips+veto 函数+七不变量立法走 `v13/load.py` 的 `SQL_LOAD_ORDER` **纯末尾追加**,不改 DP1 已登记 core/resolve/advance/twophase 前缀,不回写 M1–M4 已冻结 SQL 草案。本轮不实现这些列。
+
+既有 sessions 列集与 M1 gate 不弱化。

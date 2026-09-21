@@ -1157,3 +1157,89 @@ COMMIT;
 ---
 
 *(完——DP8/8;八份 plan 齐后进入终局交叉覆盖检查,附 A #1 建议列入其清单。)*
+
+## v2 对齐修订(2026-09-21)
+
+> 日期:2026-09-21。本轮**只追加本节**,上文一字不删、不改写。
+> 对齐输入(只读):
+> - `docs/analysis/repoprompt-native-on-v13-feasibility-v2-2026-09-21.md`(v2 主文档:§1 I-file-1 / §2.1 sessions `files_cutoff` / §4 render·三回放 / §5 G-file-replay / §7 冲突登记)
+> - `docs/reviews/repoprompt-native-context-oracle-r1-r3-2026-09-21.md`(裁决记录 D2/D5;D5 末格=fork cutoff 公式)
+> 纪律:与 v2 冲突的原文以 `ERRATUM:` 行标注并指向 v2 §7 对应行;既有 gate 一律不弱化(含 E 组 fork/validate-spawn / C 组 identity / D 组 render receipt / B5 latch digest / 不变量 1 零外部 IO / 不变量 6 validate-spawn fail-closed);新增断言只加不减。本轮不 invent 新里程碑实现、不改 SQL 代码。
+> 编号铁律:本文件只用 **A12**(latch/fork `files_cutoff`)、**A6**(latch 前缀身份哈希输入不含文件内容)与 **A13**(render 只读 artifact bytes)。不要写 A14 / A2 / A3 / A1 / A4 / A5 / A7–A11(那些归其他计划)。**A12 全局=latch/fork**,不得复用于其他语义。DP3 已在 manifest/file-section 面登记 A6/A13 同口径;本 DP 登记 **DP8 执法/render/latch 输入侧**。
+
+### 对齐总表(v2 条款 → 本计划改动点 → 换体登记)
+
+| # | v2 条款 | 本计划改动点 | 换体登记 |
+|---|---|---|---|
+| A12 | §2.1 sessions `files_cutoff`;D5 fork 冻结公式;G-file-replay 三回放;I-file-1 子会话不得越世代 | sessions 增 `files_cutoff`;exact/recompute **exact** 复制父值并**冻结**;fresh fork 采用最新已发布 epoch;子会话 recall 不得越过 cutoff 世代;三回放语义落文件面(与 DP3 已登记同口径),DP8 记 **fork 执法侧** | 不适用(执法侧立法,不改上文 SQL 字面;OQ4 spawn_kind / validate-spawn 不删) |
+| A6 | I-file-1 身份三元组;文件经 artifact hash 进 manifest | latch 的前缀身份哈希输入**不含文件内容**;`v13_latch_digest` / prefix_identity 材料=latch 的 name,value(fired_at 已排除);文件字节/路径/stat/epoch/HEAD 不进 latch digest | 不适用(输入论域收窄;OQ8 {name,value} 与 fired_at 排除不删) |
+| A13 | §4 R6 render 只读 artifact bytes;I-file-1+I-file-4 只读已冻结行 | `render` / canonical render 只读 artifact bytes,**禁开源路径**(与 DP3 A13 同口径;本 DP=render 函数业主,OQ3 `v13_render_wire` / `v13_render`) | 不适用(纯函数输入约束;OQ3 签名/三件套不删) |
+
+### A12 / latch·fork files_cutoff · 三回放执法侧
+
+v2 §2.1:sessions 增 `files_cutoff jsonb {git_head, worktree_id, max_file_epoch}`(**spawn/fork 时冻结;fork 复制父值**);**不加 ws_revision**(D2 裁决)。Oracle D5 末格:`fork 时 files_cutoff={tips.git_head, worktree_id:null, max(pointer.source_epoch)} 冻结`。§5 G-file-replay:**exact 不发 FS effect;recompute 允许 register;fresh fork 新 cutoff**;把重读 FS 标 exact→红。§1 I-file-1:进 manifest/render/exact replay 的字节必须已冻结;子会话不得看见 cutoff 之后的文件世代。§7 行「ch01「模型可见 ⟺ 已落行」」=增量适用到文件字节;「v13 §4.3 / G-ctx1」=增量适用到 FS/git(零锁内 IO)。
+
+**与 DP3 的分工**(同口径,不开第二套三回放):DP3 A6 已在 manifest/file-section 面立法三种回放;本 DP 记 **fork 执法侧**(OQ4 `v13_fork` / spawn_kind / validate-spawn / 子会话 recall·render·identity 读面)。三回放语义落文件面(与 DP3 已登记同口径)。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面、不 invent 新里程碑):
+
+sessions 增 `files_cutoff jsonb {git_head, worktree_id(null), max_file_epoch}`。列随会话写入一次即冻结(与 spawn 三列同「一次写入永不改」纪律);fork 写入后子行不可 UPDATE。**不加 ws_revision**。
+
+既有三种 spawn_kind(`exact_replay` / `recompute` / `fresh_fork`)的 **files_cutoff 执法**:
+
+1. **exact**(`exact_replay`):fork = **exact** 复制父值并**冻结**(copy parent `files_cutoff` verbatim and freeze)。子会话 recall/render/identity 不得越过 cutoff 世代(不得看见该 cutoff 之后的文件世代)。**zero live FS**(exact 不发 FS effect;把重读 FS 标 exact→红)。
+2. **recompute**:同一份继承而来的冻结 cutoff(enforcement side=父值 **exact** 复制并**冻结**,与 exact 同 cutoff)。register effects allowed(worker 可建 `file_register`);assemble still no lock-inner FS(装配持锁内零 FS/git,与不变量 1 / G-ctx1 同向)。
+   【L4 标注(F6)】「worker 可建 `file_register`」**已废止**。现行口径:advance/system SQL 可 enqueue `file_register`; worker 只执行与 fenced settle。recompute *mode* 允许消费/等待已入队的 register,不授权 worker INSERT/enqueue effects。
+3. **fresh fork**(`fresh_fork`):does NOT inherit the parent's stale cutoff(不是一份过期父 cutoff 的拷贝)。**fresh fork** 采用最新已发布 epoch 作为新 cutoff:`max_file_epoch` = latest published corpus/pointer epoch;`git_head` from tips;`worktree_id` null unless a worktree is bound。Oracle D5 公式即此冻结点:`fork 时 files_cutoff={tips.git_head, worktree_id:null, max(pointer.source_epoch)} 冻结`。v2 §2.1 字面「fork 复制父值」适用于 exact/recompute;fresh 走 D5 新 cutoff,不复制 stale parent。
+fork 复制父 `files_cutoff` 仅适用于 exact_replay/recompute;fresh_fork 必须从最新已发布 epoch 生成并冻结新 cutoff,不继承父 cutoff。
+
+G-file-replay 执法侧对照:exact 不发 FS effect;recompute 允许 register;fresh fork 新 cutoff。子会话 recall 不得越过 cutoff 世代(迟到/乱序收据不越 cutoff——后续 G-file-cutoff 只加不减)。
+
+`ERRATUM:` OQ4 约 L84–88 / §3.4 `v13_fork` 约 L524–529「建子行(parent 两列+spawn_kind)」+「latch 复制:exact/recompute 全量复制父 latch 行」——原文只复制 latches 与 `parent_cutoff_seq`/`spawn_kind`,**从未提及 `files_cutoff`**。原文 spawn-kind 词表 / validate-spawn(身份声称类 kind 比 artifact 冻结身份) / latch 复制 / `parent_cutoff_seq` 越界 V3008 **一字不删**;本条增量登记 sessions `files_cutoff` 的 fork 冻结与三回放执法。指向 v2 §7 行「ch01「模型可见 ⟺ 已落行」」(增量适用到文件字节;子会话可见=cutoff 内已落行)与「v13 §4.3 / G-ctx1」(exact 零 live FS;recompute 装配零锁内 IO)。
+
+`ERRATUM:` §3.1 约 L218–223 `ALTER TABLE sessions ADD COLUMN spawn_kind` + 三列不可变触发器(`parent_session_id`/`parent_cutoff_seq`/`spawn_kind`)——原列与触发器不删;未来 R0a/`files_cutoff` 列写入后同「一次写入永不改」,不得把「只增 spawn_kind」读成「fork 无需冻结文件世代」。指向同一 v2 §7 行「ch01「模型可见 ⟺ 已落行」」。
+
+既有 gate 不动:E 组 fork(E1 exact_replay 逐字节 / E2 三种 spawn 可区分 / E3 越界零行 / E4 validate-spawn 四负向 / E5 fresh fork overrides / E6 goal_hash 回归 / E7 冻结隔离 / E8 O(1) 结构) / A4 spawn 列不可变 / 不变量 6 validate-spawn fail-closed——一律不删不弱化。后续 G-file-replay / G-file-cutoff 只加不减。
+
+### L4 修复(2026-09-21)
+
+> 本小节只追加、不删 A12 上文。F6/F8 为 L4 终审 FAIL 并集修复。既有 gate 一律不弱化(E 组 fork / A4 spawn 列不可变 / 不变量 6 / D 组 render / 不变量 1)。
+
+**F6 · effect 创建者**
+
+A12 原句「register effects allowed(worker 可建 `file_register`)」**已废止**。现行口径:**advance/system SQL 可 enqueue `file_register`; worker 只执行与 fenced settle**。G-file-replay 「recompute 允许 register」收窄为:recompute *mode* 允许消费/等待已由 advance/system SQL 入队的 `file_register`,不授权 worker 自建/enqueue。装配持锁内零 FS/git(不变量 1 / G-ctx1)不弱化。
+
+**F8 · fork cutoff 措辞**
+
+fork 复制父 `files_cutoff` 仅适用于 exact_replay/recompute;fresh_fork 必须从最新已发布 epoch 生成并冻结新 cutoff,不继承父 cutoff。
+
+### A6 / latch 前缀身份哈希 · 输入不含文件内容
+
+v2 §1 I-file-1:模型可见身份=`(ws_id, canonical_path, content_hash)`;stat 禁作身份/缓存键/replay 键;进 prefix 身份的字节必须已冻结为 artifact。DP3 已在 manifest 面登记「文件经 content_hash 进段、stat 不进 prefix_identity」;本 DP 登记 **latch 输入侧**。§7 行「ch01「模型可见 ⟺ 已落行」」=身份材料=已落行,不是活文件字节。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面):
+
+1. latch 的前缀身份哈希输入**不含文件内容**。`v13_latch_digest` / prefix_identity 材料闭集=latches 的 **name,value**(OQ8 / §3.3;`fired_at` already excluded——时间戳非内容身份,B5 已钉)。File bytes / paths / stat / epoch / HEAD **must not be latch digest inputs**。
+2. 文件经 artifact hash 进 manifest,不直接进 latch。`kind='file'` 的 `content_hash` 走 DP3 段/`payload_ref`,不经 `v13_latch_fire` 把正文或路径塞进 latch `value`。
+3. OQ1 九键材料(`provider`/`model`/`system_blocks_digest`/`tools_rev`/`tools_digest`/`goal_hash`/`latch_digest`/`render_policy_version`/`manifest_version`)保持;九键无一是文件正文。不得把 `files_cutoff` / `git_head` / `max_file_epoch` / 源路径写进 latch digest 或 prefix_identity 材料。
+
+`ERRATUM:` OQ8 约 L117 / §3.3 约 L278–283 `v13_latch_digest`=`sha256(jsonb_agg({name,value} ORDER BY name))`+「**fired_at 不进材料**」——{name,value} 闭集与 fired_at 排除**不删**;本条收窄读法:不得把 latch `value` 读成可携带文件正文/路径/stat/epoch/HEAD 的身份输入,也不得把文件字节解作 digest 材料。指向 v2 §7 行「ch01「模型可见 ⟺ 已落行」」(身份材料=已落 latch 行的 name,value,不是 FS 字节)。
+
+`ERRATUM:` OQ1 约 L65 九键材料清单——键集不删不扩文件键;不得把「latch_digest 进身份」读成「文件内容进身份」。指向同一 v2 §7 行「ch01「模型可见 ⟺ 已落行」」。
+
+既有 gate 不动:C 组 identity(C1 首 settle 首发 / C2 mid-session 翻版安全绳 / C3 未 pin 追动 / C4 render_policy 追动 / C5 latch 追动 / C6 九键材料) / B5 digest(fired_at 不改 digest;空集='-none-') / 不变量 2 latch 一次性 / 不变量 4 进 identity 的输入必须在 token 有键——一律保留。后续若加「latch value 禁文件字节」探针,只加不减。
+
+### A13 / canonical render · 只读 artifact bytes
+
+v2 §4 R6:`render` 只读 artifact bytes;三种回放显式标注。I-file-1 + I-file-4:`parse/advance/recall/visibility/manifest/render` 只读已冻结行;所有 FS/git IO 发生在 effect worker。DP3 A13 已在 manifest 消费面登记同口径(「render 本体仍归 DP8」);本 DP 是 render 函数业主(OQ3 `v13_render_wire` / `v13_render` / `v13_render_receipt`)。§7 行「ch01「模型可见 ⟺ 已落行」」+「ch07「文件=artifacts」」+「v13 §4.3 / G-ctx1」。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面):
+
+`render` / canonical render **只读 artifact bytes**,**禁开源路径**。输入闭集=已冻结 context artifact / `kind='file'` artifact / section blob / system_block blob(经 `payload_ref` / content_hash 回取 artifacts 行);不得 open/stat/readpath 源文件,不得把 `normalized_path` 或 `payload_ref` 当读盘句柄。OQ3 三件套签名(`v13_render_wire` / `v13_render_receipt` / `v13_render`)与「wire 不落库」不删;读论域收窄为已冻结行。I-file-1 + I-file-4 字面落到本函数族:parse/advance/recall/visibility/manifest/render 只读已冻结行。
+
+`ERRATUM:` OQ3 约 L79 / §3.5 约 L615–628 `v13_render_wire`「body 经 payload_ref 判别回取(blob→context_section inline;goal→v13_goals payload::text)」——回取形态与纯函数签名不删;不得把 payload_ref / 段 `normalized_path` 读成源路径 open。canonical render 只读 artifact bytes,**禁开源路径**。指向 v2 §7 行「ch01「模型可见 ⟺ 已落行」」与「ch07「文件=artifacts」」(模型侧=artifacts)以及「v13 §4.3 / G-ctx1」(零锁内 FS/git IO)。
+
+`ERRATUM:` OQ3 约 L81 `v13_render`「读 sessions.context_active_artifact→inline→render_wire(worker 面)」——worker 面调用不授权打开源路径;worker 若需新文件字节必须先 register/settle 成冻结行,render 仍只读已落 artifact。指向同一组 v2 §7 行。
+【L4 标注(F6)】「worker … register/settle」不授权 worker 自建/enqueue `file_register`。现行口径:advance/system SQL 可 enqueue `file_register`; worker 只执行与 fenced settle。render 仍只读已落 artifact。
+
+既有 gate 不动:D 组 render(D1 纯函数确定性+wire 重现 / D2 wire 结构 / D3 tools 同源 / D4 system blocks 通道 / D5 render 块进 manifest+receipt est / D6 空表衔接 / D7 钉版本) / 不变量 1 装配零外部 IO / 不变量 5 render 确定性——一律不删不弱化。后续若加锁内 open 探针(G-ctx1-file),只加不减。

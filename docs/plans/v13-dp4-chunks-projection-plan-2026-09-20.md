@@ -1562,3 +1562,70 @@ COMMIT;
 - DP3:`docs/plans/v13-dp3-manifest-skeleton-plan-2026-09-20.md` §1.4(DP4 行)/OQ1(token 七键)/OQ4(candidates 字段族与 spans 形态)/§3.1(artifacts CHECK 与守卫)/§3.2(v13_context_required 体)。
 - 教程:`docs/tutorials/v13/chapters/07-artifacts-plane.md`(7.2–7.6;行号见 §6)。
 - 仪式参照:`v12/indb/setup_db.py`、`v12/load.py`(DP1 §3.8/M1 转述;V13 路径)。
+
+## v2 对齐修订(2026-09-21)
+
+> 日期:2026-09-21。本轮**只追加本节**,上文一字不删、不改写。
+> 对齐输入(只读):
+> - `docs/analysis/repoprompt-native-on-v13-feasibility-v2-2026-09-21.md`(v2 主文档:§1 I-file / §2.1 两层表 / §3.3 单源 / §7 冲突登记)
+> - `docs/reviews/repoprompt-native-context-oracle-r1-r3-2026-09-21.md`(裁决记录 D1)
+> 纪律:与 v2 冲突的原文以 `ERRATUM:` 行标注并指向 v2 §7 对应行;既有 gate 一律不弱化(含 A/B/C 组 chunks 行自证三纪律 / F3② / D 组 / chunk_gc dry-run / F4);新增断言只加不减。本轮不 invent 新里程碑实现、不改 SQL 代码。
+
+### 对齐总表(v2 条款 → 本计划改动点 → 换体登记)
+
+| # | v2 条款 | 本计划改动点 | 换体登记 |
+|---|---|---|---|
+| A9a | I-file-3 生成物默认 generated;I-file-6 / v2 §7「v13 §4.4 语料三分」 | file 面两分:`corpus='file'` 与 `corpus='generated'`(`produced_by` 非空默认后者);**分索引/分 IDF 池**;§4.4 文档/记忆/逐字三分保留 | 不适用(增量,非翻案) |
+| A9b | I-file-3 注册即出境;§2.1 `content_hash IS NULL` 禁进 recall/manifest/render | chunks 摄取只吃已过注册门正文;指针谓词 `scan_status='clean'` ∧ `content_hash` 非空;秘密扫描/admission(deny glob/字节帽)是投影**前置门**、fail-closed;未过门不得进 chunks/源 IDF 池 | 不适用(准入前置增补) |
+| A9c | v2 §7「v13 §4.2 chunks 重摄取」;D1 两层+引用可达性 | file 面重摄取改 **append-only** `file_receipts` + `workspace_files` 指针 UPSERT;blob GC=引用可达性,被引用 `content_hash` **不可回收**;非 file 语料纪律②字面保留 | **erratum**(仅 file 面;§2 约 L123 / `v13_ingest_document` 不换体) |
+
+### A9a / I-file-3 · corpus 维度:file 面两分,§4.4 三分保留
+
+v2 §1 I-file-3「生成物(`produced_by` 非空)默认 `corpus='generated'`,不进源文件 IDF 池」+ I-file-6「§4.4 语料三分保留,禁止按 ws 硬切非 file 语料」。§7 行「v13 §4.4 语料三分 | 保留;新增 corpus='file'|'generated';禁 ws 硬切」=**增量,不是翻案**。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面):
+
+1. **file 面两分**(新增维,不改既有三分):文件平面语料增 `corpus='file'` 与 `corpus='generated'`。`produced_by` 非空的生成物默认 `corpus='generated'`(I-file-3;含 export 落盘被扫,v2 G-file-gen)。
+2. **分索引/分 IDF 池**:`corpus='file'` 与 `corpus='generated'` 不混池;二者亦不与文档/记忆/逐字(transcript)语料混池。F4「corpus 域隔离」的隔离面扩展到 file|generated,既有文档两 corpus 不串断言不删不弱化。
+3. **§4.4 语料三分保留**:文档 / 记忆 / 逐字(transcript_chunks,§7 台账、DP6 全套)三分原样。新增的是 file 面两分,不是改掉既有 doc/memory/transcript 三分,也不是按 ws 硬切非 file 语料。`v13_sources.corpus` 仍是语料归属唯一住所(OQ4);corpus 冲突 fail-closed(B6)不弱化。
+
+§4.4 三分不是翻案:v2 §7 行「v13 §4.4 语料三分 | 保留;新增 corpus='file'|'generated';禁 ws 硬切」=增量。上文 F4 / §1.4 DP6 行③「文档语料与记忆语料分索引」/ §7 transcript_chunks 行一字不改。
+
+既有 gate 不动:F4 corpus 域隔离 / B6 corpus 冲突 fail-closed / A–C 组三纪律 / 记忆真表归 DP6 一律保留。若后续加 file|generated 分池探针,只加不减。
+
+### A9b / I-file-3 · 摄取准入前置(fail-closed)
+
+v2 §1 I-file-3「注册即出境」:秘密扫描+类型/大小/deny glob 准入是同一道注册门,fail-closed,且在**路径树**上执法。§2.1:`workspace_files` 指针上 `content_hash IS NULL` 禁进 recall/manifest/render;装配候选要求 clean ∧ content_hash 非空(v2 §3.2)。
+
+**本计划改动点**(只立法,不改 §3.3 `v13_ingest_document` 字面):
+
+1. chunks **file 面**摄取只吃「已通过注册门」的正文。指针谓词(`workspace_files`):`scan_status='clean'` ∧ `content_hash` 非空。缺任一则不得投影、不得进源 IDF 池、不得进 recall/manifest/render。
+2. 秘密扫描 / admission(deny glob / 字节帽 / 类型)是 chunks 投影的**前置门**,fail-closed——与 I-file-3「秘密扫描+类型/大小/deny glob 同一道注册门,路径树上执法」同一道门,不是摄取函数体内的事后过滤。未过门的路径(skipped/blocked 收据,或指针 `content_hash IS NULL`)不得进 chunks / 不得进源 IDF 池(v2 G-file-admit:deny glob 只有 skipped 收据,IDF 行数不因 deny 暴涨)。
+3. 非 file 语料(文档 `v13_ingest_document` / 未来记忆)的既有入口与策略形状 fail-closed(§3.3 / B1–B6)不因此删减;本条是 file 面注册门对投影的前置收窄。
+
+无直接改写上文文档摄取合同的冲突句——§3.3 / OQ7 驱动器「库外读文件→真实 enqueue/claim/complete→同事务 ingest」对**文档语料**继续有效;file 面多一道注册门,未过门正文不得充当 ingest 输入。若把 §3.3 读成「任意已读路径无条件进 chunks」,以本前置门+v2 §1 I-file-3 为准。
+
+既有 gate 不动:B1 驱动器四步 / B6 / A 组行自证 / §3.3 策略形状 fail-closed 一律保留。file 面未过门负向若后续加断言,只加不减。
+
+### A9c / D1 · §4.2 erratum:file 面摄取不是无条件 delete+insert
+
+v2 §7 行「v13 §4.2 chunks 重摄取 | file 面改 append-only 收据;旧 blob 被 manifest 引用时不可 GC」=**erratum**。裁决 D1:两层 `file_receipts` 只追加(settle INSERT,含失败尝试)+ `workspace_files` 指针(同 settle UPSERT;热路径只读指针);不变量:每行指针存在同批同值收据;GC 靠引用可达性。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面):
+
+1. **file 面**摄取走 **append-only** 收据(`file_receipts`) + 指针(`workspace_files`)。D1 字面:file_receipts 只追加(settle INSERT,含失败尝试)+ workspace_files 指针(PK=ws+path+population,同 settle UPSERT);热路径只读指针;每行指针存在同批同值收据(违约即双源,呼应 §3.3 单源)。**不是**无条件 `delete by source_hash` + insert。
+2. 现行 §2 约 L123 / 纪律② / `v13_ingest_document`「与新 artifacts 同一事务 delete by source_hash+insert」**对非 file 语料(文档)保留**(含附 A #7 已收窄的「只删无引用行」+ OQ2 locked)。file 面从该字面划出。
+3. blob GC 改为**引用可达性**(D1):`content_hash` 被以下任一引用时**不可回收**——① 任一 `workspace_files` 指针;② 未 GC 的 context artifact manifest section;③ session 水位引用。「被引用即保留」(DP3 不变量 4 / F3② / `v13_chunk_referenced`)的可达集扩展,不替换既有 manifest 候选 + decisions 面;不弱化 F3② / D 组 / `chunk_gc` dry-run。
+4. 重摄取不得删除仍被引用的旧版本。旧 blob / 旧投影在指针或未 GC manifest 或水位仍引用时留存;file 面无「按 source_hash 无条件清旧代」。
+
+`ERRATUM:` §4.2 / §2 映射约 L123「重摄取=与新 artifacts 同一事务 delete by source_hash+insert」——对 **file 面** 改为 append-only 收据 + 指针 UPSERT;无条件按 source_hash 删除旧投影/旧 blob 不再成立。指向 v2 §7 行「v13 §4.2 chunks 重摄取」。
+
+`ERRATUM:` §3.3 `v13_ingest_document` / 纪律②「旧投影行死亡+新行落账,同一事务」——该合同继续约束**文档语料**;file 面改走收据追加+指针 UPSERT,不得套用无条件 delete-by-source_hash。指向同一 v2 §7 行「v13 §4.2 chunks 重摄取」。
+
+chunks 行自证三纪律**保留不动**:
+
+- 纪律①:`content_hash`=sha256(body)+exists artifact(A 组;OQ1 `v13_body_hash` 载体化)
+- 纪律②:同事务一致——**对非 file 语料**仍是 delete by source_hash+insert(B 组;附 A #7 收窄面保留)
+- 纪律③:外部只记 `content_hash`(C 组)
+
+既有 gate 不动:A/B/C 组三纪律 / D 组 F3 保留与回放 / D3 `chunk_gc` dry-run-only / E 组 rebuild 幂等 / 不变量 9 锁协议 / J 组 一律保留。可达集扩展若后续加指针/水位探针,只加不减。本轮不 invent file 面摄取里程碑、不改 `v13_chunks.sql`。

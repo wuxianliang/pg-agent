@@ -1971,3 +1971,72 @@ COMMIT;
 - loop memory:`prompt-exports/loop-orchestrate-v13-deep-plans-runs.md`(分解表 DP6 行/turn 1–26 台账/turn 12 用户裁决)。
 - 惯例参照:`docs/plans/v12-jev-pgembed-minimal-plan-2026-09-18.md`(stage 四件/命令形态/收尾纪律);`v12/load.py`(files_through 形制)。
 
+## v2 对齐修订(2026-09-21)
+
+> 日期:2026-09-21。本轮**只追加本节**,上文一字不删、不改写。
+> 对齐输入(只读):
+> - `docs/analysis/repoprompt-native-on-v13-feasibility-v2-2026-09-21.md`(v2: §1 I-file-2 / I-file-6 / §4 R6 / §5 G-file-open / G-file-secret(+veto) / G-cjk-file / §7)
+> - `docs/reviews/repoprompt-native-context-oracle-r1-r3-2026-09-21.md`(裁决记录:I-file-2 开放世界;I-file-6 deselect 是确定性 veto,超集不得加回)
+> 纪律:与 v2 冲突的原文以 `ERRATUM:` 行标注并指向 v2 §7 对应行;既有 gate 一律不弱化(含 A–H 过滤组 / I–N 记忆组 / C 组 F2 存在性键 / G-ctx4 先行+缓存 / OQ4 candidates_digest / 闸门三态 fail-open);新增断言只加不减。本轮不 invent 新里程碑实现、不改 SQL 代码。
+> 编号铁律:本文件只用 **A4**(过滤消费侧 I-file-2)与 **A11**(人 veto)。**禁止用 A12**(A12=latch/fork,归 DP8)。
+
+### 对齐总表(v2 条款 → 本计划改动点 → 换体登记)
+
+| # | v2 条款 | 本计划改动点 | 换体登记 |
+|---|---|---|---|
+| A4 | I-file-2 开放世界:`bootstrap_done=false` 禁 file 存在性 Noul;`no` 不得短路为「仓库无答案」 | **过滤消费侧**落位:file corpus 存在性 Noul 仅 `bootstrap_done=true` 后允许;开放世界期间过滤器不得以「语料无答案」跳过整批 per-chunk Score;`no` 只证「已注册子集不足」。与 DP2 信封分工:DP2 管问题生成/缓存世代,本 DP 管过滤器消费侧执行——不开第二套语义 | 不适用(消费侧论域闸/短路禁令增补;信封题文与缓存世代仍归 DP2) |
+| A11 | I-file-6 人 veto:`v13_file_vetoes(p_sid)` 单源;deselect 高于超集;G-file-secret(+veto) | `must_include ∩ veto = ∅`;人工 `file_deselect` 事件折叠为确定性 veto,优先级高于过滤缺省超集 / 装配 must-include / bootstrap 补漏;再入选必须有新的 `file_select` 事件;deselect 的秘密路径被超集加回=P0 | 不适用(veto join 单源登记;不过滤另写第二份 veto 谓词) |
+
+### A4 / I-file-2 · 过滤消费侧:存在性 Noul 闸门条件化
+
+v2 §1 I-file-2 + §7 行「v13 §4.5 存在性 Noul 先行 | erratum(论域)」:仅 `bootstrap_done=true` 后先行;开放世界期间「已注册子集是否足够」的 no 不得短路为「仓库无答案」。G-file-open:`bootstrap_done=false` 时 file 存在性 Noul 计数=0;子集不足的 no 不短路整批。裁决记录:DP2 信封已登记 I-file-2(问题生成/缓存世代/论域闸);DP5 已登记 recall 出口同纪律;本 DP 登记 **过滤器消费侧同纪律**。
+
+**与 DP2 信封的分工**(不开第二套语义):
+
+| 平面 | 归属 | 本 DP 不另开 |
+|---|---|---|
+| 问题文本 / needed 是否含 file 存在性问 | DP2 | 不另写题文、不另开「仓库有无答案」问 |
+| 缓存世代 / 封闭绑定 / 旧答案不跨 epoch | DP2 | 不另开存在性缓存键、不另开短路定义 |
+| 过滤器是否执行该问、`no` 是否跳过整批 Score | **本 DP** | 消费 DP2 已立法的信封;误带该问仍不得据此跳过整批 |
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面、不改 OQ4 `v13_existence_ref` / `candidates_digest`):
+
+1. **论域闸(消费侧)**:file corpus 的存在性 Noul 仅在 `bootstrap_done=true` 后允许;`bootstrap_done=false`(开放世界)期间过滤器不得对该论域执行存在性 Noul(即使信封误带该问,消费侧计数必须为 0、不得据此动作)。
+2. **不得跳过整批**:开放世界期间过滤器**不得以「语料无答案」跳过整批** per-chunk Score。闸门不确定 / 开放世界禁问 / 信封无该问——三条都继续走 per-chunk,与上文「闸门三态(missing/timeout/review)全 fail-open(不闸)」同方向,本条把「语料无答案」短路从开放世界划出。
+3. **`no` 语义**:该问的 `no` 只证「已注册子集不足」,不得短路为「仓库无答案」、不得替代 k 次 Score。封闭世界(`bootstrap_done=true`)后,file 存在性 Noul 才允许先行;即便先行,`no` 仍只证封闭绑定内的已注册子集不足,不是全库穷尽。
+4. **封闭绑定消费**:封闭语义绑定 `(ws_id, corpus_epoch, files_cutoff, secret/admission policy 版本)` 由 DP2 立法;本 DP 执行时任一变化即 miss(不复用旧「无答案」)。本 DP 不另开绑定键。
+
+`ERRATUM:` §1 Goal 约 L13「存在性 Noul 先行闸整批」+ 不变量 4 约 L111「顺序=存在性严格先行」+ §2 映射约 L130「先一个存在性 Noul 闸住整批花费(语料无答案时 1 次调用替代 k 次)」——若被解读为无条件承接设计 §4.5「语料无答案时 1 次调用替代 k 次」:论域收窄为仅封闭世界(`bootstrap_done=true`)后对 file corpus 先行;开放世界禁 file 存在性 Noul,过滤器不得以「语料无答案」跳过整批 per-chunk Score;`no` 只证「已注册子集不足」。指向 v2 §7 行「v13 §4.5 存在性 Noul 先行」(增加论域条件:仅 bootstrap_done=true 后先行;**erratum(论域)**)。
+
+`ERRATUM:` 同上「语料无答案」若被读成「去扫全库」或「仓库无答案」——遵守 v2 §7 行「v13 §6.7 / §6.2 触点 3」(全库扫触发禁 Noul);问题文本锁在 DP2 已立法的「已注册子集是否已足够」,本 DP 不开第二套语义。
+
+既有 gate 不动:A–H 过滤组 / I–N 记忆组 / C 组 F2 存在性键含候选集维度 / C3 两世代存在性 / G-ctx4 先行+同 query×chunk 二次零外部调用 / OQ4 `candidates_digest` 单源 / 闸门三态 fail-open(不闸) / 不变量 4「存在性批必已不在缺口」对**封闭世界 file Noul 与非 file 论域**继续有效——一律不删不弱化。开放世界 file 面的「不执行该问、不跳过整批」只加不减。
+
+### A11 / I-file-6 · 人 veto 高于超集(`must_include ∩ veto = ∅`)
+
+v2 §1 I-file-6:veto 由事件折叠(`v13_file_vetoes(p_sid)` 单源函数),T0/过滤/装配/bootstrap 一律不得加回。I-file-3 同句:人 deselect 是确定性 veto,优先级高于一切超集。Oracle 记录:deselect 是确定性 veto,超集不得加回。G-file-secret(+veto):deselect 的秘密路径不被超集/bootstrap 加回(违=P0)。G-cjk-file:`must_include∩skipped=∅` 不弱化;本条是过滤/装配 join 上的 `must_include ∩ veto = ∅`。
+
+**单源**(字面冻结;不过滤另写):
+
+```
+v13_file_vetoes(p_sid)
+  = fold(file_deselect) − fold(后续 file_select)
+```
+
+- 人工 deselect = `file_deselect` 事件折叠,确定性 veto。
+- 再入选必须有新的 `file_select` 事件;无新 select ⇒ 路径留在 veto 集。
+- 过滤缺省超集、装配 must-include、bootstrap 补漏——三路**一律不得把 veto 路径加回**。
+- `must_include ∩ veto = ∅`:must-include 与 veto 相交即违约(不得用 must-include 覆盖 deselect)。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面):
+
+1. **过滤 join 读单源**:过滤器对 file 路径的入选/超集扩展必须 `¬ v13_file_vetoes(p_sid)`。不得另写第二份 veto 谓词、不得在 chunk_filter / defaults / 超集规则里重折事件。
+2. **must-include 不得压过 veto**:装配 / 过滤 must-include 与 veto 交必须为空。相交 ⇒ 该路径保持 veto(skipped 理由走 file 面 veto,不进 applied)。
+3. **bootstrap 补漏同禁**:`corpus_bootstrap` / 名字优先补漏不得把已 deselect 路径加回已注册闭包的可见超集。
+4. **与秘密扫描耦合(P0)**:deselect 的秘密路径被超集或缺省方向加回=**P0**,引用 v2 `G-file-secret-veto`(表名 `G-file-secret(+veto)`)。秘密扫描 fail-closed 与 veto 同向:blocked 路径不可见;deselect 后再被超集加回比「从未扫到」更坏——把已否决的秘密路径送回模型。
+5. **再入选合同**:只有新的 `file_select` 事件才能把路径移出 `v13_file_vetoes`;select 不自动恢复 blocked_secret(秘密门仍是注册门,I-file-3)。
+
+`ERRATUM:` 无直接改写上文 chunk_filter / defaults / 超集 / G-ctx4 的冲突句——本条是 file 面 veto join 的正向登记(v2 §1 I-file-6)。若把过滤缺省超集、装配 must-include、或 bootstrap 补漏读成「可把 deselect 路径加回」,以 `v13_file_vetoes(p_sid)` 单源 + `must_include ∩ veto = ∅` 为准;指向 v2 §7 无对应改写行(§7 未列 veto 冲突——本条不发明冲突,只钉单源与优先级)。秘密路径加回另指 v2 §5 `G-file-secret(+veto)`(违=P0),与 §7 行「v13 §4.4 语料三分」(禁 ws 硬切非 file;file 面 veto 不得借超集绕过)同向。
+
+既有 gate 不动:A–H / I–N / C 组 F2 / G-ctx4 / OQ4 / 记忆真表 / 文档与记忆分索引——一律不删不弱化。G-cjk-file `must_include∩skipped=∅` 不弱化。后续 G-file-secret(+veto) / veto join 探针只加不减。
+

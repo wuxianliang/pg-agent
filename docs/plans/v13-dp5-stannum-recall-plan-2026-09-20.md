@@ -1365,3 +1365,105 @@ COMMIT;
 - 教程:`docs/tutorials/v13/chapters/10-rag-as-tools.md`(全文;ch1 events 表)。
 - 引擎实证:stannum 0.1.0+PG18.4 探针库(2026-09-21;附 B 清单;探针库用毕即删)。
 - 仪式参照:`v12/load.py`(run_psql/files_through)、`v12/indb/setup_db.py`、DP2–DP4 各 §3.8/§3.3 形制。
+
+---
+
+## v2 对齐修订(2026-09-21)
+
+> 日期:2026-09-21。本轮**只追加本节**,上文一字不删、不改写。
+> 对齐输入(只读):
+> - `docs/analysis/repoprompt-native-on-v13-feasibility-v2-2026-09-21.md`(v2: §1 I-file-2 / §3.1 file_search / §3.3 `v13_visible_files` / §7)
+> - `docs/reviews/repoprompt-native-context-oracle-r1-r3-2026-09-21.md`(裁决 D1 / D4 / D5；DP2 信封已登记 I-file-2，本 DP 登记 recall 侧同纪律)
+> 纪律:与 v2 冲突的原文以 `ERRATUM:` 行标注并指向 v2 §7 对应行;既有 gate 一律不弱化(含 K 组绑定矩阵 K1–K5 / L 组 tokenizer canary L1–L3 原样、三禁、TINQL、csh=hash(needed×recall)、OQ2 双 stage);新增断言只加不减。本轮不 invent 新里程碑实现、不改 SQL 代码。
+
+### 对齐总表(v2 条款 → 本计划改动点 → 换体登记)
+
+| # | v2 条款 | 本计划改动点 | 换体登记 |
+|---|---|---|---|
+| A10 | §3.3 `v13_visible_files(p_sid, epoch, cutoff)` 单源(recall/tree/read/manifest 共用);I-file-5 是 tools 单源,文件面对偶是本函数;D1 指针=`workspace_files` | `v13_recall` 族对 **file corpus** 的候选读法改读 `v13_visible_files`;定义(= workspace_files 指针):`scan_status='clean'` ∧ `content_hash` 非空 ∧ `epoch≤cutoff` ∧ `¬veto`;非 file 语料(doc/memory/transcript)仍走既有 chunks/corpus 路径 | **换体**:替换 §3.1/§3.2 file 语料 `FROM chunks …` 直扫;不得并列第二份过滤(`FROM chunks WHERE corpus=…` 直滤 file 行、另写指针谓词、另写 veto join 都不行) |
+| A10b | I-file-2 开放世界:`空召回` ≠ `仓库无答案`;`bootstrap_done=false` 禁 file 存在性 Noul | DP2 信封已登记 I-file-2;本 DP 登记 **recall 侧同纪律**:`v13_recall` / `v13_recall_candidates` 返回空集只证明「已注册闭包内无命中」,不得被 envelope/needed/装配解释为仓库无答案;本 DP 不另开 Noul,只钉 recall 出口语义 | 不适用(出口语义增补;判断族仍归 DP6) |
+| A10c | §3.1 `file_search`=**发现工具**,**不是 T0**;裁决 D4:`kind='search_hits'` 不可变 artifact | T0 的 file 语料只覆盖已注册闭包(`v13_visible_files` 输出);未注册路径靠 file_search effect → 下 turn 消化 hits → file_register;不得把 live 搜索结果直接喂进 `v13_recall` | 不适用(定位修订;T0 引擎面/OQ2 双 stage 不换) |
+
+### A10 / `v13_visible_files` · 文件语料可见性单源(换体)
+
+v2 §3.3:文件侧对应 `v13_visible_files(p_sid, epoch, cutoff)`——recall / tree / read / manifest **共用**。I-file-5 是 tools 单源(`v13_visible_tools`);文件面对偶是 `v13_visible_files`,不得各平面另写过滤。D1:两层=`file_receipts`(只追加日志)+`workspace_files`(当前指针);热路径只读指针。D5:epoch/HEAD 不进 `candidate_set_hash`。
+
+**定义**(字面冻结;= workspace_files 指针谓词,不另写):
+
+```
+v13_visible_files(p_sid, epoch, cutoff)
+  = scan_status='clean' ∧ content_hash 非空 ∧ epoch≤cutoff ∧ ¬veto
+```
+
+【L4 标注(F4)】上式缺源语料成员资格。现行定义补 `corpus='file'`(或等价 source-membership 参数),见下「L4 修复」。**corpus 判定住在该单源函数内，禁止另写。**
+
+- `¬veto` 折叠在本函数内(I-file-6:`v13_file_vetoes(p_sid)` 单源;T0/过滤/装配/bootstrap 一律不得加回)。recall 族**不得**再 JOIN 一份 veto。
+- 本函数与 tree / read / manifest 共享;G-file-vis 同型:recall 出口=函数输出,无第二份过滤 SQL。
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面):
+
+1. `v13_recall` / `v13_recall_count` / `v13_recall_candidates` 对 **file corpus** 的候选读法改读 `v13_visible_files(p_sid, epoch, cutoff)`。file 语料候选身份=函数输出(已注册闭包);chunks 只提供已入选 `content_hash` 的 body / tsv / stannum 检索面,不得反客为主当 file 可见性过滤器。
+2. **禁止第二份过滤**:`FROM chunks WHERE corpus=…` 直滤 file 行、另写指针谓词(`workspace_files` 直查)、另写 veto join——三者不合法。指针谓词只活在 `v13_visible_files` 体内。
+3. **非 file 语料不动**:doc / memory / transcript 仍走既有 chunks/corpus 路径 + 退役源 `JOIN v13_sources … superseded_by IS NULL`(§1.5 不变量 4 / B4 / P6 原样)。v2 §7 行「v13 §4.4 语料三分」=增量保留三分、禁 ws 硬切非 file;file 面不得借三分另开第二份过滤。
+4. **csh 定义不动**(D5 + OQ3):`candidate_set_hash` 仍是 hash(needed×recall)=`digest({'needed':…,'recall':rc}::text)`。`v13_visible_files` 的 `epoch` / `cutoff` / 文件 `source_epoch` / git HEAD 是读论域闸,不得并入 csh 材料(与 DP1 A5 同禁)。
+
+**换体登记**(替换 file 语料读法,非并列;非 file 行不换):
+
+| 原文落点 | 原文读法 | 换体后 |
+|---|---|---|
+| §3.1 `v13_recall` v1 约 L321–332 | `FROM chunks c JOIN v13_sources … superseded_by IS NULL` 全语料直扫 | file 行集先经 `v13_visible_files(p_sid, epoch, cutoff)`;非 file 仍走既有 chunks/corpus + 退役源 JOIN |
+| §3.1 `v13_recall_count` v1 约 L348–353 | 同 FROM chunks | 同:count 人口与 recall 人口同论域(OQ4 附则不弱化);file 面 count 基数=已注册闭包内命中 |
+| §3.2 `v13_recall` / `v13_recall_count` v2 约 L933 / L954 | EXECUTE 串 `FROM chunks c JOIN v13_sources` | 同:file 面改读 visible_files 输出;EXECUTE 串不得另写 `corpus=` / 指针 / veto 谓词 |
+| B6 corpus 不串 | 两 corpus 语料各自查询命中不越界 | **不弱化**;file 面隔离改由 `v13_visible_files` 单源保证,不得另写第二份 `WHERE corpus='file'` |
+
+本轮只登记换体,函数体随 v2 §8 R0a(指针表+veto)+R1 与本 DP 加载序协调落地——**不在** `v13/recall/` / `v13/characterize/` 两里程碑另开实现、不改上文 SQL。
+
+`ERRATUM:` 无直接改写上文三禁 / TINQL / csh=hash(needed×recall) / OQ2 双 stage 的冲突句——本条是 file 语料读侧的正向换体登记(v2 §3.3)。若把 §3.1 `FROM chunks` 读成「file 行可另写 `corpus=` 直滤或另写指针/veto 谓词」,以 `v13_visible_files` 为唯一源。指向 v2 §7 行「v13 §4.4 语料三分 | 保留;新增 corpus='file'\|'generated';禁 ws 硬切」(增量:三分保留、非 file 不硬切;file 面不得并列第二份过滤)。
+
+既有 gate 不动:K 组绑定矩阵 K1–K5 **原样**(EXPLAIN 形状 / EXECUTE 恒绿 / 无索引回落 / 同列双索引 / 三禁 fixture);L 组 tokenizer canary L1–L3 **原样**(canary 命中 / 回落即红 / CJK 切分实证);三禁(§1.5 不变量 2 / G / R2);TINQL 构造器(OQ7 / A 组);csh=hash(needed×recall)(OQ3 / D 组);OQ2 双 stage;B4/P6 退役源;B6 corpus 不串——一律不删不弱化。若后续加 G-file-vis(recall 出口=visible_files 输出)探针,只加不减。
+
+### L4 修复(2026-09-21) · F4 corpus 隔离入单源
+
+> 本小节只追加、不删 A10 上文。F4 为 L4 终审 FAIL。既有 gate 一律不弱化(K1–K5 / L1–L3 / 三禁 / TINQL / csh=hash(needed×recall) / OQ2 / B4/P6 / B6 / G-file-vis)。
+
+**现行定义**(字面冻结;= workspace_files 指针谓词 + 源语料成员资格,不另写):
+
+```
+v13_visible_files(p_sid, epoch, cutoff)
+  = scan_status='clean' ∧ content_hash 非空 ∧ epoch≤cutoff ∧ ¬veto ∧ corpus='file'
+```
+
+**corpus 判定住在该单源函数内，禁止另写。** recall / tree / read / manifest / T0 / IDF 不得在 `v13_visible_files` 体外另写 `corpus='file'` 或 `corpus='generated'` 谓词。B6「不得另写第二份 `WHERE corpus='file'`」不弱化,且收紧为:第一份也只许住在本单源函数内。可用等价 source-membership 参数实现,谓词语义必须是「只出 `corpus='file'` 成员」。
+
+生成物(`produced_by` 非空,默认 `corpus='generated'`)不得进入源文件 T0/IDF(I-file-3 / G-file-gen:export 落盘被扫→`corpus='generated'` 不进源 IDF 池)。缺 `corpus='file'` 的可见性谓词会让 generated 行漏进源文件召回/IDF。
+
+`ERRATUM:` 上节 A10 定义字面「`= scan_status='clean' ∧ content_hash 非空 ∧ epoch≤cutoff ∧ ¬veto`」缺 `corpus='file'`——以本小节现行定义为准;原四点改动 / 换体登记 / B6 不串不删不弱化。
+
+### A10b / I-file-2 · `空召回` ≠ `仓库无答案`(recall 出口)
+
+v2 §1 I-file-2 + §7 行「v13 §4.5 存在性 Noul 先行 | erratum(论域)」:仅 `bootstrap_done=true` 后先行;开放世界期间「已注册子集是否足够」的 no 不得短路为「仓库无答案」。裁决记录:DP2 信封已登记 I-file-2;本 DP 登记 **recall 侧同纪律**。
+
+**recall 出口语义**(只钉出口,不另开判断族):
+
+1. `v13_recall` / `v13_recall_candidates` 返回空集只证明「已注册闭包内无命中」(file 面= `v13_visible_files` 输出上无命中;非 file 面=既有 chunks/corpus 路径上无命中)。
+2. 该空集**不得**被 envelope / needed / 装配解释为 `仓库无答案`。信封第 20 键 `candidates=[]`、manifest `query_side.candidates=[]` 仍是合法空(本 plan D4 / E5 不弱化),语义=闭包内零命中,不是仓库论域已穷尽。
+3. `bootstrap_done=false` 期间仍禁 file 存在性 Noul——DP2 已立法,本 DP **不另开 Noul**(§4.5 / 召回判断族仍归 DP6;§1.3 OQ3 / 附 A #4 不回写)。本条只钉 recall 出口不得被上行误读为存在性 no。
+
+`ERRATUM:` v2 §7「v13 §4.5 存在性 Noul 先行 | erratum(论域)」——若把本 plan 空候选(D4 空 goal / E5 空候选 / A1 合法空 TINQL)读成「仓库无答案」或「存在性 Noul 可无条件先行」,论域收窄:空召回只证已注册闭包内无命中;`bootstrap_done=false` 期间 file 存在性 Noul 仍禁(DP2 立法,本 DP 不另开)。
+
+既有 needed / gap / 信封 20 键 / D4「空 goal→candidates=[]」/ E5 空候选合法 / DP6 转发的存在性 Noul 缝——不弱化。
+
+### A10c / file_search · 发现工具,不是 T0
+
+v2 §3.1:`file_search` = **发现工具**,**不是 T0**。产出不可变 `kind='search_hits'` artifact。裁决 D4:去重+确定性排序+`hit_ordinal`;剩余=差集视图 `v13_search_hits_remaining`(非表);每 turn ≤32,零准队列。
+
+**定位修订**(T0 引擎面不动):
+
+1. Search 是 effect(发现),不是 T0 召回通道。T0 仍是本 plan 既裁的双 stage:第 8 位 tsvector / 第 9 位 stannum 换 definition(OQ2 **不换**)。
+2. T0 的 file 语料只覆盖**已注册闭包**(`v13_visible_files` 输出)。未注册路径靠 file_search effect → 下 turn 消化 hits → `file_register`,不得把 live 搜索结果直接喂进 `v13_recall`(含 v1/v2/`v13_recall_candidates`/信封 `rc` CTE/装配 qside)。
+3. `search_hits` 是不可变 artifact,不是召回候选、不进 csh 材料(D5:csh 仍=hash(needed×recall);hits 身份随 effect settle 入账,下 turn 经 register 投影进指针后才进入 A10 闭包)。
+4. 本轮不 invent `file_search` / 差集消化里程碑(v2 §8 R1b),不改 SQL。
+
+`ERRATUM:` 无直接改写上文 T0(tsvector→stannum) / OQ2 双 stage / 三禁 / TINQL 的冲突句——本条是「搜索 ≠ 召回通道」的正向登记(v2 §3.1)。若把 §7 T0 或 `v13_recall` 族读成「可吞 live file_search 命中」,以「发现工具,不是 T0」为准;指向 v2 §7 无对应改写行(§7 未列 file_search↔T0 冲突——本条不发明冲突,只钉定位)。
+
+既有 gate 不动:OQ2 双 stage;K 组绑定矩阵 K1–K5 **原样**;L 组 tokenizer canary L1–L3 **原样**;三禁 / TINQL / csh=hash(needed×recall);P 组换 definition 流程零改——一律不删不弱化。

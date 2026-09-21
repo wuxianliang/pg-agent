@@ -1104,3 +1104,88 @@ COMMIT;
 - stepfun 评审:`docs/reviews/v13-context-on-pg-design-review-by-stepfun-2026-09-20.md`(F5/F8/F9)
 - L4 评审:`docs/reviews/v13-dp7-economics-summary-plan-l4-review-2026-09-21.md`(1 P0/6 P1/8 P2——修订 1 的修复输入;出口裁定=局部修正,零全量重审)
 - loop memory:`prompt-exports/loop-orchestrate-v13-deep-plans-runs.md`(分解表 DP7 行/turn 1–28 全部教训/用户裁决记录)
+
+## v2 对齐修订(2026-09-21)
+
+> 日期:2026-09-21。本轮**只追加本节**,上文一字不删、不改写。
+> 对齐输入(只读):
+> - `docs/analysis/repoprompt-native-on-v13-feasibility-v2-2026-09-21.md`(v2: §4 R6 `est_tokens`(注册时写入,禁装配期现估) / §5 G-file-est / §7)
+> - `docs/reviews/repoprompt-native-context-oracle-r1-r3-2026-09-21.md`(轮 1 P1「est_tokens 推迟到装配后」已否决;估计随已落行)
+> 纪律:与 v2 冲突的原文以 `ERRATUM:` 行标注并指向 v2 §7 对应行;既有 gate 一律不弱化(含 OQ3 R_o 空桶 fail-safe / §5.5 succeeded 谓词 / C 组 pressure / 骨架 est 对照 / prompt-too-long 恢复循环不进样本);新增断言只加不减。本轮不 invent 新里程碑实现、不改 SQL 代码。
+> 编号铁律:本文件只用 **A8**(est_tokens 经济面)与 **A8b**(失败/跳过不进分位)。不要写 A11(那是 DP6 veto)、不要写 A12(latch/fork,归 DP8)。
+
+### 对齐总表(v2 条款 → 本计划改动点 → 换体登记)
+
+| # | v2 条款 | 本计划改动点 | 换体登记 |
+|---|---|---|---|
+| A8 | est_tokens 注册时写入,装配/经济禁现估;G-file-est 保守上限+超窗 skipped/budget | Plan 的 Σest_tokens 只加**注册时**已写入的估计;缺估计的选中 file section **不当 0**(保守上限=注册时按 size 折算);超窗走 `skipped/budget`,**禁止现估**(不锁内现读现估);prompt-too-long 失败样本不进 R_o 分位 | 不适用(经济面消费约束;骨架 octet_length 公式对 goal/history/tools 不删) |
+| A8b | §5.5 失败 turn 不进分位;G-file-est「无 prompt-too-long 进 R_o」 | file 面 skipped 原因闭集(`veto`/`blocked_secret`/`admission`/`budget`/`open_world_no_body`)落 manifest trace,进经济审计,**不进**质量分位(不进 R_o 样本)【L4 标注(F5):闭集补 `mixed_vintage`/`stale_stat` 共七值;「不进 R_o」收窄为 turn 级 `status='succeeded'`,section skipped ≠ turn 排除;见下「L4 修复」】 | 不适用(status 谓词 file 面扩展;succeeded 谓词不弱化) |
+
+### A8 / est_tokens · 经济面消费侧(注册时写入,禁止现估)
+
+v2 §4 R6:`est_tokens`(注册时写入,禁装配期现估);tokens=Σest_tokens。G-file-est:仅 size 的文件 est_tokens>0 保守上限;超预算→skipped/budget;无 prompt-too-long 进 R_o。Oracle 轮 1 P1:「est_tokens 推迟到装配后」已否决。DP3 已登记装配消费约束;本 DP 登记 **经济面同纪律**(T_used / 压力 / R_o 预留消费同一注册时估计)。
+
+**与 DP3 的分工**(不开第二套 est 公式):
+
+| 平面 | 归属 | 本 DP 不另开 |
+|---|---|---|
+| file section 字段 / 装配期禁现估 / 缺估计不可装箱 | DP3 | 不另写 est 公式、不在经济函数里打开源路径 |
+| T_used=Σest_tokens / 压力 / R_o 预留 | **本 DP** | 只加注册时已写入的估计;缺估计不当 0 |
+
+**本计划改动点**(只立法,不改上文 SQL 草案字面、不改骨架 est CTE):
+
+1. **Σest_tokens 只加注册时估计**:压力公式的 T_used(本 Plan 装配候选 Σest_tokens)对 **file section** 只加注册时已写入的 `file_receipts` / `workspace_files.est_tokens`。经济函数**禁止现估**,不锁内现读现估(零锁内 FS/git IO,与 v2 §7「v13 §4.3 / G-ctx1」同向)。
+2. **缺估计不当 0**:缺估计的选中 file section **不得当 0** 进 Σest_tokens(当 0=静默低估压力=prompt-too-long 的前置)。缺估计=不可装箱,或按**注册时**已写入的保守上限计;不得在经济面补一个 0。
+3. **保守上限=注册时按 size 折算**:G-file-est 字面——仅 size 的文件 `est_tokens>0` 保守上限;折算发生在**注册时**写入指针/收据,不发生在装配锁内、不发生在 R_o/pressure 派生时。
+4. **超窗 → `skipped/budget`**:file section 超窗不锁内重估凑过,走 skipped/budget(与 DP3 C2 `reason='budget'` 同词)。超窗段不计 T_used 的 applied 侧,但 skipped 原因进 manifest trace(见 A8b)。
+5. **prompt-too-long 不进 R_o**:prompt-too-long 失败样本**不进 R_o 分位**——这是 §5.5 既有纪律的 file 面接线(G-file-est「无 prompt-too-long 进 R_o」)。OQ3「status 谓词只有 succeeded」不弱化;本条钉 file 面超窗/现估失败不得回流污染分位。
+
+`ERRATUM:` §1.4 DP3 行约 L27「est_tokens 公式版本随 assemble_manifest 策略行」+ 契约表约 L65「本 plan **零改 est 公式**(机械复制 DP3 装配体的 est CTE)」——骨架 goal/history/tools 的 octet_length 公式与对照重算**不删**;file section **禁止现估**,Σest_tokens 只加注册时已写入估计,缺估计不当 0,不得把「零改 est 公式」读成「经济面可对 file section 现估或把缺估计当 0」。指向 v2 §7 行「ch01「模型可见 ⟺ 已落行」」(增量适用到文件字节;估计随已落行,不随经济面现算)与「v13 §4.3 / G-ctx1」(零锁内 IO)。
+
+既有 gate 不动:OQ3 pressure 基点制 / R_o 空桶 `cold_tokens` fail-safe / §5.5 succeeded 谓词 / C 组 pressure / 骨架 est 对照 / recovery_floor(prompt-too-long → CompactHistory+p95)——一律不删不弱化。G-file-est 后续只加不减。
+
+### A8b / 失败与 skipped 不进质量分位
+
+v2 G-file-est + 本 plan OQ3 / §5.5:失败样本排除——status 谓词只有 succeeded;failed/unknown(含 prompt too long 恢复循环的失败 turn)零进样本。本条把该纪律接到 **file 面 skipped 闭集**,不改掉 succeeded 谓词。
+
+**file 面 skipped 原因闭集**(落 manifest trace,进经济审计,**不进**质量分位 / **不进 R_o** 样本):
+
+| reason | 含义 | 分位 |
+|---|---|---|
+| `veto` | `v13_file_vetoes` 命中;must_include 不得覆盖 | 不进 |
+| `blocked_secret` | 秘密扫描拒绝 / deselect 秘密路径 | 不进 |
+| `admission` | deny glob / 字节帽 / 类型未过注册门 | 不进 |
+| `budget` | 超窗 skipped/budget | 不进 |
+| `open_world_no_body` | `bootstrap_done=false` 期间无已注册正文(开放世界不得当「仓库无答案」) | 不进 |
+| `mixed_vintage` | 跨文件候选 distinct source_epoch>1;整批 skipped(v2 §4 R6 / G-file-vintage) | 进经济审计;≠ turn 排除 |
+| `stale_stat` | stat(mtime/size) 启发式指示已注册指针可能过期、待重注册;禁作身份/缓存键(I-file-1) | 进经济审计;≠ turn 排除 |
+
+【L4 标注(F5)】上表原五值保留;补 `mixed_vintage` / `stale_stat` 成 v2 七值全集。原「分位 / 不进」列对 section skipped **不得**读成 turn 排除——R_o 分位仍只按 turn 级 `status='succeeded'` 判定,见下「L4 修复」。
+
+**本计划改动点**:
+
+1. 上表五值写入 manifest skipped 痕迹(DP3 file section `applied|skipped+reason` 词表的经济面接线;本 DP 不另开词表)。【L4:现为七值全集。】
+2. 五值**进经济审计**(calls/pressure 归因/一页账可计 skipped 次数与原因),方便看「钱花在哪 / 为何没装上」。【L4:七值同进审计。】
+3. 五值与 prompt-too-long 失败 turn **不进** R_o 分位样本——质量分位只吃 succeeded 的 completion_tokens。不得把 skipped 段的 0 或失败 usage 喂进 `percentile_cont`。【L4 标注(F5):本条「五值不进 R_o」**废止扩张**——section skipped ≠ turn 排除;R_o 仍只按 turn 级 `status='succeeded'`。】
+
+`ERRATUM:` OQ3 约 L116「失败样本排除(§5.5 原文):status 谓词只有 succeeded——failed/unknown(含 prompt too long 恢复循环的失败 turn)零进样本」——谓词本身不删不弱化;本条是 file 面 skipped 五因与 prompt-too-long 的接线扩展(进审计、不进分位),不是改 succeeded 为更松。指向 v2 §7 行「ch01「模型可见 ⟺ 已落行」」(分位样本=已成功生成的已落行 usage,不是 skipped/失败 turn)。【L4 标注(F5):「不进分位」对 file section skipped **不得扩张**到把该 turn 剔出 R_o;见下「L4 修复」。】
+
+既有 gate 不动:OQ3 succeeded 谓词 / usage 缺失零进样本 / 空桶 `cold_tokens` / recovery_floor——一律保留。file 面五因若后续加探针,只加不减。
+
+### L4 修复(2026-09-21) · F5 skipped 全集 + R_o 语义
+
+> 本小节只追加、不删 A8b 上文。F5 为 L4 终审 FAIL。既有 gate 一律不弱化(OQ3 succeeded 谓词 / usage 缺失零进样本 / 空桶 `cold_tokens` / B2/B3 / recovery_floor / C 组 pressure)。
+
+**skipped 审计七值全集**(v2 §4 R6 / DP3 A7 同闭集;本 DP 不另开词表):
+
+`mixed_vintage` / `veto` / `blocked_secret` / `admission` / `budget` / `open_world_no_body` / `stale_stat`
+
+七值一律写入 manifest skipped 痕迹并**进经济审计**(calls / pressure 归因 / 一页账可计次数与原因)。原「五值」读法废止为七值;上表原五行字面保留。
+
+**R_o 分位仍只按 turn 级 `status='succeeded'` 判定**(§5.5 原语义 / OQ3;不弱化):
+
+1. **section skipped ≠ turn 排除。** file section 因上列任一一因 skipped,只证明该段未装箱,不得把该 turn 剔出 R_o 桶。
+2. **只有失败 turn 排除**——如 prompt-too-long 恢复循环的失败 turn(`status` ∈ failed/unknown)。G-file-est「无 prompt-too-long 进 R_o」仍是失败 turn 排除,不是 section-skipped 排除。
+3. **禁止把 R_o 排除扩张到 section-skipped turn。** 上节改动点 3「五值与 prompt-too-long 失败 turn **不进** R_o」对五值/七值一侧作废止性标注:那是把装配段跳过误写成 turn 排除。现行口径=turn 级 `status='succeeded'` + usage 数值防御;skipped 段的 0 本来就不是 llm effect usage,无需、也不得改 R_o 谓词去「排除 skipped turn」。
+
+`ERRATUM:` A8b 标题「失败与 skipped 不进质量分位」+ 总表「不进 R_o 样本」+ 改动点 3「五值…不进 R_o」——succeeded 谓词不删不弱化;扩张到 section skipped 的读法以本小节为准。指向 §5.5 原文:失败 turn 只写失败记录不进分位样本(effect status 谓词)。
