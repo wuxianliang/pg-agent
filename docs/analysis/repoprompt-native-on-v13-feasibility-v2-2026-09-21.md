@@ -223,3 +223,7 @@ G-file-secret+第一版 file_register(无门的注册=出境事故)。
 ---
 **v2 封面句**:先冻论域、字节、锁,再谈组件与加速。R0/R1/R6 之上,
 Phase 1(v13 底座 DP1–DP8)与 Phase 2(v13.1 M1–M5)不变,仍是工程主体。
+
+> **勘误(2026-09-21,控制面 R2 修订轮)**:I-file-4 收窄——「parse/advance/
+> recall/visibility/manifest/render 只读已冻结行」改为「零 FS/git IO;库内写仅
+> 具名名单」。见 `docs/designs/v13-errata-2026-09-21.md` §5.4 与 R2 记录 A17。

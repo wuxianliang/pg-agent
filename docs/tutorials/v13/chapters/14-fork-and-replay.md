@@ -23,12 +23,12 @@ v13 的判据一句话：
 | 树即数据 | search tree（parent/序/payload/score/fail_class）是 RSI 层自建表，父指针指 sessions；frontier 是它身上的递归 CTE | 本章 14.5 |
 | W（批上界） | 与 quota 同一条缝：持久策略属性 | 第 13 章 |
 | redeploy | thresholds/tools 的 version 列 + meta 版本门 | 第 15 章 |
-| 前缀缓存身份 | **ForkPrefix**：system blocks + tool schemas + model + latches 的 canonical bytes SHA-256；validate-spawn 拒破坏身份的 fork；cache probe 对账 | 本章 14.3 |
+| 前缀缓存身份 | **ForkPrefix**：system blocks + tool schemas + model + 名单内 latches（`identity_latches(policy_version)`，worktree 默认排除）的 canonical bytes SHA-256；validate-spawn 拒破坏身份的 fork；cache probe 对账 | 本章 14.3 |
 | 三种回放 | **exact replay / recompute / fresh fork** 不得混称 | 本章 14.4 |
 
 两件不要焊在一起：**会话树 fork**（日志前缀，O(1) 指针）与 **ForkPrefix**
 （provider 前缀缓存的身份）。同一 cutoff 的子会话，若 model / 工具 schema /
-latch / thinking 预算档变了，日志前缀仍在，缓存身份已经死。
+名单内 latch / thinking 预算档变了，日志前缀仍在，缓存身份已经死。
 
 ## 14.2 最小形态：会话树 fork
 
@@ -56,6 +56,36 @@ dreaming 的形状（全部住在核心之外）：
   → 打分落自己表 / reward 落事件 → 对比策略版本 → redeploy = 新版本策略行
 ```
 
+dream/replay 是已裁定的实验路径，**显式绕过 triage**——实验 goal 不进
+分解裁决、不吃 triage 带宽；绕过是声明在案的形状，不是逃逸：fork 事件
+与回放种类（14.4）可审计。
+
+**spawn 是这个 primitive 的会话树应用。** 正常编排路径的建子会话动词
+`v13_spawn_subsession`（目录行 `spawn_subsession`，`kind='sql'`，第 6 章）
+与本章 `v13_fork` **同一 primitive**：同样的两列指针 + `forked` 事件 +
+validate-spawn（14.3）+ 预算准入。fork 是它的回放应用（带 cutoff 与回放
+种类声明），spawn 是它的编排应用——orchestrator turn 的 N 个 tool_call
+冻结后，下一格 advance 在父行锁（已持）内同事务批量建 N 子、一次聚合
+预算准入（并发 sibling 争根预算时，准入前先取根事务咨询锁
+`pg_advisory_xact_lock(<spawn_budget 类号>, hashtext(root_session_id))`
+再算——两参形式分 lock class，与解析相 recall 的 hash(查询×候选集) 咨询锁
+互不串扰；sessions 无 reserved/预算列可作原子 CAS 目标。仅 spawn 准入路径
+持此锁，closeout/recover 不得取；不引入 root 行锁序——咨询锁是锁图中的
+命名节点，预算写路径按同一 root key 取锁，顺序一致无环，「spawn 只锁父
+（行锁）」不变）；禁止入队，禁止 worker 在 claim
+窗口写控制面。服务端派生字段（parent/cutoff/fence/prefix identity/quota）
+模型不可提供——两列是核心的，不是工具参数的。
+
+**sessions 唯一写路径**（立法）：除 `v13_fork` / `v13_spawn_subsession`
+（及同事务批量子行）外，任何角色 INSERT sessions 被拒。子进程 harness
+自插 sessions 行 = 制造第二真相——非名单角色/函数写 sessions 即 gate 红。
+模型想建子会话，只能走 tool_call → advance 持锁事务，不能自己写行。
+**执法角色链（R2 修订复核裁决）**：两个具名函数为 `SECURITY DEFINER`、
+固定 `search_path`、owner=控制角色、`REVOKE PUBLIC`、`GRANT EXECUTE` 只给
+控制角色——advance 执行角色不持 sessions INSERT，直接 INSERT 即被角色
+权限拒绝，「唯一写路径」由数据库执法而不靠约定（INVOKER 下执行角色须持
+sessions INSERT，G-spawn-unique-writer 便无法执法该角色直写被拒）。
+
 ## 14.3 ForkPrefix：前缀身份哈希 / validate-spawn / cache probe
 
 provider 前缀缓存按字节计费：一字节变化，后续前缀全部重算。
@@ -67,7 +97,9 @@ prefix_identity = sha256(canonical(
     system blocks
   + tool schemas
   + model
-  + latches            -- INSERT once；UPDATE/DELETE 被拒（第 5 章 latch）
+  + identity_latches(policy_version)
+                      -- 版本化名单内 latch（worktree 默认排除，B15/A19）；
+                      -- 名单内 latch INSERT once；UPDATE/DELETE 被拒（第 5 章 latch）
 ))
 ```
 
@@ -79,7 +111,8 @@ prefix_identity = sha256(canonical(
 2. **validate-spawn** 在 `v13_fork` 提交前跑。声称要复用父缓存身份
    （exact replay，或任何「带着父 prefix_identity 走」的 spawn）时，
    子会话若把 thinking 预算 clamp 到不同档、换 model、换工具 schema、
-   或触发新 latch——gate 拒，不落行。要换身份，必须显式声明 **fresh fork**。
+   或触发名单内新 latch（`identity_latches(policy_version)`；`worktree`
+   latch 默认不在名单）——gate 拒，不落行。要换身份，必须显式声明 **fresh fork**。
 3. **cache probe**：第一次 llm effect 回来后，对比实际 `cache_read`
    与携带的估计（按 prefix_identity 命中应有的字节）。差一截落一条
    审计事件——不是重试，是对账。估计错了翻的是账单归因，不翻正确性。
@@ -95,7 +128,7 @@ manifest** 上有三种，混称会把缓存命中、判断复用、语料新鲜
 | 种类 | 策略 | 语料 | 读什么 | 前缀身份 |
 |---|---|---|---|---|
 | **exact replay** | 当时 | 当时 | 旧 manifest / 旧 context artifact，**不重跑 assemble** | 必须与当时相同；validate-spawn 按父 hash 执法 |
-| **recompute** | 旧 | **新** | 旧策略 × 当下 chunks，再 assemble | 策略没变，语料变了：清单 content_hash 会变，前缀身份（system/tools/model/latches）仍可继承 |
+| **recompute** | 旧 | **新** | 旧策略 × 当下 chunks，再 assemble | 策略没变，语料变了：清单 content_hash 会变，前缀身份（system/tools/model/名单内 latches）仍可继承 |
 | **fresh fork** | **新** | 当下 | 新策略 × 当下语料，新 context | 新 hash；cache miss 是声明，不是事故 |
 
 exact replay 用清单里的旧 verdict，不拿新阈值重释 raw answer
@@ -113,13 +146,19 @@ G7 那句「同前缀 fork 两次 → fold_state 逐字节相同」只对 **exac
   的父历史，看不见之后发生的——保证日志侧重放确定性（Dream-RSI 的前缀
   硬约束在 v11 的映射）。`parent_cutoff_seq` 记录在子会话行上，一次写入永不改。
 - **ForkPrefix 是另一条前缀**：日志前缀管「看见哪些事件」；身份哈希管
-  「发给模型的 system/tools/model/latch 字节有没有变」。两条前缀一起绿，
+  「发给模型的 system/tools/model/名单内 latch 字节有没有变」。两条前缀一起绿，
   provider 缓存才有资格命中。
 - **为什么事件内树（`events.parent_entry_id`）现在不建**：它服务「会话内对话分支」
   （v11/pi 的树形会话），与 fork（会话间派生）语义不同；append-only 表以后
   ALTER 加可空列零破坏——**余量可以后付的就不预付**。现在付的只有会话树两列，
-  因为身份/预算语义会漂。latch 行参与身份哈希，所以它是 P1（保护 prefix
+  因为身份/预算语义会漂。名单内 latch 行（`identity_latches(policy_version)`，
+  `worktree` 默认排除）参与身份哈希，所以 latch 是 P1（保护 prefix
   identity），不是后付余量。
+- **父子不共享 worktree**：worktree 是 latch（`name='worktree'`）+ binding
+  artifact（第 7 章），spawn/fork 出的子会话**不继承**父的 binding——并行
+  子会话共享工作面会互踩（FS 副作用无 fence）。子会话要工作面，自己
+  prepare/merge/release，走 FS effect（第 8 章：缺 binding 的 mutating
+  effect，harness 拒 claim）。
 - **评估/reward 对比 = 读两个策略版本的日志**：核心不需要 evaluations 表——
   RSI 层要建就自己建（它的表、它的锁、它的视图），父指针指向 sessions/events。
   核心的义务只是把日志写全、把载荷冻结、把会话树 fork 变成 O(1)、把三种
@@ -144,11 +183,17 @@ G7 节选断言：
 ✓ 父子并行：两个子会话并发跑 turn 互不干扰（无共享可变状态）
 ✓ ALTER 探针：对 events 加一列可空 parent_entry_id，全部既有 gate 仍绿
   （证明「后付余量」的承诺是真的）
+✓ sessions 唯一写路径：名单（v13_fork / v13_spawn_subsession）外角色
+  INSERT sessions → 拒
+✓ 父子不共享 worktree：子会话不见父 binding；无 binding 的 mutating
+  子 effect → 拒 claim（第 8 章）
 
 ForkPrefix：
-✓ 前缀身份哈希 = sha256(canonical(system blocks + tool schemas + model + latches))
+✓ 前缀身份哈希 = sha256(canonical(system blocks + tool schemas + model +
+  identity_latches(policy_version) 名单内 latches))；worktree latch 默认
+  排除在名单外（B15/A19）
 ✓ validate-spawn：破坏缓存身份的 fork 被拒
-  （thinking 预算 clamp 到不同档 / 换 model / 换工具 schema / 新 latch
+  （thinking 预算 clamp 到不同档 / 换 model / 换工具 schema / 名单内新 latch
    且未声明 fresh fork → 不落行）
 ✓ cache probe：第一次 llm 返回后，实际 cache_read 与携带估计对比，
   差一截落审计事件；估计错不改正确性
@@ -158,7 +203,7 @@ ForkPrefix：
 ✓ exact replay：读旧 manifest / context，不重跑 assemble；
   同前缀两次 exact replay → fold_state 与 context artifact 逐字节相同
 ✓ recompute：旧策略 × 当下语料，清单 content_hash 随投影变，
-  前缀身份（system/tools/model/latches）可继承
+  前缀身份（system/tools/model/名单内 latches）可继承
 ✓ fresh fork：新策略 × 当下语料，新 prefix_identity；cache miss 是声明
 ```
 
@@ -166,7 +211,9 @@ ForkPrefix：
 
 1. 实现 `v13_fork(p_sid, p_cutoff, p_kind)`：建子会话行 + 继承策略/预算 +
    `forked` 事件 + 写入 `prefix_identity`。断言 O(1)（用 10k 事件父会话计时）。
-   `p_kind ∈ {exact_replay, recompute, fresh_fork}`。
+   `p_kind ∈ {exact_replay, recompute, fresh_fork}`。落地注记：`v13_fork` 与
+   `v13_spawn_subsession`（14.2）同一 primitive，**同一 PR 交付**——不存在
+   「先有 fork、后补 spawn」的两步；动手前先 grep `v13_fork` 确认尚无实现。
 2. validate-spawn：同一 cutoff 上把 thinking 预算 clamp 到不同档。
    声明 exact replay → 拒。声明 fresh fork → 过，且新 hash ≠ 父 hash。
    第一次 llm 后跑 cache probe：fresh fork 允许 miss；exact replay 若

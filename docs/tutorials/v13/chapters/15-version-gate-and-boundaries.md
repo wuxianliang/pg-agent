@@ -51,6 +51,12 @@ dashboard 靠视图渲染——三件事都不需要指纹机器。
 | **(b)** | 保住 gate 的确定性与可 mock | 离线必须能绿；没有 `mock_response` 的库内 HTTP 进不来 |
 | **(c)** | 不制造第二真相源或第二 IO 通道 | 索引可丢、行不可丢；生成 IO 只有 effect 这一条路 |
 
+进核心还有第二把尺子：**三读法**（设计 §3.1）——turn / 会话 / goal 是
+同一组原语的三个读法。任何「为某一层读法建东西」的需求，先问它是哪层
+读法、能否在既有原语（effects/events/sessions/thresholds/
+parse+advance+settle）上闭合；闭不了再回来过 (a)(b)(c)。为读法建服务
+（session-manager、调度器）在两把尺子下都是红。
+
 | 扩展 | 裁决 | 理由（对三条的用法） |
 |---|---|---|
 | **pg_jsonschema** | **P1 进** | (a) 替掉 effect args/result、decision answer、manifest 的手写校验；(b) schema 版本化不可变，fixture 可重复；(c) 不新增真相源 |
@@ -99,6 +105,11 @@ pg_cron 与 pg_net 的对比是元原则的教具：一个把「我们自己会�
 | Emergent 表 + 在线 triage | 首个真实 mid-turn producer 出现（triage 永远走确定性 admission） |
 | 分片哈希 | 全量哈希下缓存损失实测超标 |
 | timescaledb / age | events 规模 / 图遍历需求真实出现 |
+| 六值升格 result_kind（delivery_kind 转正为持久化分派键） | 审计链退化（delivery_kind 无人写）或 progress 不扣被用于刷 turn（复访触发） |
+| rich rubric 9 项（triage 判断面进 rubric 级证据） | 首版 SQL 可判定项 + Jev Choice 证明不足 |
+| candidate_module_count | 版本化 module_key 存在后（先加 candidate_source_count——纯 SQL 聚合，已落行） |
+| explore 走 spawn（只读 explore child） | 同会话 explore（首版）不够用——走完整 spawn 准入，depth+1 不豁免 |
+| 看板物化（goal_tree 物化表） | 看板 p95 查询超标（第 13 章 v_goal_tree SRF 先行） |
 
 每一条的验证方式都是同一个：**新的威胁模型出现时，先写 gate 断言它，
 再把机制加回来。** 扩展还要再过 15.3 的三条元原则——台账触发不等于自动进核心。

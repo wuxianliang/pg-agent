@@ -2,6 +2,7 @@
 
 > 前置：第 2、5 章。产出：`v13/schema/core.sql` 的 `tools` 表（G1/G6 验收）。
 > 对照上游：`v2`（workbench 注册表）、`v5`（named tools）、`v6`（enqueue-only 工具）。
+> 设计对照：`docs/designs/v13-context-on-pg.md` §6.8（iv）（spawn 档位）。
 
 ## 6.1 这一章要做什么
 
@@ -27,7 +28,8 @@ CREATE TABLE tools (
   consumes    text[] DEFAULT '{}',    -- 吃什么 artifact kind（第 7 章）
   produces    text[] DEFAULT '{}',    -- 产什么 artifact kind
   mutating    boolean NOT NULL DEFAULT false,   -- 决定 unknown 纪律（第 2 章）
-  allowlist   jsonb,                  -- 数据不是代码：路径白名单/表白名单/参数域
+  allowlist   jsonb,                  -- 数据不是代码：路径白名单/表白名单/参数域；
+                                       -- interruptible 档位也住这里（jsonb 键，A18，见 6.3）
   timeout_ms  int NOT NULL DEFAULT 30000,
   max_attempts int NOT NULL DEFAULT 3,
   enabled     boolean NOT NULL DEFAULT true
@@ -37,12 +39,33 @@ CREATE TABLE tools (
 工具分两档（v2 与 v6 的合流）：
 
 ```text
-kind='sql'    纯只读函数：advance 同事务直接执行（第 5 章 ④），不进队列
-kind='effect' 有 IO/副作用：走 effects 账本 + worker（第 2 章）
+kind='sql'    库内函数：零外部 IO；advance 同事务直接执行（第 5 章 ④），
+              不进队列。默认只读——具名写允许名单（v13_tools_guard 源码闭集）例外
+kind='effect' 有外部 IO：走 effects 账本 + worker（第 2 章）
 ```
 
 这个两档划分消灭了 v2→v6 之间反复出现的问题：
 「为什么有的工具入队有的不入队」——因为它们本来就是两种东西。
+分界是**有无外部 IO**，不是 SELECT vs INSERT——`sql` 档的全部效果就是
+数据库自身状态（含允许名单内的库内写），崩溃即整笔回滚（§6.7 同一口径）。
+
+新目录行示例（A17）——spawn 也是一行目录数据，走 sql 快路：
+
+```sql
+INSERT INTO tools(name, handler, kind, description, input_schema,
+                  mutating, allowlist)
+VALUES ('spawn_subsession', 'sql', 'sql',
+        'Spawn child sessions for the current turn goal',
+        '{"goal":"text","budget":"inherit-decl"}'::jsonb,
+        false,
+        '{"write_targets":["sessions","events","latches","artifacts"]}');
+-- 参数面只有 goal 承接与预算继承声明；parent/cutoff/fence/prefix
+-- identity/quota 全是服务端派生字段，模型不可提供（input_schema 不含这些键；
+-- parent 由 advance 已持锁的当前会话行派生——模型可选 parent 即可选预算树，
+-- 越权，R1 共识 11）。
+-- allowlist.write_targets ⊆ {sessions,events,latches,artifacts}：目录声明，审计用。
+-- mutating=false：全部效果是库内行，崩溃即整笔回滚，unknown 路径不适用（第 2 章）。
+```
 
 ## 6.3 逐段解释
 
@@ -57,11 +80,32 @@ kind='effect' 有 IO/副作用：走 effects 账本 + worker（第 2 章）
   **一列数据驱动恢复策略**，不需要 per-tool 的恢复代码。
 - **`allowlist` 是数据**：pi 式文件工具的根目录白名单、duck 工具的表白名单、
   SQL 工具的参数域——全部住在目录行上。改授权 = UPDATE 一行，审计 =
-  `SELECT * FROM tools`。
+  `SELECT * FROM tools`。**`interruptible` 是 allowlist 键不是列（A18，
+  零新列）**：`allowlist.interruptible ∈ {'required','best_effort',
+  'unsupported'}`（缺省按 `unsupported`），guard 校验三值——第 8/12 章
+  第四务消费；R2 共识 1（零新表零新列）拒加列。
 - **只读角色执法（v2 的教训）**：模型生成的 SQL 永远跑在
   `default_transaction_read_only` 的角色下——**让数据库自己执法**，
   而不是文本黑名单（v2 的黑名单连字符串里的 `'set'` 都误伤）。
   这是 v8 grant 帝国被砍后唯一保留的种子：保护数据库不受模型，不是租户互防。
+  执法范围澄清：只读角色**只约束模型生成的 SQL 文本**，不约束 advance
+  变更相分派的目录函数——后者为 `SECURITY DEFINER`（固定 `search_path`、
+  owner=控制角色、`REVOKE PUBLIC`、`GRANT EXECUTE` 只给控制角色——模型
+  角色无 EXECUTE）在 advance 已持父 FOR UPDATE 的事务内执行。外层调用链：
+  执行者是 `v13_advance`（变更相，owner=控制角色的 SECURITY DEFINER 链）——
+  普通 route 调用者经 advance 进入控制角色，不直接持这些具名函数的 EXECUTE。
+  用 DEFINER
+  的理由是**唯一写路径可执法**：INVOKER 下执行角色必须持 sessions
+  INSERT，「该角色直接 INSERT sessions 被拒」就无法由数据库执法；
+  DEFINER 收权后执行角色零表权，直写即拒（R2 修订复核裁决）。
+- **具名写允许名单 = `v13_tools_guard` 源码闭集**：guard 默认仍拒 VOLATILE，
+  例外只有核心函数闭集——`v13_fork`、`v13_spawn_subsession`、装配函数
+  （第 10 章，实现时核对真名）。例外条件全满足才放行：`provolatile='v'`、
+  签名 `(uuid,jsonb)→jsonb`、`SECURITY DEFINER`+固定 `search_path`+
+  owner=控制角色（`REVOKE PUBLIC`+`GRANT EXECUTE` 只给控制角色，模型角色
+  无 EXECUTE——执法理由同上「唯一写路径可执法」）、`prosrc` 不含 dblink/pg_net/
+  COPY PROGRAM 等 IO 通道。扩员 = guard 源码改+设计修订+部署 gate 同发；
+  `UPDATE tools` 扩员被拒，「有 write_targets 键即放行任意 VOLATILE」同样被拒。
 
 ## 6.4 硬性规定与 gate
 
@@ -72,6 +116,11 @@ G1/G6 节选断言：
 ✓ disabled 工具对判断平面不可见（fold_state 查 enabled=true）
 ✓ input_schema 不符的 effect.request 在创建时被拒（fail-closed，不静默修参数）
 ✓ mutating=true 的工具在恢复扫描中绝不回 ready（只能 unknown）
+
+G-sql-write-closed（guard 具名例外；设计 §10）节选断言：
+✓ 具名闭集外 VOLATILE sql 工具 enable → 红
+✓ write_targets 缺键而 VOLATILE → 红；prosrc 含 IO 通道（dblink/pg_net/COPY PROGRAM）→ 红
+✓ UPDATE tools 扩 guard 名单被拒（扩员 = guard 源码+设计修订+部署 gate 同发）
 ```
 
 ## 6.5 检查点练习
@@ -111,7 +160,8 @@ G1/G6 节选断言：
 提交瞬间对所有读者可见——决策平面、推进函数、其他 worker 零改动；
 `v_tool_catalog` 是视图——视图是计算不是存储，摘要永不与目录漂移。
 「外部 IO 无原子性」逼出**两档 `kind` 是外部 IO 有无的物理分界**：
-`sql` 档的全部效果就是数据库自身状态，同事务执行、backend 一死整体
+`sql` 档的全部效果就是数据库自身状态（默认只读；具名写允许名单内的
+库内写不改这一点——写的仍是库内指针），同事务执行、backend 一死整体
 回滚，原子性白送；`effect` 档碰库外世界，事务罩不住，只剩账本 +
 worker + at-least-once。「超时≠失败」逼出**`mutating` 列**：恢复扫描
 无法证明超时 effect 的副作用没发生，把 mutating 工具回 ready 等于

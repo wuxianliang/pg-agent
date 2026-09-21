@@ -280,9 +280,12 @@ CJK 把 stannum 当救命件也仍先过 gate；换引擎只换目录行 definit
 再 per-chunk Score 吃逐条缓存；全集 Choice 与这条缓存语义冲突，不进默认。
 装配要证明「当时发现了什么、实际交给模型什么」⇒ context artifact 内嵌
 manifest（IR），applied / skipped 双分支落行。高亮跨度是 `(doc, offsets)` ⇒
-chunk 可以粗，装配单元与行宽解耦。检索要 join 控制态 ⇒ `v13_recall` 以
-`kind='sql'` 住在真相所在的库、同事务只读；跨库 join 等于把一致性问题
-请回来，批量扫描才去 DuckDB，且只在 worker 里。摄取并发会失败 ⇒ 脏检测
+chunk 可以粗，装配单元与行宽解耦。检索要 join 控制态 ⇒ `v13_recall` 与
+`rag_assemble` 都以 `kind='sql'` 住在真相所在的库——同事务、零外部 IO；
+`rag_assemble` 在写允许名单内（第 6 章 guard 具名例外），写的是本库
+artifacts 指针（10.2 时序 advance 段的 context artifact，不是外部副作用）；
+跨库 join 等于把一致性问题请回来，批量扫描才去 DuckDB，且只在 worker 里。
+摄取并发会失败 ⇒ 脏检测
 是 content_hash 谓词，重灌与新 artifacts 同一事务（第 7 章纪律 2）。
 
 **反事实。** 让向量住进第二引擎并当真相（不是投影），失败时序：

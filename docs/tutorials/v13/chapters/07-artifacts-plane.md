@@ -3,7 +3,8 @@
 > 前置：第 2、6 章。产出：`v13/schema/core.sql` 的 `artifacts` 表 + `chunks` 投影（G1 + G-ctx2 验收）。
 > 对照上游：`v6.1` 调研（内容即值、文件身份≠路径）、`v10` 冻结稿里被保留的种子
 > （内容寻址 artifact）。
-> 设计对照：`docs/designs/v13-context-on-pg.md` §4.2（chunks 投影三纪律）、§5.2（manifest 指针）。
+> 设计对照：`docs/designs/v13-context-on-pg.md` §4.2（chunks 投影三纪律）、§5.2（manifest 指针）、
+> §6.8（控制面信封族）。
 
 ## 7.1 这一章要做什么
 
@@ -20,7 +21,7 @@ v13 的裁决：
 结算事务里校验它存在且已结算**。语言差异、进程差异、时序差异全部消失在行里。
 
 检索用的 chunk **不是**再给 artifacts 加一个表达式索引。`kind='chunk'` 仍是
-不可变内容行；面向召回的 `chunks` 是可重建投影，三纪律进 7.5，
+不可变内容行；面向召回的 `chunks` 是可重建投影，三纪律进 7.6，
 装配当时「发现了什么」记在 context artifact 的清单上（7.3 的指针）。
 
 ## 7.2 最小形态
@@ -31,7 +32,9 @@ CREATE TABLE artifacts (
   content_hash text NOT NULL,          -- sha256；相等判断与语言无关
   kind         text NOT NULL,          -- 开放词表：'text','table','ast','chunk',
                                        -- 'embedding','view_def','file','summary',
-                                       -- 'context',...
+                                       -- 'context','harness_request','harness_result',
+                                       -- 'harness_interaction','interaction_response',
+                                       -- 'control.handoff',...（7.4 信封族）
   inline       jsonb,                  -- 小产物：值即内容（默认 ≤1MB）
   ref          text,                   -- 大产物：外部存储指针
   size         bigint NOT NULL,
@@ -107,7 +110,56 @@ applied/skipped 双分支、三种回放语义在第 10 章展开。本章只钉
 **清单与 `decisions` 只记 `content_hash`，不记 chunks 主键**——投影行会随
 重摄取死亡，hash 才是跨重灌仍能对上的身份。
 
-## 7.4 逐段解释
+## 7.4 控制面信封族（A15）
+
+控制面的往返——请求、结果、审批、交接——也是 artifacts。零新表零新列：
+全部住 `artifacts.kind` 开放词表 + pg_jsonschema 校验（与 `tools.input_schema`
+同款执法）。动作空间不受影响：**信封枚举不是动词，CASE 它的代码才是**
+（第 4 章动作闭集）。
+
+| kind | 载荷要点 | 校验要点 |
+|---|---|---|
+| `harness_request` | prompt + resume 参数 + 审批策略。**续跑 = 新 effect_id + 新冻结 request**（同 effect_id 换 request 再 attempt 被禁）；逻辑关联 `logical_turn_id` / `continuation_index` 住在本 artifact 内，不加列 | 必填键缺 → 创建时拒 |
+| `harness_result` | 分层词表见下 | `wait_reason` 缺省非法；evidence/quota 缺机器可判定 wake → `v13_complete` 拒收 |
+| `harness_interaction` / `interaction_response` | 审批两段：interaction 发起、response 回填，两段以 `interaction_ref` 关联 | `interaction_ref` 必填，缺 → 拒 |
+| `control.handoff` | 稳定 `delivery_id` 幂等——重复投递不得二次注入；transcript 只存 manifest/hash 引用，不复制正文；不采 XML | 同 delivery_id 二次注入 → 拒 |
+| `worktree_binding` | 工作面绑定（A19）：latch `name='worktree'` 的当前绑定（worktree id/路径/prepare effect 指针）；**子会话不继承**（第 14 章）；目录声明工作面的 mutating effect 无 binding → 拒 claim（第 8 章） | binding 载荷必填（worktree 指针可解析）；与 latch 行同事务落账 |
+
+`harness_result` 的分层词表（规范；`result_kind` 是唯一持久化分派键，
+消费表在第 5 章 5.2）：
+
+| 层 | 字段 | 词表 | 谁读 |
+|---|---|---|---|
+| harness 原始输出 | `candidate_kind` | 开放（harness 土话） | 仅合同校验器 |
+| **settle 分派键（权威，持久化）** | `result_kind` | **四值** `progress\|finish\|wait\|reject` | `v13_complete` / 下一格 parse+advance / `v_routes` 消费侧 |
+| 对照注释 | `delivery_kind` | 六值，可空 | 审计/对照/人；**路由不读** |
+
+- `wait_reason ∈ {approval|evidence|quota}` normative。approval 的 wake =
+  human settle；evidence/quota 必带**机器可判定 wake condition**（事件类型 /
+  not_before / artifact 到达 / 子终态）。
+- **USER_ACTION 载荷规则**：`USER_ACTION` 不设独立 result_kind（并入
+  `wait` + `wait_reason=approval`）。该 turn 若出现
+  `delivery_kind=USER_ACTION_REQUIRED`，则**必须**同时 `result_kind=wait`
+  且 `wait_reason=approval`，且审批 `interaction_ref` 必填——缺任一，
+  `v13_complete` 拒收。
+- 审批两段的完整流程（harness effect 以 succeeded+需审批信号终态化 →
+  human effect → 续跑 effect，mode=resume）在第 12 章展开；三层 wait
+  消歧在第 5 章 5.2。
+
+```text
+G-ctx10（信封族；设计 §10）节选断言：
+✓ 通过 envelope 校验后，其余 delivery_kind 值乱填/置空：同 result_kind 下
+  v_routes 输出与是否建 effect 逐字节相同（路由不读对照层）
+✓ USER_ACTION_REQUIRED 必伴 result_kind=wait + wait_reason=approval +
+  interaction_ref，缺则 v13_complete 拒收
+✓ evidence/quota wait 缺机器可判定 wake（事件类型/not_before/artifact
+  到达/子终态）→ 拒收
+✓ result_kind=wait 的 turn 零新 harness/llm/tool effect；wait_reason=approval
+  时恰建一个 human effect（human 也是 effect，「零新执行 effect」字面会
+  红掉审批两段，故按 effect 族细分断言）
+```
+
+## 7.5 逐段解释
 
 - **不可变 + 溯源是不变量**：artifact 没有 UPDATE 路径；`produced_by` 必须指向
   已结算 effect。「证据链」不用建——它就是外键。第 9 条不变量的全部内容。
@@ -116,7 +168,8 @@ applied/skipped 双分支、三种回放语义在第 10 章展开。本章只钉
 - **inline vs ref 的阈值是数据**：默认 1MB。界限写死在常量里就违反本教程的习惯——
   放 `meta`（第 15 章），可调。**不让 artifacts 表变成对象存储**：超限一律 ref。
 - **`kind` 开放词表**：新领域（第 10 章 RAG 的 `chunk` / `context`、第 9 章工作台
-  的 `ast`）自定义 kind，零 DDL——和 events.type 同一条缝。`kind='chunk'` 是内容行；
+  的 `ast`）自定义 kind，零 DDL——和 events.type 同一条缝，控制面信封族（7.4）
+  也走它。`kind='chunk'` 是内容行；
   检索投影是 `chunks` 表，不是再给 inline 加一条表达式索引。
 - **链条走 artifacts，不走 sticky**：工具 A → B → C 的链式分析，
   中间每步的产物是行。会话亲和的温缓存（第 9 章）只是加速器——
@@ -128,7 +181,7 @@ applied/skipped 双分支、三种回放语义在第 10 章展开。本章只钉
   且对应 `artifacts(content_hash, kind='chunk')` 必须存在。manifest / decisions
   只记这个 hash——重摄取杀死 `(source_hash, chunk_no)` 行，不杀死身份。
 
-## 7.5 硬性规定与 gate
+## 7.6 硬性规定与 gate
 
 ```text
 G1/G7 节选断言：
@@ -154,7 +207,7 @@ G-ctx2（chunks 投影）——三纪律：
 recompute / fresh fork）不在本章展开——指针在 7.3，schema 在第 10 章。
 本章 gate 只钉纪律 3 的那一半：清单行里没有 chunks 主键。
 
-## 7.6 检查点练习
+## 7.7 检查点练习
 
 1. 写 `v_lineage(artifact_id)`：递归 CTE 追溯生产链到最初的 user 输入事件。
    这是「证据链」视图——观察平面（第 15 章）的核心件。
@@ -167,7 +220,7 @@ recompute / fresh fork）不在本章展开——指针在 7.3，schema 在第 1
    提交后旧主键消失、新 `content_hash` 可检、事务外看不到中间态；
    一份假清单若引用 `(source_hash, chunk_no)` 则 gate 红，只许引用 hash。
 
-## 7.7 回到 vN 对照
+## 7.8 回到 vN 对照
 
 - `v6.1-code-file-workbench-plan`：两条被保留的调查结论——内容即值、
   文件身份≠路径——在本章兑现为表结构；tigerfs/双平面被降级为第 9 章的 handler 细节。
@@ -177,7 +230,7 @@ recompute / fresh fork）不在本章展开——指针在 7.3，schema 在第 1
   可重建投影留给 `chunks`，当时交给模型的证据链留给 context artifact
   内嵌的清单（第 10 章）。
 
-## 7.8 内在合理性：前因后果
+## 7.9 内在合理性：前因后果
 
 **作用力**先于任何设计存在。其一：一个进程只精通一种语言——Python 的
 DataFrame、Swift 的 AST、SQL 的行，内存里没有共同表示，能横跨三者逐字节

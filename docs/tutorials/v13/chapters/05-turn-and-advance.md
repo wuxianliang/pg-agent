@@ -2,7 +2,7 @@
 
 > 前置：第 1–4 章。产出：`v13/loop/advance.sql`（G4 + G-ctx1 验收）。
 > 对照上游：`v12/turn`（G4：有界 turn 端到端）、loopx 的 quota 门（第 13 章展开）。
-> 设计对照：`docs/designs/v13-context-on-pg.md` §4.3（两阶段 / 三角色）、§10 G-ctx1。
+> 设计对照：`docs/designs/v13-context-on-pg.md` §4.3（两阶段 / 三角色）、§6.8（信封族）、§10 G-ctx1。
 
 ## 5.1 这一章要做什么
 
@@ -82,9 +82,13 @@ BEGIN
   -- ③ 决策：读已落行的 decisions（缓存命中在解析相已发生）
   --         缺口仍在（超过快路批上限）→ 建 judge effect → return 'waiting'
   -- ④ 路由：v_routes 给出动作
-  --    sql  → 同事务直接执行只读函数 + effect 终态化（零队列往返）
+  --    sql  → 同事务直接执行目录函数 + effect 终态化（零队列往返）；
+  --           不入队、不 claim/settle——回执 = 同事务的行 + 事件（不是 effect
+  --           经 worker 的结算）；库内、零外部 IO、零队列；默认只读，
+  --           具名写允许名单例外（5.4④）
   --    tool/llm/human → 建 effect + 入队（第 3 章）→ return 'waiting'
-  --    finish/reject → 终结事件 + session 终态 → return 'terminal'
+  --    finish/reject → closeout：三终结事件+对账收据+终态同事务（5.3）
+  --                    → return 'terminal'
   -- ⑤ 预算：turn_no 递增在创建工作的同一事务检查/扣减
   RETURN 'progressed';
 END $$;
@@ -97,10 +101,61 @@ SELECT v13_parse(sid);            -- 解析事务
 SELECT v13_advance(sid, snap);    -- 变更事务
 ```
 
-## 5.3 变更相的五步
+**④ 的下游：harness result 四值消费表（A15）。** ④ 建的 `llm` effect 结算后，
+下一格 parse+advance 消费的不是 harness 土话，是 `harness_result` 信封（第 7 章）
+里唯一持久化的分派键 `result_kind`——四值。四值里 `progress` 是新增立法：
+没有它，中间进展只能误用 `wait`（语义相反）。`delivery_kind` 是可选对照
+注释，路由不读（分层词表在第 7 章）：
+
+| `result_kind` | advance 行为 | material spend（同 logical_turn_id ≤1 次） | 可伴随事件 |
+|---|---|---|---|
+| `progress` | 不终结，下一格 parse+advance | **是，除非同批存在 `repair/required` 或 `replan/required`**（真进展不附修复信号；防「progress+repair」双义） | 可带 repair/replan |
+| `finish` | 走验收门；过则 closeout completed | 是 | 禁止 repair/replan |
+| `wait` | 零新 harness/llm/tool effect；`wait_reason=approval` 时恰建一个 human effect | 否 | 可带 repair/replan |
+| `reject` | closeout failed | 否 | 禁止把 unknown 伪装成 reject |
+
+- `wait_reason ∈ {approval|evidence|quota}` normative（进 pg_jsonschema，缺省
+  非法）。approval 的 wake=human settle；evidence/quota 必带**机器可判定 wake
+  condition**（事件类型/not_before/artifact 到达/子终态），缺失 →
+  `v13_complete` 拒收。
+- **协调者未齐子树按 `wait` 处理（A21）**：orchestrator 的 required 子任务未全部
+  终态 → 本格零新 harness/llm/tool effect——`wait` 语义（wake=子终态，机器
+  可判定），不是 `progress`；「子齐父未验收」由 recover_idle 扫回验收链
+  （第 13 章 13.2）。
+- repair/replan 走**异步 fold**：`repair/required` → 下一格路由既有 `sql`
+  （库内修复）或 `human`（超限）；`replan/required` → 路由既有 `llm`
+  （重 triage/编排）或 `human`。上限 = thresholds 行（`harness.repair_count` /
+  `harness.replan_count` 信号，第 4 章命名风格）+ 本会话事件计数 fold，
+  带满 → human 或 reject。
+- **三层 wait 消歧（同名不同物，互不蕴含）**：`sessions.status='waiting'`
+  （会话等外部）≠ advance 返回 `'waiting'`（本格已建 effect）≠
+  `result_kind=wait`（本格不建下一执行 effect）：
+
+| 层 | 载体 | 语义 |
+|---|---|---|
+| `sessions.status='waiting'` | 会话控制行（第 1 章） | 会话在等外部——有 ready/claimed effect 或等审批，wake 前零自动推进 |
+| advance 返回 `'waiting'` | 推进函数返回值 | 本格已建 effect，推进让位给 worker |
+| `result_kind=wait` | `harness_result` 信封（第 7 章） | 本格零新 harness/llm/tool effect（`wait_reason=approval` 时恰建一个 human effect） |
+
+## 5.3 变更相的五步与 closeout（A16）
 
 五步原样留在变更相——设计原话是「建 effect / 路由 / 预算扣减，原五步原样」。
 变的是③不再在锁内调判断：判断补齐发生在已经提交的解析相。
+
+五步的终点不是「写个终结事件」就完事——**closeout 是规范级收尾**（原练习 1
+升格）：
+
+- **三终结事件**：`session/completed` / `session/failed` / `session/cancelled`
+  （第 1 章登记），各带**对账收据**——`spent`（material 花费汇总）、
+  `produced hashes`（产出 artifact 指纹）、`children 汇总`（子会话终态）、
+  `unconsumed`（未消费输入，另记 `closeout/inbox_residual` 事件）、
+  `state_hash`（终结时控制态指纹）。
+- **同事务**：收据、终结事件、session 终态、预算终态一笔落库——不存在
+  「已终结但收据缺失」的中间态。closeout 本身不再扣预算。
+- **前置 fail-closed**：对账不齐（预算未封账、children 未汇总）→ 终态
+  不得落，封闭而非兜底。
+- **子 closeout 不持子锁写父事件**：向父会话追加事件时不得持有子行锁——
+  锁序不新增边（第 2 章锁序注释；spawn 只锁父的同一条纪律）。
 
 ## 5.4 逐段解释
 
@@ -128,9 +183,12 @@ SELECT v13_advance(sid, snap);    -- 变更事务
 - **③ 判断先行，但不持会话锁**：先问 `decisions`（解析相已按 `request_hash`
   补齐或命中 cached），再按路由动作建对应 effect。判断与行动分离，
   缓存收益最大化；**全命中时 parse + advance 零外部调用**。
-- **④ sql 动作零往返**：纯只读函数（`tools.kind='sql'`，第 6 章）在变更相
-  同一事务内直接执行——不进队列、不租约、不 worker。**轻工具走快路，
-  重工具走账本**，两条路都从同一张目录表出发。
+- **④ sql 动作零往返**：`tools.kind='sql'`（第 6 章）在变更相同一事务内
+  直接执行——不进队列、不租约、不 worker。**sql 快路 = 库内、零外部 IO、
+  零队列；默认只读**；具名写允许名单内函数可写 sessions/events/latches/
+  artifacts 指针——名单 = `v13_tools_guard` 源码闭集（`v13_fork` /
+  `v13_spawn_subsession` / 装配函数，A17）。**轻工具走快路，重工具走账本**，
+  两条路都从同一张目录表出发。
 - **⑤ 预算即策略数据**：`max_turns` 不是常数。它来自版本化策略行——
   插一行 `duty_cycle=0.5` 的策略，同一个 advance 函数行为即变（第 13 章 loopx 映射）。
   纪律：**预算检查与工作创建同事务**（仍在变更相）——不存在「先检查后创建」的窗口。
@@ -150,7 +208,7 @@ v13_append_event(user/message)          -- 解析相不得阻塞这一行
 → worker: duck 工作台（第 9 章）→ settle(result artifact)（第 7 章）
 → v13_parse → v13_advance → v_routes = llm → llm effect（waiting）
 → worker: FakeLLM → settle(text) → 事件 assistant/message
-→ v13_parse → v13_advance → v_routes = finish → 终结 → terminal
+→ v13_parse → v13_advance → v_routes = finish → 验收门 → closeout（5.3）→ terminal
 ```
 
 每个箭头都是一次幂等推进（parse 一笔 + advance 一笔）。崩溃在任何一点，
@@ -171,6 +229,16 @@ G-ctx1（两阶段 advance）断言：
 ✓ 并发重复解析仅一次付款：同查询×候选集两条 parse 并行，advisory lock +
   ON CONFLICT DO NOTHING，外部调用只发生一次
 ✓ 生产断言 typesafe.mock_response IS NULL（mock 不得进生产）
+✓ steer 缝（G-ctx1 扩，第 12 章）：claimed 期间注入的 steer 不缝进已冻结
+  request——request_hash 逐字节不变
+✓ steer 不丢失：settle 后下一格 parse+advance 消费（steer/injected 事件
+  之后的有效推进可检）
+✓ 旧 request_hash 不得用于新水位：steer 落事件后，携旧水位的 advance
+  锁下复核不一致 → 弃批重解析（不得用旧批建 effect）
+✓ steer 注入立即可写：claimed 期间 events INSERT 不被挡（与第一条同源）
+✓ G-ctx1-spawn：spawn 批量建子全程在变更相事务内（父 FOR UPDATE 已持、
+  零入队）；持锁时长上限沿用毫秒级口径——超限改函数/索引，
+  不得改回队列「自愈」
 
 G4（turn gate）节选断言：
 ✓ 全链路 fake（FakeJudge/FakeLLM/FakeTool）一轮 turn 走完 sql/tool/llm/human 四路
@@ -182,7 +250,10 @@ G4（turn gate）节选断言：
 
 ## 5.7 检查点练习
 
-1. 实现 `terminal` 三个出口的收尾事件：completed/failed/cancelled 各自的终结事件形状。
+1. 实现 5.3 的 closeout：三终结事件 + 对账收据与终态、预算终态同一事务落库。
+   断言：收据字段齐（spent/produced hashes/children 汇总/unconsumed/
+   state_hash）；对账不齐时终态不落（fail-closed）；子会话 closeout 写
+   父事件时不持子锁。
 2. 给变更相加「无效输入拒绝」：fold_state 为空时直接 reject 封闭（v8 不变量：
    强制策略失败封闭——fail-closed，不 fallback）。
 3. G-ctx1 两连接实验：连接 A 在 `v13_parse` 里对判断 IO 注入可暂停的 mock，
@@ -223,8 +294,9 @@ G4（turn gate）节选断言：
 `FOR UPDATE`——但锁只罩建账/路由/扣减，持锁时长是毫秒。两相之间会话可能
 被新事件改写，所以变更相拿锁后复核水位，不一致即弃批重解析。缺口可能超过
 一批，所以同一 `v13_resolve_judgments` 有两种调用者：advance 内快路有批上限，
-worker 慢路分批无上限。sql 动作与 effect 的分界线不是性能，是「是否含生成
-IO」：纯库内只读函数留在变更相同事务快路，tool/llm/human 建账入队。
+worker 慢路分批无上限。sql 动作与 effect 的分界线不是性能，是「有无外部
+IO」：库内函数（默认只读，具名写允许名单例外）留在变更相同一事务快路，
+tool/llm/human 建账入队。
 推进来源天然有三个（settle 唤醒、tick 扫描、人工），语义必须完全一致，
 而三者唯一的公共地形是数据库本身，**唯一解仍是幂等 SQL**：循环住在调用者
 手里，状态机住在库里，谁拨一格都是 parse 然后 mutate。

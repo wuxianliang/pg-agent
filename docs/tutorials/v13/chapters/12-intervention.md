@@ -20,8 +20,12 @@ agent 不是脱缰的：人要能取消、要能回答 human effect、要能裁�
 ```sql
 -- 取消：粘性——一旦请求，任何后续 advance 都收束，不追求立即停
 -- advance 开头检查：存在 cancel/requested 事件 →
---   ready/claimed effect → cancelled（claimed 的等 settle 按 stale/cancel 收）
---   session → cancelled + 终结事件
+--   ready effect → cancelled（同步只改 ready）
+--   claimed effect 不立即改 cancelled——等 worker settle
+--   （succeeded/cancelled/unknown）；settled unknown 先 resolve
+--   （resolve_unknown），unknown 解决后才可 closeout（cancel 不得掩埋 unknown）
+--   session → cancelled + 终结事件（过 G-closeout 前置：active=0/
+--   unknown=0/pending human=0，设计 §10）
 
 CREATE OR REPLACE FUNCTION v13_resolve_unknown(p_effect uuid,
                                                p_resolution text,   -- confirmed|rolled_back|not_happened
@@ -48,12 +52,32 @@ END $$;
   正在飞的外部调用落完 settle 时自然被 cancel 语境吸收（结果落账但 turn 不继续）。
   v8 的三窗口收束/五出口矩阵被砍成「检查点 + 吸收」，因为单活跃索引
   （第 5 章①）已把竞态面压到最小。
+- **粘性是默认，interruptible 是升级**：核心永不杀进程（第 8 章），所以
+  cancel 的默认语义就是粘性。目录 `allowlist.interruptible ∈ {required,
+  best_effort, unsupported}` 键（第 6 章，零新列）声明档位的 handler 走第 8 章第四务——订阅本 session 的
+  cancel 事件、中断子进程、settle cancelled/unknown；unsupported 档保持粘性。
+  升级零机制改动：订阅是读，中断是进程内行为，settle 走既有 `v13_complete`。
+- **父 cancel 同事务扇出子树**：对树中会话落 cancel 时，同一事务沿
+  `parent_session_id` 给全部非终态子孙各扇出一条 `cancel/requested` 事件
+  ——每个子孙看到的是自己的 cancel 事实，各自的粘性收束独立完成；不新增
+  跨会话锁序（建子会话只锁父，第 14 章），终态子孙零事件。
+  **遍历顺序确定**：祖先优先、同层按 `session_id` 升序——两个并发父 cancel
+  按同一全序加锁/写入，无死锁，扇出结果确定（交错至多重复投递，由
+  事件幂等吸收）。
 - **human effect 就是慢速 worker**：`kind='human'` 的 effect 领取者是「人」
   ——lease 给足，claim 语义照旧。回答 = settle。**没有为「人」发明第二种机制**；
   审批、确认、低置信弃权（第 4 章 human 兜底带）全部走这一条路。
 - **resolve_unknown 是审计点不是技术点**：三种 resolution 对应三种现实
   （确实发生了/证明没发生/发生了但补偿了），必须带证据落事件——
   这是第 11 章 B4 窗口的唯一合法出口。
+- **审批上行两段接线（外部 harness 中途抛问题）**：长跑 harness effect 不
+  中途改自己的 status——它正常跑完 settle succeeded，结果信封带
+  `result_kind=wait` 且 `wait_reason=approval`（问题作为 artifact 落账）；
+  `v13_complete` 据此终态化该 effect、释放单活跃，下一格 advance 不建执行
+  effect、改建 human effect（审批 `interaction_ref` 必填，缺则拒收）。人答
+  = human settle，续跑 = 新 harness effect（request 带 resume 参数、新
+  effect_id——身份不偷渡）。**needs_approval 永不是 effect status**：status
+  闭集不因审批扩词，「等审批」住在结果信封里，不住在 `effects.status` 里。
 - **取消与 unknown 的交互**：mutating effect 在 unknown 时收到取消——
   仍必须先 resolve（副作用状态不明不能靠 cancel 掩埋）。
   gate 断言这条顺序不可绕过。
@@ -62,10 +86,17 @@ END $$;
 
 ```text
 ✓ cancel 后新 effect 不可创建（advance 直接收束）
-✓ 取消时已 claimed 的 effect：settle 仍被接受（结果留痕），turn 不继续
+✓ 取消时已 claimed 的 effect：不被同步改 cancelled，settle 仍被接受（结果留痕），
+  turn 不继续；settled unknown 解决前 closeout 不落（cancel 不掩埋 unknown）
 ✓ unknown 只能被 resolve_unknown 关闭；任何超时/取消路径改写它 → gate 红
 ✓ resolve 不带 evidence → 拒绝
 ✓ human effect 从创建到回答跨小时：会话 waiting，无 lease 过期误接管
+✓ 审批两段：wait_reason=approval → 唯一 human effect（interaction_ref 必填，
+  缺则拒收）；人答后续跑 = 新 effect_id；全程 effect.status 不出现审批词
+✓ 父 cancel 同事务扇出：子树全部非终态会话各得一条 cancel/requested；
+  终态子孙零事件；无跨会话锁序
+✓ 并发重叠 cancel：两个并发父 cancel 同子树无死锁，扇出结果确定
+  （祖先优先、同层 session_id 升序；重复投递由事件幂等吸收）
 ```
 
 ## 12.5 检查点练习

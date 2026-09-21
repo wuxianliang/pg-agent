@@ -63,6 +63,23 @@ v12 G7 实测:`v12_decide_in_db` 一条 SQL 完成整个 decide,9 问 $0.000042,
 Optimize=装配 SQL+manifest、Execute=序列化+llm effect、Feedback=events/effects 自带 usage。
 **两篇论文在应用层自建的管线,v13 用数据库原语直接得到;缺的只是 §5 的零件。**
 
+### 3.1 三读法尺子(控制面完备判据;2026-09-21 控制面 R2 终裁新增)
+
+控制面是否完备,用同一把尺子量:**每个读法的控制动词组(turn / 会话委托 / goal)都能在
+同一组核心原语(effects/events/sessions/thresholds + parse+advance+settle)上闭合,
+且不需要新的执行机制**。反面=为层次建服务——v11 已拒第二套调度面,v13 不重开。
+
+同尺三行(R2 §4;裁决存证 `docs/reviews/v13-control-plane-oracle-r2-2026-09-21.md`):
+
+| 尺 | 落点 |
+|---|---|
+| 动作闭集 | 四值不是 action;spawn=tools.kind='sql' 分派;triage 分类映射 llm/human/sql;**信封枚举不是动词,CASE 它的代码才是**(动作空间权威在教程 ch04,本文只引用不复制) |
+| 谁在锁内写 sessions | 仅 advance 变更相(持父 FOR UPDATE)+ guard 具名闭集;worker/harness/子进程否 |
+| 回执 | 库内动作=同事务事件+行;外部 IO=effect claim/settle |
+
+推论:建会话只有一个动词实现(`v13_spawn_subsession`);repair 走事件不另造会话;
+explore 首版同会话(不占深度=不是子会话)——三题在同一组原语上咬合(§6.8)。
+
 ## 4. 承重件(轮 1 已裁,双通道一致)
 
 ### 4.1 召回是函数,不是视图(P0 绑定纪律)
@@ -165,7 +182,8 @@ Feedback)多数映射到既有表(meta、tools、sessions、events、artifacts)�
 
 ```sql
 latches(session_id, name, value, fired_at)     -- INSERT once;UPDATE/DELETE 被触发器拒;
-                                               -- 参与前缀身份哈希(§5.6)
+                                               -- 参与前缀身份哈希(§5.6;版本化
+                                               -- latch 名单内,worktree 默认排除)
 emergent(session_id, kind, content_hash, payload, expires_turn, consumed_at)
                                                -- UNIQUE(content_hash) 写时去重;
                                                -- CHECK 行数 ≤ cap(fail-closed 不静默丢);
@@ -229,7 +247,9 @@ usage 已在 events/effects;失败 turn 只写失败记录不进分位样本
 ### 5.6 ForkPrefix 关系化 + shadow 即查询
 
 - fork 继承 context artifact + **前缀身份哈希**(system blocks+tool schemas+model+
-  latches 的 canonical bytes SHA-256);validate-spawn gate 拒绝破坏缓存身份的 fork
+  名单内 latches 的 canonical bytes SHA-256);**参与前缀身份的 latch 取版本化 latch
+  名单,`worktree` latch 默认排除**(2026-09-21 R2/A19 修订,消除「所有 latch 参与」
+  与 worktree 排除的矛盾);validate-spawn gate 拒绝破坏缓存身份的 fork
   (如 thinking 预算被 clamp 到不同档);cache probe=对比实际 cache_read 与携带估计,
   落一条审计事件。
 - shadow 演出:新旧策略双跑 assemble,diff 两份 manifest,零 diff N turn 后 flip
@@ -346,6 +366,79 @@ tier/压力/预留分位(算术,SQL 地盘)、cache-break 归因(hash diff 已�
 通用整合姿势:**SQL 先短路确定情形,Jev 只裁不确定带**;每个模板配语言、
 校准与漂移 gate。
 
+### 6.8 控制面信封族(2026-09-21 控制面 R2 终裁,A15)
+
+> 动作空间权威在教程 ch04 的 `v_routes` 动作闭集——本文只交叉引用、不复制
+> (信封枚举不是动词,CASE 它的代码才是)。裁决存证:
+> `docs/reviews/v13-control-plane-oracle-r2-2026-09-21.md`(下称 R2)。
+
+信封族全住 `artifacts.kind` + pg_jsonschema + `tools.input_schema`,零新表零新列(R1 共识 1)。
+
+**(i) harness_result 四值 result_kind 合同(A15)**
+
+分层词表(规范,R2 §1.1):
+
+| 层 | 字段 | 词表 | 谁读 |
+|---|---|---|---|
+| harness 原始输出 | `candidate_kind` | 开放(harness 土话) | 仅合同校验器 |
+| **settle 分派键(权威,持久化)** | `harness_result.result_kind` | **四值** `progress\|finish\|wait\|reject` | `v13_complete` / 下一格 parse+advance / `v_routes` 消费侧 |
+| 对照注释 | `delivery_kind` | LoopX 六值,可空 | 审计/对照/人;**路由不读** |
+| fold 信号 | `events.type` | `repair/required`、`replan/required`(开放词表,ch01) | 后续 triage / recover_idle / attention |
+
+四值是相对复核缝 B 三值(finish/reject/wait)的**新增立法**(加 `progress`):
+无 progress 则 VALIDATED_PROGRESS 只能误用 wait(语义相反)。
+
+语义表(规范,R2 §1.2):
+
+| `result_kind` | advance 行为 | material spend(同 logical_turn_id ≤1 次) | 可伴随事件 |
+|---|---|---|---|
+| `progress` | 不终结,下一格 parse+advance | **是,除非同批存在 repair/required 或 replan/required**(真进展不附修复信号;防「progress+repair」双义) | 可带 repair/replan |
+| `finish` | 走验收门;过则 closeout completed | 是 | 禁止 repair/replan |
+| `wait` | 零新 harness/llm/tool effect;`wait_reason=approval` 时恰建一个 human effect | 否 | 可带 repair/replan |
+| `reject` | closeout failed | 否 | 禁止把 unknown 伪装成 reject |
+
+- `wait_reason ∈ {approval|evidence|quota}` **normative**(进 pg_jsonschema;缺省非法)。
+  approval 的 wake=human settle;evidence/quota 必带**机器可判定 wake condition**
+  (事件类型/not_before/artifact 到达/子终态),缺失 → `v13_complete` 拒收。
+- `USER_ACTION` 不设独立 result_kind:并入 `wait+wait_reason=approval`;该 turn 若出现
+  `delivery_kind=USER_ACTION_REQUIRED` 则**必须**同时 `result_kind=wait` 且
+  `wait_reason=approval`,审批 interaction_ref 必填,缺则拒收。两条 gate 并存不矛盾
+  (§10):信封校验在 settle 入口(`v13_complete`),路由盲读在校验通过之后——
+  `delivery_kind` 其余值乱填/置空不影响分派与建 effect。
+- `VALIDATED_COMPLETION`(delivery 对照)仍须过 session acceptance gates,harness
+  不得单方面 closeout;candidate→accepted 验证链保留(§6.1「版本化 SQL 策略独占动作授权」)。
+- **wait 三层消歧(教程必修)**:`sessions.status='waiting'`(会话等外部)≠ advance 返回
+  `'waiting'`(本格已建 effect)≠ `result_kind=wait`(本格零新 harness/llm/tool
+  effect,`wait_reason=approval` 时恰建一个 human)。
+- repair/replan 异步 fold:repair/required → 下一格路由既有 `sql`(库内修复)或 `human`
+  (超限);replan/required → 路由既有 `llm`(重 triage/编排)或 `human`。上限=thresholds 行
+  (`harness.repair_count`/`harness.replan_count` 信号,按 ch04 既有信号命名风格)+ 本会话
+  事件计数 fold,带满 → human 或 reject;recover_idle 可把未消费 repair/replan 视为
+  可恢复工作输入,不建修复状态机。gate 见 §10 G-ctx10 族。
+
+**(ii) harness_request / 续跑 / 审批两段(R1 共识 2/3)**:续跑=新 effect_id+新冻结
+request(同 effect_id 换 request 再 attempt 被禁);审批两段=harness effect 以
+succeeded+需审批信号终态化 → human effect → 续跑 effect(mode=resume)。
+合同细则见教程 ch07/ch12。
+
+**(iii) handoff 信封(R1 共识 4)**:artifacts 载荷+稳定 `delivery_id` 幂等(重复投递
+不得二次注入);transcript 存 manifest/hash 引用,不复制正文;不采 XML。
+
+**(iv) spawn 档位(交叉引用,A17)**:`tools` 行 `spawn_subsession` `kind='sql'` +
+`v13_tools_guard` 具名 VOLATILE 例外 + 父 advance 同事务批量扇出;与 `v13_fork` 同一
+primitive,sessions 唯一写路径。并发 sibling 争根预算的防超售:spawn 准入前先取
+**根事务咨询锁** `pg_advisory_xact_lock(<spawn_budget 类号>,
+hashtext(root_session_id))` 再算准入(两参形式分 lock class,与 §4.3 解析相
+hash(查询×候选集) 咨询锁互不串扰;ch01/ch13 sessions DDL 无 reserved 列,
+单语句 CAS 方案作废。仅 spawn 准入路径持此锁,closeout/recover 不得取;
+不加 root **行**锁序——咨询锁是锁图中的命名节点,预算写路径按同一 root
+key 取锁,顺序一致无环)。合同细则见 ch06/ch14 与 DP1 A17 修订。
+
+**(v) triage(交叉引用,A20)**:信号集分 10a/10b 两级最小集 + 单一 `goal/override`
+事件(载荷 `intent ∈ {direct,decompose}`)+ module 数后置(首版不进;§11 步骤 3 后
+先加 `candidate_source_count`,版本化 module_key 存在后才加 `candidate_module_count`)。
+细则见 ch01/ch04/ch05/ch13 与 A20;`thresholds.action` 闭集不变(§3.1)。
+
 ## 7. 检索分层(T0/T1/T2 重排)
 
 | 层 | 形态 | 触发 |
@@ -402,11 +495,61 @@ G-ctx4 过滤:存在性 Noul 先行;同 query×chunk 二次零外部调用(mock 
               per-chunk 缓存跨 session 复用(reused_from 正确)
 G-ctx5 清单:manifest 含 §5.2 全字段;applied/skipped 双分支;三种回放可区分;
               ORDER BY 确定性(并列截断不抖)
-G-ctx6 经济:tier 只升不降跨 turn 成立;R_o 分位数计算正确;E(r) 分支可观测
+G-ctx6 经济:tier 只升不降=单 Plan 内单调,跨 turn 走 hysteresis/cooldown
+              受控降级(§5.4);R_o 分位数计算正确;E(r) 分支可观测
 G-ctx7 分片哈希:声明路径外字段变化不击穿缓存;声明与实际读取无漂移(待设计)
 G-ctx8 崩溃:解析相中途 kill→事务回滚→advance 幂等重推;摘要验收不过→drop 回退链
 G-ctx9 证据/动作:manifest freeze 后迟到 decision 不得回写;水位不一致弃批重解析;
               分片哈希 canary(启用时)——未声明字段不出现在出站 payload
+G-ctx10-envelope 信封校验(路由前):USER_ACTION_REQUIRED 必伴 result_kind=wait+
+                wait_reason=approval+interaction_ref,缺任一 → v13_complete 拒收
+G-ctx10-delivery 路由盲读(校验通过后):其余 delivery_kind 值乱填/置空,同
+                result_kind 下 v_routes 输出与是否建 effect 逐字节相同。
+                两条 gate 并存不矛盾:校验在 settle 入口,盲读在校验之后
+G-ctx10-wait-lexicon:三层 wait 各自断言——result_kind=wait 的 turn 零新
+                harness/llm/tool effect(wait_reason=approval 时恰建一个 human
+                effect);advance='waiting' 的 turn 恰有一个 ready|claimed;
+                sessions.status='waiting' 的会话 wake 前零自动推进
+G-ctx10-wake:wait_reason=approval 的 wake=human settle;evidence/quota wait 必带
+              机器可判定 wake(事件类型/not_before/artifact 到达/子终态),
+              缺失 → v13_complete 拒收
+G-ctx10-spend:同 logical_turn_id material 次数=1;progress+repair/replan 同批零
+              spend;超限 repair 后零新 spawn、走 human/reject
+G-closeout(A16):三终结事件的收据五字段(spent/produced hashes/children 汇总/
+              unconsumed/state_hash)、session 终态与预算终态同一事务;closeout
+              本身不再扣预算;子 closeout 不持子锁写父事件;前置 fail-closed——
+              active effect=0/unknown=0/pending human=0/子树全终态,任一不满足
+              → 终态不落(ch12 cancel 路径同前置复用)
+G-sql-write-closed:具名闭集外 VOLATILE sql 工具 enable → 红;write_targets 缺键而
+              VOLATILE → 红;prosrc 含 IO 通道(dblink/pg_net/COPY PROGRAM)→ 红;
+              UPDATE tools 扩 guard 名单被拒(扩员=guard 源码+设计修订+部署 gate 同发)
+G-ctx1-spawn:spawn 全程在 advance 变更相事务内(父 FOR UPDATE 已持;零入队、
+              禁止 worker 在 claim 窗口写控制面);持锁时长上限沿用 G-ctx1 毫秒级
+              口径,超限改函数/索引、不得改回队列「自愈」;不加多会话锁序
+              (spawn 只用已持父行锁;禁止持 child 锁再锁 parent)
+G-spawn-unique-writer:非名单函数/角色 INSERT sessions → 拒;harness fake 自插
+              sessions → 红;批量子同属唯一写路径(经 v13_spawn_subsession 同事务)
+G-spawn-fanout:N tool_call 一格建 N 子;每子回执四件套(child 行+forked 事件+
+              child-created 事件+reservation 载荷)同事务,缺任一 → 红;预算不足
+              全不建(fail-closed 零部分建);并发 sibling 压测无超售;同 source
+              tool_call id 重放返回同一 child(request hash 匹配,不匹配 → 拒)
+G-triage-action-closed:thresholds.action 仍属闭集;explore_then_retry/orchestrate/
+              decompose 永不出现;Jev Choice 三值(direct/decompose/human)+策略标签
+              explore_then_retry 只作 decision context/策略标签,不是第四分类;
+              override=decompose 映射既有 llm 编排(工具面含 spawn),不新增动词
+G-triage-review-band:再次 review(已探索过)→ 版本化默认策略行——种子=根
+              human/子 direct,永不默认 decompose(ch04 §4.5)
+G-triage-explore-once:根上 review 带且未探索过 → 恰一次同会话只读 explore
+              (零 spawn、不占 ancestor_depth/subtree_reserved);已探索仍
+              review 带 → 版本化默认(ch04 §4.5)
+G-triage-explore-depth:超深(depth≥max_spawn_depth)零 explore child;P2 explore
+              child 走完整 spawn 准入(depth+1,超深不豁免);首版同会话 explore
+              零 spawn、不占 ancestor_depth/reserved
+G-triage-evidence-hash:explore_evidence_hash 变 → request_hash 变 → 新 decision 行;
+              不复用旧 verdict;不改写 candidate_set_hash(探索证据不是召回结果)
+G-triage-10a-null-tree:10a 树字段 null 不点火(null≠0);根+无 override 不得静默
+              direct(走 human);超时/缺失 decision 不落行,根→human、depth≥1→
+              direct、零 child;override 打穿硬安全 → 零 child+human/waiting
 ```
 
 ## 11. 交付排序
@@ -420,6 +563,12 @@ G-ctx9 证据/动作:manifest freeze 后迟到 decision 不得回写;水位不�
 5. latch(轮 2 已裁 P1 进核心)、intent 软门控(仅复用既有 intent 行)、
    压缩 hint shadow-first;分片哈希=观测到缓存损失后条件启用;
 6. T1 vectorchord、bigram、boost 闭环、语义决策缓存——全部台账触发。
+
+**控制面修订(A15–A21,2026-09-21 R2 终裁)与上述承重件步骤并行推进、不互相
+阻塞**(实施顺序见 R2 §9);其中 triage 的 candidate module 数信号**不得早于
+步骤 3**(T0 recall+chunks 投影)——步骤 3 后先加 `candidate_source_count`(纯 SQL
+聚合已落行,禁新解析相 IO),版本化 module_key 存在后才加 `candidate_module_count`
+(§6.8(v))。
 
 ## 12. YAGNI 台账(附触发条件)
 
@@ -437,6 +586,11 @@ G-ctx9 证据/动作:manifest freeze 后迟到 decision 不得回写;水位不�
 | Emergent 表 + 在线 triage | 首个真实 mid-turn producer 出现(triage 永远走确定性 admission) |
 | 分片哈希 | 全量哈希下缓存损失实测超标 |
 | pg_cron tick | 扫描恢复的空转成本实测超标 |
+| LoopX 六值升格 result_kind | 闭集修订触发:delivery_kind 审计链在实践中无人写(退化),或 progress+repair 零扣被用于免费进展刷 turn(R2 §7 复访条件) |
+| rich rubric 9 项进 triage 硬路由 | 首版仅 Choice{direct,decompose,human}+confidence;rubric 项先作 shadow/中间带特征,判别力经实测证明后升格 |
+| candidate_module_count 进 triage 信封 | 版本化 module_key 存在;先决=步骤 3 后先加 candidate_source_count(§11) |
+| explore 走 spawn(只读 explore child) | P2:同会话 explore 不敷用(隔离/并行需求实测);升格走完整 spawn 准入(depth+1,超深不豁免) |
+| v_goal_tree/看板物化 | 查询 p95 超标(A21 先参数化 STABLE SRF,非 VIEW 非物化) |
 
 ## 13. 教程修改清单(16 章映射)
 

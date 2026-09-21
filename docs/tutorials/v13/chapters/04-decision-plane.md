@@ -2,6 +2,7 @@
 
 > 前置：第 1–3 章。产出：`v13/decide/decide.sql`（decisions/thresholds/v_routes）（G2 验收）。
 > 对照上游：`v12/decide`（G2：批次生命周期、hash 缓存、阈值路由带）。
+> 设计对照：`docs/designs/v13-context-on-pg.md` §3.1（动作闭集）、§6.8（v）（triage）。
 
 ## 4.1 这一章要做什么
 
@@ -89,7 +90,95 @@ G2（decide gate）节选断言：
 ✓ 路由输出动作 ∈ {sql, tool:*, llm, human, finish, reject}
 ```
 
-## 4.5 检查点练习
+动作闭集只有这六个值。harness 结果（`result_kind` / `delivery_kind`，第 5/7 章）
+与 triage 分类（`direct` / `decompose` / `human`，Jev Choice 三值）都不是第 7 个 action——
+**信封枚举不是动词，CASE 它的代码才是**；triage 分类只映射到既有动作（4.5）。
+
+## 4.5 triage.v1：信号最小集与优先级阶梯（A20）
+
+一个新 goal 的第一格路由问的是「直接做、拆开做、还是交给人」。这题不新增
+动作：triage 分类只**映射到**既有 `llm`/`human` 动作，`thresholds.action`
+闭集不变。
+
+**判断模板**（单一 `triage.v1` 模板声明全部字段——`decisions.context` 投影
+闭集一次立全，分级只指启用时序、不指声明集）：
+
+| 期 | 字段 | 说明 |
+|---|---|---|
+| **10a 期**（不依赖目标树，可与信封族同批） | `task_content_hash`、`task_est_tokens`、`user_intent_override`、`has_mutating_hint`、`policy_version`、`explore_evidence_hash`，以及同一模板内声明的五个树字段（值恒 null） | 任务指纹；体量估计（中间带特征，根上不作硬拆）；来自 `goal/override` 事件（第 1 章）；写操作暗示；策略版本；探索证据指纹（无探索则 null）；树字段见 10b 行 |
+| **10b 期**（树字段填实值；依赖 spawn 与 goal tree，A17+A21） | `ancestor_depth`、`n_nonterminal_children`、`remaining_turns`、`quota_remaining`、`subtree_reserved`（10a 期已声明为 null 的同一批字段，此时填实值） | 距根深度；未终结子会话数；本会话剩余 turn；预算余量；子树已预留 |
+
+**null 纪律**：`triage.v1` 单一模板在 10a 期就把树字段声明为 null（null ≠ 0——
+10a 期阶梯规则 5–6 不点火，没有树信号就不做树判断；10b 期同一批字段填实值；
+不存在「10b 追加声明字段」——声明集自始闭全）。「根+无 override 不得
+SQL 默认 direct」由 gate 钉死。Jev 首版输出仅 `Choice{direct,decompose,human}` +
+confidence，不输出 9 项 rubric（rubric 依赖项不进首版；保留 SQL 可判定项）。
+
+**优先级阶梯**（规范，7 条照录；替代「最高优先」口头语）：
+
+```text
+1 空 fold → reject
+2 duty_cycle=0 → 不建工作
+3 硬安全：depth≥max_spawn_depth 或剩余<min_child_max_turns → 禁 decompose
+  （override=decompose 也不得裂变 → human/waiting；禁止静默 direct 假装已拆）
+4 override=direct → direct（不经 Jev）
+5 override=decompose 且过 3 → llm 编排（工具面含 spawn），不经 Jev
+6 ancestor_depth≥1 且无 override → SQL 默认 direct
+7 其余（根、无 override）→ Jev thresholds 映射；无/超时/失败 → fail-closed
+```
+
+**映射与阈值带示例**：`direct` → 既有 `llm`（单会话直做）；`decompose` →
+既有 `llm`（编排，工具面含 `spawn_subsession`）；`human` → 既有 `human`。
+分类词统一：Jev `Choice` 三值 {direct,decompose,human}；`explore_then_retry`
+是**策略标签**（review 带触发的同会话探索路线，见下），不是第四分类。
+分类词与策略标签只作 decision context，永不进 `thresholds.action`：
+
+```sql
+-- 例：triage.choice 带——Choice × confidence 落带，action 仍是闭集值
+INSERT INTO thresholds(policy_name, policy_version, signal, band_no, lo, hi, action)
+VALUES ('default', 1, 'triage.choice', 1, 0.00, 0.60, 'human'),  -- 低置信兜底
+       ('default', 1, 'triage.choice', 2, 0.60, 1.00, 'llm');    -- direct/decompose 均映射 llm
+```
+
+**fail-closed**：Jev 超时/缺失时 decision 不落行（第 5 章解析相纪律）——
+根+无 override → 不得静默 direct，走 `human`；depth≥1 → 默认 `direct`；
+零 child。override 排序低于深度/预算硬安全：override=decompose 打穿硬门 →
+human/waiting，零 child。
+
+**review 带**：置信度落在 review 带（有答案、置信度居中）时处理有序——
+**首次 review（未探索过）→ 允许恰一次同会话只读 explore（细则见下）；
+再次 review（已探索过）→ 版本化默认策略行**——种子 = 根 `human` / 子
+`direct`，永不默认 `decompose`；改种子 = 插新 thresholds 版本，不改函数
+（版本化路由先例，设计 §6.1）。
+
+**explore 细则（首版 = 同会话）**：review 带且根上**未探索过** → 允许恰一次
+同会话只读 explore（`llm` + 只读 explore 工具面；不 spawn、不占
+`ancestor_depth`/`subtree_reserved`；usage 正常记账）；已探索仍 review 带 →
+版本化默认（根 `human` / 子 `direct`，见上）。explore 证据回流 = evidence artifact（可选 `explore/completed` 事件，
+第 1 章），`explore_evidence_hash` 变 → request_hash 变 → 新 decision 行
+（不复用旧 verdict、不改写 candidate_set_hash）。P2 升级 = 只读 explore
+child 走完整 spawn 准入（depth+1，超深不豁免）。
+
+```text
+G-triage 族（triage gate）节选断言：
+✓ G-triage-action-closed：thresholds.action 仍属闭集；explore_then_retry/
+  orchestrate/decompose 永不出现——Jev Choice 三值（direct/decompose/human）
+  与策略标签 explore_then_retry 只作 decision context/策略标签，不是第四分类
+✓ G-triage-review-band：再次 review（已探索过）→ 版本化默认策略行——种子 =
+  根 human/子 direct，永不默认 decompose
+✓ G-triage-explore-once：根上 review 带且未探索过 → 恰一次同会话只读 explore
+  （零 spawn、不占 ancestor_depth/subtree_reserved）；已探索仍 review 带 →
+  版本化默认（根 human/子 direct）
+✓ G-triage-10a-null-tree：10a 树字段值为 null 不点火（null≠0）；根+无
+  override 不得 SQL 默认 direct（走 human）；超时/缺失 decision 不落行——
+  根→human、depth≥1→direct、零 child；override 打穿硬安全 → 零 child+human/waiting
+✓ G-triage-explore-depth：超深（depth≥max_spawn_depth）零 explore child；
+  首版 explore 同会话（零 spawn、不占 ancestor_depth/subtree_reserved）
+✓ G-triage-evidence-hash：explore_evidence_hash 变 → request_hash 变 →
+  新 decision 行；不复用旧 verdict、不改写 candidate_set_hash
+```
+
+## 4.6 检查点练习
 
 1. 加 `v_fold_state(p_sid)` 函数：聚合 sessions/events/decisions 成判断吃的 context
    jsonb（开放任务数、turn 余量、最近 effect 状态）。断言纯函数：同输入同输出。
@@ -97,7 +186,7 @@ G2（decide gate）节选断言：
    risk=reject 时无视 route.next 直接 reject。体会「路由是视图」组合的成本是零。
 3. 破坏性实验：把阈值改成有缝隙（lo/hi 不连续），gate 应在 thresholds 校验断言上红。
 
-## 4.6 回到 vN 对照
+## 4.7 回到 vN 对照
 
 - `v12/decide/test_decide.py`：批次生命周期 + hash 幂等 + 路由带的全部断言。
   v13 的减法：`decision_batches/jev_questions/jev_decisions` 三表压成一张
@@ -105,7 +194,7 @@ G2（decide gate）节选断言：
 - v8 没有独立决策平面——判断藏在 step 决策与 LLM effect 里。
   v13 把「判断」升为一等行，这是 v12 对底座的最大贡献。
 
-## 4.7 内在合理性：前因后果
+## 4.8 内在合理性：前因后果
 
 **作用力。** 先列事实——它们关于运行环境，不关于任何设计偏好：**判断调用
 有成本**（外部 IO，按次计费、按延迟等待），且**同题答案可缓存**——

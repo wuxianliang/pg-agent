@@ -23,6 +23,18 @@ PG 本身就是 harness。**
 3. v13_complete(effect_id, attempt, fence, status,   → 结算（事务）
                 result)
 
+第四务（控制订阅——是义务，不是第四个函数）：
+- 长跑 handler SHOULD 订阅本 session 的 cancel/requested 事件；订阅档位
+  是目录数据（`tools.allowlist` 的 `interruptible` 键 ∈ {required, best_effort,
+  unsupported}，第 6 章）
+- 收到即中断自己拉起的子进程、settle cancelled——主动打断住在 handler
+  进程内，核心永不杀进程（不新增 kill 通道）
+- 不订阅者（unsupported）退回粘性语义：跑到自然结束，settle 被 cancel
+  语境吸收（第 12 章）
+- mutating effect 中断后外部副作用状态不明 → settle unknown——cancelled
+  不得掩埋 unknown（与第 12 章同一条纪律）
+- 中断前已落的 partial artifact 只作审计证据，不过 completion gate
+
 附带纪律：
 - 请求已冻结：worker 原样发送 request，凭据在进程侧注入，无权改
 - 申报不裁决：known/unknown 的分类规则在 v13_complete 的 SQL 里
@@ -44,6 +56,19 @@ Swift 用 PostgresNIO/libpq，Python 用 psycopg，Node 用 pg——各写各的
 - **崩溃窗口语言无关**：Swift worker 在「外部成功、结算前」崩溃，
   和 Python worker 崩溃是同一个 SQL 现象（claimed + lease 过期），
   走同一条恢复路径（第 11 章）。**恢复逻辑只写一遍，写在 SQL 里。**
+- **第四务是控制语义，不是崩溃语义**：与第 11 章的区分一句话——
+  kill-at-every-boundary 是崩溃语义（系统杀 worker 自身，恢复靠账本与扫描）；
+  第四务是控制语义（handler 杀自己的子进程，由 cancel 事件驱动）。
+  两者共用同一条结算纪律（申报不裁决、副作用不明即 unknown），
+  但「谁去杀」不同：崩溃杀点谁也不控制，控制中断是合同义务。
+- **第四务零新机制**：轮询 events 是读、中断子进程是 worker 进程内行为、
+  settle 走既有 `v13_complete`——不新增通道。订阅档位是目录行数据
+  （`allowlist.interruptible` 键，第 6 章），required 档不订阅即合同违约（gate 可断言），核心仍不
+  越俎代庖去杀进程。
+- **mutating harness 缺 worktree binding 拒 claim**：目录声明工作面的 mutating
+  工具，claim 前必须已有 binding artifact（latch `name='worktree'` 的当前
+  绑定，第 7 章）；缺 binding 的 effect，harness 拒绝领取——副作用落点不明的
+  工作不认领。子会话不继承父的 binding（第 14 章），并行子会话不共享工作面。
 - **pi 式极简工具就是一包目录行**：read/write/edit/bash/glob 注册在某个 handler 下，
   allowlist 根目录是目录行的数据（第 6 章）；写操作产物注册为 artifact（第 7 章）；
   bash 标 mutating=true——享受全套 unknown 纪律。**没有为「外部著名工具集」
@@ -61,6 +86,11 @@ G6 节选断言：
 ✓ 错误信封：两种语言的失败结果落账后事件形状完全一致
 ✓ op_seq 并行纪律：只读 effect 并行执行（op_seq NULL）；
   同 mutation_scope 的变更严格按最小未完成序
+✓ 第四务：cancel 后 required 档 handler 的外部子进程提前终止、settle cancelled；
+  unsupported 档自然结束、settle 被粘性吸收（第 12 章）
+✓ mutating 中断后副作用不明 → settle unknown；用 cancelled 掩埋 unknown → 红
+✓ 中断 turn 的 partial artifact 只进审计断言集，不过 completion gate
+✓ 目录声明工作面的 mutating effect 无 worktree binding → harness 拒 claim（零执行）
 ```
 
 ## 8.5 检查点练习

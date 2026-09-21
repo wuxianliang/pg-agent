@@ -27,6 +27,7 @@ LoopX 概念 → v13 原语的完整映射（逐条零或一列成本）：
 | evidence | artifacts（第 7 章） | 0 |
 | scheduler tick | **pg_cron 扫地僧**（13.2）：丢通知 / 过期租约 / 投影构建 / verify_index。**不是节拍器**——turn 推进仍靠 settle | 0（调度是行） |
 | dashboard（投影） | 视图（第 15 章） | 0 |
+| 信封 / closeout / worktree（控制面族） | artifacts.kind + events.type + latch（name='worktree'）——结果分类、对账收据、工作面绑定全住已有平面 | 0 |
 | 预取排序（触点 6） | **YAGNI 台账**（13.3）。触发：长目标树落地 **且** 下一查询可预测 | 0（不建） |
 
 **总预付成本 = 2 个可空列（`parent_session_id`、`parent_cutoff_seq`）+ 2 条纪律。**
@@ -42,6 +43,16 @@ quota 仍是数据，与 reward / 审批分离（loopx 裁决）：
 ```sql
 -- 策略行。advance 的预算检查读 (policy_name, version)：
 -- 插一行 duty_cycle=0.5，同一个 advance 函数的资格即变，零代码改动。
+-- 目标树/信封族的兄弟策略行（全部是 thresholds 数据，零代码）：
+--   quota.should_run                  资格（duty_cycle）
+--   max_spawn_depth                   硬安全：深于此 → 禁裂变（第 14 章批量扇出同读）
+--   min_child_max_turns               硬安全：父剩余 turn 少于此 → 禁裂变
+--   parent_orchestrator_max_turns     编排父会话的 turn 上限
+--   triage 带宽                       分解判断（Jev）的批上限
+--   triage_fail_closed                Jev 无/超时/失败的降级档（根 → human、depth≥1 → direct）
+--   harness.repair_count / harness.replan_count
+--                                     repair/replan 事件消费上限带（第 4 章
+--                                     信号命名风格；带满 → human 或 reject）
 INSERT INTO thresholds(policy_name:'scheduler', policy_version:1, signal:'quota.should_run', ...);
 ```
 
@@ -53,8 +64,13 @@ settle 决定现在推进。pg_cron 的 job 是一行调度，跑的是扫地，
 SELECT cron.schedule('v13-sweep-stale', '*/5 * * * *',
   $$SELECT v13_requeue_stale(100);$$);          -- 过期租约 / 丢通知 → 重入队
 SELECT cron.schedule('v13-sweep-recover', '*/5 * * * *',
-  $$SELECT v13_recover_idle(100);$$);           -- 非终态、无活跃 effect、有未消费事件
-                                               -- → 幂等 parse+advance（第 5 章第三来源）
+  $$SELECT v13_recover_idle(100);$$);           -- 谓词（可恢复工作）：非终态+无活跃
+                                               -- effect+有未消费事件；或「子齐父未验收」
+                                               -- （required 子任务全部终态、父未验收 → 幂等
+                                               -- parse+advance 走验收链，第 5 章第三来源）；
+                                               -- 未消费的 repair/required、replan/required
+                                               -- 事件同样是可恢复工作输入——修复/重规划是
+                                               -- 下一格路由的事，不建修复状态机
 SELECT cron.schedule('v13-sweep-transcript', '*/5 * * * *',
   $$SELECT v13_rebuild_transcript_chunks(100);$$);  -- 记忆逐字层：tick 批量构建，水印谓词
 SELECT cron.schedule('v13-verify-index', '15 3 * * *',
@@ -87,6 +103,7 @@ NOTIFY 不持久、队列 at-least-once、worker 可能在 settle 之后、下�
 |---|---|---|---|
 | **预取排序（触点 6）** | 不建 | 长目标树落地 **且** 下一查询可预测 | SQL 构造有界候选；Jev 可选重排；**预取仍由 worker 执行**（effect，不是解析相里的 IO） |
 | 更聪明的 tick（少扫空转） | 不建 | 扫描恢复的空转成本实测超标 | 仍是扫地僧；只减少空转，不改 settle 主路径 |
+| 看板物化（v_goal_tree 物化表） | 不建 | 看板 p95 查询超标 | 参数化 STABLE SRF 先行（13.6 练习 1）；物化 = 增量重算 + 失效纪律，仍非真相源 |
 
 性价比（设计 §6.2）：预取排在摘要验收、复用 intent、压缩 hint、效用遥测
 之后。没有「下一查询可预测」的证据时，预取是把猜测写成 effect——
@@ -113,6 +130,14 @@ NOTIFY 不持久、队列 at-least-once、worker 可能在 settle 之后、下�
 - **quota 管资格，cron 管缝**：`duty_cycle=0` 的 goal 被恢复扫描跳过
   （compute-paused）；它仍可能被 settle 之后的 parse+advance 看见——那时
   变更相读同一行策略，拒绝建新工作。两处读同一份数据，没有第二套调度面。
+- **验收链是 SQL 谓词，不是状态机**：父会话的完成条件可判定——每个
+  required 子任务都有唯一有效 child 且全部 completed、artifacts 可消费、
+  无未处理 failed/unknown。**`required` 标记在 spawn 时声明、冻结进
+  `child-created`/reservation 载荷（不可后改）**——验收链读的是出生时的
+  事实，不是事后可编辑的标注。首版：SQL 全 completed 可自动 finish；任一
+  failed/cancelled → 按策略行走 human 或 reject。recover_idle 的「子齐父
+  未验收」谓词（13.2）扫的就是这条链的待验收端——验收是 advance 的
+  一步，不是独立机器。
 - **不建的（loopx 六层控制面表结构）**：v11 已裁「不引入第二套调度面」。
   目标树 / 配额 / 扫地全部寄生在已有平面上；loopx 本身（或任何控制面产品）
   可以作为**策略层+视图层**坐在同一个 PG 上，或经 SQL 面从外部驱动——
@@ -122,8 +147,12 @@ NOTIFY 不持久、队列 at-least-once、worker 可能在 settle 之后、下�
 ## 13.5 硬性规定与 gate（G7 部分）
 
 ```text
-✓ 子会话预算归属：父 goal 的 quota 扣减包含活跃子会话的消耗（一次递归聚合）
+✓ 子树预算递归聚合：每个 root 的 spent/reserved 按子树递归聚合——
+  活跃子孙的消耗与预留全部计入 root（一次递归聚合；并发建子防超售
+  机制见第 14 章 spawn 段：根事务咨询锁）
 ✓ duty_cycle=0 的 goal：恢复扫描跳过（compute-paused 语义）
+✓ child-created/reservation 载荷含 required 标记（spawn 时冻结）；
+  spawn 后改 required → 拒
 ✓ human_reward 事件挂在不存在的 effect → 拒绝（FK 语义）
 ✓ 树深度/环检查：parent 链不得成环（递归 CTE 断言）
 
@@ -143,8 +172,10 @@ tick = 扫地僧，不是节拍器：
 
 ## 13.6 检查点练习
 
-1. 写 `v_goal_tree(root_id)` 递归视图：goal → 活跃子会话 → 各自状态/预算余量。
-   这就是「agent-native Kanban 的看板」——一行 SQL。
+1. 写 `v_goal_tree(root_id)`：**参数化 STABLE set-returning function**
+   （非无参 VIEW、非物化表）——goal → 活跃子会话 → 各自状态/预算余量的
+   递归聚合。这就是「agent-native Kanban 的看板」——一行 SQL。
+   物化停在第 15 章台账（触发：看板 p95 超标），本章只建函数。
 2. 实现 duty_cycle 策略行 + 恢复扫描过滤，压测：100 个 goal、quota 0.1，
    断言一个扫地周期内恰 ~10 个有资格被推进。再关 cron、只走 settle：
    一个有界 turn 必须仍能走完——这是「不是节拍器」的断言。

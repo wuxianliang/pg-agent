@@ -3226,3 +3226,80 @@ v2 §2.1 / §8 R0a:sessions 增列 `ws_id NOT NULL`、`files_cutoff jsonb {git_h
 R0a 将与 DP1 加载序协调:workspaces+sessions 增列+两张文件表+tips+veto 函数+七不变量立法走 `v13/load.py` 的 `SQL_LOAD_ORDER` **纯末尾追加**,不改 DP1 已登记 core/resolve/advance/twophase 前缀,不回写 M1–M4 已冻结 SQL 草案。本轮不实现这些列。
 
 既有 sessions 列集与 M1 gate 不弱化。
+
+---
+
+## R2 对齐修订（2026-09-21）
+
+> 日期：2026-09-21。本轮**只追加本节**，上文一字不删、不改写。
+> 对齐输入（只读）：`docs/reviews/v13-control-plane-oracle-r2-2026-09-21.md`
+> （R2 终裁记录，唯一权威：§2 D2——尤其 §2.2 guard 具名例外 / §2.5 同发修订
+> 清单；§6 B9/B12）。
+> 纪律：与 R2 冲突的原文以 `ERRATUM:` 行标注并指向 R2 对应小节；既有 gate
+> 一律不弱化（M1-14 / M2-14 / M3-4 等）；新增断言只加不减。本轮只立法，
+> 不改上文 SQL 草案字面；guard 例外与例外行随实现落地。
+
+### 对齐总表（R2 条款 → 本计划改动点 → 换体登记）
+
+| # | R2 条款 | 本计划改动点 | 换体登记 |
+|---|---|---|---|
+| #50 | A17 §2.2 guard 具名例外 | v13_tools_guard 默认仍拒 VOLATILE；新增**具名核心函数闭集例外**（五条件全满足才放行）；扩员=guard 源码+设计修订+部署 gate 同发 | 不适用（例外立法；§3.1/§3.2 guard 草案字面随实现修订） |
+| A1 | A17 §2.1/§2.5 A1 字面收窄 | 「sql 快路=只读已落行」收窄为「零 FS/git IO；库内写仅具名名单」（叠在「v2 对齐修订 · A1」之上） | 不适用（语义修正，非换体） |
+| P4a | A17 §2.5 P4a 更名 | `reason:'read_only_handler'` 更名 `'in_db_handler'`（消除与写允许名单的语义冲突） | 不适用（字面更名，route 源码+gate 断言同发） |
+
+### #50 / A17 · v13_tools_guard 具名 VOLATILE 例外闭集
+
+R2 §2.2（D2 终裁）与 §2.5：guard 默认仍拒 VOLATILE；**具名核心函数闭集
+例外**——`v13_fork`、`v13_spawn_subsession`、ch10 装配函数 `rag_assemble`
+（目录行同名；实现时按 B12 核对真名）。例外条件**全满足才放行**：
+
+1. `provolatile='v'`；
+2. 精确签名 `(uuid,jsonb)→jsonb`（与既有签名校验同款，oidvectortypes，#52）；
+3. `SECURITY DEFINER` + 固定 `search_path` + owner=控制角色——在 advance 已持
+   父 FOR UPDATE 的事务内执行；`REVOKE PUBLIC` + `GRANT EXECUTE` 只给控制角色
+   （模型角色无 EXECUTE）。理由（R2 修订复核裁决：sessions 唯一写路径可执法性）——
+   INVOKER 下执行角色须持 sessions INSERT，「该角色直接 INSERT sessions 被拒」
+   便无法由数据库执法；DEFINER 收权后执行角色零表权，直写即拒；
+4. `GRANT EXECUTE` 只给控制角色；模型角色（只读角色族）无 EXECUTE；
+5. `prosrc` 不含 dblink/pg_net/COPY PROGRAM 等 IO 通道。
+
+扩员纪律：**例外扩员 = guard 源码改 + 设计修订 + 部署 gate 同发**；禁止
+`UPDATE tools` 扩员；禁止「有 write_targets 键即放行任意 VOLATILE」。
+新增部署 gate：`G-sql-write-closed`（R2 §2.6——具名闭集外 VOLATILE sql
+工具 enable → 红；write_targets 缺键而 VOLATILE → 红；prosrc 含 IO 通道
+→ 红）。M1-14 对应补例外闭集断言（具名闭集外 VOLATILE → 仍拒），原断言
+语义不弱化。
+
+`ERRATUM:` §3.6 #50 条文与 §3.1/§3.2 guard 草案「provolatile∈{i,s} 拒
+VOLATILE」——收窄为「默认拒；具名闭集例外（上述五条件）」。模型 SQL 与
+只读角色执法（§3.1 矩阵）不动：guard 只约束目录声明的 sql handler。
+
+### A1 · sql 快路字面收窄（零 FS/git IO；库内写仅具名名单）
+
+R2 §2.1 教条改写（叠在「v2 对齐修订 · A1」之上，FS/git 禁令定性不变）：
+
+- 快路面 =「**库内、零外部 IO、零队列；默认只读；具名写允许名单内函数
+  可写 sessions/events/latches/artifacts 指针**」。两档分界是**有无外部
+  IO**，不是 SELECT vs INSERT。
+- 「变更相禁一切 FS/git IO」不变量（v2 对齐修订 A1 第 2 条）不动；收窄的
+  只是「只读已落行」字面——写面从「一律禁写」改为「具名名单内可写本库
+  指针」。锁内盘（open/stat/git 探针）禁令性质不变。
+
+`ERRATUM:` 「v2 对齐修订 · A1」改动点 1「handler 只读已落行（artifacts/
+chunks/指针）。不得 open/stat/readpath/git」——「只读已落行」收窄为「零
+FS/git IO；库内写仅具名名单（#50 闭集），写本库 sessions/events/latches/
+artifacts 指针」；「不得 open/stat/readpath/git」保留。
+
+`ERRATUM:` M3-4「同事务执行只读 handler」——「只读」按新字面：=库内、零
+外部 IO；默认只读；具名名单内可写本库指针。同事务/持锁执行面不动。
+
+### P4a · reason:'read_only_handler' 更名 'in_db_handler'
+
+R2 §2.5：写允许名单存在后，「read_only_handler」字面与名单语义冲突——
+sql 档 handler 可在名单内写本库指针，不再是「只读」。P4a 分支的 reason
+字面更名（等价词，消除冲突）：
+
+`ERRATUM:` §3.5 P4a 注释/输入输出示例（约 L2056–L2067）与 v13_route 代码
+（约 L2122–L2124）的 `reason:'read_only_handler'` → `reason:'in_db_handler'`。
+路由动作（'sql'）与分派行为零变化——更名只动 reason 字面；gate 断言若
+引用旧字面，同发改字面不改语义。

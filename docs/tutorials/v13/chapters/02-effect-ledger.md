@@ -81,14 +81,17 @@ $$;
 ```
 
 ```sql
--- 结算：先锁 session 后锁 effect（两级锁序），fence CAS
+-- 结算：先无锁读 sid → 锁 session → 锁 effect 并复核 fence
+-- （两级锁序 session → effect，与 advance 同向；若先锁 effect 再锁 session，
+--  会与 advance 的 session → effect 对向死锁）
 CREATE OR REPLACE FUNCTION v13_complete(p_effect uuid, p_attempt int, p_fence bigint,
                                         p_status text, p_result jsonb)
 RETURNS text LANGUAGE plpgsql AS $$
 DECLARE v_sid uuid; v_out text;
 BEGIN
-  SELECT session_id INTO v_sid FROM effects WHERE effect_id=p_effect FOR UPDATE; -- effect 锁
-  PERFORM 1 FROM sessions WHERE session_id=v_sid FOR UPDATE;                     -- session 锁
+  SELECT session_id INTO v_sid FROM effects WHERE effect_id=p_effect;           -- 无锁读 sid
+  PERFORM 1 FROM sessions WHERE session_id=v_sid FOR UPDATE;                     -- session 锁（先）
+  PERFORM 1 FROM effects WHERE effect_id=p_effect FOR UPDATE;                    -- effect 锁（后）+ 复核 fence
   IF (SELECT attempt_no FROM effects WHERE effect_id=p_effect) <> p_attempt
      OR (SELECT fence FROM effects WHERE effect_id=p_effect) <> p_fence THEN
     RETURN 'stale';                              -- 旧租约迟到：零控制态修改
@@ -114,8 +117,15 @@ END $$;
   `conflict`（同 fence 异结果）在 gate 里构造，出现即人为 bug。
 - **事件与结算同事务**：`effect_done` 事件和控制态同 commit——
   这就是「日志与现在永不分家」在行动平面的兑现。
+- **`mutating` 问的是外部副作用，不是写库**：该列语义 =「外部副作用能否在
+  rollback 后仍在」。`kind='sql'` 工具（第 6 章）崩溃即整笔回滚——unknown
+  路径不适用，目录行 `mutating=false`，恢复扫描见不到 sql 行；G3 的 unknown
+  纪律只对着有外部 IO 的 effect 档生效。
 - **锁序一行注释**：session → effect，两级。v8 的八位锁序在 9 张表的世界里
-  塌缩成这一行；写进注释就是全部所需（00 章差异表）。
+  塌缩成这一行；写进注释就是全部所需（00 章差异表）。spawn（第 14 章）
+  只锁父——`v13_spawn_subsession` 全程只用 advance 已持有的父行
+  `FOR UPDATE`，禁止持 child 锁再锁 parent；不引入多会话锁序
+  （根行不进锁序图，R2 终裁）。
 - **worker 三步合同**：claim 事务提交 → **进程内**执行全部 IO → complete。
   worker 申报结果但**不裁决** known/unknown——分类规则是 `v13_complete` 里
   可审计的 SQL，不是 worker 的自由心证。

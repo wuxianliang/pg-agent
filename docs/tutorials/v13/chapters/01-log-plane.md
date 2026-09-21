@@ -81,6 +81,25 @@ END $$;
 - **`type` 是 text 不是枚举**：这是留给未来的缝（第 13 章）。任何层——
   人工 reward、经验教训、handoff——都能追加自己的事件类型，零 DDL。
   代价是没有 CHECK 防拼写错误；用 gate 断言已知类型拼写正确。
+
+已知事件类型登记（控制面新增，R2 终裁；词表照旧开放——新类型零 DDL，
+已知类型由 gate 断言拼写）：
+
+| `type` | 载荷要点 | 产生者 / 去向 |
+|---|---|---|
+| `repair/required` | 缺陷定位与描述 | harness 结算批的 fold 信号；下一格路由既有 `sql`（库内修复）或 `human`（超限） |
+| `replan/required` | 重规划原因 | fold 信号；下一格路由既有 `llm`（重 triage/编排）或 `human`（超限） |
+| `goal/override` | `intent ∈ {direct,decompose}` + `schema_version` + `source_principal`（仅 user/operator，模型不得自写）+ 可选 `reason`；同 type 按 seq 取最后一条 | 第 4 章 triage 阶梯的 override 输入；排序低于深度/预算硬安全 |
+| `session/completed` / `session/failed` / `session/cancelled` | closeout 对账收据（第 5 章 5.3） | closeout 事务，与终态、预算终态同 commit |
+| `forked` | fork/spawn 同一 primitive 的子侧出生事件（fork 边界 + prefix identity，第 14 章） | `v13_fork` / `v13_spawn_subsession` |
+| `child-created` | 父侧回执：parent/child/replay_kind/reservation/source tool_call id | spawn 同事务；回执四件套之一 |
+| `closeout/inbox_residual` | 终结时未消费输入的对账记录 | closeout 事务（fail-closed 的证据面） |
+| `steer/injected` | 注入内容与水位 | 干预路径（第 12 章）；claimed 期间不缝进已冻结 request（第 5 章 G-ctx1 扩） |
+| `explore/completed` | 探索证据摘要（证据本体是 evidence artifact，本事件可选） | 同会话 explore（第 13 章） |
+
+同名消歧先钉一条：`sessions.status='waiting'`（会话等外部）与信封
+`result_kind=wait`（本格不建下一执行 effect）不是一回事——三层 wait 的
+对照表在第 5 章 5.2。
 - **`source_effect_id` 可空**：用户消息没有来源 effect；工具结果、LLM 输出、
   判断答案都指向产生它们的 effect——这是第 15 章「观察即视图」的锚点。
 - **`payload_hash`**：事件内容指纹。第 14 章回放时比对「重放的输入逐字节一致」。
@@ -99,6 +118,10 @@ G1（schema gate）节选断言：
 ✓ 对 events 的 UPDATE/DELETE 抛错
 ✓ 并发 append 后 max(seq) = count(*) - 1
 ✓ 重复 event_id 被拒
+✓ 已知事件类型（1.3 登记表）逐 type 精确可查（seed 断言，防开放词表拼写漂移）
+✓ goal/override 授权 gate（G1 扩，A20）：source_principal 为 model/handler
+  （或任何非 user/operator principal）的 goal/override 事件写入被拒——
+  override 只收 user/operator，模型不得自写（1.3 载荷纪律的执法面）
 ✓ 恰 9 张产品表（第 7 章后验收）
 ```
 
