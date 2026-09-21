@@ -23,6 +23,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "manifest" / "v13_manifest.sql",
     V13_ROOT / "chunks" / "v13_chunks.sql",
     V13_ROOT / "recall" / "v13_recall.sql",
+    V13_ROOT / "characterize" / "v13_characterize.sql",
 ]
 
 STAGE_THROUGH = {
@@ -34,6 +35,7 @@ STAGE_THROUGH = {
     "manifest": 6,
     "chunks": 7,
     "recall": 8,
+    "characterize": 9,
 }
 
 
