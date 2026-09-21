@@ -60,10 +60,10 @@ def fails_with(cur, sql, params, needle, label, pgcode=None):
     try:
         cur.execute(sql, params)
     except psycopg2.Error as exc:
-        msg = str(exc).lower()
-        ok = needle.lower() in msg
         if pgcode:
-            ok = ok or exc.pgcode == pgcode
+            ok = exc.pgcode == pgcode
+        else:
+            ok = needle.lower() in str(exc).lower()
         check(label, ok, str(exc).splitlines()[0])
         cur.execute("ROLLBACK TO SAVEPOINT sp")
         return exc
@@ -79,8 +79,8 @@ def connect_as(server, user):
 
 def guc(cur):
     cur.execute("SET search_path TO public, pg_catalog")
-    cur.execute("SELECT set_config('typesafe.provider', 'mock', true)")
-    cur.execute("SELECT set_config('typesafe.model', 'jev-mock', true)")
+    cur.execute("SELECT set_config('typesafe.provider', 'mock', false)")
+    cur.execute("SELECT set_config('typesafe.model', 'jev-mock', false)")
 
 
 def recycle(server, conn):
@@ -283,6 +283,74 @@ def wait_lock(watch, pid, timeout=8.0) -> bool:
     return False
 
 
+def wait_box_lock(watch, box, key="pid", timeout=8.0) -> bool:
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        pid = box.get(key)
+        if pid:
+            if wait_lock(watch, pid, timeout=0.12):
+                return True
+            watch.execute(
+                "SELECT bool_or(NOT granted) FROM pg_locks WHERE pid=%s",
+                (pid,))
+            row = watch.fetchone()
+            if row and row[0]:
+                return True
+        time.sleep(0.02)
+    return False
+
+
+def minus_replay(m):
+    body = json.loads(json.dumps(m))
+    body.pop("replay", None)
+    return body
+
+
+def insert_complete_decision(cur, sid, signal="late"):
+    h = uuid.uuid4().hex + uuid.uuid4().hex
+    cur.execute(
+        "INSERT INTO decisions (session_id, signal, kind, question, context, "
+        " request_hash, status, answer) "
+        "VALUES (%s, %s, 'noul', %s, '{}'::jsonb, %s, 'answered', "
+        " %s::jsonb) RETURNING decision_id",
+        (sid, signal, f"{signal} complete decision question.", h,
+         json.dumps({"type": "noul", "noul": 0.1})))
+    return cur.fetchone()[0]
+
+
+CANON_PAUSE_SQL = r"""
+CREATE OR REPLACE FUNCTION v13_canonical_state(p_sid uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE v jsonb;
+BEGIN
+  PERFORM pg_advisory_xact_lock({lock});
+  SELECT jsonb_build_object(
+    'messages', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object('seq', e.seq, 'type', e.type,
+                                          'payload', e.payload) ORDER BY e.seq)
+        FROM (SELECT seq, type, payload FROM events
+               WHERE session_id = p_sid
+                 AND type IN ('user/message','llm/message','tool/result')
+                 AND (seq <= v13_last_user_seq(p_sid)
+                      OR (payload->>'origin_user_seq')::bigint
+                         = v13_last_user_seq(p_sid))
+               ORDER BY seq DESC LIMIT 20) e), '[]'::jsonb),
+    'derived', jsonb_build_object(
+      'message_count', (SELECT count(*) FROM events WHERE session_id = p_sid
+                         AND type IN ('user/message','llm/message','tool/result')
+                         AND (seq <= v13_last_user_seq(p_sid)
+                              OR (payload->>'origin_user_seq')::bigint
+                                 = v13_last_user_seq(p_sid)))),
+    'tools', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object('name', name, 'description', description,
+                                          'kind', kind) ORDER BY name)
+        FROM tools WHERE enabled), '[]'::jsonb))
+    INTO v;
+  RETURN v;
+END $$;
+"""
+
+
 def main() -> int:
     setup_db()
     server = get_server()
@@ -447,7 +515,7 @@ def main() -> int:
         "SELECT request FROM effects WHERE effect_id=%s", (eid5,))
     req5 = cur.fetchone()[0]
     check("A5: refresh request only goal_hash",
-          set(req5) == {"goal_hash"} or "goal_hash" in req5, req5)
+          set(req5) == {"goal_hash"}, req5)
 
     # A6 token monotonic
     sid_a6 = new_session(cur)
@@ -979,7 +1047,15 @@ def main() -> int:
     got.pop("replay", None)
     check("D1: body equals inline minus replay", base == got)
     check("D1: judgments empty", rp["judgments"] == [])
-    parse(cur, sid_d)  # may no-op
+    cur.execute(
+        "SELECT count(*) FROM decisions WHERE session_id=%s "
+        "AND answer IS NOT NULL AND status IN ('answered','cached')", (sid_d,))
+    n_d1 = cur.fetchone()[0]
+    insert_complete_decision(cur, sid_d, "late-d1")
+    cur.execute(
+        "SELECT count(*) FROM decisions WHERE session_id=%s "
+        "AND answer IS NOT NULL AND status IN ('answered','cached')", (sid_d,))
+    check("D1: complete decision added", cur.fetchone()[0] == n_d1 + 1)
     cur.execute("SELECT v13_replay(%s)", (art1,))
     rp2 = cur.fetchone()[0]
     check("D1: replay unchanged after new decision", rp2 == rp)
@@ -1102,21 +1178,36 @@ def main() -> int:
         (sid_e,))
     check("E2: NULL template -> pre-bind", cur.fetchone()[0] == "pre-bind")
 
+    conn, cur = recycle(server, conn)
+    sid_e3 = new_session(cur)
+    append_user(cur, sid_e3, "e3-fill")
+    cur.execute("SELECT v13_judgment_envelope(%s)", (sid_e3,))
+    env_e3 = cur.fetchone()[0]
+    item_e3 = next(x for x in env_e3["needed"] if x["signal"] == "intent")
     cur.execute(
-        "INSERT INTO decisions (session_id, signal, kind, question, context, "
-        " request_hash, status) "
-        "VALUES (%s, 'openfill', 'noul', 'Open fill question here.', "
-        " '{}'::jsonb, %s, 'open')",
-        (sid_e, "d" * 64))
+        "SELECT v13_judgment_hash(%s::jsonb, %s, %s, %s, %s::jsonb)",
+        (json.dumps(env_e3), item_e3["signal"], item_e3["kind"],
+         item_e3["question"],
+         json.dumps(item_e3.get("criteria"))
+         if item_e3.get("criteria") is not None else None))
+    rh_e3 = cur.fetchone()[0]
     cur.execute(
-        "SELECT decision_id, epoch FROM decisions "
-        "WHERE session_id=%s AND signal='openfill'", (sid_e,))
+        "INSERT INTO decisions (session_id, signal, kind, question, criteria, "
+        " context, request_hash, status) VALUES "
+        " (%s, 'intent', 'choice', %s, %s::jsonb, '{}'::jsonb, %s, 'open') "
+        " RETURNING decision_id, epoch",
+        (sid_e3, item_e3["question"], json.dumps(item_e3["criteria"]), rh_e3))
     oid, oep = cur.fetchone()
+    set_mock(cur, mock_from_needed(cur, sid_e3))
+    cur.execute("SELECT v13_parse(%s)", (sid_e3,))
+    cur.fetchone()
     cur.execute(
-        "UPDATE decisions SET answer='{\"noul\": 0.1}'::jsonb, status='answered' "
+        "SELECT epoch, status, answer IS NOT NULL FROM decisions "
         "WHERE decision_id=%s", (oid,))
-    cur.execute("SELECT epoch FROM decisions WHERE decision_id=%s", (oid,))
-    check("E3: epoch unchanged after fill", cur.fetchone()[0] == oep)
+    ep3, st3, filled3 = cur.fetchone()
+    check("E3: mock filled open row", filled3 is True and st3 == "answered",
+          (st3, filled3))
+    check("E3: epoch unchanged after fill", ep3 == oep)
 
     cur.execute(
         "INSERT INTO decisions (session_id, signal, kind, question, context, "
@@ -1159,7 +1250,15 @@ def main() -> int:
     m1id = cur.fetchone()[0]
     cur.execute("SELECT inline FROM artifacts WHERE artifact_id=%s", (m1id,))
     m1 = cur.fetchone()[0]
-    parse(cur, sid_f)
+    cur.execute(
+        "SELECT count(*) FROM decisions WHERE session_id=%s "
+        "AND answer IS NOT NULL AND status IN ('answered','cached')", (sid_f,))
+    n_f1 = cur.fetchone()[0]
+    insert_complete_decision(cur, sid_f, "late-f1")
+    cur.execute(
+        "SELECT count(*) FROM decisions WHERE session_id=%s "
+        "AND answer IS NOT NULL AND status IN ('answered','cached')", (sid_f,))
+    check("F1: complete decision added", cur.fetchone()[0] == n_f1 + 1)
     cur.execute("SELECT inline FROM artifacts WHERE artifact_id=%s", (m1id,))
     check("F1: M1 inline frozen", cur.fetchone()[0] == m1)
     fails_with(cur, "UPDATE artifacts SET size=size+1 WHERE artifact_id=%s",
@@ -1224,6 +1323,112 @@ def main() -> int:
     cur.execute(canon_def)
     cur.execute("SELECT v13_assemble_manifest(%s)", (sid_f3,))
     check("F3: restored assemble works", cur.fetchone()[0] is not None)
+
+    conn, cur = recycle(server, conn)
+    # F4(i-iii) statement snapshot: concurrent complete decision invisible to A
+    sid_f4 = new_session(cur)
+    append_user(cur, sid_f4, "f4-snap")
+    parse(cur, sid_f4)
+    cur.execute("SELECT (v13_context_required(%s)->>'dec')::int", (sid_f4,))
+    dec_before = cur.fetchone()[0]
+    cur.execute("SELECT pg_get_functiondef('v13_canonical_state(uuid)'::regprocedure)")
+    canon_f4 = cur.fetchone()[0]
+    conn, cur = recycle(server, conn)
+    cur.execute(CANON_PAUSE_SQL.format(lock=879041))
+    conn, cur = recycle(server, conn)
+    cur.execute("SELECT pg_advisory_lock(879041)")
+    box_f4 = {}
+
+    def run_assemble_f4():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        guc(k)
+        k.execute("SELECT pg_backend_pid()")
+        box_f4["pid"] = k.fetchone()[0]
+        try:
+            k.execute("SELECT v13_assemble_manifest(%s)", (sid_f4,))
+            box_f4["m"] = k.fetchone()[0]
+            c.commit()
+        except Exception as exc:
+            box_f4["err"] = str(exc)
+        c.close()
+
+    ta4 = threading.Thread(target=run_assemble_f4)
+    ta4.start()
+    check("F4: assemble blocked in snapshot", wait_box_lock(cur, box_f4))
+    cB4 = psycopg2.connect(server.get_uri(DB))
+    kB4 = cB4.cursor()
+    did_f4 = insert_complete_decision(kB4, sid_f4, "f4inj")
+    cB4.commit()
+    cB4.close()
+    cur.execute("SELECT pg_advisory_unlock(879041)")
+    ta4.join(15)
+    check("F4: assemble completed", "m" in box_f4, box_f4)
+    mA4 = box_f4["m"]
+    dec_a = mA4["required_revision"]["dec"]
+    check("F4: A token.dec excludes concurrent row", int(dec_a) == dec_before,
+          (dec_a, dec_before))
+    jids = {str(j.get("decision_id")) for j in (mA4.get("judgments") or [])}
+    check("F4: A judgments omit concurrent decision", str(did_f4) not in jids, jids)
+    cur.execute(canon_f4)
+    conn, cur = recycle(server, conn)
+    cur.execute("SELECT v13_assemble_manifest(%s)", (sid_f4,))
+    mA4b = cur.fetchone()[0]
+    check("F4: after A commit token.dec includes row",
+          int(mA4b["required_revision"]["dec"]) == dec_before + 1,
+          mA4b["required_revision"]["dec"])
+
+    # F4(iv) settle window: B append_event blocks on sessions row lock
+    sid_f4iv = new_session(cur)
+    append_user(cur, sid_f4iv, "f4iv")
+    a, eid4iv, _ = hang_refresh(cur, sid_f4iv)
+    ck4iv = claim_pinned(cur, eid4iv)
+    cur.execute("SELECT v13_last_user_seq(%s)", (sid_f4iv,))
+    origin4 = cur.fetchone()[0]
+    conn, cur = recycle(server, conn)
+    box_b4 = {}
+
+    def run_append_f4iv():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        box_b4["pid"] = k.fetchone()[0]
+        try:
+            k.execute(
+                "SELECT v13_append_event(%s, %s, 'llm/message', %s::jsonb)",
+                (sid_f4iv, u(), json.dumps(
+                    {"text": "f4iv-concurrent", "origin_user_seq": origin4})))
+            box_b4["seq"] = k.fetchone()[0]
+            c.commit()
+        except Exception as exc:
+            box_b4["err"] = str(exc)
+        c.close()
+
+    cA4 = psycopg2.connect(server.get_uri(DB))
+    kA4 = cA4.cursor()
+    guc(kA4)
+    kA4.execute("SELECT 1 FROM sessions WHERE session_id=%s FOR UPDATE",
+                (sid_f4iv,))
+    kA4.execute("SELECT 1 FROM v13_tools_meta WHERE singleton FOR UPDATE")
+    kA4.execute(
+        "SELECT 1 FROM v13_policies "
+        "WHERE name IN ('assemble_manifest','generation','judgment_defaults') "
+        "AND active ORDER BY name FOR UPDATE")
+    tb4 = threading.Thread(target=run_append_f4iv)
+    tb4.start()
+    check("F4(iv): B blocked on sessions lock", wait_box_lock(cur, box_b4))
+    kA4.execute("SELECT v13_refresh_context(%s,%s,%s)",
+                (eid4iv, ck4iv["attempt_no"], ck4iv["fence"]))
+    out4iv = kA4.fetchone()[0]
+    check("F4(iv): A settle accepted (belt, zero V3003)", out4iv == "accepted",
+          out4iv)
+    cA4.commit()
+    cA4.close()
+    tb4.join(15)
+    check("F4(iv): B appended after A commit", "seq" in box_b4, box_b4)
+    conn, cur = recycle(server, conn)
+    cur.execute("SELECT v13_context_fresh(%s)", (sid_f4iv,))
+    check("F4(iv): fresh=false after B event", cur.fetchone()[0] is False)
 
     conn, cur = recycle(server, conn)
     # F5 replay/stale/failed
@@ -1295,8 +1500,155 @@ def main() -> int:
           all(not str(v).startswith("ERR:40P01") for v in box6.values()), box6)
     vals = {box6["a"], box6["b"]}
     check("F6: one accepted one replay",
-          vals == {"accepted", "replay"} or vals == {"accepted"} or "accepted" in vals,
-          box6)
+          vals == {"accepted", "replay"}, box6)
+    conn, cur = recycle(server, conn)
+
+    # F6(ii) settle || complete(failed)
+    sid_f6ii = new_session(cur)
+    append_user(cur, sid_f6ii, "f6ii")
+    a, eid6ii, _ = hang_refresh(cur, sid_f6ii)
+    ck6ii = claim_pinned(cur, eid6ii)
+    conn.commit()
+    box6ii = {}
+
+    def run_refresh_ii():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        guc(k)
+        try:
+            k.execute("SELECT v13_refresh_context(%s,%s,%s)",
+                      (eid6ii, ck6ii["attempt_no"], ck6ii["fence"]))
+            box6ii["a"] = k.fetchone()[0]
+            c.commit()
+        except psycopg2.Error as exc:
+            box6ii["a"] = f"ERR:{exc.pgcode}:{exc}"
+            c.rollback()
+        c.close()
+
+    def run_complete_ii():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        guc(k)
+        try:
+            k.execute(
+                "SELECT v13_complete(%s,%s,%s,'failed', '{}'::jsonb)",
+                (eid6ii, ck6ii["attempt_no"], ck6ii["fence"]))
+            box6ii["b"] = k.fetchone()[0]
+            c.commit()
+        except psycopg2.Error as exc:
+            box6ii["b"] = f"ERR:{exc.pgcode}:{exc}"
+            c.rollback()
+        c.close()
+
+    t6a = threading.Thread(target=run_refresh_ii)
+    t6b = threading.Thread(target=run_complete_ii)
+    t6a.start(); t6b.start()
+    t6a.join(30); t6b.join(30)
+    check("F6(ii): both returned", "a" in box6ii and "b" in box6ii, box6ii)
+    check("F6(ii): no deadlock",
+          all(not str(v).startswith("ERR:40P01") for v in box6ii.values()),
+          box6ii)
+    vals_ii = {box6ii["a"], box6ii["b"]}
+    check("F6(ii): one accepted, other replay/stale",
+          "accepted" in vals_ii
+          and vals_ii <= {"accepted", "replay", "stale"},
+          box6ii)
+    conn, cur = recycle(server, conn)
+    cur.execute("SELECT status FROM effects WHERE effect_id=%s", (eid6ii,))
+    st_ii = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM artifacts WHERE produced_by=%s", (eid6ii,))
+    nart_ii = cur.fetchone()[0]
+    cur.execute(
+        "SELECT context_active_artifact FROM sessions WHERE session_id=%s",
+        (sid_f6ii,))
+    ptr_ii = cur.fetchone()[0]
+    if st_ii == "succeeded":
+        check("F6(ii): A-win has artifact+pointer",
+              nart_ii >= 1 and ptr_ii is not None, (nart_ii, ptr_ii))
+        check("F6(ii): B replay when A wins", box6ii["b"] == "replay", box6ii)
+    elif st_ii == "failed":
+        check("F6(ii): B-win zero artifacts", nart_ii == 0, nart_ii)
+        check("F6(ii): A replay/stale when B wins",
+              box6ii["a"] in ("replay", "stale"), box6ii)
+    else:
+        check("F6(ii): terminal status unique", False, st_ii)
+
+    # F6(iii) settle || policy flip: B blocks on policy row lock
+    cur.execute(
+        "SELECT version FROM v13_policies "
+        "WHERE name='assemble_manifest' AND active")
+    old_asm = cur.fetchone()[0]
+    sid_f6iii = new_session(cur)
+    append_user(cur, sid_f6iii, "f6iii")
+    a, eid6iii, _ = hang_refresh(cur, sid_f6iii)
+    ck6iii = claim_pinned(cur, eid6iii)
+    cur.execute("SELECT pg_get_functiondef('v13_canonical_state(uuid)'::regprocedure)")
+    canon_f6 = cur.fetchone()[0]
+    conn, cur = recycle(server, conn)
+    cur.execute(CANON_PAUSE_SQL.format(lock=879061))
+    conn, cur = recycle(server, conn)
+    cur.execute("SELECT pg_advisory_lock(879061)")
+    box6a = {}
+    box6b = {}
+
+    def run_settle_iii():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        guc(k)
+        k.execute("SELECT pg_backend_pid()")
+        box6a["pid"] = k.fetchone()[0]
+        try:
+            k.execute("SELECT v13_refresh_context(%s,%s,%s)",
+                      (eid6iii, ck6iii["attempt_no"], ck6iii["fence"]))
+            box6a["r"] = k.fetchone()[0]
+            c.commit()
+        except psycopg2.Error as exc:
+            box6a["r"] = f"ERR:{exc.pgcode}:{exc}"
+            c.rollback()
+        c.close()
+
+    def run_flip_iii():
+        c = psycopg2.connect(server.get_uri(DB))
+        k = c.cursor()
+        k.execute("SELECT pg_backend_pid()")
+        box6b["pid"] = k.fetchone()[0]
+        try:
+            k.execute(
+                "SELECT 1 FROM v13_policies "
+                "WHERE name='assemble_manifest' AND active FOR UPDATE")
+            bump_policy(k, "assemble_manifest", seed_asm())
+            box6b["ok"] = True
+            c.commit()
+        except psycopg2.Error as exc:
+            box6b["err"] = f"ERR:{exc.pgcode}:{exc}"
+            c.rollback()
+        c.close()
+
+    t6s = threading.Thread(target=run_settle_iii, daemon=True)
+    t6s.start()
+    try:
+        check("F6(iii): A blocked in assemble", wait_box_lock(cur, box6a), box6a)
+        t6f = threading.Thread(target=run_flip_iii, daemon=True)
+        t6f.start()
+        blocked_b = wait_box_lock(cur, box6b)
+        check("F6(iii): B blocked on policy lock", blocked_b, box6b)
+    finally:
+        cur.execute("SELECT pg_advisory_unlock(879061)")
+    t6s.join(30); t6f.join(30)
+    check("F6(iii): A accepted", box6a.get("r") == "accepted", box6a)
+    check("F6(iii): B flip completed", box6b.get("ok") is True, box6b)
+    cur.execute(canon_f6)
+    conn, cur = recycle(server, conn)
+    cur.execute(
+        "SELECT inline->'policy'->>'assemble_version' FROM artifacts a "
+        "JOIN effects e ON e.effect_id=a.produced_by "
+        "WHERE e.effect_id=%s AND a.kind='context'", (eid6iii,))
+    landed_ver = cur.fetchone()
+    check("F6(iii): A manifest used old policy version",
+          landed_ver is not None and int(landed_ver[0]) == old_asm, landed_ver)
+    cur.execute("SELECT v13_context_fresh(%s)", (sid_f6iii,))
+    check("F6(iii): fresh=false after policy flip", cur.fetchone()[0] is False)
+    restore_asm(cur)
     conn, cur = recycle(server, conn)
 
     # ----- G remaining -----
@@ -1343,14 +1695,40 @@ def main() -> int:
                (blob_id, sid_ptr), "kind", "G1: pointer to blob rejected")
     fails_with(cur,
                "UPDATE sessions SET context_active_artifact=%s WHERE session_id=%s",
-               (str(uuid.uuid4()), sid_ptr), "", "G1: random uuid FK rejected")
+               (str(uuid.uuid4()), sid_ptr), "kind",
+               "G1: random uuid rejected")
     cur.execute(
         "UPDATE sessions SET context_active_artifact=NULL WHERE session_id=%s",
         (sid_ptr,))
-    check("G1: pointer NULL allowed", True)
+    cur.execute(
+        "SELECT context_active_artifact FROM sessions WHERE session_id=%s",
+        (sid_ptr,))
+    check("G1: pointer NULL allowed", cur.fetchone()[0] is None)
     cur.execute(
         "UPDATE sessions SET context_active_artifact=%s WHERE session_id=%s",
         (good, sid_ptr))
+
+    conn, cur = recycle(server, conn)
+    sid_g1r = new_session(cur)
+    append_user(cur, sid_g1r, "g1-replay")
+    _, _, _, conn, cur = parse_settle(server, conn, cur, sid_g1r)
+    cur.execute("SELECT v13_goal_hash(%s)", (sid_g1r,))
+    gh1 = cur.fetchone()[0]
+    cur.execute(
+        "SELECT v13_enqueue_effect(%s, 'context_refresh', %s::jsonb)",
+        (sid_g1r, json.dumps({"goal_hash": gh1, "nonce": u()})))
+    eid_g1r = cur.fetchone()[0]
+    out_g1r, _ = settle(cur, eid_g1r)
+    check("G1: second zero-change settle accepted", out_g1r == "accepted")
+    cur.execute(
+        "SELECT a.inline FROM artifacts a "
+        "JOIN effects e ON e.effect_id=a.produced_by "
+        "WHERE e.session_id=%s AND a.kind='context' "
+        "ORDER BY a.created_at", (sid_g1r,))
+    ctx_rows = [r[0] for r in cur.fetchall()]
+    check("G1: two context artifacts", len(ctx_rows) >= 2, len(ctx_rows))
+    check("G1: inline-replay byte-equal across zero-change settles",
+          minus_replay(ctx_rows[-2]) == minus_replay(ctx_rows[-1]))
 
     conn, cur = recycle(server, conn)
     v = seed_asm()
@@ -1370,7 +1748,9 @@ def main() -> int:
     cur.execute(
         "SELECT count(*) FROM events WHERE type='effect_done' "
         "AND payload->>'effect_id' = %s", (str(eid2),))
-    # payload may store uuid differently
+    check("G2: zero effect_done", cur.fetchone()[0] == 0)
+    cur.execute("SELECT result FROM effects WHERE effect_id=%s", (eid2,))
+    check("G2: zero result write", cur.fetchone()[0] is None)
     cur.execute(
         "SELECT count(*) FROM artifacts a WHERE produced_by=%s", (eid2,))
     check("G2: zero artifacts", cur.fetchone()[0] == 0)
@@ -1438,6 +1818,24 @@ def main() -> int:
         "SELECT has_function_privilege('v13_route', "
         "'v13_judgment_defaults_check(jsonb)', 'EXECUTE')")
     check("G4: route no defaults_check", cur.fetchone()[0] is False)
+    for fn in (
+            "v13_goals_append_only()", "v13_goal_project()",
+            "v13_artifacts_append_only()", "v13_artifacts_effect_guard()",
+            "v13_ctx_ptr_guard()", "v13_decisions_epoch_fill()",
+            "v13_epoch_frozen()"):
+        cur.execute("SELECT has_function_privilege('public', %s, 'EXECUTE')", (fn,))
+        check(f"G4: PUBLIC no trigger {fn.split('(')[0]}", cur.fetchone()[0] is False)
+    for fn, role_ok in (
+            ("v13_context_fresh(uuid)", "v13_route"),
+            ("v13_probe(uuid)", "v13_route"),
+            ("v13_judgment_envelope(uuid)", "v13_route")):
+        cur.execute("SELECT has_function_privilege('public', %s, 'EXECUTE')", (fn,))
+        check(f"G4: PUBLIC no OR REPLACE {fn.split('(')[0]}",
+              cur.fetchone()[0] is False)
+        cur.execute("SELECT has_function_privilege(%s, %s, 'EXECUTE')",
+                    (role_ok, fn))
+        check(f"G4: {role_ok} kept {fn.split('(')[0]} after OR REPLACE",
+              cur.fetchone()[0] is True)
 
     rconn = connect_as(server, "v13_route_login")
     rc = rconn.cursor()
@@ -1464,7 +1862,7 @@ def main() -> int:
         "'v13_refresh_context(uuid,integer,bigint)', 'EXECUTE')")
     check("G5: resolve EXECUTE false", cur.fetchone()[0] is False)
 
-    # G8 llm provenance
+    # G8 llm provenance — no ready llm is an immediate fail
     sid_g8 = new_session(cur)
     last8 = append_user(cur, sid_g8, "write a poem please")
     _, _, _, conn, cur = parse_settle(server, conn, cur, sid_g8, **{
@@ -1483,29 +1881,27 @@ def main() -> int:
         "SELECT effect_id FROM effects WHERE session_id=%s AND kind='llm' "
         "AND status='ready'", (sid_g8,))
     lrow = cur.fetchone()
-    if lrow:
-        cur.execute(
-            "SELECT context_active_artifact FROM sessions WHERE session_id=%s",
-            (sid_g8,))
-        art = cur.fetchone()[0]
-        ck = claim_pinned(cur, lrow[0])
-        cur.execute(
-            "SELECT v13_complete(%s,%s,%s,'succeeded', %s::jsonb)",
-            (lrow[0], ck["attempt_no"], ck["fence"],
-             json.dumps({"text": "verse", "context_artifact_id": str(art)})))
-        check("G8: llm complete", cur.fetchone()[0] == "accepted")
-        cur.execute(
-            "SELECT payload ? 'context_artifact_id' FROM events "
-            "WHERE session_id=%s AND type='llm/message' "
-            "ORDER BY seq DESC LIMIT 1", (sid_g8,))
-        check("G8: llm/message has context_artifact_id", cur.fetchone()[0] is True)
-        cur.execute("SELECT result ? 'context_artifact_id' FROM effects "
-                    "WHERE effect_id=%s", (lrow[0],))
-        check("G8: effect.result has artifact", cur.fetchone()[0] is True)
-    else:
-        check("G8: llm effect ready", a8 == "waiting", a8)
+    check("G8: llm effect ready", lrow is not None, a8)
+    cur.execute(
+        "SELECT context_active_artifact FROM sessions WHERE session_id=%s",
+        (sid_g8,))
+    art = cur.fetchone()[0]
+    ck = claim_pinned(cur, lrow[0])
+    cur.execute(
+        "SELECT v13_complete(%s,%s,%s,'succeeded', %s::jsonb)",
+        (lrow[0], ck["attempt_no"], ck["fence"],
+         json.dumps({"text": "verse", "context_artifact_id": str(art)})))
+    check("G8: llm complete", cur.fetchone()[0] == "accepted")
+    cur.execute(
+        "SELECT payload ? 'context_artifact_id' FROM events "
+        "WHERE session_id=%s AND type='llm/message' "
+        "ORDER BY seq DESC LIMIT 1", (sid_g8,))
+    check("G8: llm/message has context_artifact_id", cur.fetchone()[0] is True)
+    cur.execute("SELECT result ? 'context_artifact_id' FROM effects "
+                "WHERE effect_id=%s", (lrow[0],))
+    check("G8: effect.result has artifact", cur.fetchone()[0] is True)
 
-    # G9 full chain
+    # G9 full chain: llm → ② settle → finish(terminal) → extra refresh
     sid_g9 = new_session(cur)
     last9 = append_user(cur, sid_g9, "write a short poem")
     _, _, _, conn, cur = parse_settle(server, conn, cur, sid_g9, **{
@@ -1519,24 +1915,36 @@ def main() -> int:
     snap9 = answers_llm(cur, sid_g9)
     poison(cur)
     cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid_g9, json.dumps(snap9)))
-    cur.fetchone()
+    a9w = cur.fetchone()[0]
     cur.execute(
         "SELECT effect_id FROM effects WHERE session_id=%s AND kind='llm' "
         "AND status='ready'", (sid_g9,))
     l9 = cur.fetchone()
-    if l9:
-        ck = claim_pinned(cur, l9[0])
-        cur.execute(
-            "SELECT v13_complete(%s,%s,%s,'succeeded', %s::jsonb)",
-            (l9[0], ck["attempt_no"], ck["fence"], json.dumps({"text": "done"})))
-        cur.fetchone()
-        conn, cur = recycle(server, conn)
-        snap9b = answers_llm(cur, sid_g9)
-        poison(cur)
-        cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid_g9, json.dumps(snap9b)))
-        a9 = cur.fetchone()[0]
-        check("G9: chain terminal or waiting",
-              a9 in ("terminal", "waiting", "progressed"), a9)
+    check("G9: llm effect ready", l9 is not None, a9w)
+    ck = claim_pinned(cur, l9[0])
+    cur.execute(
+        "SELECT v13_complete(%s,%s,%s,'succeeded', %s::jsonb)",
+        (l9[0], ck["attempt_no"], ck["fence"], json.dumps({"text": "done"})))
+    check("G9: llm complete", cur.fetchone()[0] == "accepted")
+    conn, cur = recycle(server, conn)
+    snap9b = answers_llm(cur, sid_g9)
+    poison(cur)
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid_g9, json.dumps(snap9b)))
+    a9r = cur.fetchone()[0]
+    check("G9: ② after llm/message", a9r == "waiting", a9r)
+    cur.execute(
+        "SELECT effect_id FROM effects WHERE session_id=%s "
+        "AND kind='context_refresh' AND status='ready'", (sid_g9,))
+    eid9r = cur.fetchone()
+    check("G9: refresh ready after llm", eid9r is not None)
+    out9r, _ = settle(cur, eid9r[0])
+    check("G9: post-llm settle accepted", out9r == "accepted")
+    conn, cur = recycle(server, conn)
+    snap9c = answers_llm(cur, sid_g9)
+    poison(cur)
+    cur.execute("SELECT v13_advance(%s, %s::jsonb)", (sid_g9, json.dumps(snap9c)))
+    a9 = cur.fetchone()[0]
+    check("G9: chain terminal", a9 == "terminal", a9)
     conn, cur = recycle(server, conn)
     cur.execute("SELECT count(*) FROM events WHERE session_id=%s AND type='turn/route'",
                 (sid_g9,))
@@ -1547,8 +1955,13 @@ def main() -> int:
         "ON s.context_active_artifact=a.artifact_id WHERE s.session_id=%s",
         (sid_g9,))
     m9 = cur.fetchone()[0]
-    hist = json.dumps(sec_map(m9)["history"])
-    check("G9: history section present", "history" in sec_map(m9))
+    href = sec_map(m9)["history"]["payload_ref"]["content_hash"]
+    cur.execute(
+        "SELECT inline::text FROM artifacts "
+        "WHERE kind='context_section' AND content_hash=%s", (href,))
+    hist_txt = cur.fetchone()[0]
+    check("G9: history has this-turn llm/message",
+          "llm/message" in hist_txt and "done" in hist_txt, hist_txt[:240])
     cur.execute("SELECT count(*) FROM events WHERE session_id=%s AND type='turn/route'",
                 (sid_g9,))
     check("G9: refresh does not add turn/route", cur.fetchone()[0] == routes)
@@ -1599,9 +2012,18 @@ def main() -> int:
     mg2 = cur.fetchone()[0]
     h2 = sec_map(mg2)["history"]["content_hash"]
     check("G10: new history hash", h2 != h1)
+    sm1, sm2 = sec_map(mg1), sec_map(mg2)
+    changed = 0
+    for sid, s in sm1.items():
+        if sid not in sm2 or sm2[sid]["content_hash"] != s["content_hash"]:
+            changed += 1
+    for sid in sm2:
+        if sid not in sm1:
+            changed += 1
     cur.execute("SELECT count(*) FROM artifacts WHERE kind='context_section'")
     nblob2 = cur.fetchone()[0]
-    check("G10: blob rows grew with changed sections", nblob2 > nblob, (nblob, nblob2))
+    check("G10: new blobs = changed sections",
+          nblob2 - nblob == changed, (nblob, nblob2, changed))
     _, _, _, conn, cur = parse_settle(server, conn, cur, sid_g10)
     cur.execute("SELECT count(*) FROM artifacts WHERE kind='context_section'")
     check("G10: zero-change settle no new blobs", cur.fetchone()[0] == nblob2)
