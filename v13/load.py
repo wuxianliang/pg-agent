@@ -16,10 +16,12 @@ AGENT_ROOT = V13_ROOT.parent
 
 SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "schema" / "v13_core.sql",
+    V13_ROOT / "resolve" / "v13_resolve.sql",
 ]
 
 STAGE_THROUGH = {
     "schema": 1,
+    "resolve": 2,
 }
 
 
