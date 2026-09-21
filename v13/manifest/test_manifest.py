@@ -376,8 +376,8 @@ def main() -> int:
     check("G7: backfill INSERT", "INSERT INTO v13_goals" in body)
     check("G6: files_through manifest is 6",
           len(files_through("manifest")) == 6, len(files_through("manifest")))
-    check("G6: SQL_LOAD_ORDER last is manifest",
-          SQL_LOAD_ORDER[-1].name == "v13_manifest.sql")
+    check("G6: SQL_LOAD_ORDER[5] is manifest",
+          SQL_LOAD_ORDER[5].name == "v13_manifest.sql")
     for st in ("schema", "resolve", "loop", "twophase", "envelope"):
         check(f"G6: {st} prefix excludes manifest",
               all(p.name != "v13_manifest.sql" for p in files_through(st)))
