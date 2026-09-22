@@ -438,6 +438,20 @@ def main() -> int:
     cur.execute("SET enable_seqscan = on")
     idxs = [n.get("Index") for n in dplan if n.get("Index")]
     check("K4: planner binds exactly one index", len(set(idxs)) == 1, idxs)
+    bound_idx = idxs[0]
+    check("K4: bound index is canary or default",
+          bound_idx in ("ix_v13_canary", "ix_v13_canary_default"), bound_idx)
+    cur.execute("SET enable_seqscan = off")
+    cur.execute("SELECT doc_no FROM v13_canary_docs WHERE body ==> %s",
+                ('"' + blk + '"',))
+    k4_hits = [r[0] for r in cur.fetchall()]
+    if bound_idx == "ix_v13_canary_default":
+        check("K4: default-bound result misses split doc 1",
+              1 not in k4_hits, (bound_idx, k4_hits))
+    else:
+        check("K4: split-bound result hits doc 1",
+              1 in k4_hits, (bound_idx, k4_hits))
+    cur.execute("SET enable_seqscan = on")
     cur.execute("DROP INDEX ix_v13_canary_default")
     conn.commit()
 
@@ -489,23 +503,29 @@ def main() -> int:
     check("L3: single Katakana miss", rec_ta == [], rec_ta)
 
     # ----- M fold -----
-    cur.execute(
-        "SELECT proname FROM pg_proc WHERE proname ILIKE '%segment%' "
-        "AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname='stannum')")
-    segs_fns = [r[0] for r in cur.fetchall()]
-    print("[info] segment_info candidates", segs_fns)
-    mutable_ok = False
-    if "segment_info" in segs_fns:
+    def seg_rows():
         try:
-            cur.execute("SELECT * FROM stannum.segment_info('ix_v13_canary'::regclass)")
-            info0 = cur.fetchall()
-            print("[info] segment_info", info0)
-            mutable_ok = True
+            cur.execute(
+                "SELECT * FROM stannum.segment_info('ix_v13_canary'::regclass)")
         except psycopg2.Error as exc:
-            cur.execute("ROLLBACK TO SAVEPOINT sp") if False else None
-            print("[info] segment_info err", exc)
             conn.rollback()
             guc(cur)
+            raise AssertionError(f"M2: segment_info unreadable: {exc}") from exc
+        cols = [d.name for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    cur.execute(
+        "SELECT count(*) FROM pg_proc p "
+        "JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "WHERE p.proname = 'segment_info' AND n.nspname = 'stannum'")
+    check("M2: stannum.segment_info present", cur.fetchone()[0] == 1)
+    cur.execute("SELECT count(*) FROM v13_canary_docs")
+    n_can0 = cur.fetchone()[0]
+    info0 = seg_rows()
+    gen0 = max(r["generation"] for r in info0)
+    kinds0 = {r["kind"] for r in info0}
+    print("[info] M2 segment_info initial", info0)
+
     times_base = []
     for i in range(500):
         t0 = time.perf_counter()
@@ -515,18 +535,13 @@ def main() -> int:
             (1000 + i, f"folddoc {i} " + ("z" * 80)))
         times_base.append((time.perf_counter() - t0) * 1000)
     conn.commit()
-    if "segment_info" in segs_fns:
-        try:
-            cur.execute("SELECT * FROM stannum.segment_info('ix_v13_canary'::regclass)")
-            info1 = cur.fetchall()
-            print("[info] segment_info after 500", info1)
-            check("M2: segment_info readable", True, info1)
-        except psycopg2.Error as exc:
-            print("[info] segment_info after", exc)
-            conn.rollback()
-            guc(cur)
+    info1 = seg_rows()
+    gen1 = max(r["generation"] for r in info1)
+    kinds1 = {r["kind"] for r in info1}
+    print("[info] M2 segment_info after 500", info1)
+    check("M2: generation increments with inserts", gen1 > gen0, (gen0, gen1))
     extra = 0
-    while extra < 4000:
+    while "mutable" not in kinds1 and extra < 4000:
         cur.execute(
             "INSERT INTO v13_canary_docs VALUES (%s, %s) "
             "ON CONFLICT (doc_no) DO UPDATE SET body = EXCLUDED.body",
@@ -534,19 +549,22 @@ def main() -> int:
         extra += 1
         if extra % 500 == 0:
             conn.commit()
-            if "segment_info" in segs_fns:
-                try:
-                    cur.execute(
-                        "SELECT * FROM stannum.segment_info('ix_v13_canary'::regclass)")
-                    inf = cur.fetchall()
-                    if any("mutable" in str(x).lower() for x in inf):
-                        mutable_ok = True
-                        print("[info] mutable observed", inf)
-                        break
-                except psycopg2.Error:
-                    conn.rollback()
-                    guc(cur)
-                    break
+            info1 = seg_rows()
+            gen1 = max(r["generation"] for r in info1)
+            kinds1 = {r["kind"] for r in info1}
+    conn.commit()
+    info1 = seg_rows()
+    gen1 = max(r["generation"] for r in info1)
+    kinds1 = {r["kind"] for r in info1}
+    check("M2: mutable segment active (fold face loaded)",
+          "mutable" in kinds1, {"kinds": sorted(kinds1), "extra": extra})
+    print(f"[info] M2 mutable activation extra={extra} "
+          f"gen={gen1} kinds={sorted(kinds1)}")
+    cur.execute(
+        "SELECT count(*) FROM stannum.verify_index('ix_v13_canary'::regclass, true) "
+        "WHERE severity IN ('error','warning')")
+    check("M2: verify green before fold batch", cur.fetchone()[0] == 0)
+
     times_fold = []
     for i in range(500):
         t0 = time.perf_counter()
@@ -556,6 +574,18 @@ def main() -> int:
             (9000 + i, f"foldp99 {i} " + ("x" * 80)))
         times_fold.append((time.perf_counter() - t0) * 1000)
     conn.commit()
+    info2 = seg_rows()
+    gen2 = max(r["generation"] for r in info2)
+    kinds2 = {r["kind"] for r in info2}
+    print("[info] M2 segment_info after fold batch", info2)
+    check("M2: generation increments across fold batch", gen2 > gen1,
+          (gen1, gen2))
+    check("M2: immutable and mutable segments coexist after fold",
+          {"immutable", "mutable"} <= kinds2, sorted(kinds2))
+    cur.execute(
+        "SELECT count(*) FROM stannum.verify_index('ix_v13_canary'::regclass, true) "
+        "WHERE severity IN ('error','warning')")
+    check("M2: verify green after fold batch", cur.fetchone()[0] == 0)
     p99_base = p99(times_base)
     p99_fold = p99(times_fold)
     cap = max(p99_base * 10, 200.0)
@@ -564,7 +594,9 @@ def main() -> int:
           {"base": p99_base, "fold": p99_fold, "cap": cap})
     cur.execute("SELECT count(*) FROM v13_canary_docs")
     n_can = cur.fetchone()[0]
-    check("M3: canary count > 0", n_can > 0, n_can)
+    expected_can = n_can0 + 500 + extra + 500
+    check("M3: canary count equals inserts after fold", n_can == expected_can,
+          {"count": n_can, "expected": expected_can, "extra": extra})
 
     # ----- N verify + REINDEX -----
     cur.execute(
@@ -637,14 +669,25 @@ def main() -> int:
     fails_with(cur, "SELECT v13_query_segments(%s)",
                (" ".join(f"w{i}" for i in range(200)),),
                "exceeds max segments", "O1: 200 segs", pgcode="V3005")
-    long_and = " AND ".join(f'"{i}term"' for i in range(1030))
+    long_terms = [f"o2k{i}word" for i in range(1030)]
+    o2_doc = 500001
+    cur.execute("INSERT INTO v13_canary_docs VALUES (%s, %s)",
+                (o2_doc, " ".join(long_terms)))
+    long_and = " AND ".join(f'"{t}"' for t in long_terms)
     t0 = time.perf_counter()
     cur.execute(
-        "SELECT count(*) FROM v13_canary_docs WHERE body ==> %s", (long_and,))
-    n_long = cur.fetchone()[0]
+        "SELECT doc_no FROM v13_canary_docs WHERE body ==> %s", (long_and,))
+    hits_long = sorted(r[0] for r in cur.fetchall())
     dt_long = time.perf_counter() - t0
-    print(f"[info] O2 1030-term count={n_long} dt={dt_long:.3f}s")
-    check("O2: 1030-term returns", n_long >= 0, n_long)
+    print(f"[info] O2 1030-term hits={hits_long} dt={dt_long:.3f}s")
+    cur.execute("SELECT doc_no, body FROM v13_canary_docs")
+    direct_long = sorted(
+        d for d, b in cur.fetchall()
+        if all(t in b.split() for t in long_terms))
+    check("O2: 1030-term known doc hit", o2_doc in hits_long,
+          (hits_long, direct_long))
+    check("O2: hit set equals direct scan", hits_long == direct_long,
+          (hits_long, direct_long))
 
     # ----- P v2 chain -----
     rows_p = recall_rows(cur, tinql_q, 8)
@@ -738,28 +781,34 @@ def main() -> int:
           (g0, g1, cgr0, cgr1))
 
     # ----- Q size characterization -----
-    print("[info] Q1 size table")
+    print("[info] Q1 size table (word buried mid-body; avg_rank = mean "
+          "start byte of target word inside each result chunk)")
     print("size\thits\tbm25_mean\tavg_rank")
     for size, tag in ((512, "s512"), (1024, "s1k"), (2048, "s2k"),
                       (4096, "s4k"), (8192, "s8k"), (16384, "s16k")):
         word = f"size{tag}"
-        pad = "x" * max(0, size - len(word) - 20)
         for i in range(20):
-            body = (word + " " + pad + f" {i}")[:size]
-            if len(body.encode()) < size:
-                body += "y" * (size - len(body.encode()))
+            tail = f" {i}"
+            half = max(0, (size - len(word) - len(tail)) // 2)
+            front = "p" * half
+            back = "q" * max(0, size - half - 1 - len(word) - len(tail))
+            body = f"{front} {word}{tail}{back}"
+            if len(body) < size:
+                body += "r" * (size - len(body))
             ingest_doc(cur, body, "qsize", eid=eid_ops)
         conn.commit()
         tq = tinql_of(cur, word)
         rec = recall_rows(cur, tq, 64)
         hits = len(rec)
         mean = (sum(float(s) for _, s, _ in rec) / hits) if hits else 0.0
-        ranks = []
-        for i, (h, s, _) in enumerate(rec, 1):
-            ranks.append(i)
-        avg_rank = (sum(ranks) / len(ranks)) if ranks else None
-        print(f"{size}\t{hits}\t{mean:.4f}\t{avg_rank}")
-        check(f"Q1: {size}B ran", hits >= 0, hits)
+        starts = [sp[0][0] for _, _, sp in rec if sp]
+        avg_rank = (sum(starts) / len(starts)) if starts else 0.0
+        print(f"{size}\t{hits}\t{mean:.4f}\t{avg_rank:.1f}")
+        check(f"Q1: {size}B hits 20 docs", hits == 20, hits)
+        check(f"Q1: {size}B spans present on all rows",
+              len(starts) == hits, (len(starts), hits))
+        check(f"Q1: {size}B word buried mid-chunk",
+              size * 0.3 < avg_rank < size * 0.7, avg_rank)
     readme = (V13 / "characterize" / "README.md").read_text()
     check("Q2: flip procedure in README",
           "v13_rebuild_chunks" in readme and "不自动翻策略" in readme)

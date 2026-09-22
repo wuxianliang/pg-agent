@@ -42,19 +42,21 @@ verify 体用 `SET enable_seqscan` 不用 `set_config`（避开 G-ctx1-5(b) 全�
 
 ## 尺寸刻画面
 
-6 档 × 20 文档（查询词埋中段，本机 Q1）：
+6 档 × 20 文档（查询词埋中段；avg_rank = 目标词在各结果 chunk 内的
+起始字节均值，本机 Q1）：
 
 | size | hits | bm25_mean | avg_rank |
 |---|---|---|---|
-| 512B | 20 | 0.3787 | 10.5 |
-| 1K | 20 | 0.8360 | 10.5 |
-| 2K | 20 | 1.0162 | 10.5 |
-| 4K | 20 | 1.0638 | 10.5 |
-| 8K | 20 | 1.0498 | 10.5 |
-| 16K | 20 | 1.0129 | 10.5 |
+| 512B | 20 | 0.3965 | 252.5 |
+| 1K | 20 | 0.8418 | 509.0 |
+| 2K | 20 | 0.9987 | 1021.0 |
+| 4K | 20 | 1.0363 | 2045.0 |
+| 8K | 20 | 1.0241 | 4093.0 |
+| 16K | 20 | 0.9937 | 8188.5 |
 
-2K 起均值进入平台。3072 先验落在平台上，本轮不翻 `chunks_ingest.target_bytes`。
-数据支持 ≠ 3072 时：新版本行 + `v13_rebuild_chunks()`，**不自动翻策略**。
+2K 起均值进入平台（**无 [0,1] 上界承诺**，见台账 ③）。3072 先验落在平台上，
+本轮不翻 `chunks_ingest.target_bytes`。数据支持 ≠ 3072 时：新版本行 +
+`v13_rebuild_chunks()`，**不自动翻策略**。
 
 ## 台账
 
@@ -62,13 +64,29 @@ verify 体用 `SET enable_seqscan` 不用 `set_config`（避开 G-ctx1-5(b) 全�
   `p_terms jsonb`，载荷约定改为 `{"tinql":…}`。签名 `(text,jsonb)` 不变。
 - **② verify SET 非 set_config**：逐字复制 DP4 v1 的 `SET enable_seqscan` 路径，
   避开 G-ctx1-5(b) 对 `set_config` 的全树扫描。
-- **③ full_score 值域**：英文 quasar fixture ∈[0,1]；CJK 短语实测可 >1
-  （本机 3.37）。P2 钉英文值域；CJK 超 1 记为 0.1.0 观测，不宽化 P2。
+- **③ full_score 值域**：**只保证 finite numeric + 排序并列 content_hash 终裁**，
+  无任何语言的全局 [0,1] 承诺（L4 P2-10 收口）。英文 fixture 亦已 >1
+  （Q 表 4K 档 1.0363）；CJK 短语实测 3.37。gate P2 的 [0,1] 断言仅限
+  quasar 小文档 fixture，不外推。
+- **④ L4 §5 尾债收口**（2026-09-22，
+  `docs/reviews/v13-dp5-impl-l4-review-2026-09-22.md`，仅测试面 SQL 零改动）：
+  M2 删 `check(...,True)` 恒真枝，改强制观测（segment_info 必在、mutable 段在场、
+  generation 随插入递增、fold 批后 immutable+mutable 共存、verify 前后绿）；
+  M3 改 fold 后 count==插入数（本机 1003/1003）；O2 改已知命中文档+命中集
+  对照直查（1030 词项 AND 命中恰 {500001}，零命中即红）；Q1 查询词埋中段+
+  每档断言 hits==20+avg_rank 改目标词结果内字节位次（禁 1..n 自平均）；
+  K4 补执行面错咬（EXPLAIN 识别所绑索引后执行 64B 查询：绑 default ⇒ 漏召
+  doc 1 / 绑 split ⇒ 命中 doc 1；测后 DROP 复原）。
 
 ## 0.1.0 实测记录
 
 - Custom Scan / `Stannum Text Search Scan`（K1 钉死，升级若改节点形态随 README 重钉，不做 OR 宽化）
-- 降级面：无索引回落默认 comparator；同列双索引错绑
+- 降级面：无索引回落默认 comparator；同列双索引错绑（K4 实测 planner 绑 split 索引，
+  命中 doc 1；绑 default 时漏召——两分支均断言）
+- segment_info 段时序（M2 实测）：首条 insert 即开 mutable 段；mutable 攒 ~512 docs
+  折叠成新 immutable 段（种子 immutable 原地保留）；generation=段内变更计数，随每条
+  insert +1（3 种子 gen1 → +500 后 mutable gen500 → fold 批后
+  immutable(512,gen2)+mutable(488,gen1001)）
 - K5 三禁路径 0.1.0 命中保持绑定（升级复测项）
 - Katakana 连跑成单 token；查询侧 CJK 语段一律短语引用
 

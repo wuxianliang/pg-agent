@@ -436,6 +436,22 @@ def cand_sorted(cands):
         cands, key=lambda c: (-float(c["bm25"]), c["content_hash"]))
 
 
+def walk_plans(node, acc=None):
+    acc = acc if acc is not None else []
+    if isinstance(node, list):
+        for x in node:
+            walk_plans(x, acc)
+    elif isinstance(node, dict):
+        if "Plan" in node:
+            walk_plans(node["Plan"], acc)
+        else:
+            acc.append(node)
+            for v in node.values():
+                if isinstance(v, (dict, list)):
+                    walk_plans(v, acc)
+    return acc
+
+
 def main() -> int:
     setup_db()
     server = get_server()
@@ -540,6 +556,17 @@ def main() -> int:
     expect = {r[0] for r in cur.fetchall()}
     got = {r[0] for r in rows}
     check("B1: hit set equals tsv", got == expect, (got, expect))
+    cur.execute("SET enable_seqscan = off")
+    cur.execute(
+        "EXPLAIN (FORMAT JSON) SELECT c.content_hash FROM chunks c "
+        "JOIN v13_sources src ON src.source_hash=c.source_hash "
+        "AND src.superseded_by IS NULL "
+        "WHERE c.body_tsv @@ phraseto_tsquery('english'::regconfig, 'quasar')")
+    b1_plan = walk_plans(cur.fetchone()[0])
+    cur.execute("SET enable_seqscan = on")
+    b1_idx = [n.get("Index Name") or n.get("Index") for n in b1_plan]
+    check("B1: tsv predicate binds ix_chunks_tsv",
+          "ix_chunks_tsv" in b1_idx, b1_idx)
     for h, bm, sp in rows:
         check("B1: hash 64hex", bool(HEX64.match(h)), h)
         check("B1: spans shape", spans_ok(sp), sp)
@@ -550,8 +577,8 @@ def main() -> int:
             check("B1: start byte", cur.fetchone()[0] == s, (s, e))
             check("B1: end within body", e <= len(body.encode("utf-8")), (s, e, body))
 
-    ingest_doc(cur, "quasar alpha tiebreak aaa", "docs", eid=eid_ops)
-    ingest_doc(cur, "alpha quasar tiebreak bbb", "docs", eid=eid_ops)
+    ingest_doc(cur, "quasar alpha tiepad1", "docs", eid=eid_ops)
+    ingest_doc(cur, "quasar alpha tiepad2", "docs", eid=eid_ops)
     conn.commit()
     tinql_tie = tinql_of(cur, "quasar alpha")
     r1 = recall_rows(cur, tinql_tie, 8)
@@ -563,10 +590,11 @@ def main() -> int:
           hashes == [h for h, _, _ in sorted(
               r1, key=lambda x: (-float(x[1]), x[0]))],
           list(zip(scores, hashes)))
+    check("B2: tie fixture yields exactly the pair", len(r1) == 2, r1)
+    check("B2: pair scores tie", scores[:2] == [scores[0]] * 2, scores)
     rlim = recall_rows(cur, tinql_tie, 1)
-    if len(r1) >= 2 and float(r1[0][1]) == float(r1[1][1]):
-        check("B2: limit tie uses hash", rlim[0][0] == min(r1[0][0], r1[1][0]),
-              rlim)
+    check("B2: limit tie uses hash", rlim[0][0] == min(r1[0][0], r1[1][0]),
+          (rlim, r1))
 
     ingest_doc(cur, "東京タワーは電波塔である", "docs", eid=eid_ops)
     conn.commit()
@@ -1131,7 +1159,7 @@ def main() -> int:
             cch.close()
 
     sid_i2 = new_session(cur)
-    append_user(cur, sid_i2, "quasar")
+    append_user(cur, sid_i2, "maxium")
     cur.execute("SELECT v13_context_required(%s)", (sid_i2,))
     tok9 = cur.fetchone()[0]
     eight = {k: tok9[k] for k in tok9 if k != "recall_ver"}
@@ -1147,6 +1175,8 @@ def main() -> int:
                 (sid_i2,))
     stored = cur.fetchone()[0]
     check("I2: stored nine keys", keys_of(stored) == TOKEN9, stored)
+    n_i3_pre = len(active_manifest(cur, sid_i2)["query_side"]["candidates"])
+    check("I3: pre-flip candidates capped at 64", n_i3_pre == 64, n_i3_pre)
 
     cur.execute("SELECT value FROM v13_policies WHERE name='recall_k' AND active")
     rk_now = cur.fetchone()[0]
@@ -1156,9 +1186,9 @@ def main() -> int:
     check("I3: recall_ver flip not fresh", cur.fetchone()[0] is False)
     _, _, _, conn, cur = parse_settle(server, conn, cur, sid_i2)
     man_i3 = active_manifest(cur, sid_i2)
-    check("I3: candidates truncated",
-          len(man_i3["query_side"]["candidates"]) <= 16,
-          len(man_i3["query_side"]["candidates"]))
+    n_i3_post = len(man_i3["query_side"]["candidates"])
+    check("I3: candidates truncated 64->16 on k_max flip",
+          n_i3_pre == 64 and n_i3_post == 16, (n_i3_pre, n_i3_post))
     bump_policy(cur, "recall_k", rk_now)
     conn.commit()
 

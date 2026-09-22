@@ -77,3 +77,9 @@ envelope + manifest + chunks + `v13_recall.sql`（`files_through('recall')`
 - **② timeout_ms NULLIF**：信封换体从加载态原文机械复制，保留 DP2
   `NULLIF(current_setting(…), '')`，不回退为 plan 草案的裸 `current_setting`。
 - **③ I4 缺行**：策略行禁 DELETE；用 `active=false` 制造无活动行，语义等价。
+- **④ L4 §5 P2 精选收口**（2026-09-22，
+  `docs/reviews/v13-dp5-impl-l4-review-2026-09-22.md`，仅测试面 SQL 零改动）：
+  B1 补 GIN belt——`enable_seqscan=off` 下 EXPLAIN 内层 `body_tsv @@` 谓词计划
+  含 `ix_chunks_tsv`；B2 换必并列 fixture（`quasar alpha tiepad1/2`，查询词同位
+  同长度同分）去 `if` 跳过，断言恰一对+分并列+hash 截断；I3 复用 C3 的 4000
+  匹配语料（sid 改查 maxium）断言翻版前后 manifest 候选 64→16（原来只 <=16）。
