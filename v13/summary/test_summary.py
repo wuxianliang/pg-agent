@@ -411,41 +411,6 @@ def prepare_round(cur, sid, body, noul=0.9):
     return chk, did, cur.fetchone()[0], req, src
 
 
-def prepare_round(cur, sid, body, noul=0.9):
-    """One prepare round on a claimed effect: checks + envelope + resolve +
-    verdict lookup. Returns (checks, decision_id|None, verdict|None)."""
-    cur.execute(
-        "SELECT request FROM effects WHERE session_id=%s AND "
-        "kind='context_summary' AND status='claimed' ORDER BY created_at "
-        "DESC LIMIT 1", (sid,))
-    req = cur.fetchone()[0]
-    src = span_source(cur, sid, req["span"])
-    cur.execute("SELECT v13_summary_checks(%s,%s::jsonb,2048)",
-                (body, json.dumps(src)))
-    chk = cur.fetchone()[0]
-    if not chk["pass"]:
-        return chk, None, None, req, src
-    cur.execute("SELECT v13_summary_envelope(%s,%s,%s,%s)",
-                (sid, req["span_digest"], json.dumps(src), body))
-    env = cur.fetchone()[0]
-    sig = env["needed"][0]["signal"]
-    summary_mock(cur, sig, noul)
-    cur.execute("SELECT v13_resolve_judgments(%s::jsonb, 1)",
-                (json.dumps(env),))
-    cur.fetchone()
-    cur.execute(
-        "SELECT decision_id FROM decisions WHERE session_id=%s AND "
-        "signal=%s AND context=%s::jsonb AND answer IS NOT NULL",
-        (sid, sig, json.dumps(env["groups"][0]["state"])))
-    row = cur.fetchone()
-    if row is None:
-        return chk, None, {"action": "exclude",
-                           "basis": "default_missing"}, req, src
-    did = row[0]
-    cur.execute("SELECT v13_summary_verdict(%s)", (did,))
-    return chk, did, cur.fetchone()[0], req, src
-
-
 def drive_summary(cur, sid, bodies, noul=0.9, adopt_basis="decision_accept"):
     """Full worker drive: schedule -> claim -> rounds (per body) ->
     complete. Returns (effect_id, rounds, adopted, outcome)."""
@@ -1766,8 +1731,29 @@ def main() -> int:
     check("O3-③: steps [spill,drop_rounds,final_trim]",
           [s["op"] for s in econ_of(m_t)["summary"]["fallback"]["steps"]] ==
           ["spill", "drop_rounds", "final_trim"])
+    # [dp7 L4 P2-1] guard 规则 3 的测试端镜像(原为恒真占位):final_trim
+    # 在场 ⇒ ①round_drop trace 段仍在场 ②history 材料(经 content_hash
+    # 从 artifacts 回取,同 worker 契约路径)与 protected-tail 界零交集
+    # (tailb=测试端独立重算:最后 keep_tail_turns 条 user/message 的最小
+    # seq,与 keepc/guard 同式)
+    cur_l.execute(
+        "SELECT (value->>'keep_tail_turns')::int FROM v13_policies WHERE "
+        "name='context_budget' AND active")
+    keep_l = cur_l.fetchone()[0]
+    cur_l.execute("SELECT v13_canonical_state(%s)->'messages'", (sid_l,))
+    users_l = sorted((int(m["seq"]) for m in cur_l.fetchone()[0]
+                      if m["type"] == "user/message"), reverse=True)
+    tailb_l = users_l[keep_l - 1] if len(users_l) >= keep_l else None
+    cur_l.execute(
+        "SELECT inline::text FROM artifacts WHERE kind='context_section' "
+        "AND content_hash=%s", (secs_t["history"]["content_hash"],))
+    mat_t = json.loads(cur_l.fetchone()[0])
     check("O3-③: no level skip — prefix rounds all dropped (guard rule)",
-          True)  # guard 在 settle 内执法;settle accepted 即过
+          tailb_l is not None and
+          not any(int(m["seq"]) < tailb_l for m in mat_t) and
+          any(x.get("kind") == "compaction" and
+              x.get("transform", {}).get("reason") == "compaction_round_drop"
+              for x in m_t["sections"]), (keep_l, tailb_l))
     # O5:goal/tools 字节不变(三级全程)
     restore_policy(cur_l, "assemble_manifest", 1)
     restore_policy(cur_l, "context_tiers", tiers_v1)
@@ -2108,6 +2094,19 @@ def main() -> int:
     out_p0, _ = refresh_n(cur_p, sid_p, m_p0["required_revision"]["goal"])
     cur_p.execute("SELECT v13_context_fresh(%s)", (sid_p,))
     check("P2: fresh after settle N", cur_p.fetchone()[0] is True)
+    # [dp7 L4 P2-2] 捕获收缩前 history blob 锚:活动 context artifact 的
+    # history 段哈希 + content-addressed context_section 行原字节(P5 做
+    # 零 UPDATE 原字节回取对照;同 worker span_source 回取路径)
+    cur_p.execute(
+        "SELECT s->>'content_hash' FROM jsonb_array_elements("
+        "(SELECT inline FROM artifacts WHERE artifact_id="
+        "(SELECT context_active_artifact FROM sessions WHERE session_id=%s))"
+        "->'sections') s WHERE s->>'section_id'='history'", (sid_p,))
+    h0_p = cur_p.fetchone()[0]
+    cur_p.execute(
+        "SELECT inline::text FROM artifacts WHERE kind='context_section' "
+        "AND content_hash=%s", (h0_p,))
+    pre_bytes_p = cur_p.fetchone()[0]
     cur_p.execute("SELECT v13_summary_schedule(%s)", (sid_p,))
     eff_p = cur_p.fetchone()[0]
     cur_p.execute("SELECT v13_claim('t')")
@@ -2185,18 +2184,28 @@ def main() -> int:
     check("P5: exact replay returns old manifest with source marker",
           rep["replay"]["mode"] == "exact_replay" and
           rep["replay"]["source_artifact"] is not None)
-    # 旧 history blob(消费前全文)仍原字节可取(收缩不 UPDATE 旧 artifact)
+    # [dp7 L4 P2-2] 旧 history blob(消费前材料)原字节回取真断言(原为
+    # `if False else` 死代码,弱化成 source artifact 行存在==1):
+    # ①本 session 收缩前 context artifact 仍引用旧 history 段哈希
+    #   (replay 链可达;哈希按 session 限定——content-addressed 材料跨
+    #   session 共享是设计行为,identical fixture ⇒ 同哈希)
+    # ②该哈希的 context_section 行 inline 与收缩前捕获字节逐字相等
     cur_p.execute(
-        "SELECT count(*) FROM artifacts WHERE kind='context_section' AND "
-        "content_hash=(SELECT s->>'content_hash' FROM jsonb_array_elements("
-        "(SELECT inline FROM artifacts WHERE artifact_id="
-        "(SELECT replay->>'prior_artifact_id' FROM jsonb_array_elements("
-        "[m_p5a]) LIMIT 1))) s)", (sid_p,)) \
-        if False else cur_p.execute(
-        "SELECT count(*) FROM artifacts a WHERE a.artifact_id=%s",
-        (rep["replay"]["source_artifact"],))
-    check("P5: prior artifact retrievable (exact replay 原字节)",
+        "SELECT count(*) FROM artifacts a JOIN effects e ON "
+        "e.effect_id=a.produced_by, jsonb_array_elements("
+        "a.inline->'sections') s WHERE a.kind='context' AND "
+        "e.session_id=%s AND s->>'section_id'='history' AND "
+        "s->>'content_hash'=%s", (sid_p, h0_p))
+    check("P5: pre-contraction context artifact still references old "
+          "history hash (本 session replay 链可达)",
           cur_p.fetchone()[0] == 1)
+    cur_p.execute(
+        "SELECT inline::text FROM artifacts WHERE kind='context_section' "
+        "AND content_hash=%s", (h0_p,))
+    row_p5 = cur_p.fetchone()
+    check("P5: old history blob byte-identical retrievable (exact replay "
+          "原字节, 零 UPDATE)",
+          row_p5 is not None and row_p5[0] == pre_bytes_p)
     conn_p.commit()
     conn_p.close()
     conn_p3.rollback()
