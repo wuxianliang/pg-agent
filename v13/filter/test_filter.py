@@ -2463,8 +2463,10 @@ def main() -> int:
     C.open_fresh()
 
     check("H4: filter prefix 10", len(files_through("filter")) == 10)
-    check("H4: memory not yet registered",
-          all("memory" not in p.name for p in SQL_LOAD_ORDER))
+    check("H4: memory excluded from filter prefix",
+          all("memory" not in p.name for p in files_through("filter")))
+    check("H4: filter file is 10th in load order",
+          SQL_LOAD_ORDER[9].name == "v13_filter.sql")
     C.cur.execute("SELECT 1 FROM pg_database WHERE datname='agent_v13_characterize'")
     if C.cur.fetchone():
         cch = psycopg2.connect(server.get_uri("agent_v13_characterize"))
