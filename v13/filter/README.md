@@ -122,6 +122,28 @@ gate:`uv run python v13/filter/test_filter.py`(A–H 八组,退出码 0=通过)�
 10. **advance 时序注记**:parse 落行后 context 必 stale(②),judge effect
     在 refresh settle 之后才建——E1/E2 的 worker 夹具先 settle 再以
     with_current_probe 探针化推进(DP1 既有驱动面形态,非新缝)。
+11. **dp6.1 P2-4:两处 decisions LIMIT 1 补确定性 ORDER BY**(L4 §4;plan
+    §3.1 草案继承无序):`v13_chunk_filter_action` 两处 decisions 查找与
+    `v13_assemble_manifest` qside 标量子查询补 `ORDER BY answered_at
+    DESC, decision_id`——同 (session,signal,context) 多世代行(session
+    中途 provider/model 换代重问)下不再 planner-dependent。语义依据=
+    世代/最新优先(newest active):已答行取最新作答;chunk_filter_action
+    首查无态过滤，PG DESC 默认 NULLS FIRST=在途/未答行(newest 问)遮
+    旧答案 → timeout 态，与「行在未答(status failed/open)=timeout」
+    既定口径一致。gate F5 增多世代 fixture(双 answered 行旧 include/
+    新 exclude→终局 exclude+新 decision_id;无 ORDER BY 时 planner 常取
+    堆序首行=旧行,断言即红)。qside 与 chunk_filter_action 同款谓词
+    同款序;「按当前信封身份过滤」需改冻结签名，未取。另:
+    `v13_filter_gate_open` 存在同款 LIMIT 1(L4 未列，dp6.1 不动——呈报
+    父 loop 裁量)。
+12. **dp6.1 P2-1/2/3 清理**:G4 错误路径 `bC.rollback()`→`bconn.
+    rollback()`(NameError 掩盖根因诊断);F2 删死代码(trace_map/
+    ok_trace 空 for/dj 死赋值)+trace 对照改「decided candidate 缺 trace
+    行→红、动作不一致→红」(原 `if t_h:` 缺失即静默跳过。对照域收窄到
+    decided candidates 而非全部 judgments——trace 是候选级面，存在性
+    judgment 结构性无 trace 行，按 judgments 全集字面实现会永久红;
+    L4 字面表述的不可实现缝，意图不变);COMMIT 前「OR REPLACE 五件
+    ACL」重复注释块去重(零语义)。
 
 ## 会话/连接纪律(测试面)
 

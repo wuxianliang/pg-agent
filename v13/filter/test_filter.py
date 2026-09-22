@@ -1801,17 +1801,6 @@ def main() -> int:
               for j in juds_f), {j["final_action"] for j in juds_f})
     C.cur.execute("SELECT * FROM v13_filter_trace(%s)", (sid_f,))
     trace_f = C.cur.fetchall()
-    trace_map = {r[0]: (r[2], r[3]) for r in trace_f}
-    ok_trace = True
-    for j in juds_f:
-        if j["decision_id"] and str(j["decision_id"]) in {
-                str(r[1]) for r in trace_f}:
-            pass
-    for h, act, basis in [(r[0], r[2], r[3]) for r in trace_f]:
-        dj = next((j for j in juds_f
-                   if j["decision_id"] and str(j["decision_id"]) ==
-                   str(next((t[1] for t in trace_f if t[0] == h), None))),
-                  None)
     check("F2: trace rows carry action/basis",
           all(a in ("include", "exclude", "degrade")
               and b in ("decision", "decision_review", "default_timeout",
@@ -1819,15 +1808,22 @@ def main() -> int:
               for _, _, a, b in [(r[0], r[1], r[2], r[3]) for r in trace_f]),
           trace_f)
     trace_actions = {r[0]: r[2] for r in trace_f}
-    for j in juds_f:
-        if j["decision_id"] is None:
-            continue
+    # dp6.1 P2-2 强化:对照域=decided candidates(trace 是候选级面,存在性
+    # judgment 结构性无 trace 行——按全集字面实现会永久红;候选缺行必红,
+    # 不再静默跳过)。
+    jud_by_id_f2 = {str(j["decision_id"]): j for j in juds_f
+                    if j["decision_id"]}
+    for c_f2 in decided_f:
         t_h = next((r[0] for r in trace_f
-                    if r[1] and str(r[1]) == str(j["decision_id"])), None)
-        if t_h:
+                    if r[1] and str(r[1]) == str(c_f2["decision_id"])), None)
+        check("F2: decided candidate has matching trace row",
+              t_h is not None,
+              (c_f2["decision_id"], c_f2.get("content_hash"), trace_f))
+        if t_h is not None:
+            j_f2 = jud_by_id_f2[str(c_f2["decision_id"])]
             check("F2: trace action equals judgment final_action",
-                  trace_actions[t_h] == j["final_action"],
-                  (t_h, trace_actions[t_h], j["final_action"]))
+                  trace_actions[t_h] == j_f2["final_action"],
+                  (t_h, trace_actions[t_h], j_f2["final_action"]))
     C.cur.execute("SELECT v13_manifest_validate(%s::jsonb)",
                 (json.dumps(man_f),))
     check("F2: direct revalidate green", True)
@@ -1974,6 +1970,44 @@ def main() -> int:
     C.cur.execute("SELECT * FROM v13_filter_trace(%s)", (sid_f,))
     t2_f5 = C.cur.fetchall()
     check("F5: trace deterministic", t1_f5 == t2_f5)
+
+    # F5b(dp6.1 P2-4):多世代 decision 行确定性——同 (session,signal,
+    # context) 双 answered 行(session 中途 provider/model 换代重问;直插
+    # owner 平面,G2 手工 DML 同款),消费必须确定性取 newest active
+    # (answered_at DESC,decision_id 终裁):旧世代 include/新世代 exclude
+    # →终局 exclude+新 decision_id。两世界:无 ORDER BY 时 planner 常取
+    # 堆序首行(旧 include)→断言红;有 ORDER BY→确定性 newest。
+    sid_f5b = new_session(C.cur)
+    h_f5b = "f5b" + "0" * 61          # 64hex(v13_filter_ref 校验);chunk::
+    gh_f5b = "e5b" + "0" * 61         # 前缀命名空间+全新会话,零碰撞面
+    C.cur.execute("SELECT v13_filter_ref(%s, %s)", (gh_f5b, h_f5b))
+    ctx_f5b = C.cur.fetchone()[0]
+    C.cur.execute(
+        "INSERT INTO decisions (session_id, signal, kind, question, context,"
+        " answer, request_hash, status, answered_at, template_name,"
+        " template_version) VALUES"
+        " (%s, %s, 'score', %s, %s,"
+        "  '{\"score\": 2.9, \"confidence\": 0.9}'::jsonb, %s, 'answered',"
+        "  now() - interval '2 minutes', 'chunk_score', 1),"
+        " (%s, %s, 'score', %s, %s,"
+        "  '{\"score\": 0.4, \"confidence\": 0.9}'::jsonb, %s, 'answered',"
+        "  now(), 'chunk_score', 1)",
+        (sid_f5b, "chunk::" + h_f5b, SCORE_Q, json.dumps(ctx_f5b), u(),
+         sid_f5b, "chunk::" + h_f5b, SCORE_Q, json.dumps(ctx_f5b), u()))
+    C.commit()
+    C.cur.execute(
+        "SELECT decision_id::text FROM decisions WHERE session_id=%s"
+        " AND answered_at IS NOT NULL ORDER BY answered_at", (sid_f5b,))
+    ids_f5b = [r[0] for r in C.cur.fetchall()]
+    check("F5: multi-generation fixture (two answered rows)",
+          len(ids_f5b) == 2, ids_f5b)
+    C.cur.execute("SELECT v13_chunk_filter_action(%s, %s, %s, %s)",
+                  (sid_f5b, gh_f5b, "f5b-digest", h_f5b))
+    act_f5b = C.cur.fetchone()[0]
+    check("F5: newest active generation wins deterministically",
+          act_f5b["action"] == "exclude" and
+          act_f5b["basis"] == "decision" and
+          str(act_f5b["decision_id"]) == ids_f5b[-1], act_f5b)
 
     C.cur.execute(
         "SELECT value FROM v13_policies WHERE name='judgment_defaults' AND active")
@@ -2154,7 +2188,7 @@ def main() -> int:
         except Exception as exc:
             box_g4["err"] = str(exc)
             box_g4["pgcode"] = getattr(exc, "pgcode", None)
-            bC.rollback()
+            bconn.rollback()
             box_g4["ok"] = False
 
     th_g4 = threading.Thread(target=run_g4_rebuild)

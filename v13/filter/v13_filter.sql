@@ -211,6 +211,10 @@ $$;
 -- 无行→闸证据优先(存在性已答确信无→exclude),再→defaults.missing。
 -- basis 词表:{decision,decision_review,default_timeout,gate_closed,
 -- default_missing}——F1 三态的可观测区分面。
+-- dp6.1 P2-4:两处 decisions LIMIT 1 补 ORDER BY answered_at DESC,
+-- decision_id——世代/最新优先(已答取最新作答;首查无态过滤,DESC 默认
+-- NULLS FIRST=在途/未答行遮旧答案→timeout,与「行在未答=timeout」口径
+-- 一致),多世代行(provider/model 换代)不再 planner-dependent。
 CREATE FUNCTION v13_chunk_filter_action(p_sid uuid, p_goal_hash text,
                                         p_candidates_digest text,
                                         p_chunk_hash text) RETURNS jsonb
@@ -236,6 +240,7 @@ BEGIN
   SELECT * INTO d FROM decisions
    WHERE session_id = p_sid AND signal = 'chunk::' || p_chunk_hash
      AND context = v13_filter_ref(p_goal_hash, p_chunk_hash)
+   ORDER BY answered_at DESC, decision_id
    LIMIT 1;
   IF FOUND AND d.answer IS NOT NULL THEN
     v_conf  := (d.answer->>'confidence')::numeric;
@@ -260,8 +265,9 @@ BEGIN
    WHERE a.session_id = p_sid AND a.signal = 'corpus_exists'
      AND a.context = jsonb_build_object('query_content_hash', p_goal_hash,
                                         'candidates_digest', p_candidates_digest)
-     AND a.answer IS NOT NULL AND a.status IN ('answered','cached')
-   LIMIT 1;
+       AND a.answer IS NOT NULL AND a.status IN ('answered','cached')
+     ORDER BY a.answered_at DESC, a.decision_id
+     LIMIT 1;
   IF v_ans IS NOT NULL AND v13_existence_action(v_ans) = 'exclude' THEN
     RETURN jsonb_build_object('decision_id', NULL::uuid,
       'action', 'exclude', 'basis', 'gate_closed');
@@ -1103,8 +1109,9 @@ WITH pol AS MATERIALIZED (
                            AND d.context =
                                  v13_filter_ref(fc.gh, c->>'content_hash')
                            AND d.answer IS NOT NULL
-                           AND d.status IN ('answered','cached')
-                         LIMIT 1))
+                            AND d.status IN ('answered','cached')
+                            ORDER BY d.answered_at DESC, d.decision_id
+                        LIMIT 1))
                        ORDER BY (c->>'bm25')::numeric DESC,
                                 c->>'content_hash' ASC), '[]'::jsonb)
                      FROM jsonb_array_elements((SELECT cands FROM rc2)) c, fc)
@@ -1278,8 +1285,6 @@ GRANT EXECUTE ON FUNCTION v13_existence_action(jsonb) TO v13_recall;
              -- (resolve 已有;recall/route 补授)
 GRANT EXECUTE ON FUNCTION v13_filter_defaults_action(text,text)
 TO v13_recall, v13_route;
--- OR REPLACE 五件 ACL 经 OID 保留,不重授(judgment_hash/resolve=三角色/
--- resolve 既有面;envelope/assemble=三角色;chunk_referenced=DP4 既有面)。
 -- OR REPLACE 五件 ACL 经 OID 保留,不重授(judgment_hash/resolve=三角色/
 -- resolve 既有面;envelope/assemble=三角色;chunk_referenced=DP4 既有面)。
 

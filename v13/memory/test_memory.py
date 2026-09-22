@@ -340,6 +340,24 @@ def main() -> int:
         (sid_j1,))
     check("J1: only projected base row present", cur.fetchone()[0] == 1)
 
+    # J1b(dp6.1 P1-1):尾部空体事件不入 freshness 分母——分母与 rebuild
+    # 策展口径对齐(空体跳过)。两世界:分母不排空体→v_max=尾部空体
+    # seq>watermark→lag=1≠0 即红;排空体→lag=0。
+    sid_j1b = new_session(cur)
+    append_user(cur, sid_j1b, "trailing empty body probe")
+    conn.commit()
+    rebuild(cur)
+    cur.execute(
+        "SELECT count(*) FROM transcript_chunks WHERE session_id=%s",
+        (sid_j1b,))
+    check("J1b: base row projected", cur.fetchone()[0] == 1)
+    append_llm(cur, sid_j1b, "")           # 尾部空体:不可投影
+    conn.commit()
+    fr_j1b = freshness(cur, sid_j1b)
+    check("J1b: trailing empty body out of denominator (lag=0)",
+          fr_j1b["lag"] == 0, fr_j1b)
+    check("J1b: degraded=false", fr_j1b["degraded"] is False, fr_j1b)
+
     sid_j2 = new_session(cur)
     append_user(cur, sid_j2, "first turn asks about polaris north star")
     append_llm(cur, sid_j2, "polaris is the north star reply")
@@ -362,10 +380,14 @@ def main() -> int:
     rebuild(cur)
     for i in range(20):
         append_llm(cur, sid_j3, f"unprojected tail {i} nebulium")
+    # dp6.1 P2-5:追加 user 锚推 last_user_seq→20 条尾部 llm 沉淀入
+    # canonical 窗(seq ≤ last_user_seq)——「canonical 含最新 tail」半边
+    # 才可直钉(无锚时尾部在窗外,canonical 结构性不含;lag 相应 20→21)。
+    append_user(cur, sid_j3, "degradation probe tail anchor")
     conn.commit()
     conn.notices.clear() if hasattr(conn, "notices") else None
     fr_j3 = freshness(cur, sid_j3)
-    check("J3: lag 20 over bound 16", fr_j3["lag"] == 20 and
+    check("J3: lag 21 over bound 16", fr_j3["lag"] == 21 and
           fr_j3["max_lag"] == 16, fr_j3)
     check("J3: degraded=true", fr_j3["degraded"] is True, fr_j3)
     notices_j3 = list(getattr(conn, "notices", []) or [])
@@ -383,14 +405,14 @@ def main() -> int:
     check("J3: prefix intact (1 projected row)", cur.fetchone()[0] == 1)
     cur.execute("SELECT v13_canonical_state(%s)->'messages'", (sid_j3,))
     msgs_j3 = cur.fetchone()[0]
-    check("J3: current turn direct read via canonical_state",
-          any("degradation probe head" == (m["payload"].get("text"))
-              for m in msgs_j3), [m["payload"] for m in msgs_j3][:2])
+    check("J3: current turn direct read via canonical_state (latest tail)",
+          any("unprojected tail 19 nebulium" == (m["payload"].get("text"))
+            for m in msgs_j3), [m["payload"] for m in msgs_j3][-2:])
     cur.execute(
         "SELECT count(*) FROM transcript_chunks WHERE session_id=%s "
-        "AND body LIKE '%%degradation probe head%%'", (sid_j3,))
-    check("J3: projection has head only (structural contrast)",
-          cur.fetchone()[0] == 1)
+        "AND body LIKE '%%unprojected tail%%'", (sid_j3,))
+    check("J3: projection excludes unprojected tail (structural contrast)",
+          cur.fetchone()[0] == 0)
 
     cur.execute(
         "SELECT value FROM v13_policies WHERE name='memory_stack' AND active")

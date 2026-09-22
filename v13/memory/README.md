@@ -18,7 +18,8 @@ ch13:58-59/64-79/130-135。gate:`uv run python v13/memory/test_memory.py`
    (owner 平面,无 retention 引用面)。
 2. **水印新鲜度(F10/OQ5)**:`v13_transcript_watermark`=投影覆盖上界;
    `v13_transcript_freshness`={watermark,max_curated_seq,lag,max_lag,
-   degraded}——lag=max 策展 seq−watermark(编排事件不入分母);
+   degraded}——lag=max 策展非空体 seq−watermark(编排事件与空体均
+   不入分母——dp6.1 P1-1 修，尾部空体不再致 watermark 滞留);
    超界 → degraded=true + RAISE NOTICE(运维可见)。**fail-closed**:
    reader `v13_transcript_recall` 只读 transcript_chunks,零 events 回退
    读路径;当前 turn 消息永远经 canonical_state 直读(结构性,零投影
@@ -62,7 +63,10 @@ ch13:58-59/64-79/130-135。gate:`uv run python v13/memory/test_memory.py`
   append 计时)vs 载入(并行 builder+2000 append)→ p99_loaded ≤
   max(p99_base×1.25, p99_base+0.5ms),三轮取中位;噪声带宽取大。
 - **⑧ 会话全扫空转的台账触发**(聪明 tick):v1 会话全扫(数量级小);
-  触发=会话数实测超标 → ch15:91 台账重开(§7)。
+  触发=会话数实测超标 → ch15:91 台账重开(§7)。**饥饿具体化(dp6.1,
+  L4 P2-6)**:rebuild 按 session_id(uuid)升序逐会话耗尽全局 limit——
+  持续积压的低 uuid 会话饥饿后续会话(plan 风险 #9「v1 接受会话全扫」
+  的具体化);不单独修，随本条台账在阈值触发时与聪明 tick 同批修。
 
 ## 明确不做(§7 台账)
 
@@ -89,6 +93,18 @@ tsv 双引擎/换体缝(OQ9:同签名 OR REPLACE 即换)。
    Seq Scan,但**不选 Custom Scan**;无 session 谓词的 bind 才驱动
    Custom Scan。gate 断言随升(§5 风险表 #11 预授权);reader 体保持
    草案逐字(索引化计分已背书,无需预过滤改体)。
+5. **dp6.1 P1-1:freshness 分母排空体**(L4 §4/§5;plan 草案自带缺陷,
+   实施原逐字忠实):草案 v_max(max 策展 seq)不排空体——尾部空体不可
+   投影，watermark 永滞其后、lag 永不归零；尾部空体 ≥17 时 degraded=true
+   永久谎报(投影实已覆盖全部可投影内容)，DP7+ 消费契约会误禁记忆段。
+   修法一行:v_max 查询加 `AND coalesce(e.payload->>'text','') <> ''`
+   (与 rebuild 策展口径逐字对齐;lag 语义=「可投影滞后」，可归零;
+   watermark 定义不动，单调性不受影响——v_max(非空)≥v_wm 恒成立)。
+   gate J1b:尾部空体 fixture → lag=0 ∧ degraded=false(分母不排空体
+   则 lag=1≠0 即红)。同轮 J3 直读对照改挑最新 tail(canonical 含
+   tail ∧ 投影不含——「canonical 含最新」半边直接钉死,L4 P2-5;fixture
+   追加 user 锚推 last_user_seq 使尾部沉淀入 canonical 窗,否则尾部在
+   窗外结构性不含;lag 断言 20→21)。
 
 ## 回退
 

@@ -51,7 +51,9 @@ LANGUAGE sql STABLE AS $$
    WHERE session_id = p_sid;
 $$;
 
--- 新鲜度谓词(F10 的载体):lag=max 策展 seq−watermark;超界→degraded
+-- 新鲜度谓词(F10 的载体):lag=max 策展非空体 seq−watermark(空体
+--     不可投影,入分母则尾部空体致 watermark 永滞/lag 永不归零——dp6.1
+--     P1-1,与 rebuild 策展口径对齐);超界→degraded
 -- +NOTICE(运维可见);消费契约(§1.4 DP7④):degraded=true 时消费侧
 -- 不得以记忆层为可靠召回面,须落审计事件并降级——recall 平面纯 SELECT
 -- (DP1 角色分裂)不可写事件,附 A #9。
@@ -61,8 +63,10 @@ DECLARE v_wm bigint; v_max bigint; v_lag bigint; v_cap jsonb; v_n int;
 BEGIN
   SELECT coalesce(max(seq_to), -1) INTO v_wm FROM transcript_chunks
    WHERE session_id = p_sid;
-  SELECT coalesce(max(seq), -1) INTO v_max FROM events
-   WHERE session_id = p_sid AND type IN ('user/message','llm/message');
+  SELECT coalesce(max(e.seq), -1) INTO v_max FROM events e
+   WHERE e.session_id = p_sid
+     AND e.type IN ('user/message','llm/message')
+     AND coalesce(e.payload->>'text', '') <> '';
   v_lag := v_max - v_wm;
   v_cap := v13_policy('memory_stack');
   IF v_cap IS NULL
