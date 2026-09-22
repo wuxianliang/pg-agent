@@ -28,6 +28,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "memory" / "v13_memory.sql",
     V13_ROOT / "economy" / "v13_economy.sql",
     V13_ROOT / "summary" / "v13_summary.sql",
+    V13_ROOT / "periphery" / "v13_periphery.sql",
 ]
 
 STAGE_THROUGH = {
@@ -44,6 +45,7 @@ STAGE_THROUGH = {
     "memory": 11,
     "economy": 12,
     "summary": 13,
+    "periphery": 14,
 }
 
 
