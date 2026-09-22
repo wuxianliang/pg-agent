@@ -24,6 +24,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "chunks" / "v13_chunks.sql",
     V13_ROOT / "recall" / "v13_recall.sql",
     V13_ROOT / "characterize" / "v13_characterize.sql",
+    V13_ROOT / "filter" / "v13_filter.sql",
 ]
 
 STAGE_THROUGH = {
@@ -36,6 +37,7 @@ STAGE_THROUGH = {
     "chunks": 7,
     "recall": 8,
     "characterize": 9,
+    "filter": 10,
 }
 
 
