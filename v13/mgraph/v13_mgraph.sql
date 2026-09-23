@@ -43,7 +43,8 @@ CREATE TABLE memory_nodes (
                AND consolidation_key IS NOT NULL))
 );
 -- 记忆语料索引(OQ7=A:候选发现走 stannum TINQL;stannum 默认配置单索引纪律,
--- memory 先例同款;本文件 `==>` 出现次数=0——候选函数 M2 才落)
+-- memory 先例同款;本文件 `==>` 源码计数=恰 1——M2 候选函数 EXECUTE 串;
+-- 注释出现不计入,门 A7/组 D 按去注释源码断言)
 CREATE INDEX ix_memory_nodes_stannum ON memory_nodes USING stannum (body);
 -- 合并节点 consolidation_key 唯一(§3.1:同 key 至多一个合并产物)
 CREATE UNIQUE INDEX ux_memory_nodes_consolidation_key
@@ -618,5 +619,710 @@ GRANT EXECUTE ON FUNCTION v13_mgraph_envelope(uuid,jsonb,jsonb)
 TO v13_resolve;                              -- 发问在 resolve 侧
 -- rebuild/verify/DELETE/表 DML 其余面:仅 owner(不 GRANT);触发器函数
 -- REVOKE 后仅属主可挂。
+
+COMMIT;
+
+BEGIN;
+
+-- =========================================================================
+-- DP9 M2 write & rebuild (v13_mgraph.sql M2 segment): episodic projection
+-- build + deterministic structure edges (temporal reconnect + proximity on
+-- lexical activation) + relation-judgment edges (apply over threshold, no
+-- mirroring) + idempotent rebuild (endpoint-based deletion, watermark/cursor
+-- reset, then build). Plan §3.4 write path 1-9 / §3.5 rebuild / §5 D-gates.
+-- Discipline carried from M1: error family V3009; zero DEFINER; no session
+-- row locks (advisory only); judgment IO only via v13_resolve_judgments;
+-- source scan five tokens stay at zero; the stannum bind operator appears
+-- exactly once in source (candidates EXECUTE string; comments excluded from
+-- the count, memory precedent). Write stays default-off (OQ2); nothing in
+-- this segment flips the seed row.
+-- =========================================================================
+
+-- === §3.4/OQ10 实体抽取:英文段 ^[A-Z][a-z]+$ 减 entity_stopwords;
+--     CJK 段不贡献不 RAISE(锚定 ASCII 字符类天然不匹配多字节段);
+--     停用词表=策略行(可先 [],多抽不假抽)。段面函数供 tinql 项复用
+--     (v13_build_tinql 保留段的重复度,anchor 面与 body 面同源) ===
+CREATE FUNCTION v13_mgraph_entities_of(p_segs text[]) RETURNS text[]
+LANGUAGE plpgsql STABLE AS $$
+DECLARE v_stop text[];
+BEGIN
+  IF p_segs IS NULL THEN RETURN ARRAY[]::text[]; END IF;
+  v_stop := coalesce(ARRAY(SELECT jsonb_array_elements_text(
+                             v13_mgraph_policy()->'entity_stopwords')),
+                     ARRAY[]::text[]);
+  RETURN coalesce(ARRAY(
+    SELECT DISTINCT s FROM unnest(p_segs) s
+     WHERE s ~ '^[A-Z][a-z]+$' AND s <> ALL(v_stop)
+     ORDER BY s), ARRAY[]::text[]);
+END $$;
+
+CREATE FUNCTION v13_mgraph_entities(p_body text) RETURNS text[]
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  IF p_body IS NULL OR p_body = '' THEN RETURN ARRAY[]::text[]; END IF;
+  RETURN v13_mgraph_entities_of(
+    ARRAY(SELECT jsonb_array_elements_text(v13_query_segments(p_body))));
+END $$;
+
+-- === §3.4/OQ7 关键词面:latin 段([A-Za-z0-9]+)频次顶 keyword_cap,
+--     并列 token 升序终裁;CJK 段不贡献;不移植年正则 ===
+CREATE FUNCTION v13_mgraph_keywords_of(p_segs text[]) RETURNS text[]
+LANGUAGE plpgsql STABLE AS $$
+DECLARE v_cap int;
+BEGIN
+  IF p_segs IS NULL THEN RETURN ARRAY[]::text[]; END IF;
+  v_cap := (v13_mgraph_policy()->>'keyword_cap')::int;
+  RETURN coalesce(ARRAY(
+    SELECT t FROM (SELECT t, count(*) AS c
+                     FROM unnest(p_segs) t
+                    WHERE t ~ '^[A-Za-z0-9]+$'
+                    GROUP BY t
+                    ORDER BY c DESC, t ASC
+                    LIMIT v_cap) x), ARRAY[]::text[]);
+END $$;
+
+-- === Jaccard(集合交并比;空并集=0——不伪造相似度) ===
+CREATE FUNCTION v13_mgraph_jaccard(p_a text[], p_b text[]) RETURNS numeric
+LANGUAGE sql IMMUTABLE AS $$
+  WITH u AS (
+    SELECT DISTINCT e FROM (
+      SELECT unnest(coalesce(p_a, ARRAY[]::text[])) AS e
+      UNION ALL
+      SELECT unnest(coalesce(p_b, ARRAY[]::text[])) AS e) s)
+  SELECT CASE WHEN (SELECT count(*) FROM u) = 0 THEN 0
+              ELSE (SELECT count(DISTINCT k) FROM unnest(coalesce(p_a, ARRAY[]::text[])) k
+                     WHERE k = ANY(coalesce(p_b, ARRAY[]::text[])))::numeric
+                   / (SELECT count(*) FROM u)::numeric END;
+$$;
+
+-- === OQ7 候选发现 T0(签名三参;p_tinql 必须来自 v13_build_tinql——入口
+--     v13_tinql_terms 文法守卫把用户文本挡在 EXECUTE 串之外,设计 §4.1
+--     三禁;本文件去注释源码的绑定算符计数=恰 1,即本函数 EXECUTE 串;
+--     池=本会话全部 episodic(consolidation 不作候选锚——只经遍历可达);
+--     谓词驱动 stannum 索引扫描,禁裸表扫描后算分;插完全批再计分由
+--     调用点(build ⑤ 全部插入后才进入 ⑦)保证;
+--     score = lexical_coef*lexical_norm + entity_coef*entity_jaccard
+--           + keyword_coef*keyword_jaccard + candidate_recency_coef*recency,
+--     lexical_norm = bm25/max(bm25)(池内归一化),
+--     recency = 1/(1+Δsource_at 秒/halflife)(halflife 键已是秒);
+--     并列 score DESC, content_hash ASC 终裁) ===
+CREATE FUNCTION v13_mgraph_candidates(p_sid uuid, p_tinql text, p_k int)
+RETURNS TABLE(content_hash text, score numeric, lexical_norm numeric)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_pol  jsonb;
+  v_lc numeric; v_ec numeric; v_kc numeric; v_rc numeric;
+  v_hl  numeric; v_cap int;
+  v_terms text[]; v_aent text[]; v_akw text[];
+  v_hashes text[] := ARRAY[]::text[];
+  v_bodies text[] := ARRAY[]::text[];
+  v_ats  timestamptz[] := ARRAY[]::timestamptz[];
+  v_bm25 numeric[] := ARRAY[]::numeric[];
+  v_norms numeric[]; v_scores numeric[];
+  v_n int := 0; v_i int; v_max numeric; r record;
+BEGIN
+  IF p_tinql IS NULL OR p_k IS NULL OR p_k < 1 OR p_k > 1024 THEN
+    RAISE EXCEPTION 'v13: v13_mgraph_candidates args out of bounds'
+      USING ERRCODE = 'V3009';
+  END IF;
+  IF p_tinql = '' THEN RETURN; END IF;
+  v_terms := ARRAY(SELECT jsonb_array_elements_text(v13_tinql_terms(p_tinql)));
+  v_pol := v13_mgraph_policy();
+  v_lc := (v_pol->>'lexical_coef')::numeric;
+  v_ec := (v_pol->>'entity_coef')::numeric;
+  v_kc := (v_pol->>'keyword_coef')::numeric;
+  v_rc := (v_pol->>'candidate_recency_coef')::numeric;
+  v_hl := (v_pol->>'candidate_recency_halflife_s')::numeric;
+  v_aent := v13_mgraph_entities_of(v_terms);
+  v_akw  := v13_mgraph_keywords_of(v_terms);
+  FOR r IN EXECUTE
+       'SELECT n.content_hash AS h, n.body AS b, n.source_at AS at, '
+    || 'stannum.full_score(n.ctid)::numeric AS s '
+    || 'FROM memory_nodes n '
+    || 'WHERE n.session_id = $1 AND n.origin = ''episodic'' AND n.body ==> $2 '
+    || 'ORDER BY n.content_hash ASC'
+    USING p_sid, p_tinql
+  LOOP
+    v_n := v_n + 1;
+    v_hashes[v_n] := r.h; v_bodies[v_n] := r.b;
+    v_ats[v_n] := r.at;  v_bm25[v_n] := r.s;
+  END LOOP;
+  IF v_n = 0 THEN RETURN; END IF;
+  SELECT max(s) INTO v_max FROM unnest(v_bm25) s;
+  v_norms := ARRAY[]::numeric[]; v_scores := ARRAY[]::numeric[];
+  FOR v_i IN 1 .. v_n LOOP
+    v_norms[v_i] := CASE WHEN v_max > 0 THEN v_bm25[v_i] / v_max ELSE 0 END;
+    v_scores[v_i] :=
+        v_lc * v_norms[v_i]
+      + v_ec * v13_mgraph_jaccard(v_aent, v13_mgraph_entities(v_bodies[v_i]))
+      + v_kc * v13_mgraph_jaccard(v_akw,
+          v13_mgraph_keywords_of(ARRAY(SELECT jsonb_array_elements_text(
+            v13_query_segments(v_bodies[v_i])))))
+      + v_rc * (1::numeric / (1::numeric
+          + extract(epoch FROM (now() - v_ats[v_i]))::numeric / v_hl));
+  END LOOP;
+  RETURN QUERY
+  SELECT u.h, u.s, u.ln
+  FROM unnest(v_hashes, v_scores, v_norms) WITH ORDINALITY AS u(h, s, ln, ord)
+  ORDER BY u.s DESC, u.h ASC
+  LIMIT p_k;
+END $$;
+
+-- === §3.4⑦ 关系信封问题集(每 pair 一封;基础三问 semantic/causes/
+--     caused_by;entity 问仅当双方实体集非空且无交集——OQ10;
+--     signal 形状 §1.5:mem_rel::<src>::<dst>::<rel>;state 由调用方组装,
+--     本函数是 entity 闸的单一事实源,亦供 gate 直测) ===
+CREATE FUNCTION v13_mgraph_pair_questions(p_src text, p_dst text,
+                                          p_left_body text, p_right_body text)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_le text[]; v_re text[];
+  v_pre text;
+BEGIN
+  IF p_src IS NULL OR p_src !~ '^[0-9a-f]{64}$'
+     OR p_dst IS NULL OR p_dst !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'v13: pair question endpoints must be 64hex content hashes'
+      USING ERRCODE = 'V3009';
+  END IF;
+  IF p_left_body IS NULL OR p_right_body IS NULL
+     OR octet_length(p_left_body) = 0 OR octet_length(p_right_body) = 0 THEN
+    RAISE EXCEPTION 'v13: pair question bodies must be non-empty'
+      USING ERRCODE = 'V3009';
+  END IF;
+  v_le := v13_mgraph_entities(p_left_body);
+  v_re := v13_mgraph_entities(p_right_body);
+  v_pre := 'mem_rel::' || p_src || '::' || p_dst || '::';
+  RETURN jsonb_build_array(
+    jsonb_build_object('signal', v_pre || 'semantic',
+                       'template_name', 'mem_rel_semantic'),
+    jsonb_build_object('signal', v_pre || 'causes',
+                       'template_name', 'mem_rel_causes'),
+    jsonb_build_object('signal', v_pre || 'caused_by',
+                       'template_name', 'mem_rel_caused_by'))
+  || CASE WHEN cardinality(v_le) > 0 AND cardinality(v_re) > 0
+             AND NOT EXISTS (SELECT 1 FROM unnest(v_le) e WHERE e = ANY(v_re))
+          THEN jsonb_build_array(
+                 jsonb_build_object('signal', v_pre || 'entity',
+                                    'template_name', 'mem_rel_entity'))
+          ELSE '[]'::jsonb END;
+END $$;
+
+-- === §3.4⑧ apply_relations:扫本会话已答 mem_rel:: 行,各 rel 独立过
+--     relation_threshold 才插边,ON CONFLICT DO NOTHING,不镜像反向;
+--     决不重试:迟到 decision 只允许随后的 apply 补插从未写过的边,
+--     不 UPDATE 旧边(行不可变) ===
+CREATE FUNCTION v13_mgraph_apply_relations(p_sid uuid) RETURNS jsonb
+LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+  v_thr numeric; v_pver int; v_ins int := 0;
+  v_parts text[]; r record;
+BEGIN
+  v_thr := (v13_mgraph_policy()->>'relation_threshold')::numeric;
+  SELECT version INTO v_pver FROM v13_policies
+   WHERE name = 'mgraph' AND active;
+  FOR r IN SELECT d.decision_id, d.signal, d.answer
+             FROM decisions d
+            WHERE d.session_id = p_sid
+              AND d.answer IS NOT NULL
+              AND d.status IN ('answered','cached')
+              AND left(d.signal, 9) = 'mem_rel::'
+            ORDER BY d.signal
+  LOOP
+    v_parts := string_to_array(r.signal, '::');
+    IF array_length(v_parts, 1) <> 4
+       OR v_parts[2] !~ '^[0-9a-f]{64}$'
+       OR v_parts[3] !~ '^[0-9a-f]{64}$'
+       OR v_parts[4] NOT IN ('semantic','causes','caused_by','entity') THEN
+      RAISE EXCEPTION 'v13: malformed mem_rel signal (%)', r.signal
+        USING ERRCODE = 'V3009';
+    END IF;
+    IF jsonb_typeof(r.answer->'noul') IS DISTINCT FROM 'number' THEN
+      RAISE EXCEPTION 'v13: mem_rel decision answer lacks numeric noul (%)',
+        r.signal USING ERRCODE = 'V3009';
+    END IF;
+    IF (r.answer->>'noul')::numeric >= v_thr THEN
+      INSERT INTO memory_links (session_id, src_hash, dst_hash, rel,
+                                origin, decision_id, structural,
+                                policy_version)
+      VALUES (p_sid, v_parts[2], v_parts[3], v_parts[4], 'jev',
+              r.decision_id, NULL, v_pver)
+      ON CONFLICT DO NOTHING;
+      IF FOUND THEN v_ins := v_ins + 1; END IF;
+    END IF;
+  END LOOP;
+  RETURN jsonb_build_object('jev_edges', v_ins);
+END $$;
+
+-- === §3.4 写路径 v13_mgraph_build(sid, limit):①write_enabled 假→
+--     skipped:disabled 零写;②admission_enabled 真→V3009(策略读取器
+--     「保留但响亮」执法,在取策略时即炸);③freshness.degraded→
+--     skipped:degraded 零写;④整次 build 会话级咨询锁
+--     pg_advisory_lock(v13_lock_key(sid,'mgraph-build'))(结束释放;
+--     与读环每轮的 xact 同 key 跨级互斥);⑤watermark 后 transcript 行
+--     插 episodic 节点 ON CONFLICT DO NOTHING(seq 升序→同文折叠保留
+--     source_at 最早者;source_at=events.at 回查,不变量 8);⑥先 DELETE
+--     本会话 origin='temporal' 边再按 source_at ASC,content_hash ASC
+--     全量重连;⑦发问从 rel_cursor 之后按插入序(首现 seq 升序)推进:
+--     每节点类型信封(四 Noul 一 state)→resolve→只记录,然后
+--     v13_build_tinql(body)→candidates 取对(锚自身除外),每 pair 一封
+--     关系信封,lexical_norm≥graph_activation_threshold 插 proximity 边
+--     (structural=lexical_norm);帽(spend.over/write_max_batches/
+--     write_max_asks,计数=judgment_calls 行增量=每封发出即+1 含失败批)
+--     任一用尽→停在断点;resolve failed→停(节点不标记完成);
+--     ⑧apply_relations(幂等,零 ask);⑨收尾一律先把 rel_cursor 推到
+--     「类型+关系问全部落账」的末节点再把 watermark 推到其首现 seq,
+--     两列同批提交(帽尽=断点,全部完成=本次末节点);generation 仅在
+--     图内容有净变化时 +1 ===
+CREATE FUNCTION v13_mgraph_build(p_sid uuid, p_limit int DEFAULT 100)
+RETURNS jsonb LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+  v_pol jsonb; v_pver int; v_wmb int; v_wma int;
+  v_act numeric; v_topk int;
+  v_provider text; v_model text;
+  v_meta v13_mgraph_meta%ROWTYPE;
+  v_wm0 bigint; v_floor bigint;
+  v_asks int := 0; v_failed boolean := false; v_stop text; v_skipped text;
+  v_nodes int := 0; v_tdel int := 0; v_tins int := 0;
+  v_pins int := 0; v_jins int := 0;
+  v_c0 bigint; v_c1 bigint; v_res jsonb; v_env jsonb;
+  v_state jsonb; v_questions jsonb; v_tinql text; v_rbody text;
+  v_node record; v_cand record;
+  v_last_hash text; v_last_seq bigint;
+  v_cursor_new text; v_wm_new bigint; v_done_floor bigint;
+  v_pending int; v_changed boolean; v_ret jsonb; v_jret jsonb;
+BEGIN
+  v_pol := v13_mgraph_policy();                       -- ② loud keys fire here
+  IF NOT (v_pol->>'write_enabled')::boolean THEN      -- ①
+    RETURN jsonb_build_object('status','skipped','skipped','disabled',
+                              'failed', false, 'asks', 0);
+  END IF;
+  IF (v13_transcript_freshness(p_sid)->>'degraded')::boolean THEN  -- ③
+    RETURN jsonb_build_object('status','skipped','skipped','degraded',
+                              'failed', false, 'asks', 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM sessions WHERE session_id = p_sid) THEN
+    RAISE EXCEPTION 'v13: mgraph build on unknown session (%)', p_sid
+      USING ERRCODE = 'V3009';
+  END IF;
+  IF p_limit IS NOT NULL AND p_limit < 1 THEN
+    RAISE EXCEPTION 'v13: mgraph build limit must be >= 1 or NULL (unbounded)'
+      USING ERRCODE = 'V3009';
+  END IF;
+  v_pver := (SELECT version FROM v13_policies WHERE name = 'mgraph' AND active);
+  v_wmb := (v_pol->>'write_max_batches')::int;
+  v_wma := (v_pol->>'write_max_asks')::int;
+  v_act := (v_pol->>'graph_activation_threshold')::numeric;
+  v_topk := (v_pol->>'candidate_top_k')::int;
+  -- provider/model 一次捕获(首次 ask 后占位符被清除,后续信封一律显式传参;
+  -- 已花费的连接在此响亮失败 V3002,驱动每 tick 用新连接——README 运维注记)
+  v_provider := v13_guc_required('typesafe.provider');
+  v_model := v13_guc_required('typesafe.model');
+
+  PERFORM pg_advisory_lock(v13_lock_key(p_sid, 'mgraph-build'));  -- ④
+  BEGIN
+    -- 锁后重读状态(并发第二连接在此之后只见已提交前缀)
+    SELECT * INTO v_meta FROM v13_mgraph_meta WHERE session_id = p_sid;
+    v_wm0 := coalesce(v_meta.transcript_watermark, -1);
+    v_floor := -1;
+    IF v_meta.rel_cursor IS NOT NULL THEN
+      SELECT coalesce(min(t.seq_from), -1) INTO v_floor
+        FROM transcript_chunks t
+       WHERE t.session_id = p_sid AND t.content_hash = v_meta.rel_cursor;
+    END IF;
+
+    -- ⑤ episodic 投影插入(seq 升序→折叠保最早 source_at)
+    INSERT INTO memory_nodes (session_id, content_hash, body, origin,
+                              source_hashes, source_at, builder_version)
+    SELECT t.session_id, t.content_hash, t.body, 'episodic',
+           ARRAY[t.content_hash], e.at, v_pver
+      FROM transcript_chunks t
+      JOIN events e ON e.session_id = t.session_id AND e.seq = t.seq_from
+     WHERE t.session_id = p_sid AND t.seq_from > v_wm0
+     ORDER BY t.seq_from
+     LIMIT p_limit
+    ON CONFLICT (session_id, content_hash) DO NOTHING;
+    GET DIAGNOSTICS v_nodes = ROW_COUNT;
+
+    -- ⑥ temporal 全量重连(先 DELETE 后重连:新节点落在两旧节点之间时
+    --    旧跨接边必须消失)
+    DELETE FROM memory_links
+     WHERE session_id = p_sid AND origin = 'temporal';
+    GET DIAGNOSTICS v_tdel = ROW_COUNT;
+    WITH ord AS (
+      SELECT content_hash,
+             row_number() OVER (ORDER BY source_at ASC, content_hash ASC) AS rn
+        FROM memory_nodes
+       WHERE session_id = p_sid AND origin = 'episodic'),
+    lnk AS (
+      SELECT a.content_hash AS src, b.content_hash AS dst
+        FROM ord a JOIN ord b ON b.rn = a.rn + 1)
+    INSERT INTO memory_links (session_id, src_hash, dst_hash, rel, origin,
+                              decision_id, structural, policy_version)
+    SELECT p_sid, src, dst, 'temporal', 'temporal', NULL, NULL, v_pver
+      FROM lnk
+    ON CONFLICT DO NOTHING;
+    GET DIAGNOSTICS v_tins = ROW_COUNT;
+
+    -- ⑦ 发问循环(类型→关系;锚=本节点 tinql,候选对=池内其余节点)
+    <<nodes>> FOR v_node IN
+      SELECT f.content_hash, f.body, f.first_seq
+        FROM (SELECT n.content_hash, n.body,
+                     min(t.seq_from) AS first_seq
+                FROM memory_nodes n
+                JOIN transcript_chunks t
+                  ON t.session_id = n.session_id
+                 AND t.content_hash = n.content_hash
+               WHERE n.session_id = p_sid AND n.origin = 'episodic'
+               GROUP BY n.content_hash, n.body) f
+       WHERE f.first_seq > v_floor
+       ORDER BY f.first_seq ASC, f.content_hash ASC
+    LOOP
+      -- (a) 类型信封:四 Noul 一 state
+      IF v_stop IS NULL THEN
+        IF (v13_judge_spend(p_sid)->>'over')::boolean THEN v_stop := 'spend';
+        ELSIF v_asks >= v_wmb THEN v_stop := 'batches';
+        ELSIF v_asks >= v_wma THEN v_stop := 'asks';
+        END IF;
+      END IF;
+      EXIT nodes WHEN v_stop IS NOT NULL;
+      v_state := jsonb_build_object('body', v_node.body);
+      v_questions := jsonb_build_array(
+        jsonb_build_object('signal',
+          'mem_type::' || v_node.content_hash || '::episodic',
+          'template_name', 'mem_type_episodic'),
+        jsonb_build_object('signal',
+          'mem_type::' || v_node.content_hash || '::semantic',
+          'template_name', 'mem_type_semantic'),
+        jsonb_build_object('signal',
+          'mem_type::' || v_node.content_hash || '::procedural',
+          'template_name', 'mem_type_procedural'),
+        jsonb_build_object('signal',
+          'mem_type::' || v_node.content_hash || '::preference',
+          'template_name', 'mem_type_preference'));
+      v_env := v13_mgraph_envelope(p_sid, v_state, v_questions, v_provider, v_model);
+      SELECT count(*) INTO v_c0 FROM judgment_calls WHERE session_id = p_sid;
+      SELECT v13_resolve_judgments(v_env, 1) INTO v_res;
+      SELECT count(*) INTO v_c1 FROM judgment_calls WHERE session_id = p_sid;
+      v_asks := v_asks + (v_c1 - v_c0)::int;
+      IF coalesce(v_res->>'failed', 'false')::boolean THEN
+        v_failed := true; v_stop := 'failed'; EXIT nodes;
+      END IF;
+
+      -- (b) 候选对:proximity 结构边 + 每 pair 一封关系信封
+      v_tinql := v13_build_tinql(v_node.body);
+      FOR v_cand IN SELECT * FROM v13_mgraph_candidates(p_sid, v_tinql, v_topk)
+      LOOP
+        IF v_cand.content_hash = v_node.content_hash THEN CONTINUE; END IF;
+        IF v_cand.lexical_norm >= v_act THEN
+          INSERT INTO memory_links (session_id, src_hash, dst_hash, rel,
+                                    origin, decision_id, structural,
+                                    policy_version)
+          VALUES (p_sid, v_node.content_hash, v_cand.content_hash,
+                  'proximity', 'proximity', NULL, v_cand.lexical_norm, v_pver)
+          ON CONFLICT DO NOTHING;
+          IF FOUND THEN v_pins := v_pins + 1; END IF;
+        END IF;
+        SELECT body INTO v_rbody FROM memory_nodes
+         WHERE session_id = p_sid AND content_hash = v_cand.content_hash;
+        v_questions := v13_mgraph_pair_questions(
+                         v_node.content_hash, v_cand.content_hash,
+                         v_node.body, v_rbody);
+        v_state := jsonb_build_object(
+          'left',  jsonb_build_object('content', v_node.body,
+                      'entities', to_jsonb(v13_mgraph_entities(v_node.body))),
+          'right', jsonb_build_object('content', v_rbody,
+                      'entities', to_jsonb(v13_mgraph_entities(v_rbody))));
+        IF v_stop IS NULL THEN
+          IF (v13_judge_spend(p_sid)->>'over')::boolean THEN v_stop := 'spend';
+          ELSIF v_asks >= v_wmb THEN v_stop := 'batches';
+          ELSIF v_asks >= v_wma THEN v_stop := 'asks';
+          END IF;
+        END IF;
+        EXIT nodes WHEN v_stop IS NOT NULL;
+        v_env := v13_mgraph_envelope(p_sid, v_state, v_questions);
+        SELECT count(*) INTO v_c0 FROM judgment_calls WHERE session_id = p_sid;
+        SELECT v13_resolve_judgments(v_env, 1) INTO v_res;
+        SELECT count(*) INTO v_c1 FROM judgment_calls WHERE session_id = p_sid;
+        v_asks := v_asks + (v_c1 - v_c0)::int;
+        IF coalesce(v_res->>'failed', 'false')::boolean THEN
+          v_failed := true; v_stop := 'failed'; EXIT nodes;
+        END IF;
+      END LOOP;
+      v_last_hash := v_node.content_hash; v_last_seq := v_node.first_seq;
+                                       -- 类型+关系问全部落账
+    END LOOP nodes;
+
+    -- ⑧ apply(幂等,零 ask)
+    v_jret := v13_mgraph_apply_relations(p_sid);
+    v_jins := (v_jret->>'jev_edges')::int;
+
+    -- ⑨ 收尾:先推 cursor 再推 watermark,两列同批
+    v_cursor_new := v_meta.rel_cursor;
+    v_wm_new := v_wm0;
+    IF v_last_hash IS NOT NULL THEN
+      v_cursor_new := v_last_hash;
+      v_wm_new := v_last_seq;
+    END IF;
+    v_done_floor := -1;
+    IF v_cursor_new IS NOT NULL THEN
+      SELECT coalesce(min(t.seq_from), -1) INTO v_done_floor
+        FROM transcript_chunks t
+       WHERE t.session_id = p_sid AND t.content_hash = v_cursor_new;
+    END IF;
+    SELECT count(*) INTO v_pending
+      FROM (SELECT n.content_hash, min(t.seq_from) AS fs
+              FROM memory_nodes n
+              JOIN transcript_chunks t
+                ON t.session_id = n.session_id
+               AND t.content_hash = n.content_hash
+             WHERE n.session_id = p_sid AND n.origin = 'episodic'
+             GROUP BY n.content_hash) f
+     WHERE f.fs > v_done_floor;
+    v_changed := (v_nodes + v_pins + v_jins) > 0 OR (v_tins <> v_tdel);
+    INSERT INTO v13_mgraph_meta (session_id, generation,
+                                 transcript_watermark, rel_cursor,
+                                 nodes_since_consolidate)
+    VALUES (p_sid, CASE WHEN v_changed THEN 1 ELSE 0 END,
+            v_wm_new, v_cursor_new, 0)
+    ON CONFLICT (session_id) DO UPDATE SET
+      generation = v13_mgraph_meta.generation
+                   + CASE WHEN v_changed THEN 1 ELSE 0 END,
+      transcript_watermark = EXCLUDED.transcript_watermark,
+      rel_cursor = EXCLUDED.rel_cursor;
+
+    IF v_stop = 'spend' AND v_asks = 0 THEN v_skipped := 'spend'; END IF;
+    v_ret := jsonb_build_object(
+      'status', CASE WHEN v_skipped IS NOT NULL THEN 'skipped'
+                     WHEN v_stop IS NOT NULL THEN 'stopped' ELSE 'ok' END,
+      'skipped', v_skipped,
+      'stop_reason', v_stop,
+      'failed', v_failed,
+      'nodes_inserted', v_nodes,
+      'temporal_deleted', v_tdel, 'temporal_edges', v_tins,
+      'proximity_edges', v_pins, 'jev_edges', v_jins,
+      'asks', v_asks, 'pending_nodes', v_pending,
+      'rel_cursor', v_cursor_new, 'watermark', v_wm_new);
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM pg_advisory_unlock(v13_lock_key(p_sid, 'mgraph-build'));
+    RAISE;
+  END;
+  PERFORM pg_advisory_unlock(v13_lock_key(p_sid, 'mgraph-build'));
+  RETURN v_ret;
+END $$;
+
+-- === §3.5 rebuild:DELETE 全部 episodic 节点 + 两端都不是 consolidation
+--     节点的边(按端点判定——不变量 6 的完整实现)→ watermark=-1 且
+--     rel_cursor=NULL 两列一起复位 →build(无界 limit);write 关/degraded
+--     时拒绝(fail-closed:build 会 skip 而图已删——计划未言明,取拒绝);
+--     与 build 同 key 会话级咨询锁(可重入栈式);固化节点及其关联边
+--     不在删除面 ===
+CREATE FUNCTION v13_mgraph_rebuild(p_sid uuid) RETURNS jsonb
+LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+  v_pol jsonb; v_nd int := 0; v_ld int := 0; v_ret jsonb;
+BEGIN
+  v_pol := v13_mgraph_policy();
+  IF NOT (v_pol->>'write_enabled')::boolean THEN
+    RAISE EXCEPTION
+      'v13: rebuild requires write_enabled (build would skip leaving the graph deleted)'
+      USING ERRCODE = 'V3009';
+  END IF;
+  IF (v13_transcript_freshness(p_sid)->>'degraded')::boolean THEN
+    RAISE EXCEPTION 'v13: rebuild refused while transcript freshness degraded'
+      USING ERRCODE = 'V3009';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM sessions WHERE session_id = p_sid) THEN
+    RAISE EXCEPTION 'v13: mgraph rebuild on unknown session (%)', p_sid
+      USING ERRCODE = 'V3009';
+  END IF;
+  PERFORM pg_advisory_lock(v13_lock_key(p_sid, 'mgraph-build'));
+  BEGIN
+    DELETE FROM memory_links l
+     WHERE l.session_id = p_sid
+       AND NOT EXISTS (SELECT 1 FROM memory_nodes c
+                        WHERE c.session_id = l.session_id
+                          AND c.content_hash = l.src_hash
+                          AND c.origin = 'consolidation')
+       AND NOT EXISTS (SELECT 1 FROM memory_nodes c
+                        WHERE c.session_id = l.session_id
+                          AND c.content_hash = l.dst_hash
+                          AND c.origin = 'consolidation');
+    GET DIAGNOSTICS v_ld = ROW_COUNT;
+    DELETE FROM memory_nodes
+     WHERE session_id = p_sid AND origin = 'episodic';
+    GET DIAGNOSTICS v_nd = ROW_COUNT;
+    UPDATE v13_mgraph_meta
+       SET transcript_watermark = -1, rel_cursor = NULL
+     WHERE session_id = p_sid;
+    v_ret := v13_mgraph_build(p_sid, NULL);
+  EXCEPTION WHEN OTHERS THEN
+    PERFORM pg_advisory_unlock(v13_lock_key(p_sid, 'mgraph-build'));
+    RAISE;
+  END;
+  PERFORM pg_advisory_unlock(v13_lock_key(p_sid, 'mgraph-build'));
+  RETURN jsonb_build_object('nodes_deleted', v_nd, 'links_deleted', v_ld,
+                            'build', v_ret);
+END $$;
+
+-- === §4 ACL(M2 面;列举式 REVOKE,零 DEFINER;rebuild/DELETE 仍仅 owner) ===
+REVOKE EXECUTE ON FUNCTION
+  v13_mgraph_entities_of(text[]), v13_mgraph_entities(text),
+  v13_mgraph_keywords_of(text[]), v13_mgraph_jaccard(text[],text[]),
+  v13_mgraph_candidates(uuid,text,int),
+  v13_mgraph_pair_questions(text,text,text,text),
+  v13_mgraph_apply_relations(uuid), v13_mgraph_build(uuid,int),
+  v13_mgraph_rebuild(uuid)
+FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION
+  v13_mgraph_entities_of(text[]), v13_mgraph_entities(text),
+  v13_mgraph_keywords_of(text[]), v13_mgraph_jaccard(text[],text[]),
+  v13_mgraph_candidates(uuid,text,int),
+  v13_mgraph_pair_questions(text,text,text,text),
+  v13_mgraph_apply_relations(uuid), v13_mgraph_build(uuid,int)
+TO v13_resolve;                              -- 写路径驱动面(resolve_login)
+GRANT EXECUTE ON FUNCTION v13_mgraph_candidates(uuid,text,int)
+TO v13_recall;                               -- M3 读环锚复用(同写路径函数)
+-- v13_mgraph_rebuild:owner only(§3.5 owner 平面)
+GRANT INSERT, UPDATE ON v13_mgraph_meta TO v13_resolve;  -- build 终态 upsert 面
+
+COMMIT;
+
+BEGIN;
+
+-- =========================================================================
+-- DP9 M2 addendum: envelope constructor provider/model passthrough.
+-- typesafe.provider is a placeholder GUC that is PURGED when the typesafe
+-- extension library loads (the connection's first judgment IO) and cannot
+-- be re-set afterward (reserved prefix) — a connection that has asked can
+-- never construct another envelope via the GUC-reading path. Build loops
+-- envelope→resolve→envelope, so it must capture provider/model ONCE at start
+-- and pass them explicitly to every construction (same-file CREATE OR
+-- REPLACE + a wider-signature overload; the 3-arg M1 face stays callable
+-- and its ACL survives the body swap). Drivers should run one build tick
+-- per fresh connection (README ops note); the capture fails loud (V3002)
+-- on a spent connection instead of silently re-keying the cache.
+-- =========================================================================
+
+CREATE FUNCTION v13_mgraph_envelope(p_sid uuid, p_state jsonb, p_questions jsonb,
+                                    p_provider text, p_model text)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_provider text; v_model text;
+  v_n int; v_q jsonb; v_t judgment_templates%ROWTYPE;
+  v_needed jsonb := '[]'::jsonb;
+  v_templates jsonb := '{}'::jsonb;
+  v_signals text[] := '{}';
+  v_pkey text; v_proj jsonb;
+BEGIN
+  IF p_state IS NULL OR jsonb_typeof(p_state) IS DISTINCT FROM 'object' THEN
+    RAISE EXCEPTION 'v13: mgraph envelope state must be a jsonb object'
+      USING ERRCODE = 'V3009';
+  END IF;
+  IF p_questions IS NULL OR jsonb_typeof(p_questions) IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'v13: mgraph envelope questions must be a jsonb array'
+      USING ERRCODE = 'V3009';
+  END IF;
+  v_n := jsonb_array_length(p_questions);
+  IF v_n < 1 OR v_n > 32 THEN
+    RAISE EXCEPTION 'v13: mgraph envelope needs 1..32 questions (one state per envelope)'
+      USING ERRCODE = 'V3009';
+  END IF;
+  IF coalesce(btrim(p_provider), '') <> '' THEN
+    v_provider := btrim(p_provider);
+  ELSE
+    v_provider := v13_guc_required('typesafe.provider');
+  END IF;
+  IF coalesce(btrim(p_model), '') <> '' THEN
+    v_model := btrim(p_model);
+  ELSE
+    v_model := v13_guc_required('typesafe.model');
+  END IF;
+  FOR v_q IN SELECT value FROM jsonb_array_elements(p_questions) LOOP
+    IF jsonb_typeof(v_q) IS DISTINCT FROM 'object'
+       OR v_q->>'signal' IS NULL OR btrim(v_q->>'signal') = ''
+       OR v_q->>'template_name' IS NULL THEN
+      RAISE EXCEPTION 'v13: mgraph envelope question entries need signal+template_name'
+        USING ERRCODE = 'V3009';
+    END IF;
+    IF left(v_q->>'signal', 4) <> 'mem_' THEN
+      RAISE EXCEPTION 'v13: mgraph envelope signals must carry the mem_ prefix (%)',
+        v_q->>'signal' USING ERRCODE = 'V3009';
+    END IF;
+    IF v_q->>'signal' = ANY(v_signals) THEN
+      RAISE EXCEPTION 'v13: mgraph envelope duplicate signal (%)', v_q->>'signal'
+        USING ERRCODE = 'V3009';
+    END IF;
+    SELECT t.* INTO v_t
+      FROM judgment_templates t
+      JOIN v13_judgment_template_versions w
+        ON w.template_name = t.template_name
+       AND w.template_version = t.template_version
+     WHERE t.template_name = v_q->>'template_name' AND w.state = 'frozen'
+     ORDER BY t.template_version DESC LIMIT 1;
+    IF v_t.template_name IS NULL THEN
+      RAISE EXCEPTION 'v13: frozen template % missing (seed lost?)',
+        v_q->>'template_name' USING ERRCODE = 'V3009';
+    END IF;
+    v_proj := v_t.projection;
+    IF v_pkey IS NULL THEN
+      v_pkey := v13_projection_key(v_proj);
+      IF EXISTS (SELECT 1 FROM jsonb_array_elements_text(v_proj) p
+                  WHERE NOT p_state ? p) THEN
+        RAISE EXCEPTION
+          'v13: mgraph envelope state misses a projection path (%)', v_pkey
+          USING ERRCODE = 'V3009';
+      END IF;
+    ELSIF v13_projection_key(v_proj) IS DISTINCT FROM v_pkey THEN
+      RAISE EXCEPTION
+        'v13: mgraph envelope questions must share one projection (one state per envelope)'
+        USING ERRCODE = 'V3009';
+    END IF;
+    v_needed := v_needed || (
+      CASE WHEN v_t.criteria IS NULL THEN
+        jsonb_build_object('signal', v_q->>'signal', 'kind', v_t.kind,
+                           'question', v_t.question,
+                           'template_name', v_t.template_name)
+      ELSE
+        jsonb_build_object('signal', v_q->>'signal', 'kind', v_t.kind,
+                           'question', v_t.question,
+                           'criteria', v_t.criteria,
+                           'template_name', v_t.template_name)
+      END);
+    v_templates := v_templates || jsonb_build_object(v_t.template_name,
+      jsonb_build_object('version', v_t.template_version, 'kind', v_t.kind,
+                         'projection', v_t.projection,
+                         'answer_schema_version', v_t.answer_schema_version));
+    v_signals := v_signals || ARRAY[v_q->>'signal'];
+  END LOOP;
+  RETURN jsonb_build_object(
+    'sid', p_sid,
+    'ctx', p_state,
+    'needed', v_needed,
+    'templates', v_templates,
+    'groups', jsonb_build_array(jsonb_build_object(
+       'projection_key', v_pkey, 'state', p_state)),
+    'budget', jsonb_build_object('batch_questions', v_n),
+    'timeout_ms', NULLIF(current_setting('typesafe.timeout_ms', true), ''),
+    'candidate_set_hash',
+      encode(digest(jsonb_build_object(
+        'signals', (SELECT jsonb_agg(s ORDER BY s) FROM unnest(v_signals) s),
+        'state', p_state)::text, 'sha256'), 'hex'),
+    'provider', v_provider, 'model', v_model,
+    'goal_hash', v13_goal_hash(p_sid),
+    'candidates', '[]'::jsonb);
+END $$;
+
+-- 3 参 M1 面保持可调(OR REPLACE 换体不改签名,ACL 经 OID 保留)
+CREATE OR REPLACE FUNCTION v13_mgraph_envelope(p_sid uuid, p_state jsonb,
+                                               p_questions jsonb)
+RETURNS jsonb LANGUAGE sql STABLE AS
+  $$ SELECT v13_mgraph_envelope($1, $2, $3, NULL, NULL) $$;
+
+REVOKE EXECUTE ON FUNCTION
+  v13_mgraph_envelope(uuid,jsonb,jsonb,text,text)
+FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION
+  v13_mgraph_envelope(uuid,jsonb,jsonb,text,text)
+TO v13_resolve;                              -- build 内部显式传参面
 
 COMMIT;
