@@ -75,7 +75,7 @@ validate-spawn + cache probe）、shadow 即查询（observe/streak，flip=人�
 | 5 | shadow_streak 列名 | events 时间列= `at`（草案 created_at）；同事务时间戳 tie 由 fixture 显式 `at` 错开 |
 | 6 | intent_gate 对齐加载态 | thresholds 实列名 `policy_name/policy_version`（草案 route_policy_*）；DP5 分段器返回**纯文本段数组**（单类游程）⇒ CJK 判定=段首字符码位（区间常量镜像 DP5 同组） |
 | 7 | PG18 词法/优先级 | render_wire marker 首字面量 `'['::text` 消歧（`[` 开头字面量在 PL/pgSQL 赋值语境被按 JSON 解析）；`||`/`->>` 同层左结合 ⇒ `(s->>'k')` 括号 |
-| 8 | A5 扫描口径 | 新 RAISE 全 V3008（**34** 检查点）；全文 RAISE/errcode=104/97 纸面钉死（裸 7 条=机械复制体逐条在案：context_required 每输入 ×3+refresh 入口 ×2+blob_land ×1+validate 多行 ×1） |
+| 8 | A5 扫描口径 | 新 RAISE 全 V3008（**34** 检查点）；全文 RAISE/errcode=104/97 纸面钉死（裸 7 条=机械复制体逐条在案：context_required 每输入 ×4+refresh 入口 ×2+blob_land ×1；validate 的 RAISE 全部带 ERRCODE、不计入 bare） |
 | 9 | A12 files_cutoff | **不落列**：v2 节自述「执法侧立法、换体登记=不适用」，A–I gate/§4.2/README 必记均无它，v13 无 file pointer/epoch/git tips 数据源；激活缝随 R0a（SQL 内注记+本条） |
 | 10 | latch_fire/fork REVOKE PUBLIC | plan §3.8 草案 REVOKE 清单遗漏两 DEFINER 面（默认 PUBLIC 可执行）；gate A6 负向抓获后补 |
 | 11 | invoker 链 ACL 补全 | manifest 既有授予使 resolve/recall 可执行 prefix_identity/context_required/render（INVOKER）⇒ 子函数（generation_effective/latch_digest/ident_ver/render_wire/render_section_body）EXECUTE 随家族补齐三角色 |

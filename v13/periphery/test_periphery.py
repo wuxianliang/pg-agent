@@ -383,8 +383,8 @@ def main() -> int:
     raises = norm.count("RAISE EXCEPTION")
     errcoded = norm.count("USING ERRCODE")
     check("A5: RAISE/errcode paper checkpoint (104/97; bare 7 = verbatim "
-          "copies: context_required per-input ×3 + refresh entry ×2 + "
-          "blob_land produced_by ×1 + validate multi-line ×1)",
+          "copies: context_required per-input ×4 + refresh entry ×2 + "
+          "blob_land produced_by ×1; validate RAISEs all carry ERRCODE)",
           raises == 104 and errcoded == 97, (raises, errcoded))
 
     # A6 ACL(双登录)
