@@ -94,7 +94,7 @@ CREATE TABLE memory_links (
 );
 
 -- 一跳 JOIN 的两向 btree(OQ1 机制:桶→rel 过滤经 rels[] 入参承载;
--- 邻居函数 M2 落地,索引先行)
+-- 邻居函数 M3 落地,索引先行)
 CREATE INDEX ix_memory_links_src
   ON memory_links (session_id, src_hash, rel);
 CREATE INDEX ix_memory_links_dst
@@ -193,11 +193,12 @@ DECLARE
   v_nnnnum text[] := ARRAY['lexical_coef','entity_coef','keyword_coef'];
   v_posint text[] := ARRAY['candidate_top_k','total_graph_budget','beam_width',
                            'maximum_depth','maximum_nodes','maximum_edges',
-                           'maximum_jev_calls','max_latency_ms','keyword_cap',
+                           'maximum_jev_calls','keyword_cap',
                            'candidate_recency_halflife_s','write_max_batches',
                            'deterministic_floor','inject_top_k',
                            'consolidate_max_body_bytes','write_max_asks'];
-  v_nznint text[] := ARRAY['consolidation_interval'];
+  -- max_latency_ms 允许 0(E7:0 = 第一轮提交后即 latency 停);其余计数仍 ≥1
+  v_nznint text[] := ARRAY['consolidation_interval','max_latency_ms'];
   k        text;
 BEGIN
   SELECT value INTO v FROM v13_policies WHERE name = 'mgraph' AND active;
@@ -1212,7 +1213,7 @@ DECLARE
   v_needed jsonb := '[]'::jsonb;
   v_templates jsonb := '{}'::jsonb;
   v_signals text[] := '{}';
-  v_pkey text; v_proj jsonb;
+  v_pkey text; v_proj jsonb; v_timeout text;
 BEGIN
   IF p_state IS NULL OR jsonb_typeof(p_state) IS DISTINCT FROM 'object' THEN
     RAISE EXCEPTION 'v13: mgraph envelope state must be a jsonb object'
@@ -1226,6 +1227,12 @@ BEGIN
   IF v_n < 1 OR v_n > 32 THEN
     RAISE EXCEPTION 'v13: mgraph envelope needs 1..32 questions (one state per envelope)'
       USING ERRCODE = 'V3009';
+  END IF;
+  -- typesafe.timeout_ms 的扩展默认值是时长串(30s)。judgment_calls.timeout_ms
+  -- 是 int;非数字就不写入信封,避免把整批 ask 打成 22P02。
+  v_timeout := nullif(btrim(current_setting('typesafe.timeout_ms', true)), '');
+  IF v_timeout IS NOT NULL AND v_timeout !~ '^[0-9]+$' THEN
+    v_timeout := NULL;
   END IF;
   IF coalesce(btrim(p_provider), '') <> '' THEN
     v_provider := btrim(p_provider);
@@ -1302,7 +1309,7 @@ BEGIN
     'groups', jsonb_build_array(jsonb_build_object(
        'projection_key', v_pkey, 'state', p_state)),
     'budget', jsonb_build_object('batch_questions', v_n),
-    'timeout_ms', NULLIF(current_setting('typesafe.timeout_ms', true), ''),
+    'timeout_ms', v_timeout,
     'candidate_set_hash',
       encode(digest(jsonb_build_object(
         'signals', (SELECT jsonb_agg(s ORDER BY s) FROM unnest(v_signals) s),
@@ -1324,5 +1331,1254 @@ FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION
   v13_mgraph_envelope(uuid,jsonb,jsonb,text,text)
 TO v13_resolve;                              -- build 内部显式传参面
+
+COMMIT;
+
+BEGIN;
+
+-- =========================================================================
+-- DP9 M3 read loop B1 (v13_mgraph.sql M3 segment): deterministic route,
+-- Hamilton allocate, one-step run_round, should_stop, evidence export.
+-- Plan §1.3 OQ1/OQ2/OQ3/OQ8/OQ11, §3.1 walks/rounds, §3.4 read path, §5 E.
+-- Zero effect, zero resolve/failed, zero session row lock. Judgment IO only
+-- via v13_resolve_judgments. One envelope per run_round call (mock GUC is
+-- one batch shape — same stepping discipline as write_max_batches).
+-- Error family V3009. No new bind operator. No DEFINER.
+-- =========================================================================
+
+-- === §3.1 memory_walks / memory_rounds (M1 未建,本里程碑补)
+--     walk 唯一 (session, query_hash, generation, policy_version);
+--     status open|stopped;stopped 不因迟到信号重开。
+--     round PK (walk_id, round):重放已存在轮次不再扩展。 ===
+CREATE TABLE memory_walks (
+  walk_id            uuid PRIMARY KEY,
+  session_id         uuid NOT NULL REFERENCES sessions (session_id),
+  query_hash         text NOT NULL CHECK (query_hash ~ '^[0-9a-f]{64}$'),
+  mgraph_generation  bigint NOT NULL CHECK (mgraph_generation >= 0),
+  policy_version     int NOT NULL CHECK (policy_version >= 1),
+  frontier           jsonb NOT NULL DEFAULT '[]'::jsonb,
+  budgets            jsonb NOT NULL DEFAULT '{}'::jsonb,
+  calls_used         int NOT NULL DEFAULT 0 CHECK (calls_used >= 0),
+  nodes_used         int NOT NULL DEFAULT 0 CHECK (nodes_used >= 0),
+  edges_used         int NOT NULL DEFAULT 0 CHECK (edges_used >= 0),
+  depth              int NOT NULL DEFAULT 0 CHECK (depth >= 0),
+  stop_reason        text,
+  status             text NOT NULL CHECK (status IN ('open','stopped')),
+  UNIQUE (session_id, query_hash, mgraph_generation, policy_version)
+);
+
+CREATE TABLE memory_rounds (
+  walk_id      uuid NOT NULL REFERENCES memory_walks (walk_id),
+  round        int NOT NULL CHECK (round >= 1),
+  frontier_in  jsonb,
+  frontier_out jsonb NOT NULL,
+  basis        jsonb,
+  asks         int NOT NULL DEFAULT 0 CHECK (asks >= 0),
+  PRIMARY KEY (walk_id, round)
+);
+
+-- 确定性 walk 身份:同一 (sid,qhash,gen,policy) 永远同一 uuid,
+-- 信号 mem_trav/mem_stop 在驱动发问前就可计算。
+CREATE FUNCTION v13_mgraph_walk_id(p_sid uuid, p_qhash text,
+                                   p_gen bigint, p_pver int)
+RETURNS uuid LANGUAGE sql IMMUTABLE AS $$
+  SELECT md5(p_sid::text || ':' || p_qhash || ':' || p_gen::text
+             || ':' || p_pver::text)::uuid;
+$$;
+
+-- 桶→rel(唯一映射;recency 与 temporal 同边集,调用方按 source_at 重排)
+CREATE FUNCTION v13_mgraph_bucket_rels(p_bucket text)
+RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE p_bucket
+    WHEN 'semantic' THEN ARRAY['semantic','related_to','redundant_with','contradicts']
+    WHEN 'temporal' THEN ARRAY['temporal']
+    WHEN 'causal'   THEN ARRAY['causes','caused_by']
+    WHEN 'entity'   THEN ARRAY['entity']
+    WHEN 'recency'  THEN ARRAY['temporal']
+    WHEN 'multi_hop' THEN ARRAY['semantic','causes','caused_by','entity','temporal',
+                                'proximity','contradicts','redundant_with','related_to']
+    ELSE NULL END;
+$$;
+
+-- OQ1 唯一存储端口:出边,structural DESC NULLS LAST, dst_hash ASC。
+-- p_limit NULL = 不截断(recency 调用方重排后再截)。
+CREATE FUNCTION v13_mgraph_neighbors(p_sid uuid, p_hash text,
+                                     p_rels text[], p_limit int)
+RETURNS TABLE(dst_hash text, rel text, structural numeric,
+              source_at timestamptz)
+LANGUAGE sql STABLE AS $$
+  SELECT l.dst_hash, l.rel, l.structural, n.source_at
+    FROM memory_links l
+    JOIN memory_nodes n
+      ON n.session_id = l.session_id AND n.content_hash = l.dst_hash
+   WHERE l.session_id = p_sid
+     AND l.src_hash = p_hash
+     AND (p_rels IS NULL OR l.rel = ANY (p_rels))
+   ORDER BY l.structural DESC NULLS LAST, l.dst_hash ASC
+   LIMIT p_limit;
+$$;
+
+-- 调试用变长展开(热路径禁止调用;深度缺省读 maximum_depth)
+CREATE FUNCTION v13_mgraph_structural_reach(p_sid uuid, p_hash text,
+                                            p_depth int)
+RETURNS TABLE(content_hash text, depth int)
+LANGUAGE sql STABLE AS $$
+  WITH RECURSIVE lim AS (
+    SELECT coalesce(p_depth,
+                    (v13_mgraph_policy()->>'maximum_depth')::int) AS d
+  ), w AS (
+    SELECT p_hash AS content_hash, 0 AS depth
+    UNION ALL
+    SELECT l.dst_hash, w.depth + 1
+      FROM w
+      JOIN memory_links l
+        ON l.session_id = p_sid AND l.src_hash = w.content_hash
+     WHERE w.depth < (SELECT d FROM lim)
+  )
+  SELECT DISTINCT w.content_hash, w.depth
+    FROM w WHERE w.depth > 0
+   ORDER BY 2, 1;
+$$;
+
+-- OQ3 确定性路由。主意图互斥:why > when > 大写实体 > semantic,
+-- 被点名桶权重 = deterministic_floor+1,其余 = floor(全向量六键)。
+-- multi_hop/recency 仅查询点名时升到同一高度。CJK 段 → superset,
+-- 六桶都停在 floor(零 ask,ask 发生在 run_round 之外的本函数也不发问)。
+-- routing_mode=jev 时 mode=jev,权重不作为分配输入(run_round 改读 Noul)。
+CREATE FUNCTION v13_mgraph_route(p_query text)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_pol jsonb; v_floor numeric; v_raised numeric; v_q text;
+  v_mode text; v_primary text := NULL; v_cjk boolean := false;
+  v_ch text; v_cp int; v_i int;
+  v_names text[] := ARRAY['causal','entity','multi_hop','recency',
+                          'semantic','temporal'];
+  v_w numeric[] := ARRAY[0,0,0,0,0,0]::numeric[];
+  v_weights jsonb := '{}'::jsonb;
+BEGIN
+  v_pol := v13_mgraph_policy();
+  v_floor := (v_pol->>'deterministic_floor')::numeric;
+  v_raised := v_floor + 1;
+  v_q := coalesce(p_query, '');
+  FOR v_ch IN SELECT x FROM unnest(regexp_split_to_array(v_q, '')) AS t(x)
+  LOOP
+    IF v_ch IS NULL OR v_ch = '' THEN CONTINUE; END IF;
+    v_cp := ascii(v_ch);
+    IF (v_cp BETWEEN 12352 AND 12543)
+       OR (v_cp BETWEEN 13312 AND 19903)
+       OR (v_cp BETWEEN 19968 AND 40959)
+       OR (v_cp BETWEEN 44032 AND 55215)
+       OR (v_cp BETWEEN 63744 AND 64255) THEN
+      v_cjk := true; EXIT;
+    END IF;
+  END LOOP;
+  IF v_pol->>'routing_mode' = 'jev' THEN
+    v_mode := 'jev';
+  ELSIF v_cjk THEN
+    v_mode := 'superset';
+  ELSE
+    v_mode := 'deterministic';
+  END IF;
+  FOR v_i IN 1..6 LOOP v_w[v_i] := v_floor; END LOOP;
+  IF v_mode = 'deterministic' THEN
+    IF position('why' IN lower(v_q)) > 0 THEN v_primary := 'causal';
+    ELSIF position('when' IN lower(v_q)) > 0 THEN v_primary := 'temporal';
+    ELSIF cardinality(v13_mgraph_entities(v_q)) > 0 THEN v_primary := 'entity';
+    ELSE v_primary := 'semantic';
+    END IF;
+    FOR v_i IN 1..6 LOOP
+      IF v_names[v_i] = v_primary THEN v_w[v_i] := v_raised; END IF;
+    END LOOP;
+    IF position('multi_hop' IN lower(v_q)) > 0
+       OR position('multi-hop' IN lower(v_q)) > 0 THEN
+      v_w[3] := v_raised;
+    END IF;
+    IF position('recency' IN lower(v_q)) > 0 THEN
+      v_w[4] := v_raised;
+    END IF;
+  END IF;
+  FOR v_i IN 1..6 LOOP
+    v_weights := v_weights
+      || jsonb_build_object(v_names[v_i], to_jsonb(v_w[v_i]));
+  END LOOP;
+  RETURN jsonb_build_object('mode', v_mode, 'weights', v_weights);
+END $$;
+
+-- Hamilton 最大余数。桶序(余数并列终裁)= causal,entity,multi_hop,
+-- recency,semantic,temporal。全 0 → 六桶权重改 1 再分配。
+-- 权重>0 且 floor 后为 0 的桶向当前最大且 ≥2 的桶借 1(并列名字升序);
+-- 借不到 V3009。jev 激活阈由调用方在传入前归零,本函数不读阈值。
+CREATE FUNCTION v13_mgraph_allocate(p_weights jsonb)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_pol jsonb; v_b int; v_e numeric; v_sum numeric := 0;
+  v_names text[] := ARRAY['causal','entity','multi_hop','recency',
+                          'semantic','temporal'];
+  v_w numeric[]; v_we numeric[]; v_quota numeric[];
+  v_base int[]; v_rem numeric[]; v_ord int[];
+  v_i int; v_j int; v_left int; v_active int := 0;
+  v_tmp int; v_best int; v_out jsonb := '{}'::jsonb;
+BEGIN
+  IF p_weights IS NULL OR jsonb_typeof(p_weights) IS DISTINCT FROM 'object'
+     OR (SELECT count(*) FROM jsonb_object_keys(p_weights)) <> 6 THEN
+    RAISE EXCEPTION 'v13: mgraph allocate weights must be the six-bucket object'
+      USING ERRCODE = 'V3009';
+  END IF;
+  v_pol := v13_mgraph_policy();
+  v_b := (v_pol->>'total_graph_budget')::int;
+  v_e := (v_pol->>'probability_exponent')::numeric;
+  FOR v_i IN 1..6 LOOP
+    IF NOT p_weights ? v_names[v_i]
+       OR jsonb_typeof(p_weights->v_names[v_i]) IS DISTINCT FROM 'number' THEN
+      RAISE EXCEPTION 'v13: mgraph allocate missing numeric weight %',
+        v_names[v_i] USING ERRCODE = 'V3009';
+    END IF;
+    v_w[v_i] := (p_weights->>v_names[v_i])::numeric;
+    IF v_w[v_i] < 0 THEN
+      RAISE EXCEPTION 'v13: mgraph allocate weight % is negative', v_names[v_i]
+        USING ERRCODE = 'V3009';
+    END IF;
+    IF v_w[v_i] > 0 THEN v_active := v_active + 1; END IF;
+  END LOOP;
+  IF v_active = 0 THEN
+    FOR v_i IN 1..6 LOOP v_w[v_i] := 1; END LOOP;
+  END IF;
+  FOR v_i IN 1..6 LOOP
+    v_we[v_i] := power(v_w[v_i], v_e);
+    v_sum := v_sum + v_we[v_i];
+  END LOOP;
+  IF v_sum = 0 THEN
+    RAISE EXCEPTION 'v13: mgraph allocate weight mass is zero'
+      USING ERRCODE = 'V3009';
+  END IF;
+  v_left := v_b;
+  FOR v_i IN 1..6 LOOP
+    v_quota[v_i] := (v_b::numeric * v_we[v_i]) / v_sum;
+    v_base[v_i] := floor(v_quota[v_i])::int;
+    v_rem[v_i] := v_quota[v_i] - v_base[v_i];
+    v_left := v_left - v_base[v_i];
+    v_ord[v_i] := v_i;
+  END LOOP;
+  FOR v_i IN 1..5 LOOP
+    FOR v_j IN 1..(6 - v_i) LOOP
+      IF v_rem[v_ord[v_j]] < v_rem[v_ord[v_j + 1]]
+         OR (v_rem[v_ord[v_j]] = v_rem[v_ord[v_j + 1]]
+             AND v_names[v_ord[v_j]] > v_names[v_ord[v_j + 1]]) THEN
+        v_tmp := v_ord[v_j];
+        v_ord[v_j] := v_ord[v_j + 1];
+        v_ord[v_j + 1] := v_tmp;
+      END IF;
+    END LOOP;
+  END LOOP;
+  FOR v_j IN 1..v_left LOOP
+    v_base[v_ord[v_j]] := v_base[v_ord[v_j]] + 1;
+  END LOOP;
+  FOR v_i IN 1..6 LOOP
+    IF v_w[v_i] > 0 AND v_base[v_i] = 0 THEN
+      v_best := NULL;
+      FOR v_j IN 1..6 LOOP
+        IF v_base[v_j] >= 2 AND (v_best IS NULL
+            OR v_base[v_j] > v_base[v_best]
+            OR (v_base[v_j] = v_base[v_best]
+                AND v_names[v_j] < v_names[v_best])) THEN
+          v_best := v_j;
+        END IF;
+      END LOOP;
+      IF v_best IS NULL THEN
+        RAISE EXCEPTION
+          'v13: mgraph allocate cannot fund every active bucket (budget %)',
+          v_b USING ERRCODE = 'V3009';
+      END IF;
+      v_base[v_best] := v_base[v_best] - 1;
+      v_base[v_i] := 1;
+    END IF;
+  END LOOP;
+  FOR v_i IN 1..6 LOOP
+    v_out := v_out || jsonb_build_object(v_names[v_i], to_jsonb(v_base[v_i]));
+  END LOOP;
+  RETURN v_out;
+END $$;
+
+CREATE FUNCTION v13_mgraph_primary_bucket(p_weights jsonb)
+RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT e.k FROM jsonb_each(p_weights) AS e(k, v)
+   ORDER BY (e.v #>> '{}')::numeric DESC, e.k ASC
+   LIMIT 1;
+$$;
+
+-- 信号三态:已答 Noul / 该信号出现在 failed_timeout 调用里 / 无 call 行。
+-- 不伪造概率。failed_validation 等其它失败落在 default_missing(无 Noul)。
+CREATE FUNCTION v13_mgraph_signal_class(p_sid uuid, p_signal text)
+RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT CASE
+    WHEN EXISTS (
+      SELECT 1 FROM decisions d
+       WHERE d.session_id = p_sid AND d.signal = p_signal
+         AND d.answer IS NOT NULL
+         AND d.status IN ('answered','cached')
+         AND jsonb_typeof(d.answer->'noul') = 'number')
+    THEN 'noul'
+    WHEN EXISTS (
+      SELECT 1 FROM judgment_calls c
+       WHERE c.session_id = p_sid AND c.status = 'failed_timeout'
+         AND position(p_signal IN c.payload::text) > 0)
+    THEN 'default_timeout'
+    ELSE 'default_missing' END;
+$$;
+
+CREATE FUNCTION v13_mgraph_component(p_sid uuid, p_signal text)
+RETURNS numeric LANGUAGE sql STABLE AS $$
+  SELECT CASE WHEN v13_mgraph_signal_class(p_sid, p_signal) = 'noul'
+    THEN (SELECT (d.answer->>'noul')::numeric FROM decisions d
+           WHERE d.session_id = p_sid AND d.signal = p_signal
+             AND d.answer IS NOT NULL
+             AND d.status IN ('answered','cached')
+           ORDER BY d.answered_at DESC NULLS LAST LIMIT 1)
+    ELSE NULL END;
+$$;
+
+CREATE FUNCTION v13_mgraph_anchors(p_sid uuid, p_query text, p_bucket text)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE v_pol jsonb; v_k int; v_beam int; v_tinql text;
+BEGIN
+  v_pol := v13_mgraph_policy();
+  v_k := (v_pol->>'candidate_top_k')::int;
+  v_beam := (v_pol->>'beam_width')::int;
+  v_tinql := v13_build_tinql(p_query);
+  IF v_tinql IS NULL OR v_tinql = '' THEN RETURN '[]'::jsonb; END IF;
+  RETURN coalesce((
+    SELECT jsonb_agg(jsonb_build_object(
+             'content_hash', c.content_hash,
+             'bucket', p_bucket,
+             'structural', NULL)
+             ORDER BY c.score DESC, c.content_hash ASC)
+      FROM (
+        SELECT content_hash, score
+          FROM v13_mgraph_candidates(p_sid, v_tinql, v_k)
+         ORDER BY score DESC, content_hash ASC
+         LIMIT v_beam) c
+  ), '[]'::jsonb);
+END $$;
+
+CREATE FUNCTION v13_mgraph_trav_questions(p_walk uuid, p_hash text, p_round int)
+RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+  SELECT jsonb_build_array(
+    jsonb_build_object('signal',
+      'mem_trav::' || p_walk::text || '::' || p_hash || '::relevance',
+      'template_name', 'mem_trav_relevance'),
+    jsonb_build_object('signal',
+      'mem_trav::' || p_walk::text || '::' || p_hash || '::relation_usefulness',
+      'template_name', 'mem_trav_relation_usefulness'),
+    jsonb_build_object('signal',
+      'mem_trav::' || p_walk::text || '::' || p_hash || '::new_information',
+      'template_name', 'mem_trav_new_information'),
+    jsonb_build_object('signal',
+      'mem_trav::' || p_walk::text || '::' || p_hash || '::supports',
+      'template_name', 'mem_trav_supports'));
+$$;
+
+CREATE FUNCTION v13_mgraph_stop_questions(p_walk uuid, p_round int)
+RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+  SELECT jsonb_build_array(
+    jsonb_build_object('signal',
+      'mem_stop::' || p_walk::text || '::' || p_round::text || '::sufficient',
+      'template_name', 'mem_stop_sufficient'),
+    jsonb_build_object('signal',
+      'mem_stop::' || p_walk::text || '::' || p_round::text || '::missing',
+      'template_name', 'mem_stop_missing'),
+    jsonb_build_object('signal',
+      'mem_stop::' || p_walk::text || '::' || p_round::text || '::contradiction',
+      'template_name', 'mem_stop_contradiction'),
+    jsonb_build_object('signal',
+      'mem_stop::' || p_walk::text || '::' || p_round::text || '::continue',
+      'template_name', 'mem_stop_continue'));
+$$;
+
+CREATE FUNCTION v13_mgraph_route_questions(p_qhash text, p_gen bigint)
+RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+  SELECT jsonb_build_array(
+    jsonb_build_object('signal',
+      'mem_route::' || p_qhash || '::semantic@' || p_gen::text,
+      'template_name', 'mem_routing_semantic'),
+    jsonb_build_object('signal',
+      'mem_route::' || p_qhash || '::temporal@' || p_gen::text,
+      'template_name', 'mem_routing_temporal'),
+    jsonb_build_object('signal',
+      'mem_route::' || p_qhash || '::causal@' || p_gen::text,
+      'template_name', 'mem_routing_causal'),
+    jsonb_build_object('signal',
+      'mem_route::' || p_qhash || '::entity@' || p_gen::text,
+      'template_name', 'mem_routing_entity'),
+    jsonb_build_object('signal',
+      'mem_route::' || p_qhash || '::multi_hop@' || p_gen::text,
+      'template_name', 'mem_routing_multi_hop_need'),
+    jsonb_build_object('signal',
+      'mem_route::' || p_qhash || '::recency@' || p_gen::text,
+      'template_name', 'mem_routing_recency_importance'));
+$$;
+
+CREATE FUNCTION v13_mgraph_trav_state(p_sid uuid, p_query text, p_node jsonb)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE v_body text; v_hash text;
+BEGIN
+  v_hash := p_node->>'content_hash';
+  SELECT body INTO v_body FROM memory_nodes
+   WHERE session_id = p_sid AND content_hash = v_hash;
+  IF v_body IS NULL THEN
+    RAISE EXCEPTION 'v13: mgraph traversal node % is not in the graph', v_hash
+      USING ERRCODE = 'V3009';
+  END IF;
+  RETURN jsonb_build_object(
+    'query', p_query,
+    'candidate', jsonb_build_object('content', v_body, 'content_hash', v_hash),
+    'path', CASE WHEN p_node ? 'from_hash'
+            THEN jsonb_build_array(jsonb_build_object(
+                   'from', p_node->>'from_hash', 'bucket', p_node->>'bucket'))
+            ELSE '[]'::jsonb END);
+END $$;
+
+CREATE FUNCTION v13_mgraph_stop_state(p_sid uuid, p_query text, p_scored jsonb)
+RETURNS jsonb LANGUAGE sql STABLE AS $$
+  SELECT jsonb_build_object(
+    'query', p_query,
+    'evidence', coalesce((
+      SELECT jsonb_agg(jsonb_build_object(
+               'content_hash', n.content_hash, 'body', n.body)
+               ORDER BY n.content_hash)
+        FROM jsonb_array_elements(coalesce(p_scored, '[]'::jsonb)) s
+        JOIN memory_nodes n
+          ON n.session_id = p_sid AND n.content_hash = s->>'content_hash'
+    ), '[]'::jsonb));
+$$;
+
+-- 过渡分(§3.4 单式)。Jev 分量缺失则丢掉该 λ 并重归一;全缺则分子只剩
+-- 词法项(词法 0 即分数 0)。structural NULL 在 supports 存在时按 0 参加
+-- 平均(边上没有结构分,不是伪 Noul)。recency 与候选发现同一秒制 halflife。
+CREATE FUNCTION v13_mgraph_transition_score(
+  p_sid uuid, p_query text, p_walk uuid, p_hash text,
+  p_bucket text, p_structural numeric, p_weights jsonb)
+RETURNS numeric LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_pol jsonb; v_l numeric[]; v_num numeric := 0; v_den numeric := 0;
+  v_lex numeric := 0; v_rel numeric; v_use numeric; v_nov numeric; v_sup numeric;
+  v_need numeric; v_r numeric; v_rec numeric; v_coef numeric; v_hl numeric;
+  v_at timestamptz; v_score numeric; v_pre text; v_tinql text;
+BEGIN
+  v_pol := v13_mgraph_policy();
+  SELECT array_agg((e #>> '{}')::numeric ORDER BY ord) INTO v_l
+    FROM jsonb_array_elements(v_pol->'transition_weights')
+         WITH ORDINALITY AS t(e, ord);
+  v_pre := 'mem_trav::' || p_walk::text || '::' || p_hash || '::';
+  v_tinql := v13_build_tinql(p_query);
+  IF v_tinql IS NOT NULL AND v_tinql <> '' THEN
+    SELECT coalesce(max(c.lexical_norm), 0) INTO v_lex
+      FROM v13_mgraph_candidates(p_sid, v_tinql, 1024) c
+     WHERE c.content_hash = p_hash;
+  END IF;
+  v_lex := coalesce(v_lex, 0);
+  v_rel := v13_mgraph_component(p_sid, v_pre || 'relevance');
+  v_use := v13_mgraph_component(p_sid, v_pre || 'relation_usefulness');
+  v_nov := v13_mgraph_component(p_sid, v_pre || 'new_information');
+  v_sup := v13_mgraph_component(p_sid, v_pre || 'supports');
+  v_need := coalesce((p_weights->>p_bucket)::numeric, 0);
+  v_r := coalesce((p_weights->>'recency')::numeric, 0);
+  v_coef := (v_pol->>'transition_recency_coef')::numeric;
+  v_hl := (v_pol->>'candidate_recency_halflife_s')::numeric;
+  SELECT source_at INTO v_at FROM memory_nodes
+   WHERE session_id = p_sid AND content_hash = p_hash;
+  IF v_at IS NULL OR v_hl <= 0 THEN v_rec := 0;
+  ELSE v_rec := 1 / (1 + extract(epoch FROM (now() - v_at)) / v_hl);
+  END IF;
+  v_num := v_l[1] * v_lex; v_den := v_l[1];
+  IF v_rel IS NOT NULL THEN
+    v_num := v_num + v_l[2] * v_rel; v_den := v_den + v_l[2];
+  END IF;
+  IF v_use IS NOT NULL THEN
+    v_num := v_num + v_l[3] * v_need * v_use; v_den := v_den + v_l[3];
+  END IF;
+  IF v_nov IS NOT NULL THEN
+    v_num := v_num + v_l[4] * v_nov; v_den := v_den + v_l[4];
+  END IF;
+  IF v_sup IS NOT NULL THEN
+    v_num := v_num + v_l[5] * (coalesce(p_structural, 0) + v_sup) / 2;
+    v_den := v_den + v_l[5];
+  END IF;
+  IF v_den = 0 THEN v_score := 0; ELSE v_score := v_num / v_den; END IF;
+  RETURN (v_score + v_coef * v_r * v_rec) / (1 + v_coef * v_r);
+END $$;
+
+-- 停止四条排序。四条 Noul 缺任一则不进 ①②(OQ11);硬顶照常。
+-- latency 不在本函数(由 run_round 在收轮时写)。
+CREATE FUNCTION v13_mgraph_should_stop(p_walk uuid)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_w memory_walks%ROWTYPE; v_pol jsonb; v_round int;
+  v_pref text; v_cls text; v_all boolean := true;
+  v_suf numeric; v_mis numeric; v_con numeric; v_go numeric;
+  v_aspect text;
+BEGIN
+  SELECT * INTO v_w FROM memory_walks WHERE walk_id = p_walk;
+  IF v_w.walk_id IS NULL THEN
+    RAISE EXCEPTION 'v13: mgraph should_stop on unknown walk %', p_walk
+      USING ERRCODE = 'V3009';
+  END IF;
+  v_pol := v13_mgraph_policy();
+  v_round := coalesce((v_w.budgets->>'round_no')::int, 1);
+  v_pref := 'mem_stop::' || p_walk::text || '::' || v_round::text || '::';
+  FOR v_aspect IN
+    SELECT unnest(ARRAY['sufficient','missing','contradiction','continue'])
+  LOOP
+    v_cls := v13_mgraph_signal_class(v_w.session_id, v_pref || v_aspect);
+    IF v_cls IS DISTINCT FROM 'noul' THEN v_all := false; END IF;
+  END LOOP;
+  IF v_all THEN
+    v_suf := v13_mgraph_component(v_w.session_id, v_pref || 'sufficient');
+    v_mis := v13_mgraph_component(v_w.session_id, v_pref || 'missing');
+    v_con := v13_mgraph_component(v_w.session_id, v_pref || 'contradiction');
+    v_go  := v13_mgraph_component(v_w.session_id, v_pref || 'continue');
+    IF v_suf >= (v_pol->>'evidence_sufficient_min')::numeric
+       AND v_mis < (v_pol->>'missing_stop_hi')::numeric
+       AND v_con < (v_pol->>'contradiction_stop_hi')::numeric THEN
+      RETURN jsonb_build_object('stop', true, 'reason', 'evidence');
+    ELSIF v_go < (v_pol->>'continue_min')::numeric THEN
+      RETURN jsonb_build_object('stop', true, 'reason', 'continue');
+    END IF;
+  END IF;
+  IF v_w.nodes_used >= (v_pol->>'maximum_nodes')::int THEN
+    RETURN jsonb_build_object('stop', true, 'reason', 'nodes');
+  ELSIF v_w.edges_used >= (v_pol->>'maximum_edges')::int THEN
+    RETURN jsonb_build_object('stop', true, 'reason', 'edges');
+  ELSIF v_w.depth >= (v_pol->>'maximum_depth')::int THEN
+    RETURN jsonb_build_object('stop', true, 'reason', 'depth');
+  ELSIF v_w.calls_used >= (v_pol->>'maximum_jev_calls')::int THEN
+    RETURN jsonb_build_object('stop', true, 'reason', 'calls');
+  END IF;
+  RETURN jsonb_build_object('stop', false, 'reason', 'go');
+END $$;
+
+-- 下一步(纯读)。run_round 只执行这里给出的一个动作,从而一轮一封。
+CREATE FUNCTION v13_mgraph_next_action(p_sid uuid, p_query text, p_elapsed_ms int)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_pol jsonb; v_q text; v_qhash text; v_gen bigint; v_pver int; v_wid uuid;
+  v_w memory_walks%ROWTYPE; v_b jsonb; v_route jsonb; v_weights jsonb;
+  v_quota jsonb; v_anchors jsonb; v_primary text; v_round int;
+  v_head jsonb; v_qs jsonb; v_cls text; v_aspect text;
+  v_any_to boolean := false; v_any_miss boolean := false; v_all_noul boolean := true;
+  v_names text[] := ARRAY['causal','entity','multi_hop','recency','semantic','temporal'];
+  v_i int; v_act jsonb;
+BEGIN
+  v_q := btrim(coalesce(p_query, ''));
+  IF v_q = '' THEN
+    RETURN jsonb_build_object('action','skip','skipped','empty');
+  END IF;
+  v_pol := v13_mgraph_policy();
+  IF NOT (v_pol->>'read_enabled')::boolean THEN
+    RETURN jsonb_build_object('action','skip','skipped','disabled');
+  END IF;
+  IF (v13_transcript_freshness(p_sid)->>'degraded')::boolean THEN
+    RETURN jsonb_build_object('action','skip','skipped','degraded');
+  END IF;
+  IF p_elapsed_ms IS NULL OR p_elapsed_ms < 0 THEN
+    RAISE EXCEPTION 'v13: mgraph elapsed_ms must be >= 0'
+      USING ERRCODE = 'V3009';
+  END IF;
+  v_qhash := v13_body_hash(v_q);
+  v_gen := (v13_mgraph_progress(p_sid)->>'generation')::bigint;
+  SELECT version INTO v_pver FROM v13_policies WHERE name = 'mgraph' AND active;
+  v_wid := v13_mgraph_walk_id(p_sid, v_qhash, v_gen, v_pver);
+  SELECT * INTO v_w FROM memory_walks WHERE walk_id = v_wid;
+
+  IF v_w.walk_id IS NULL THEN
+    IF (v13_judge_spend(p_sid)->>'over')::boolean THEN
+      RETURN jsonb_build_object('action','stop_spend');
+    END IF;
+    v_route := v13_mgraph_route(v_q);
+    IF v_route->>'mode' = 'jev' THEN
+      RETURN jsonb_build_object(
+        'action','ask','kind','route','round_no', 1,
+        'questions', v13_mgraph_route_questions(v_qhash, v_gen),
+        'state', jsonb_build_object('query', v_q),
+        'phase', 'route');
+    END IF;
+    v_weights := v_route->'weights';
+    v_quota := v13_mgraph_allocate(v_weights);
+    v_primary := v13_mgraph_primary_bucket(v_weights);
+    v_anchors := v13_mgraph_anchors(p_sid, v_q, v_primary);
+    IF jsonb_array_length(v_anchors) = 0 THEN
+      RETURN jsonb_build_object(
+        'action','ask','kind','stop','round_no', 1,
+        'questions', v13_mgraph_stop_questions(v_wid, 1),
+        'state', v13_mgraph_stop_state(p_sid, v_q, '[]'::jsonb),
+        'weights', v_weights, 'quota', v_quota, 'phase', 'stop');
+    END IF;
+    RETURN jsonb_build_object(
+      'action','ask','kind','trav','round_no', 1,
+      'node', v_anchors->0,
+      'questions', v13_mgraph_trav_questions(v_wid, v_anchors->0->>'content_hash', 1),
+      'state', v13_mgraph_trav_state(p_sid, v_q, v_anchors->0),
+      'set_pending', v_anchors,
+      'weights', v_weights, 'quota', v_quota, 'phase', 'traverse');
+  END IF;
+
+  v_b := v_w.budgets;
+  IF v_w.status = 'stopped' THEN
+    IF (v_pol->>'routing_shadow')::boolean
+       AND coalesce((v_b->>'shadow_done')::boolean, false) = false
+       AND NOT (v13_judge_spend(p_sid)->>'over')::boolean THEN
+      v_any_miss := false;
+      FOR v_i IN 1..6 LOOP
+        IF v13_mgraph_signal_class(p_sid,
+             'mem_route::' || v_qhash || '::' || v_names[v_i] || '@' || v_gen::text)
+           = 'default_missing' THEN
+          v_any_miss := true;
+        END IF;
+      END LOOP;
+      IF v_any_miss THEN
+        RETURN jsonb_build_object(
+          'action','ask','kind','shadow',
+          'questions', v13_mgraph_route_questions(v_qhash, v_gen),
+          'state', jsonb_build_object('query', v_q));
+      END IF;
+      RETURN jsonb_build_object('action','mark_shadow');
+    END IF;
+    RETURN jsonb_build_object('action','done');
+  END IF;
+
+  IF (v13_judge_spend(p_sid)->>'over')::boolean THEN
+    RETURN jsonb_build_object('action','stop_spend');
+  END IF;
+  IF EXISTS (SELECT 1 FROM memory_rounds r WHERE r.walk_id = v_wid)
+     AND p_elapsed_ms >= (v_pol->>'max_latency_ms')::int THEN
+    RETURN jsonb_build_object('action','stop_latency');
+  END IF;
+
+  v_round := coalesce((v_b->>'round_no')::int, 1);
+
+  IF coalesce(v_b->>'phase', 'seed') = 'route' THEN
+    IF coalesce((v_b->>'route_attempted')::boolean, false) THEN
+      v_act := jsonb_build_object('action','bind');
+    ELSE
+      v_act := jsonb_build_object(
+        'action','ask','kind','route','round_no', v_round,
+        'questions', v13_mgraph_route_questions(v_qhash, v_gen),
+        'state', jsonb_build_object('query', v_q));
+    END IF;
+  ELSIF coalesce(v_b->>'phase', 'seed') = 'seed'
+        OR (v_b->>'phase' = 'traverse'
+            AND jsonb_array_length(coalesce(v_b->'pending','[]'::jsonb)) = 0
+            AND jsonb_array_length(coalesce(v_b->'scored','[]'::jsonb)) = 0
+            AND NOT coalesce((v_b->>'stop_attempted')::boolean, false)) THEN
+    v_weights := v_b->'weights';
+    v_primary := v13_mgraph_primary_bucket(v_weights);
+    v_anchors := v13_mgraph_anchors(p_sid, v_q, v_primary);
+    IF jsonb_array_length(v_anchors) = 0 THEN
+      v_act := jsonb_build_object(
+        'action','ask','kind','stop','round_no', v_round,
+        'questions', v13_mgraph_stop_questions(v_wid, v_round),
+        'state', v13_mgraph_stop_state(p_sid, v_q, coalesce(v_b->'scored','[]'::jsonb)));
+    ELSE
+      v_act := jsonb_build_object(
+        'action','ask','kind','trav','round_no', v_round,
+        'node', v_anchors->0,
+        'questions', v13_mgraph_trav_questions(
+                       v_wid, v_anchors->0->>'content_hash', v_round),
+        'state', v13_mgraph_trav_state(p_sid, v_q, v_anchors->0),
+        'set_pending', v_anchors);
+    END IF;
+  ELSIF v_b->>'phase' = 'traverse' THEN
+    IF jsonb_array_length(coalesce(v_b->'pending','[]'::jsonb)) = 0 THEN
+      v_act := jsonb_build_object('action','to_stop');
+    ELSE
+      v_head := v_b->'pending'->0;
+      v_qs := v13_mgraph_trav_questions(v_wid, v_head->>'content_hash', v_round);
+      v_any_to := false; v_any_miss := false; v_all_noul := true;
+      FOR v_aspect IN SELECT q->>'signal' FROM jsonb_array_elements(v_qs) q LOOP
+        v_cls := v13_mgraph_signal_class(p_sid, v_aspect);
+        IF v_cls = 'default_timeout' THEN v_any_to := true; END IF;
+        IF v_cls = 'default_missing' THEN v_any_miss := true; END IF;
+        IF v_cls IS DISTINCT FROM 'noul' THEN v_all_noul := false; END IF;
+      END LOOP;
+      IF v_all_noul OR v_any_to THEN
+        -- 已答,或已有超时调用(同节点未覆盖的信号记 default_missing,不再补问)
+        v_act := jsonb_build_object('action','score','node', v_head);
+      ELSE
+        v_act := jsonb_build_object(
+          'action','ask','kind','trav','round_no', v_round,
+          'node', v_head, 'questions', v_qs,
+          'state', v13_mgraph_trav_state(p_sid, v_q, v_head));
+      END IF;
+    END IF;
+  ELSIF v_b->>'phase' = 'stop' THEN
+    v_qs := v13_mgraph_stop_questions(v_wid, v_round);
+    v_any_miss := false;
+    FOR v_aspect IN SELECT q->>'signal' FROM jsonb_array_elements(v_qs) q LOOP
+      IF v13_mgraph_signal_class(p_sid, v_aspect) = 'default_missing'
+         AND NOT coalesce((v_b->>'stop_attempted')::boolean, false) THEN
+        v_any_miss := true;
+      END IF;
+    END LOOP;
+    IF v_any_miss THEN
+      v_act := jsonb_build_object(
+        'action','ask','kind','stop','round_no', v_round,
+        'questions', v_qs,
+        'state', v13_mgraph_stop_state(p_sid, v_q, coalesce(v_b->'scored','[]'::jsonb)));
+    ELSE
+      v_act := jsonb_build_object('action','close');
+    END IF;
+  ELSIF v_b->>'phase' = 'expand' THEN
+    v_act := jsonb_build_object('action','expand');
+  ELSE
+    RAISE EXCEPTION 'v13: mgraph walk % phase % is unknown',
+      v_wid, v_b->>'phase' USING ERRCODE = 'V3009';
+  END IF;
+
+  -- 帽尽只拦截下一次发问;收轮(close)仍走 should_stop,使 ①② 优先于 calls
+  IF v_act->>'action' = 'ask'
+     AND v_w.walk_id IS NOT NULL
+     AND v_w.calls_used >= (v_pol->>'maximum_jev_calls')::int THEN
+    RETURN jsonb_build_object('action','close');
+  END IF;
+  RETURN v_act;
+END $$;
+
+-- 读环一步。p_query 标识 walk(计划正文把 elapsed 标成延迟写入点;
+-- 查询文本是 walk 身份的另一半,见偏差台账)。provider/model 在本 walk
+-- 第一次发问前捕获,其后读 budgets,避开占位符 GUC 被清除的坑。
+CREATE FUNCTION v13_mgraph_capture_pm(p_sid uuid)
+RETURNS jsonb LANGUAGE plpgsql VOLATILE AS $$
+DECLARE v_p text; v_m text;
+BEGIN
+  v_p := nullif(btrim(current_setting('typesafe.provider', true)), '');
+  v_m := nullif(btrim(current_setting('typesafe.model', true)), '');
+  IF v_p IS NULL OR v_m IS NULL THEN
+    SELECT c.provider, c.model INTO v_p, v_m
+      FROM judgment_calls c
+     WHERE c.session_id = p_sid
+       AND c.provider IS NOT NULL AND c.model IS NOT NULL
+     ORDER BY c.created_at DESC LIMIT 1;
+  END IF;
+  IF v_p IS NULL OR v_m IS NULL THEN
+    v_p := v13_guc_required('typesafe.provider');
+    v_m := v13_guc_required('typesafe.model');
+  END IF;
+  RETURN jsonb_build_object('provider', v_p, 'model', v_m);
+END $$;
+
+CREATE FUNCTION v13_mgraph_run_round(p_sid uuid, p_query text, p_elapsed_ms int)
+RETURNS jsonb LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+  v_act jsonb; v_q text; v_qhash text; v_gen bigint; v_pver int; v_wid uuid;
+  v_w memory_walks%ROWTYPE; v_b jsonb; v_pol jsonb; v_pm jsonb;
+  v_env jsonb; v_res jsonb; v_c0 bigint; v_c1 bigint; v_delta int := 0;
+  v_failed boolean := false; v_node jsonb; v_score numeric; v_hash text;
+  v_qs jsonb; v_basis jsonb; v_pending jsonb; v_scored jsonb; v_visited jsonb;
+  v_sig text; v_cid uuid; v_names text[]; v_i int; v_thr numeric; v_val numeric;
+  v_all0 boolean; v_weights jsonb; v_key text; v_cls text;
+  v_beam jsonb; v_ss jsonb; v_round int; v_asks int; v_edges int;
+  v_frontier jsonb; v_quota jsonb; v_bucket text; v_left int; v_hash2 text;
+  v_fr jsonb; v_rel text; v_st numeric; v_nb jsonb; v_seen boolean;
+  rec record;
+BEGIN
+  v_act := v13_mgraph_next_action(p_sid, p_query, p_elapsed_ms);
+  IF v_act->>'action' = 'skip' THEN
+    RETURN jsonb_build_object('status','skipped','skipped', v_act->>'skipped',
+                              'asks', 0, 'failed', false, 'calls_used', 0,
+                              'frontier', '[]'::jsonb);
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(v13_lock_key(p_sid, 'mgraph-build'));
+  v_act := v13_mgraph_next_action(p_sid, p_query, p_elapsed_ms);
+  v_q := btrim(p_query);
+  v_qhash := v13_body_hash(v_q);
+  v_gen := (v13_mgraph_progress(p_sid)->>'generation')::bigint;
+  SELECT version INTO v_pver FROM v13_policies WHERE name = 'mgraph' AND active;
+  v_wid := v13_mgraph_walk_id(p_sid, v_qhash, v_gen, v_pver);
+  v_pol := v13_mgraph_policy();
+  SELECT * INTO v_w FROM memory_walks WHERE walk_id = v_wid;
+
+  IF v_act->>'action' = 'skip' THEN
+    RETURN jsonb_build_object('status','skipped','skipped', v_act->>'skipped',
+                              'asks', 0, 'failed', false, 'walk_id', v_wid);
+  ELSIF v_act->>'action' = 'done' THEN
+    RETURN jsonb_build_object(
+      'action','done','status', v_w.status, 'stop_reason', v_w.stop_reason,
+      'asks', 0, 'failed', false, 'calls_used', v_w.calls_used,
+      'frontier', v_w.frontier, 'walk_id', v_wid,
+      'phase', v_w.budgets->>'phase');
+  ELSIF v_act->>'action' IN ('stop_spend','stop_latency') THEN
+    IF v_w.walk_id IS NULL THEN
+      INSERT INTO memory_walks (walk_id, session_id, query_hash,
+        mgraph_generation, policy_version, frontier, budgets,
+        calls_used, nodes_used, edges_used, depth, stop_reason, status)
+      VALUES (v_wid, p_sid, v_qhash, v_gen, v_pver, '[]'::jsonb, '{}'::jsonb,
+              0, 0, 0, 0,
+              CASE v_act->>'action' WHEN 'stop_spend' THEN 'spend'
+                                    ELSE 'latency' END,
+              'stopped');
+    ELSE
+      UPDATE memory_walks SET status = 'stopped',
+             stop_reason = CASE v_act->>'action'
+                             WHEN 'stop_spend' THEN 'spend' ELSE 'latency' END
+       WHERE walk_id = v_wid AND status = 'open';
+    END IF;
+    SELECT * INTO v_w FROM memory_walks WHERE walk_id = v_wid;
+    RETURN jsonb_build_object(
+      'action', v_act->>'action', 'status', v_w.status,
+      'stop_reason', v_w.stop_reason, 'asks', 0, 'failed', false,
+      'calls_used', v_w.calls_used, 'frontier', v_w.frontier, 'walk_id', v_wid);
+  END IF;
+
+  -- 确保 walk 在(ask 的 init / 其它动作都要求行已在)
+  IF v_w.walk_id IS NULL THEN
+    v_pm := v13_mgraph_capture_pm(p_sid);
+    v_b := jsonb_build_object(
+      'phase', coalesce(v_act->>'phase', 'traverse'),
+      'round_no', coalesce((v_act->>'round_no')::int, 1),
+      'weights', v_act->'weights',
+      'quota', v_act->'quota',
+      'pending', coalesce(v_act->'set_pending', '[]'::jsonb),
+      'scored', '[]'::jsonb,
+      'visited', '[]'::jsonb,
+      'basis', '{}'::jsonb,
+      'provider', v_pm->>'provider',
+      'model', v_pm->>'model',
+      'shadow_done', false,
+      'route_attempted', false,
+      'stop_attempted', false,
+      'round_asks', 0,
+      'round_edges', 0,
+      'counted_calls', '[]'::jsonb);
+    INSERT INTO memory_walks (walk_id, session_id, query_hash,
+      mgraph_generation, policy_version, frontier, budgets,
+      calls_used, nodes_used, edges_used, depth, stop_reason, status)
+    VALUES (v_wid, p_sid, v_qhash, v_gen, v_pver, '[]'::jsonb, v_b,
+            0, 0, 0, 0, NULL, 'open');
+    SELECT * INTO v_w FROM memory_walks WHERE walk_id = v_wid;
+  END IF;
+  v_b := v_w.budgets;
+
+  IF v_act ? 'set_pending' THEN
+    v_b := jsonb_set(v_b, '{pending}', v_act->'set_pending');
+    v_b := jsonb_set(v_b, '{phase}', '"traverse"');
+    IF v_act ? 'weights' THEN
+      v_b := jsonb_set(v_b, '{weights}', v_act->'weights');
+      v_b := jsonb_set(v_b, '{quota}', v_act->'quota');
+    END IF;
+  END IF;
+
+  IF v_act->>'action' = 'mark_shadow' THEN
+    v_b := jsonb_set(v_b, '{shadow_done}', 'true'::jsonb);
+    UPDATE memory_walks SET budgets = v_b WHERE walk_id = v_wid;
+    RETURN jsonb_build_object(
+      'action','mark_shadow','status', v_w.status, 'stop_reason', v_w.stop_reason,
+      'asks', 0, 'failed', false, 'calls_used', v_w.calls_used,
+      'frontier', v_w.frontier, 'walk_id', v_wid);
+  ELSIF v_act->>'action' = 'bind' THEN
+    v_names := ARRAY['causal','entity','multi_hop','recency','semantic','temporal'];
+    v_thr := (v_pol->>'graph_activation_threshold')::numeric;
+    v_weights := '{}'::jsonb; v_all0 := true;
+    FOR v_i IN 1..6 LOOP
+      v_key := 'mem_route::' || v_qhash || '::' || v_names[v_i] || '@' || v_gen::text;
+      v_cls := v13_mgraph_signal_class(p_sid, v_key);
+      v_val := 0;
+      IF v_cls = 'noul' THEN
+        v_val := coalesce(v13_mgraph_component(p_sid, v_key), 0);
+        IF v_val < v_thr THEN v_val := 0; END IF;
+      END IF;
+      IF v_val > 0 THEN v_all0 := false; END IF;
+      v_weights := v_weights || jsonb_build_object(v_names[v_i], to_jsonb(v_val));
+    END LOOP;
+    IF v_all0 THEN
+      v_weights := '{}'::jsonb;
+      FOR v_i IN 1..6 LOOP
+        v_weights := v_weights || jsonb_build_object(v_names[v_i], to_jsonb(0));
+      END LOOP;
+    END IF;
+    v_b := jsonb_set(v_b, '{weights}', v_weights);
+    v_b := jsonb_set(v_b, '{quota}', v13_mgraph_allocate(v_weights));
+    v_b := jsonb_set(v_b, '{phase}', '"seed"');
+    UPDATE memory_walks SET budgets = v_b WHERE walk_id = v_wid;
+    RETURN jsonb_build_object(
+      'action','bind','status','open','asks',0,'failed',false,
+      'calls_used', v_w.calls_used, 'frontier', v_w.frontier,
+      'walk_id', v_wid, 'phase','seed', 'weights', v_weights);
+  ELSIF v_act->>'action' = 'to_stop' THEN
+    v_b := jsonb_set(v_b, '{phase}', '"stop"');
+    UPDATE memory_walks SET budgets = v_b WHERE walk_id = v_wid;
+    RETURN jsonb_build_object(
+      'action','to_stop','status','open','asks',0,'failed',false,
+      'calls_used', v_w.calls_used, 'frontier', v_w.frontier,
+      'walk_id', v_wid, 'phase','stop');
+  ELSIF v_act->>'action' = 'score' THEN
+    v_node := v_act->'node';
+    v_hash := v_node->>'content_hash';
+    v_qs := v13_mgraph_trav_questions(
+              v_wid, v_hash, coalesce((v_b->>'round_no')::int, 1));
+    v_basis := coalesce(v_b->'basis', '{}'::jsonb);
+    FOR v_sig IN SELECT q->>'signal' FROM jsonb_array_elements(v_qs) q LOOP
+      v_basis := v_basis || jsonb_build_object(
+        v_sig, v13_mgraph_signal_class(p_sid, v_sig));
+    END LOOP;
+    -- 失败批只计一次(同一 call_id 覆盖多条 signal)
+    SELECT c.call_id INTO v_cid
+      FROM judgment_calls c
+     WHERE c.session_id = p_sid AND c.status = 'failed_timeout'
+       AND position(v_qs->0->>'signal' IN c.payload::text) > 0
+     ORDER BY c.created_at DESC LIMIT 1;
+    IF v_cid IS NOT NULL AND NOT coalesce(v_b->'counted_calls', '[]'::jsonb)
+         @> jsonb_build_array(v_cid::text) THEN
+      v_w.calls_used := v_w.calls_used + 1;
+      v_b := jsonb_set(v_b, '{counted_calls}',
+              coalesce(v_b->'counted_calls','[]'::jsonb)
+              || jsonb_build_array(v_cid::text));
+    END IF;
+    v_score := v13_mgraph_transition_score(
+      p_sid, v_q, v_wid, v_hash, v_node->>'bucket',
+      NULLIF(v_node->>'structural','')::numeric, v_b->'weights');
+    v_scored := coalesce(v_b->'scored','[]'::jsonb) || jsonb_build_array(
+      jsonb_build_object('content_hash', v_hash, 'score', to_jsonb(v_score),
+                         'bucket', v_node->>'bucket'));
+    v_visited := coalesce(v_b->'visited','[]'::jsonb)
+                 || jsonb_build_array(v_hash);
+    v_pending := coalesce((
+      SELECT jsonb_agg(e ORDER BY i)
+        FROM jsonb_array_elements(coalesce(v_b->'pending','[]'::jsonb))
+             WITH ORDINALITY AS t(e, i)
+       WHERE i > 1), '[]'::jsonb);
+    v_b := jsonb_set(v_b, '{basis}', v_basis);
+    v_b := jsonb_set(v_b, '{scored}', v_scored);
+    v_b := jsonb_set(v_b, '{visited}', v_visited);
+    v_b := jsonb_set(v_b, '{pending}', v_pending);
+    UPDATE memory_walks SET budgets = v_b, calls_used = v_w.calls_used
+     WHERE walk_id = v_wid;
+    RETURN jsonb_build_object(
+      'action','score','status','open','asks',0,'failed',false,
+      'calls_used', v_w.calls_used, 'frontier', v_w.frontier,
+      'walk_id', v_wid, 'phase', v_b->>'phase', 'scored_hash', v_hash);
+  ELSIF v_act->>'action' = 'expand' THEN
+    v_quota := v_b->'quota';
+    v_visited := coalesce(v_b->'visited','[]'::jsonb);
+    v_pending := '[]'::jsonb;
+    v_edges := 0;
+    v_names := ARRAY['causal','entity','multi_hop','recency','semantic','temporal'];
+    FOR v_i IN 1..6 LOOP
+      v_bucket := v_names[v_i];
+      v_left := coalesce((v_quota->>v_bucket)::int, 0);
+      IF v_left <= 0 THEN CONTINUE; END IF;
+      FOR v_fr IN SELECT e FROM jsonb_array_elements(
+                    coalesce(v_w.frontier,'[]'::jsonb)) e LOOP
+        EXIT WHEN v_left <= 0;
+        IF v_bucket = 'recency' THEN
+          FOR rec IN
+            SELECT n.dst_hash, n.rel, n.structural
+              FROM v13_mgraph_neighbors(p_sid, v_fr->>'content_hash',
+                     v13_mgraph_bucket_rels(v_bucket), NULL) n
+             ORDER BY n.source_at DESC NULLS LAST, n.dst_hash ASC
+          LOOP
+            EXIT WHEN v_left <= 0;
+            IF EXISTS (
+              SELECT 1 FROM jsonb_array_elements_text(v_visited) h
+               WHERE h = rec.dst_hash)
+               OR EXISTS (
+              SELECT 1 FROM jsonb_array_elements(v_pending) p
+               WHERE p->>'content_hash' = rec.dst_hash) THEN
+              CONTINUE;
+            END IF;
+            v_pending := v_pending || jsonb_build_array(jsonb_build_object(
+              'content_hash', rec.dst_hash, 'bucket', v_bucket,
+              'structural', to_jsonb(rec.structural),
+              'from_hash', v_fr->>'content_hash'));
+            v_left := v_left - 1;
+            v_edges := v_edges + 1;
+            v_quota := jsonb_set(v_quota, ARRAY[v_bucket], to_jsonb(v_left));
+          END LOOP;
+        ELSE
+          FOR rec IN
+            SELECT n.dst_hash, n.rel, n.structural
+              FROM v13_mgraph_neighbors(p_sid, v_fr->>'content_hash',
+                     v13_mgraph_bucket_rels(v_bucket), v_left) n
+          LOOP
+            IF EXISTS (
+              SELECT 1 FROM jsonb_array_elements_text(v_visited) h
+               WHERE h = rec.dst_hash)
+               OR EXISTS (
+              SELECT 1 FROM jsonb_array_elements(v_pending) p
+               WHERE p->>'content_hash' = rec.dst_hash) THEN
+              CONTINUE;
+            END IF;
+            v_pending := v_pending || jsonb_build_array(jsonb_build_object(
+              'content_hash', rec.dst_hash, 'bucket', v_bucket,
+              'structural', to_jsonb(rec.structural),
+              'from_hash', v_fr->>'content_hash'));
+            v_left := v_left - 1;
+            v_edges := v_edges + 1;
+            v_quota := jsonb_set(v_quota, ARRAY[v_bucket], to_jsonb(v_left));
+            EXIT WHEN v_left <= 0;
+          END LOOP;
+        END IF;
+      END LOOP;
+    END LOOP;
+    IF jsonb_array_length(v_pending) = 0 THEN
+      UPDATE memory_walks
+         SET status = 'stopped', stop_reason = 'depth', budgets = v_b
+       WHERE walk_id = v_wid;
+      RETURN jsonb_build_object(
+        'action','expand','status','stopped','stop_reason','depth',
+        'asks',0,'failed',false,'calls_used', v_w.calls_used,
+        'frontier', v_w.frontier, 'walk_id', v_wid);
+    END IF;
+    v_b := jsonb_set(v_b, '{pending}', v_pending);
+    v_b := jsonb_set(v_b, '{quota}', v_quota);
+    v_b := jsonb_set(v_b, '{phase}', '"traverse"');
+    v_b := jsonb_set(v_b, '{round_edges}', to_jsonb(
+             coalesce((v_b->>'round_edges')::int, 0) + v_edges));
+    v_b := jsonb_set(v_b, '{scored}', '[]'::jsonb);
+    v_b := jsonb_set(v_b, '{basis}', '{}'::jsonb);
+    v_b := jsonb_set(v_b, '{stop_attempted}', 'false'::jsonb);
+    UPDATE memory_walks SET budgets = v_b WHERE walk_id = v_wid;
+    RETURN jsonb_build_object(
+      'action','expand','status','open','asks',0,'failed',false,
+      'calls_used', v_w.calls_used, 'frontier', v_w.frontier,
+      'walk_id', v_wid, 'phase','traverse',
+      'pending', jsonb_array_length(v_pending));
+  ELSIF v_act->>'action' = 'close' OR v_act->>'action' = 'to_stop' THEN
+    NULL; -- close handled below; to_stop already returned
+  END IF;
+
+  IF v_act->>'action' = 'ask' THEN
+    IF v_b->>'provider' IS NULL OR v_b->>'model' IS NULL THEN
+      v_pm := v13_mgraph_capture_pm(p_sid);
+      v_b := jsonb_set(v_b, '{provider}', to_jsonb(v_pm->>'provider'));
+      v_b := jsonb_set(v_b, '{model}', to_jsonb(v_pm->>'model'));
+    END IF;
+    v_env := v13_mgraph_envelope(p_sid, v_act->'state', v_act->'questions',
+                                 v_b->>'provider', v_b->>'model');
+    SELECT count(*) INTO v_c0 FROM judgment_calls WHERE session_id = p_sid;
+    v_res := v13_resolve_judgments(v_env, 1);
+    SELECT count(*) INTO v_c1 FROM judgment_calls WHERE session_id = p_sid;
+    v_delta := (v_c1 - v_c0)::int;
+    v_failed := coalesce((v_res->>'failed')::boolean, false);
+    IF v_act->>'kind' IS DISTINCT FROM 'shadow' THEN
+      v_w.calls_used := v_w.calls_used + v_delta;
+      v_b := jsonb_set(v_b, '{round_asks}', to_jsonb(
+               coalesce((v_b->>'round_asks')::int, 0) + v_delta));
+    END IF;
+    v_basis := coalesce(v_b->'basis', '{}'::jsonb);
+    FOR v_sig IN SELECT q->>'signal' FROM jsonb_array_elements(v_act->'questions') q
+    LOOP
+      v_basis := v_basis || jsonb_build_object(
+        v_sig, v13_mgraph_signal_class(p_sid, v_sig));
+    END LOOP;
+    v_b := jsonb_set(v_b, '{basis}', v_basis);
+    IF v_act->>'kind' = 'route' THEN
+      v_b := jsonb_set(v_b, '{route_attempted}', 'true'::jsonb);
+      v_b := jsonb_set(v_b, '{phase}', '"route"');
+    ELSIF v_act->>'kind' = 'shadow' THEN
+      v_b := jsonb_set(v_b, '{shadow_done}', 'true'::jsonb);
+    ELSIF v_act->>'kind' = 'stop' THEN
+      v_b := jsonb_set(v_b, '{stop_attempted}', 'true'::jsonb);
+      v_b := jsonb_set(v_b, '{phase}', '"stop"');
+    ELSIF v_act->>'kind' = 'trav' THEN
+      v_node := v_act->'node';
+      v_hash := v_node->>'content_hash';
+      v_score := v13_mgraph_transition_score(
+        p_sid, v_q, v_wid, v_hash, v_node->>'bucket',
+        NULLIF(v_node->>'structural','')::numeric, v_b->'weights');
+      v_b := jsonb_set(v_b, '{scored}',
+        coalesce(v_b->'scored','[]'::jsonb) || jsonb_build_array(
+          jsonb_build_object('content_hash', v_hash, 'score', to_jsonb(v_score),
+                             'bucket', v_node->>'bucket')));
+      v_b := jsonb_set(v_b, '{visited}',
+        coalesce(v_b->'visited','[]'::jsonb) || jsonb_build_array(v_hash));
+      v_pending := coalesce((
+        SELECT jsonb_agg(e ORDER BY i)
+          FROM jsonb_array_elements(coalesce(v_b->'pending','[]'::jsonb))
+               WITH ORDINALITY AS t(e, i)
+         WHERE e->>'content_hash' IS DISTINCT FROM v_hash), '[]'::jsonb);
+      v_b := jsonb_set(v_b, '{pending}', v_pending);
+      v_b := jsonb_set(v_b, '{phase}', '"traverse"');
+    END IF;
+    UPDATE memory_walks SET budgets = v_b, calls_used = v_w.calls_used
+     WHERE walk_id = v_wid;
+    RETURN jsonb_build_object(
+      'action','ask','kind', v_act->>'kind','status','open',
+      'asks', v_delta, 'failed', v_failed, 'calls_used', v_w.calls_used,
+      'frontier', v_w.frontier, 'walk_id', v_wid, 'phase', v_b->>'phase');
+  END IF;
+
+  IF v_act->>'action' = 'close' THEN
+    v_round := coalesce((v_b->>'round_no')::int, 1);
+    v_asks := coalesce((v_b->>'round_asks')::int, 0);
+    v_edges := coalesce((v_b->>'round_edges')::int, 0);
+    v_frontier := coalesce(v_w.frontier, '[]'::jsonb);
+    v_scored := coalesce(v_b->'scored', '[]'::jsonb);
+    SELECT coalesce(jsonb_agg(elem ORDER BY (elem->>'score')::numeric DESC,
+                                       elem->>'content_hash' ASC), '[]'::jsonb)
+      INTO v_beam
+      FROM (
+        SELECT elem FROM (
+          SELECT DISTINCT ON (elem->>'content_hash') elem
+            FROM (
+              SELECT e AS elem, 0 AS src
+                FROM jsonb_array_elements(v_scored) e
+              UNION ALL
+              SELECT e, 1 FROM jsonb_array_elements(v_frontier) e
+            ) u
+           ORDER BY elem->>'content_hash', src
+        ) d
+        ORDER BY (elem->>'score')::numeric DESC, elem->>'content_hash' ASC
+        LIMIT (v_pol->>'beam_width')::int
+      ) z;
+    v_w.nodes_used := (
+      SELECT count(DISTINCT h) FROM (
+        SELECT jsonb_array_elements_text(coalesce(v_b->'visited','[]'::jsonb)) AS h
+        UNION
+        SELECT f->>'content_hash' FROM jsonb_array_elements(v_beam) f
+      ) s);
+    v_w.edges_used := v_w.edges_used + v_edges;
+    v_w.depth := v_w.depth + 1;
+    UPDATE memory_walks
+       SET frontier = v_beam, nodes_used = v_w.nodes_used,
+           edges_used = v_w.edges_used, depth = v_w.depth, budgets = v_b,
+           calls_used = v_w.calls_used
+     WHERE walk_id = v_wid;
+    INSERT INTO memory_rounds (walk_id, round, frontier_in, frontier_out, basis, asks)
+    VALUES (v_wid, v_round, v_frontier, v_beam, v_b->'basis', v_asks)
+    ON CONFLICT (walk_id, round) DO NOTHING;
+    v_ss := v13_mgraph_should_stop(v_wid);
+    IF (v_ss->>'stop')::boolean THEN
+      UPDATE memory_walks SET status = 'stopped', stop_reason = v_ss->>'reason'
+       WHERE walk_id = v_wid;
+    ELSIF p_elapsed_ms >= (v_pol->>'max_latency_ms')::int THEN
+      UPDATE memory_walks SET status = 'stopped', stop_reason = 'latency'
+       WHERE walk_id = v_wid;
+    ELSE
+      v_b := jsonb_set(v_b, '{phase}', '"expand"');
+      v_b := jsonb_set(v_b, '{round_no}', to_jsonb(v_round + 1));
+      v_b := jsonb_set(v_b, '{scored}', '[]'::jsonb);
+      v_b := jsonb_set(v_b, '{pending}', '[]'::jsonb);
+      v_b := jsonb_set(v_b, '{basis}', '{}'::jsonb);
+      v_b := jsonb_set(v_b, '{round_asks}', '0'::jsonb);
+      v_b := jsonb_set(v_b, '{round_edges}', '0'::jsonb);
+      v_b := jsonb_set(v_b, '{stop_attempted}', 'false'::jsonb);
+      UPDATE memory_walks SET budgets = v_b, frontier = v_beam
+       WHERE walk_id = v_wid;
+    END IF;
+    SELECT * INTO v_w FROM memory_walks WHERE walk_id = v_wid;
+    RETURN jsonb_build_object(
+      'action','close','status', v_w.status, 'stop_reason', v_w.stop_reason,
+      'asks', 0, 'failed', false, 'calls_used', v_w.calls_used,
+      'frontier', v_w.frontier, 'walk_id', v_wid, 'phase', v_w.budgets->>'phase',
+      'round', v_round);
+  END IF;
+
+  RAISE EXCEPTION 'v13: mgraph run_round unhandled action %', v_act->>'action'
+    USING ERRCODE = 'V3009';
+END $$;
+
+-- OQ8 evidence 出口。只读已停 walk 的 frontier,零 ask。
+-- 定位键 = 当前 generation + 活动 policy_version + query_hash。
+CREATE FUNCTION v13_mgraph_evidence(p_sid uuid, p_query_hash text)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_pol jsonb; v_k int; v_gen bigint; v_pver int; v_rows jsonb;
+BEGIN
+  IF p_query_hash IS NULL OR p_query_hash !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'v13: mgraph evidence query_hash must be 64 hex'
+      USING ERRCODE = 'V3009';
+  END IF;
+  v_pol := v13_mgraph_policy();
+  IF NOT (v_pol->>'read_enabled')::boolean THEN
+    RETURN jsonb_build_object('rows', '[]'::jsonb, 'skipped', 'disabled',
+                              'asks', 0);
+  END IF;
+  IF (v13_transcript_freshness(p_sid)->>'degraded')::boolean THEN
+    RETURN jsonb_build_object('rows', '[]'::jsonb, 'skipped', 'degraded',
+                              'asks', 0);
+  END IF;
+  v_k := (v_pol->>'inject_top_k')::int;
+  v_gen := (v13_mgraph_progress(p_sid)->>'generation')::bigint;
+  SELECT version INTO v_pver FROM v13_policies WHERE name = 'mgraph' AND active;
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'content_hash', x.content_hash, 'score', x.score, 'body', n.body)
+           ORDER BY x.score DESC, x.content_hash ASC), '[]'::jsonb)
+    INTO v_rows
+    FROM (
+      SELECT f->>'content_hash' AS content_hash,
+             (f->>'score')::numeric AS score
+        FROM memory_walks w
+        CROSS JOIN LATERAL jsonb_array_elements(w.frontier) AS f
+       WHERE w.session_id = p_sid
+         AND w.query_hash = p_query_hash
+         AND w.mgraph_generation = v_gen
+         AND w.policy_version = v_pver
+         AND w.status = 'stopped'
+       ORDER BY (f->>'score')::numeric DESC, f->>'content_hash' ASC
+       LIMIT v_k
+    ) x
+    JOIN memory_nodes n
+      ON n.session_id = p_sid AND n.content_hash = x.content_hash;
+  RETURN jsonb_build_object('rows', coalesce(v_rows, '[]'::jsonb),
+                            'skipped', NULL, 'asks', 0);
+END $$;
+
+-- === §4 ACL(M3 面) ===
+REVOKE ALL ON memory_walks, memory_rounds FROM PUBLIC;
+GRANT SELECT ON memory_walks, memory_rounds
+  TO v13_recall, v13_resolve, v13_route;
+GRANT INSERT, UPDATE ON memory_walks TO v13_resolve;
+GRANT INSERT ON memory_rounds TO v13_resolve;
+
+REVOKE EXECUTE ON FUNCTION
+  v13_mgraph_walk_id(uuid,text,bigint,int),
+  v13_mgraph_bucket_rels(text),
+  v13_mgraph_neighbors(uuid,text,text[],int),
+  v13_mgraph_structural_reach(uuid,text,int),
+  v13_mgraph_route(text),
+  v13_mgraph_allocate(jsonb),
+  v13_mgraph_primary_bucket(jsonb),
+  v13_mgraph_signal_class(uuid,text),
+  v13_mgraph_component(uuid,text),
+  v13_mgraph_anchors(uuid,text,text),
+  v13_mgraph_trav_questions(uuid,text,int),
+  v13_mgraph_stop_questions(uuid,int),
+  v13_mgraph_route_questions(text,bigint),
+  v13_mgraph_trav_state(uuid,text,jsonb),
+  v13_mgraph_stop_state(uuid,text,jsonb),
+  v13_mgraph_transition_score(uuid,text,uuid,text,text,numeric,jsonb),
+  v13_mgraph_should_stop(uuid),
+  v13_mgraph_next_action(uuid,text,int),
+  v13_mgraph_capture_pm(uuid),
+  v13_mgraph_run_round(uuid,text,int),
+  v13_mgraph_evidence(uuid,text)
+FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION
+  v13_mgraph_neighbors(uuid,text,text[],int),
+  v13_mgraph_structural_reach(uuid,text,int),
+  v13_mgraph_route(text),
+  v13_mgraph_allocate(jsonb),
+  v13_mgraph_evidence(uuid,text),
+  v13_mgraph_primary_bucket(jsonb)
+TO v13_recall, v13_resolve;
+
+GRANT EXECUTE ON FUNCTION
+  v13_mgraph_walk_id(uuid,text,bigint,int),
+  v13_mgraph_bucket_rels(text),
+  v13_mgraph_signal_class(uuid,text),
+  v13_mgraph_component(uuid,text),
+  v13_mgraph_anchors(uuid,text,text),
+  v13_mgraph_trav_questions(uuid,text,int),
+  v13_mgraph_stop_questions(uuid,int),
+  v13_mgraph_route_questions(text,bigint),
+  v13_mgraph_trav_state(uuid,text,jsonb),
+  v13_mgraph_stop_state(uuid,text,jsonb),
+  v13_mgraph_transition_score(uuid,text,uuid,text,text,numeric,jsonb),
+  v13_mgraph_should_stop(uuid),
+  v13_mgraph_next_action(uuid,text,int),
+  v13_mgraph_capture_pm(uuid),
+  v13_mgraph_run_round(uuid,text,int)
+TO v13_resolve;
 
 COMMIT;

@@ -22,6 +22,7 @@
 
 > **实施进度**:M1 ✅(2026-09-23 交付;A1–A9 全绿 169 PASS,前序 14 gate 回归全绿——twophase/envelope 的本地红系未入库 demo 树(v13/demo/ 整树 gitignored,aa106b7)被全树扫描误中,提交态干净;实施偏差九条见 v13/mgraph/README.md 偏差台账,含上游行号按钉死 commit 校正)。
 > M2 ✅(2026-09-23 交付;A+D 241 PASS,前序 14 gate 回归全绿;偏差台账 #10–#17 见 v13/mgraph/README.md——含 typesafe provider 占位符陷阱的 5 参信封重载、GUC mock 单批形状限制的 write_max_batches=1 步进驱动、mem_rel_entity 写路径结构性不可达改经 pair_questions 直测)。
+> M3 ✅(2026-09-23 交付;A+D+E 277 PASS,前序 14 gate 回归全绿;偏差台账 #18–#28 见 v13/mgraph/README.md——读环一步一封、确定性升权 = floor+1 且主意图互斥、max_latency_ms 允许 0、timeout_ms 非整数丢弃、E5 的 failed_timeout 由夹具种入)。
 
 ---
 

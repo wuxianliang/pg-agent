@@ -4,7 +4,8 @@ QUESTION_SNAPSHOT.md, judgment_defaults six new points, needed_judgments
 untouched + cgr bump, ACL negative face, source scan, zero side effects,
 envelope constructor batch shape. M2 group D (write & rebuild): build/apply/
 rebuild/candidates, caps & cursor semantics, concurrency, poisoned-rebuild
-zero-ask. M3/M4 groups (E/F) land with their milestones.
+zero-ask. M3 group E (read loop B1): route/allocate/run_round/should_stop/
+evidence. M4 group F lands with its milestone.
 
 Run: uv run python v13/mgraph/test_mgraph.py  (exit 0 = pass)
 """
@@ -1384,6 +1385,570 @@ def main() -> int:
     check("D12: deterministic mode produced no mem_route rows",
           cur.fetchone()[0] == 0)
 
+    # =====================================================================
+    # DP9 M3 group E: read loop B1 (G-mg/E1-E9)
+    #
+    # One envelope per run_round call. The driver asks next_action, mocks
+    # that gap, then steps. Provider is captured once per drive and passed
+    # into the 5-arg envelope so a spent connection can still preview.
+    # =====================================================================
+    C.ensure()
+    cur = C.cur
+    set_active("mgraph", 1)
+
+    BUCKETS = ("causal", "entity", "multi_hop", "recency", "semantic",
+               "temporal")
+
+    def as_ints(obj):
+        return {k: int(v) for k, v in obj.items()}
+
+    def noul_mock(sigs, spec):
+        answers = {}
+        for s in sigs:
+            if s in spec:
+                v = spec[s]
+            else:
+                v = spec.get("*", 0.55)
+                for key, val in spec.items():
+                    if key.startswith("*") and key != "*" and s.endswith(key[1:]):
+                        v = val
+                        break
+            answers[s] = {"type": "noul", "noul": v}
+        return json.dumps({"model": "jev-mock", "answers": answers,
+                           "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+    def put_nodes(c, bodies, at="2020-01-01 00:00:00+00"):
+        sid = u()
+        c.execute("INSERT INTO sessions (session_id) VALUES (%s)", (sid,))
+        hashes = []
+        for b in bodies:
+            c.execute("SELECT v13_body_hash(%s)", (b,))
+            h = c.fetchone()[0]
+            c.execute(
+                "INSERT INTO memory_nodes (session_id, content_hash, body,"
+                " origin, source_hashes, source_at, builder_version)"
+                " VALUES (%s,%s,%s,'episodic',%s,%s::timestamptz,1)",
+                (sid, h, b, [h], at))
+            hashes.append(h)
+        return sid, hashes
+
+    def open_read(**over):
+        ver = bump_policy(cur, "mgraph",
+                          dict(EXPECTED_POLICY, read_enabled=True, **over))
+        C.commit()
+        return ver
+
+    def drive(sid, query, elapsed=0, spec=None, commit=True,
+              reconnect=True, pm=None, limit=48):
+        spec = spec or {}
+        if reconnect:
+            C.ensure()
+        cur_d = C.cur
+        if pm is None:
+            cur_d.execute(
+                "SELECT current_setting('typesafe.provider', true),"
+                " current_setting('typesafe.model', true)")
+            pm = cur_d.fetchone()
+        outs = []
+        shadow = None
+        for _ in range(limit):
+            cur_d.execute(
+                "SELECT v13_mgraph_next_action(%s,%s,%s)",
+                (sid, query, elapsed))
+            act = cur_d.fetchone()[0]
+            if act["action"] in ("done", "skip"):
+                outs.append({"preview": act})
+                break
+            before = None
+            if act.get("kind") == "shadow":
+                cur_d.execute(
+                    "SELECT frontier, calls_used FROM memory_walks"
+                    " WHERE session_id=%s AND status='stopped'", (sid,))
+                before = cur_d.fetchone()
+            if act["action"] == "ask":
+                cur_d.execute(
+                    "SELECT v13_mgraph_envelope(%s,%s::jsonb,%s::jsonb,%s,%s)",
+                    (sid, json.dumps(act["state"]), json.dumps(act["questions"]),
+                     pm[0], pm[1]))
+                env = cur_d.fetchone()[0]
+                gap = gap_of_env(cur_d, env)
+                if gap:
+                    cur_d.execute(
+                        "SELECT set_config('typesafe.mock_response', %s, true)",
+                        (noul_mock([g["signal"] for g in gap], spec),))
+            cur_d.execute(
+                "SELECT v13_mgraph_run_round(%s,%s,%s)",
+                (sid, query, elapsed))
+            step = cur_d.fetchone()[0]
+            outs.append(step)
+            if act.get("kind") == "shadow" and before is not None:
+                cur_d.execute(
+                    "SELECT frontier, calls_used FROM memory_walks"
+                    " WHERE session_id=%s AND status='stopped'", (sid,))
+                after = cur_d.fetchone()
+                shadow = (before, after)
+            if commit:
+                C.commit()
+        else:
+            raise AssertionError(
+                "drive did not finish: %s" % (outs[-1] if outs else None))
+        return outs, shadow, pm
+
+    def walk_row(c, sid):
+        c.execute(
+            "SELECT walk_id, status, stop_reason, calls_used, frontier, budgets"
+            " FROM memory_walks WHERE session_id=%s", (sid,))
+        row = c.fetchone()
+        if row is None:
+            return None
+        return {"walk_id": row[0], "status": row[1], "stop_reason": row[2],
+                "calls_used": row[3], "frontier": row[4], "budgets": row[5]}
+
+    def alloc(c, weights):
+        c.execute("SELECT v13_mgraph_allocate(%s::jsonb)",
+                  (json.dumps(weights),))
+        return as_ints(c.fetchone()[0])
+
+    # ---------------- E1 allocate -----------------------------------------
+    # Hand trace, B=20, exponent 1.5.
+    # Equal weights: quota=20/6, floor 3, leftover 2, remainders tied,
+    # name order gives the extra unit to causal then entity.
+    got_eq = alloc(cur, {b: 1 for b in BUCKETS})
+    exp_eq = {"causal": 4, "entity": 4, "multi_hop": 3, "recency": 3,
+              "semantic": 3, "temporal": 3}
+    check("E1: equal weights, name-order remainder tie",
+          got_eq == exp_eq and sum(got_eq.values()) == 20, got_eq)
+    check("E1: every active bucket funded (>=1)",
+          all(v >= 1 for v in got_eq.values()), got_eq)
+    # temporal=5, others=1: temporal remainder is the largest, then causal
+    # (name order among the tied unit remainders) takes the second seat.
+    got_hi = alloc(cur, {"causal": 1, "entity": 1, "multi_hop": 1,
+                         "recency": 1, "semantic": 1, "temporal": 5})
+    exp_hi = {"causal": 2, "entity": 1, "multi_hop": 1, "recency": 1,
+              "semantic": 1, "temporal": 14}
+    check("E1: unequal remainders, largest remainder then name",
+          got_hi == exp_hi and sum(got_hi.values()) == 20, got_hi)
+    got_zero = alloc(cur, {b: 0 for b in BUCKETS})
+    check("E1: all-zero weights become the superset distribution",
+          sum(got_zero.values()) == 20 and all(v >= 1 for v in got_zero.values()),
+          got_zero)
+    fails_with(cur, "SELECT v13_mgraph_allocate(%s::jsonb)",
+               (json.dumps({"causal": -1, "entity": 1, "multi_hop": 1,
+                            "recency": 1, "semantic": 1, "temporal": 1}),),
+               "negative", "E1: negative weight raises V3009", pgcode="V3009")
+    bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, total_graph_budget=3))
+    C.commit()
+    fails_with(cur, "SELECT v13_mgraph_allocate(%s::jsonb)",
+               (json.dumps({b: 1 for b in BUCKETS}),),
+               "cannot fund", "E1: budget below active-bucket count raises",
+               pgcode="V3009")
+    bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, total_graph_budget=6))
+    C.commit()
+    # B=6, one mass-100 bucket and five units: Hamilton parks all 6 on the
+    # heavy bucket, then each empty active bucket borrows 1. End state is
+    # one each.
+    got_b = alloc(cur, {"causal": 100, "entity": 1, "multi_hop": 1,
+                        "recency": 1, "semantic": 1, "temporal": 1})
+    check("E1: borrow funds every active bucket",
+          got_b == {b: 1 for b in BUCKETS} and sum(got_b.values()) == 6, got_b)
+    set_active("mgraph", 1)
+
+    # ---------------- E2 route + E4/E9 on one read policy -----------------
+    open_read()
+    r_why = None
+    cur.execute("SELECT v13_mgraph_route(%s)", ("Why did the deploy fail?",))
+    r_why = cur.fetchone()[0]
+    why_w = {k: float(v) for k, v in r_why["weights"].items()}
+    check("E2: WHY query routes deterministic with causal strictly heaviest",
+          r_why["mode"] == "deterministic"
+          and why_w["causal"] > max(why_w[b] for b in BUCKETS if b != "causal"),
+          r_why)
+    cur.execute("SELECT v13_mgraph_route(%s)", ("为什么部署失败",))
+    r_cjk = cur.fetchone()[0]
+    cjk_w = {k: float(v) for k, v in r_cjk["weights"].items()}
+    floor = float(EXPECTED_POLICY["deterministic_floor"])
+    al_cjk = alloc(cur, r_cjk["weights"])
+    check("E2: CJK query is a superset at or above the floor",
+          r_cjk["mode"] == "superset"
+          and all(cjk_w[b] >= floor for b in BUCKETS)
+          and all(al_cjk[b] >= 1 for b in BUCKETS),
+          (r_cjk, al_cjk))
+
+    sid_cjk = u()
+    cur.execute("INSERT INTO sessions (session_id) VALUES (%s)", (sid_cjk,))
+    C.commit()
+    calls_before = None
+    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s"
+                " AND signal LIKE 'mem\\_route::%%'", (sid_cjk,))
+    drive(sid_cjk, "为什么部署失败", spec={"*": 0.2})
+    cur = C.cur
+    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s"
+                " AND signal LIKE 'mem\\_route::%%'", (sid_cjk,))
+    check("E2: CJK deterministic walk asks no routing questions",
+          cur.fetchone()[0] == 0)
+
+    def five(tag):
+        return [f"alpha beacon {tag} {i}" for i in range(5)]
+
+    ev_spec = {"*::sufficient": 0.95, "*::missing": 0.10,
+               "*::contradiction": 0.10, "*::continue": 0.90, "*": 0.50}
+    sid_ev, _ = put_nodes(cur, five("ev"))
+    C.commit()
+    drive(sid_ev, "alpha beacon", spec=ev_spec)
+    cur = C.cur
+    w_ev = walk_row(cur, sid_ev)
+    check("E4: sufficient/missing/contradiction stop as evidence",
+          w_ev["status"] == "stopped" and w_ev["stop_reason"] == "evidence"
+          and w_ev["calls_used"] == 6, w_ev)
+    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s"
+                " AND signal LIKE 'mem\\_route::%%'", (sid_ev,))
+    check("E2: deterministic WHY-free walk wrote no mem_route rows",
+          cur.fetchone()[0] == 0)
+
+    cur.execute("SELECT v13_body_hash(btrim(%s))", ("alpha beacon",))
+    qh_ev = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
+                (sid_ev,))
+    calls_ev = cur.fetchone()[0]
+    cur.execute("SELECT v13_mgraph_evidence(%s,%s)", (sid_ev, qh_ev))
+    ev = cur.fetchone()[0]
+    rows = ev["rows"]
+    scores = [float(r["score"]) for r in rows]
+    hashes = [r["content_hash"] for r in rows]
+    check("E9: stopped walk returns <= inject_top_k, score desc hash asc",
+          ev["asks"] == 0 and ev["skipped"] is None
+          and 1 <= len(rows) <= EXPECTED_POLICY["inject_top_k"]
+          and scores == sorted(scores, reverse=True)
+          and all(hashes[i] <= hashes[i + 1]
+                  for i in range(len(hashes) - 1)
+                  if scores[i] == scores[i + 1]),
+          ev)
+    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
+                (sid_ev,))
+    check("E9: evidence itself asks nothing", cur.fetchone()[0] == calls_ev)
+    cur.execute("SELECT v13_mgraph_evidence(%s,%s)", (sid_ev, "ab" * 32))
+    ev_empty = cur.fetchone()[0]
+    check("E9: no walk for that hash is an empty zero-ask set",
+          ev_empty["rows"] == [] and ev_empty["asks"] == 0
+          and ev_empty["skipped"] is None, ev_empty)
+
+    cont_spec = {"*::sufficient": 0.10, "*::missing": 0.10,
+                 "*::contradiction": 0.10, "*::continue": 0.10, "*": 0.50}
+    sid_co, _ = put_nodes(cur, five("co"))
+    C.commit()
+    drive(sid_co, "alpha beacon", spec=cont_spec)
+    cur = C.cur
+    w_co = walk_row(cur, sid_co)
+    check("E4: low continue stops as continue, still six batches",
+          w_co["status"] == "stopped" and w_co["stop_reason"] == "continue"
+          and w_co["calls_used"] == 6, w_co)
+
+    open_read(maximum_jev_calls=6)
+    call_spec = {"*::sufficient": 0.10, "*::missing": 0.10,
+                 "*::contradiction": 0.10, "*::continue": 0.90, "*": 0.50}
+    sid_ca, _ = put_nodes(cur, five("ca"))
+    C.commit()
+    drive(sid_ca, "alpha beacon", spec=call_spec)
+    cur = C.cur
+    w_ca = walk_row(cur, sid_ca)
+    cur.execute("SELECT v13_mgraph_run_round(%s,%s,0)", (sid_ca, "alpha beacon"))
+    again = cur.fetchone()[0]
+    C.commit()
+    check("E4: calls cap stops after 1 stop batch + 5 traversal batches"
+          " and a later round does not ask",
+          w_ca["status"] == "stopped" and w_ca["stop_reason"] == "calls"
+          and w_ca["calls_used"] == 6 and again["asks"] == 0, (w_ca, again))
+
+    # ---------------- E2 jev routing + shadow ------------------------------
+    open_read(routing_mode="jev")
+    sid_jv, _ = put_nodes(cur, ["alpha beacon jev route"])
+    C.commit()
+    C.ensure()
+    cur = C.cur
+    cur.execute("SELECT v13_mgraph_next_action(%s,%s,0)",
+                (sid_jv, "alpha beacon"))
+    act_jv = cur.fetchone()[0]
+    check("E2: jev mode's first step is the six-question routing envelope",
+          act_jv["action"] == "ask" and act_jv["kind"] == "route"
+          and len(act_jv["questions"]) == 6, act_jv)
+    drive(sid_jv, "alpha beacon", spec={"*": 0.80}, reconnect=True)
+    cur = C.cur
+    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s"
+                " AND signal LIKE 'mem\\_route::%%'", (sid_jv,))
+    check("E2: jev fixture lands six routing decisions",
+          cur.fetchone()[0] == 6)
+
+    open_read(routing_shadow=True)
+    sid_sh, _ = put_nodes(cur, ["alpha beacon shadow"])
+    C.commit()
+    _outs, shadow, _pm = drive(sid_sh, "alpha beacon", spec=ev_spec)
+    cur = C.cur
+    check("E2: shadow ask leaves frontier and calls_used unchanged",
+          shadow is not None and shadow[0][0] == shadow[1][0]
+          and shadow[0][1] == shadow[1][1], shadow)
+    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s"
+                " AND signal LIKE 'mem\\_route::%%'", (sid_sh,))
+    check("E2: shadow recorded the six routing decisions",
+          cur.fetchone()[0] == 6)
+
+    # ---------------- E3 beam tie + replay equality ------------------------
+    open_read(beam_width=2)
+    sid_e3, hashes_e3 = put_nodes(
+        cur, ["alpha beacon aa", "alpha beacon bb", "alpha beacon cc"])
+    C.commit()
+    tie_spec = {"*": 0.40, "*::sufficient": 0.95, "*::missing": 0.10,
+                "*::contradiction": 0.10, "*::continue": 0.90}
+    drive(sid_e3, "alpha beacon", spec=tie_spec, commit=False)
+    cur = C.cur
+    w_e3a = walk_row(cur, sid_e3)
+    cur.execute(
+        "DELETE FROM memory_rounds WHERE walk_id IN"
+        " (SELECT walk_id FROM memory_walks WHERE session_id=%s)", (sid_e3,))
+    cur.execute("DELETE FROM memory_walks WHERE session_id=%s", (sid_e3,))
+    drive(sid_e3, "alpha beacon", spec=tie_spec, commit=False, reconnect=False,
+          pm=("mock", "jev-mock"))
+    cur = C.cur
+    w_e3b = walk_row(cur, sid_e3)
+    fa = w_e3a["frontier"]
+    fb = w_e3b["frontier"]
+    check("E3: two rounds inside one transaction share a frontier",
+          fa == fb and len(fa) == 2, (fa, fb))
+    ordered = sorted(hashes_e3)
+    front_h = [x["content_hash"] for x in fa]
+    scores_e3 = [float(x["score"]) for x in fa]
+    tied = len(scores_e3) == 2 and scores_e3[0] == scores_e3[1]
+    check("E3: tied beam keeps the smaller content_hash first",
+          tied and front_h == ordered[:2],
+          {"frontier": fa, "hashes": ordered})
+    C.commit()
+
+    # ---------------- E5 timeout / missing basis ---------------------------
+    open_read()
+    sid_e5, (h_a, h_b) = put_nodes(
+        cur, ["alpha beacon anchor", "quartz fossil unrelated"])
+    cur.execute(
+        "INSERT INTO memory_links (session_id, src_hash, dst_hash, rel,"
+        " origin, decision_id, structural, policy_version)"
+        " VALUES (%s,%s,%s,'temporal','temporal',NULL,NULL,1)",
+        (sid_e5, h_a, h_b))
+    C.commit()
+    cur.execute(
+        "SELECT v13_mgraph_walk_id(%s, v13_body_hash(btrim(%s)),"
+        " (v13_mgraph_progress(%s)->>'generation')::bigint,"
+        " (SELECT version FROM v13_policies WHERE name='mgraph' AND active))",
+        (sid_e5, "alpha beacon", sid_e5))
+    wid_e5 = cur.fetchone()[0]
+    sig_rel = f"mem_trav::{wid_e5}::{h_b}::relevance"
+    sig_use = f"mem_trav::{wid_e5}::{h_b}::relation_usefulness"
+    payload = json.dumps({"signals": [sig_rel, sig_use]})
+    cur.execute(
+        "INSERT INTO judgment_calls (session_id, candidate_set_hash,"
+        " projection_key, payload, payload_hash, provider, model,"
+        " question_count, status, error)"
+        " VALUES (%s,%s,'mgraph',%s::jsonb,%s,'mock','jev-mock',2,"
+        " 'failed_timeout','57014')",
+        (sid_e5, "ab" * 32, payload, sha(payload)))
+    C.commit()
+    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
+                (sid_e5,))
+    calls_e5_pre = cur.fetchone()[0]
+    e5_spec = {"*::sufficient": 0.10, "*::missing": 0.10,
+               "*::contradiction": 0.10, "*::continue": 0.90, "*": 0.60}
+    drive(sid_e5, "alpha beacon", spec=e5_spec)
+    cur = C.cur
+    w_e5 = walk_row(cur, sid_e5)
+    cur.execute(
+        "SELECT basis FROM memory_rounds WHERE walk_id=%s AND round=2",
+        (wid_e5,))
+    basis_row = cur.fetchone()
+    basis = basis_row[0] if basis_row else {}
+    classes = set(basis.values()) if isinstance(basis, dict) else set()
+    front_e5 = {x["content_hash"] for x in (w_e5["frontier"] or [])}
+    cur.execute(
+        "SELECT count(*) FROM decisions WHERE session_id=%s"
+        " AND signal LIKE %s", (sid_e5, f"mem\\_trav::{wid_e5}::{h_b}::%"))
+    b_decs = cur.fetchone()[0]
+    cur.execute(
+        "SELECT count(*) FROM memory_links WHERE session_id=%s"
+        " AND origin='jev' AND decision_id IS NULL", (sid_e5,))
+    naked = cur.fetchone()[0]
+    cur.execute("SELECT calls_used FROM memory_walks WHERE walk_id=%s",
+                (wid_e5,))
+    used_e5 = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
+                (sid_e5,))
+    calls_e5 = cur.fetchone()[0]
+    check("E5: timeout basis, missing basis, structural neighbor kept,"
+          " no forged noul and the failed batch counts",
+          "default_timeout" in classes and "default_missing" in classes
+          and h_b in front_e5 and b_decs == 0 and naked == 0
+          and used_e5 == (calls_e5 - calls_e5_pre) + 1,
+          {"basis": basis, "frontier": list(front_e5),
+           "calls_used": used_e5, "new_calls": calls_e5 - calls_e5_pre})
+
+    cur.execute("SET enable_seqscan = off")
+    cur.execute(
+        "EXPLAIN (FORMAT TEXT) SELECT * FROM v13_mgraph_neighbors(%s,%s,%s,5)",
+        (sid_e5, h_a, ["temporal"]))
+    plan_e = "\n".join(r[0] for r in cur.fetchall())
+    cur.execute("SET enable_seqscan = on")
+    # Tiny fixtures make the planner skip-scan ix_memory_links_dst
+    # (session_id, rel) and filter src_hash. Either OQ1 btree counts;
+    # a seq scan on memory_links does not.
+    check("E5: neighbor plan uses a link btree, not a seq scan",
+          "Seq Scan on memory_links" not in plan_e
+          and ("ix_memory_links_src" in plan_e
+               or "ix_memory_links_dst" in plan_e), plan_e)
+
+    # ---------------- E7 latency -------------------------------------------
+    open_read(max_latency_ms=0)
+    sid_lat, _ = put_nodes(cur, ["alpha beacon late"])
+    C.commit()
+    drive(sid_lat, "alpha beacon", elapsed=0, spec=call_spec)
+    cur = C.cur
+    w_lat = walk_row(cur, sid_lat)
+    check("E7: max_latency_ms=0 stops after the first round as latency",
+          w_lat["status"] == "stopped" and w_lat["stop_reason"] == "latency",
+          w_lat)
+
+    # ---------------- E6 no effects, no resolve/failed, no tuple lock ------
+    open_read()
+    cur.execute("SELECT count(*) FROM effects")
+    eff0 = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM events WHERE type='resolve/failed'")
+    rf0 = cur.fetchone()[0]
+    sid_e6, _ = put_nodes(cur, ["alpha beacon lock"])
+    C.commit()
+    drive(sid_e6, "alpha beacon", spec=ev_spec)
+    cur = C.cur
+    cur.execute("SELECT count(*) FROM effects")
+    cur.execute("SELECT count(*) FROM events WHERE type='resolve/failed'")
+    # refetch properly
+    cur.execute("SELECT count(*) FROM effects")
+    eff1 = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM events WHERE type='resolve/failed'")
+    rf1 = cur.fetchone()[0]
+    check("E6: a finished walk adds no effects and no resolve/failed",
+          eff1 == eff0 and rf1 == rf0, (eff0, eff1, rf0, rf1))
+
+    sid_lock = u()
+    cur.execute("INSERT INTO sessions (session_id) VALUES (%s)", (sid_lock,))
+    C.commit()
+    cur.execute(
+        "SELECT v13_mgraph_stop_questions("
+        " v13_mgraph_walk_id(%s, v13_body_hash(btrim(%s)),"
+        "  (v13_mgraph_progress(%s)->>'generation')::bigint,"
+        "  (SELECT version FROM v13_policies WHERE name='mgraph' AND active)),"
+        " 1)",
+        (sid_lock, "alpha beacon", sid_lock))
+    stop_qs = cur.fetchone()[0]
+    mock_lock = noul_mock([q["signal"] for q in stop_qs], {"*": 0.2})
+    lock_conn, lock_cur = fresh_conn()
+    lock_cur.execute(
+        "SELECT pg_advisory_lock(v13_lock_key(%s, 'mgraph-build'))",
+        (sid_lock,))
+    box_e6 = {}
+
+    def _e6_round():
+        c_b, k_b = fresh_conn()
+        try:
+            k_b.execute(
+                "SELECT set_config('typesafe.mock_response', %s, true)",
+                (mock_lock,))
+            k_b.execute(
+                "SELECT v13_mgraph_run_round(%s,%s,0)",
+                (sid_lock, "alpha beacon"))
+            box_e6["res"] = k_b.fetchone()[0]
+            c_b.commit()
+        except Exception as exc:            # pragma: no cover
+            box_e6["err"] = repr(exc)
+            c_b.rollback()
+        finally:
+            c_b.close()
+
+    t_e6 = threading.Thread(target=_e6_round)
+    t_e6.start()
+    time.sleep(0.6)
+    conn_ap, k_ap = fresh_conn()
+    t0 = time.monotonic()
+    k_ap.execute(
+        "SELECT v13_append_event(%s, %s, 'user/message', %s::jsonb)",
+        (sid_lock, u(), json.dumps({"text": "e6 probe"})))
+    dt_e6 = time.monotonic() - t0
+    conn_ap.commit()
+    conn_ap.close()
+    check("E6: append_event while run_round waits on the advisory lock < 5s",
+          dt_e6 < 5.0 and t_e6.is_alive(), (dt_e6, t_e6.is_alive(), box_e6))
+    lock_cur.execute(
+        "SELECT pg_advisory_unlock(v13_lock_key(%s, 'mgraph-build'))",
+        (sid_lock,))
+    lock_conn.commit()
+    lock_conn.close()
+    t_e6.join(timeout=20)
+    check("E6: blocked run_round finished and did not raise",
+          not t_e6.is_alive() and "res" in box_e6 and "err" not in box_e6,
+          box_e6)
+    cur.execute("SELECT count(*) FROM effects")
+    eff2 = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM events WHERE type='resolve/failed'")
+    rf2 = cur.fetchone()[0]
+    check("E6: the blocked round still added no effect and no resolve/failed",
+          eff2 == eff0 and rf2 == rf0, (eff2, rf2))
+
+    # ---------------- E8 read off / degraded --------------------------------
+    set_active("mgraph", 1)
+    sid_off = u()
+    cur.execute("INSERT INTO sessions (session_id) VALUES (%s)", (sid_off,))
+    C.commit()
+    cur.execute("SELECT count(*) FROM judgment_calls")
+    calls_off = cur.fetchone()[0]
+    cur.execute("SELECT v13_body_hash(btrim(%s))", ("alpha beacon",))
+    qh_off = cur.fetchone()[0]
+    cur.execute("SELECT v13_mgraph_evidence(%s,%s)", (sid_off, qh_off))
+    ev_off = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM judgment_calls")
+    check("E8: read_enabled=false is an empty skipped:disabled result",
+          ev_off["rows"] == [] and ev_off["skipped"] == "disabled"
+          and ev_off["asks"] == 0 and cur.fetchone()[0] == calls_off, ev_off)
+    cur.execute("SELECT v13_mgraph_run_round(%s,%s,0)", (sid_off, "alpha beacon"))
+    rr_off = cur.fetchone()[0]
+    C.commit()
+    check("E8: run_round honors the same disabled skip",
+          rr_off.get("skipped") == "disabled" and rr_off.get("asks") == 0,
+          rr_off)
+
+    open_read()
+    bump_policy(cur, "memory_stack", {"max_lag_events": 0})
+    C.commit()
+    sid_deg = mk_session(cur, ["alpha beacon fresh"])
+    cur.execute(
+        "SELECT v13_append_event(%s, %s, 'user/message', %s::jsonb)",
+        (sid_deg, u(), json.dumps({"text": "alpha beacon lagged"})))
+    C.commit()
+    cur.execute("SELECT v13_transcript_freshness(%s)->>'degraded'", (sid_deg,))
+    deg = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM judgment_calls")
+    calls_deg = cur.fetchone()[0]
+    cur.execute("SELECT v13_mgraph_evidence(%s,%s)", (sid_deg, qh_off))
+    ev_deg = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM judgment_calls")
+    check("E8: degraded freshness is an empty skipped:degraded result",
+          deg == "true" and ev_deg["rows"] == []
+          and ev_deg["skipped"] == "degraded" and ev_deg["asks"] == 0
+          and cur.fetchone()[0] == calls_deg, (deg, ev_deg))
+    set_active("memory_stack", 1)
+
+    # ---------------- M3 source discipline ---------------------------------
+    sql_m3 = SQL_FILE.read_text(encoding="utf-8")
+    norm_m3 = strip_sql_comments(sql_m3)
+    check("M3: bind operator exactly 1 in comment-stripped source",
+          norm_m3.count("==>") == 1, norm_m3.count("==>"))
+    check("M3: whole-file scan still clean (A7 five tokens)",
+          all(sql_m3.count(tok) == 0 for tok in (
+              "typesafe_ask", "v13_append_event", "FOR UPDATE",
+              "mock_response", "cypher(")))
+    check("M3: no set_config in mgraph SQL", "set_config" not in sql_m3)
+
     # ---------------- M2 source discipline + policy restore ----------------
     sql_m2 = SQL_FILE.read_text(encoding="utf-8")
     norm_m2 = strip_sql_comments(sql_m2)
@@ -1403,7 +1968,7 @@ def main() -> int:
     C.conn.rollback()
     C.conn.close()
 
-    print("\n[mgraph M1+M2] groups A+D: ALL GREEN")
+    print("\n[mgraph M1+M2+M3] groups A+D+E: ALL GREEN")
     return 0
 
 

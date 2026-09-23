@@ -1,13 +1,14 @@
-# v13/mgraph — DP9 M1 暗库 + M2 写与重建(episodic 投影 build/确定性结构边/关系判断边/幂等 rebuild)
+# v13/mgraph — DP9 M1 暗库 + M2 写与重建 + M3 读环 B1
 
 Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphery
 全部前序 14 文件;本 stage 库 = `agent_v13_mgraph`(`files_through('mgraph')`
 前缀切片,15 文件;stannum 前置探针 fail-closed,形态照 memory/summary)。
 设计:`docs/designs/v13-context-on-pg.md` v2 §4.4/§6.1/§6.5/§8。计划:
 `docs/plans/v13-dp9-memory-graph-plan-2026-09-23.md`(M1=暗库;**M2=写与
-重建已交付**;M3 读环 B1、M4 固化由后续里程碑追加)。gate:`uv run python
-v13/mgraph/test_mgraph.py`(G-mg 族 **A+D 两组**,退出码 0=通过;write
-默认关——D 组以「INSERT 新策略版本+翻 active」打开、测毕翻回 v1)。
+重建已交付**;**M3=读环 B1 已交付**;M4 固化由后续里程碑追加)。gate:
+`uv run python v13/mgraph/test_mgraph.py`(G-mg 族 **A+D+E 三组**,退出码
+0=通过;write/read 默认关——D/E 组以「INSERT 新策略版本+翻 active」打开、
+测毕翻回 v1)。
 
 ## 机制(M1 范围;错误码一律 V3009)
 
@@ -130,6 +131,44 @@ v13/mgraph/test_mgraph.py`(G-mg 族 **A+D 两组**,退出码 0=通过;write
     同 key 咨询锁栈式重入;write 关/degraded 时 V3009 拒绝(偏差 #13)。
     毒化重建零调用:全局 judgment_cache 使全部信封 gap=0,failed=false、
     asked=0,temporal/jev/proximity 边集合字节级复现(D4)。
+15. **读环 B1(M3,OQ2)**。`memory_walks`/`memory_rounds` 在本里程碑建
+    (walk 唯一 `(session_id,query_hash,mgraph_generation,policy_version)`,
+    status∈open|stopped;round PK `(walk_id,round)`)。驱动面
+    `v13_mgraph_run_round(sid, query, elapsed_ms)`:每调用至多一封
+    `v13_resolve_judgments`(mock 单批纪律,偏差 #19);逻辑轮在
+    `memory_rounds` 收口。每轮事务取
+    `pg_advisory_xact_lock(v13_lock_key(sid,'mgraph-build'))`,与 build
+    的会话级同 key 锁互斥。零 effect、零 `resolve/failed`、不
+    `FOR UPDATE sessions`。
+16. **路由 `v13_mgraph_route(query)→{mode,weights}`(OQ3)**。确定性:
+    主意图互斥 why>when>大写实体>semantic,被点名桶权重 =
+    `deterministic_floor+1`,其余六桶保持 floor;`multi_hop`/`recency`
+    仅查询点名(`multi_hop`/`multi-hop`/`recency`)时升到同一高度。
+    CJK 段(与 `v13_query_segments` 同一码点区间)→ mode=superset,
+    六桶都停在 floor,routing asked=0。`routing_mode='jev'` 才把六问
+    放进 walk(signal `mem_route::<qhash>::<桶>@<generation>`,偏差 #15);
+    低于 `graph_activation_threshold` 的 Noul 归零,全 0 走 allocate
+    的 superset。shadow 在 walk 已 stopped 且 spend 有余量时另发一封,
+    不改 frontier、不计入 `calls_used`。
+17. **`v13_mgraph_allocate(weights)`**:Hamilton 最大余数,并列终裁序
+    causal,entity,multi_hop,recency,semantic,temporal。全 0→六桶改 1
+    再分配。权重>0 且 floor 后为 0 的桶向当前最大且 ≥2 的桶借 1;
+    借不到 V3009。配额=该桶可拉的邻居节点数,和=`total_graph_budget`。
+18. **一跳与停止**。邻居只来自 `v13_mgraph_neighbors(sid,hash,rels[],
+    limit)`(出边;`structural DESC NULLS LAST, dst_hash ASC`)。桶→rel:
+    semantic→{semantic,related_to,redundant_with,contradicts},
+    temporal→{temporal},causal→{causes,caused_by},entity→{entity},
+    recency→{temporal}(调用方再按 source_at 近者优先),multi_hop→全部
+    rel 仍只扩一跳。过渡分用 §3.4 单式;Jev 分量缺失则丢掉该 λ。
+    首轮锚=`v13_mgraph_candidates` 的 lexical top-k,再截到 beam。
+    `v13_mgraph_should_stop(walk_id)→{stop,reason}`:四条停止 Noul 缺
+    任一则不进 evidence/continue,硬顶照常;latency 由 run_round 在收轮
+    时用驱动传入的 elapsed 写。`read_enabled=false` 或 freshness
+    degraded → evidence 空集、零 ask、带 skipped。
+19. **evidence `v13_mgraph_evidence(sid, query_hash)`(OQ8=B1)**。定位
+    当前 generation + 活动 policy 的 stopped walk,按 score DESC,
+    content_hash ASC 取 ≤`inject_top_k`。无 walk → 空集零 ask。不进
+    `recall_candidates`,不改装配。
 
 ## 运维纪律(README 必记)
 
@@ -174,12 +213,14 @@ v13/mgraph/test_mgraph.py`(G-mg 族 **A+D 两组**,退出码 0=通过;write
   `v13_query_segments` 抛既有 V3005(entities/tinql/candidates 全经它);
   不另造上限,与 OQ8 读面「超长仍由 v13_query_segments 抛既有 V3005」
   同向。上线前按 transcript 正文分布评估。
+- **⑩ 读环步进(M3)**:`run_round` 每次调用至多一封。驱动循环到
+  `next_action` 报 done。provider/model 在该 walk 第一次发问前捕获进
+  `budgets`;已花费的连接上开新 walk 时,回退读本会话最近一条
+  `judgment_calls` 的 provider/model(GUC 已被清除)。elapsed 由驱动
+  累计传入,latency 只在收轮时比较。
 
-## 明确不做(M1 范围外=M2–M4 里程碑;§8 台账另见计划)
+## 明确不做(M4 与 §8 台账;M3 已交付)
 
-- **M3**:route/allocate/run_round/should_stop/evidence(读环 B1,零
-  effect 驱动分轮;walk/round 表与 `v13_mgraph_neighbors` 随本里程碑落;
-  EXPLAIN 断言与候选函数分会话跑——enable_seqscan=off 不顺手钉候选)。
 - **M4**:固化链(五问+representation choice+fidelity)、kind
   `mgraph_consolidate`+cap 七键+窄 requeue(活体 OR REPLACE)、enqueue/
   settle、consolidation 节点=远程层首批。
@@ -259,6 +300,54 @@ v13/mgraph/test_mgraph.py`(G-mg 族 **A+D 两组**,退出码 0=通过;write
     write_max_batches=write_max_asks=1「步进」驱动(每次调用恰一个真实
     ask,预测下一信封=v13_gap 感知全局缓存;filter Conns 先例,连接
     ask 过即 recycle)。帽耗尽/续跑语义在此纪律下被真实走查。
+18. **`run_round(sid, query, elapsed_ms)`(M3)**:计划正文把签名写成
+    `(sid, p_elapsed_ms)`(强调 elapsed 是 latency 的唯一写入点)。查询
+    文本是 walk 身份与信封 state 的另一半,无法从 query_hash 还原,故
+    作为第三参。walk 行不另存 query 正文。
+19. **读环一步一封(M3,同 #17)**:GUC mock 仍只能答一个批形状。
+    `run_round` 每次只执行 `v13_mgraph_next_action` 给出的一个动作
+    (一封 ask,或一次不计 ask 的 score/bind/expand/close)。逻辑轮在
+    `memory_rounds` 收口;beam=5 的首轮 `calls_used=6`(5 遍历封+1
+    停止封)。生产 provider 若要在一事务里问完一轮,把 next_action
+    循环放进同一次调用即可,本里程碑不这么做。
+20. **确定性升权值与主意图互斥(M3)**:计划只说「升权 / 其余保持
+    floor」,没钉升多少。实施取升权桶 = `deterministic_floor+1`。
+    主意图互斥序 why > when > 大写实体 > semantic,保证 WHY 查询的
+    causal 严格最大(「Why」本身也匹配实体形态,若不互斥会并列)。
+    `multi_hop`/`multi-hop`/`recency` 子串才把对应桶升到同一高度。
+21. **`max_latency_ms` 允许 0(M3)**:M1 读取器把它放进 ≥1 正整数,
+    E7 要求策略值 0(第一轮提交后即停)。同文件把该键挪到 ≥0 整数
+    组;种子 15000 不变,A2 仍绿。
+22. **信封丢掉非整数 `typesafe.timeout_ms`(M3)**:扩展默认值是时长
+    串 `30s`。`judgment_calls.timeout_ms` 是 int,原样写入会把整批
+    ask 打成 22P02(读环在 set mock 之后才构造信封,库已加载,GUC
+    已是 `30s`;写路径每封都在新连接上、库尚未加载,所以 M2 没撞上)。
+    非 `^[0-9]+$` 的值写成 JSON null;纯数字原样保留。
+23. **E5 的 failed_timeout 由夹具种入(M3)**:本仓 pg_typesafe 的 HTTP
+    等待不可被 statement_timeout 打断(setup 探针 sqlstate=08006,
+    与 DP1 #45(b) / filter README #2 同族)。闸门断言的是 apply 分支:
+    夹具插入 `judgment_calls.status='failed_timeout'` 且 payload 含
+    邻居的部分 traversal signal。该节点不再补问;被覆盖的 signal=
+    `default_timeout`,同节点没有 call 行的 signal=`default_missing`;
+    该 call_id 对 `calls_used` +1 一次。无伪造 Noul,无无 decision
+    的 jev 边。引擎能投递 57014 后可改成真超时。
+24. **无可扩展邻居时以 depth 收束(M3)**:停止四问不命中、配额内又
+    没有新邻居时,若保持 open 会空转。实施写 `stop_reason='depth'`、
+    status=stopped(搜索穷尽,不是 `maximum_depth` 计数器)。frontier
+    保留已收束的束。
+25. **walk 身份是 md5 uuid(M3)**:`md5(sid:qhash:generation:policy)::uuid`。
+    同一键永远同一 walk_id,traversal/stop signal 在第一封之前就可
+    计算(E5 预种 call 行靠这个)。不是 `gen_random_uuid()`。
+26. **structural NULL 不是伪 Noul(M3)**:supports 存在时,
+    `(coalesce(structural,0)+supports)/2` 参加 λ5;supports 缺失则
+    整段 λ5 丢掉。0 只表示这条边没有结构分。
+27. **邻居 EXPLAIN 在单边夹具上可能走 dst btree(M3)**:
+    `enable_seqscan=off` 时规划器对 `(session_id, dst_hash, rel)` 做
+    session_id+rel 的 skip scan,再过滤 src_hash。两条 OQ1 btree 都在;
+    闸门断言计划不是 `Seq Scan on memory_links`。
+28. **锚的 need_g 取主桶(M3)**:首轮锚没有入边。`need_g` 用权重最大
+    的桶(并列名字升序)。扩展出去的邻居带上认领它的桶(桶序
+    causal…temporal,先到先得)。
 
 ## 回退
 
