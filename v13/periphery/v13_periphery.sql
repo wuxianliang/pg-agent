@@ -2342,6 +2342,9 @@ REVOKE ALL ON TABLE latches FROM PUBLIC;
 GRANT SELECT ON TABLE latches TO v13_route;   -- INSERT/UPDATE/DELETE 零授权:
                                               -- 唯一写路径=DEFINER(v13_latch_fire/
                                               -- fork/settle 内联)
+GRANT SELECT ON latches TO v13_resolve, v13_recall;  -- F-1(dp8 L4 §5): 6 号授予的
+                                                     -- identity/assemble 族 INVOKER
+                                                     -- 链运行时需读 latch 面
 REVOKE EXECUTE ON FUNCTION
   v13_latches_guard(), v13_spawn_cols_guard(),
   v13_latch_fire(uuid,text,jsonb), v13_fork(uuid,bigint,text,jsonb),

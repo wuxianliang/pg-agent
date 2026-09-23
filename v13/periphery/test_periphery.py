@@ -418,6 +418,10 @@ def main() -> int:
     check("A6: recall real-exec intent_gate + streak",
           gate_acl["mode"] == "superset"
           and streak_acl["observations"] == 0)
+    cur.execute("SELECT count(*) FROM latches WHERE session_id=%s",
+                (sid_acl,))
+    check("A6: recall can SELECT latches (real read, dp8 L4 F-1)",
+          cur.fetchone()[0] == 1)
     fails_with(cur, "INSERT INTO latches (session_id, name, value) VALUES "
                "(%s,'nope','{}'::jsonb)", (sid_acl,), "permission",
                "A6: recall INSERT latches denied")
@@ -432,6 +436,10 @@ def main() -> int:
     privs_resolve = cur.fetchone()
     check("A6: resolve denied new faces, keeps manifest identity-family ACL",
           privs_resolve == (False, False, False, True), privs_resolve)
+    cur.execute("SELECT count(*) FROM latches WHERE session_id=%s",
+                (sid_acl,))
+    check("A6: resolve can SELECT latches (real read, dp8 L4 F-1)",
+          cur.fetchone()[0] == 1)
     cur.execute("RESET ROLE")
     cur.execute(
         "SELECT count(*) FROM pg_proc p WHERE p.proname IN "
