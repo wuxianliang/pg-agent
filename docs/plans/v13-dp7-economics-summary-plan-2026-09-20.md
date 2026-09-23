@@ -1189,3 +1189,35 @@ v2 G-file-est + 本 plan OQ3 / §5.5:失败样本排除——status 谓词只有
 3. **禁止把 R_o 排除扩张到 section-skipped turn。** 上节改动点 3「五值与 prompt-too-long 失败 turn **不进** R_o」对五值/七值一侧作废止性标注:那是把装配段跳过误写成 turn 排除。现行口径=turn 级 `status='succeeded'` + usage 数值防御;skipped 段的 0 本来就不是 llm effect usage,无需、也不得改 R_o 谓词去「排除 skipped turn」。
 
 `ERRATUM:` A8b 标题「失败与 skipped 不进质量分位」+ 总表「不进 R_o 样本」+ 改动点 3「五值…不进 R_o」——succeeded 谓词不删不弱化;扩张到 section skipped 的读法以本小节为准。指向 §5.5 原文:失败 turn 只写失败记录不进分位样本(effect status 谓词)。
+
+## Erratum（实施期裁决，2026-09-23）
+
+> 追加节，正文零改动、不新授权。权威链：
+> docs/reviews/v13-dp7-bdp7-1-oracle-resolution-2026-09-22.md §4、
+> docs/reviews/v13-dp8-impl-l4-review-2026-09-23.md §2.5/§4/§5 → 本节；
+> 终局裁决 docs/reviews/v13-impl-erratum-resolution-2026-09-23.md 项3/项4。
+
+E-DP7-index（指针，不复述全文）：
+
+§1.1「七处 OR REPLACE」被文件 13 对 `v13_refresh_context` 的第 8 处
+换体（文件 13 第 3 处）突破——矛盾为数学结构性，已经控制器核实+
+用户授权+三路 oracle 裁决（方案 D）收口，plan 正文按该裁决冻结不改。
+三条登记原文（E-DP7-1/E-DP7-2/C-DP7-M1）与条件回退条款的权威副本：
+①docs/reviews/v13-dp7-bdp7-1-oracle-resolution-2026-09-22.md §4；
+②`v13/summary/README.md`「裁决授权：第 8 处 OR REPLACE（refresh
+换体）」节。L4 检查点 1（授权先验）已在实施验收通过。若该授权被
+推翻：回退=summary 消费延期（M2 记 blocked/deferred），不得弱化
+O1/O3 断言假绿。
+
+E-DP7-3（§1.2 消费清单 #15「8 键 token」孤立残留；正文原句保持）：
+
+§1.2 #15 行内「8 键 token」为残留误算（按 DP3 七键+`econ_ver` 计 8，
+漏 DP4 `corpus` 与 DP5 `recall_ver`）。本 plan 权威谱以 OQ 裁决节
+（§1.3 开头声明「本节为最终权威」）为准：OQ7=`required_revision`
+10 键（加载态基九键+`econ_ver`）；不变量 8=token 十键（turn 34
+修订）；换体一注释=复制源文件 8 九键体、键集 9→10、DP8 已在 14 号
+恢复十一键全谱；E1/E4 同谱。正确谱系：DP3 七键 → DP4 +corpus 八 →
+DP5 +recall_ver 九 → 本 plan 文件 12 +econ_ver 十 → DP8 文件 14
++ident_ver 十一（{sem,dec,goal,tools_rev,asm_ver,jdef_ver,gen_ver,
+corpus,recall_ver,econ_ver,ident_ver}；dp8 gate I1 `string_agg`
+字典序恰等钉死）。#15 后半「chunk_filter 不入 token」语义不受影响。

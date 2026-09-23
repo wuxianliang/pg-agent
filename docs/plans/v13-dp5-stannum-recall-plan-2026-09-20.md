@@ -1467,3 +1467,44 @@ v2 §3.1:`file_search` = **发现工具**,**不是 T0**。产出不可变 `kind=
 `ERRATUM:` 无直接改写上文 T0(tsvector→stannum) / OQ2 双 stage / 三禁 / TINQL 的冲突句——本条是「搜索 ≠ 召回通道」的正向登记(v2 §3.1)。若把 §7 T0 或 `v13_recall` 族读成「可吞 live file_search 命中」,以「发现工具,不是 T0」为准;指向 v2 §7 无对应改写行(§7 未列 file_search↔T0 冲突——本条不发明冲突,只钉定位)。
 
 既有 gate 不动:OQ2 双 stage;K 组绑定矩阵 K1–K5 **原样**;L 组 tokenizer canary L1–L3 **原样**;三禁 / TINQL / csh=hash(needed×recall);P 组换 definition 流程零改——一律不删不弱化。
+
+## Erratum（实施期裁决，2026-09-23）
+
+> 追加节，正文零改动。权威链：dp5 L4 边界#1/偏差①
+> （docs/reviews/v13-dp5-impl-l4-review-2026-09-22.md）、dp6 L4 §3.5+§5
+> （docs/reviews/v13-dp6-impl-l4-review-2026-09-22.md）→ 本节追认；
+> 实施提交 `828556f`/`1ed9837`（validator 九键）、`e4c5646`/`29a8a10`
+> （部署 ACL 蓝本）；终局裁决 docs/reviews/v13-impl-erratum-resolution-2026-09-23.md 项1/项2。
+
+E-DP5-1（§1.1「共九处」漏计 validator 九键换体；正文原句保持）：
+
+§1.1 ①–⑨封闭清单未列 `v13_manifest_validate`。第 8 位文件
+`v13/recall/v13_recall.sql` 另有同签名 OR REPLACE：
+`required_revision` 八键→九键（+`recall_ver`，校验 `recall_ver ≥ 1`），
+其余段落与八键体同构。谱系：DP3 原体七键 → DP4 第三处八键
+（E-DP4-1）→ 本处九键；DP7 文件 12/13、DP8 文件 14 对同一函数的再跳
+在各自 plan 授权清单内（至文件 14 为十一键，含 `ident_ver`），不在
+本节重开。无此缝则 E1/I2 真实 settle 必 V3003。封闭清单按本节补计
+为十处；权威=本节+实施文件，`v13/recall/README.md` 台账①为记录层。
+
+E-DP5-2（stannum 部署 ACL：授权落部署面；SQL 文件内授权结构性封死）：
+
+dp5 引入 stannum 引擎依赖（第 9 位 characterize 起生效；第 8 位
+recall 零依赖=其 README 不变量 7）。引擎侧仅 `full_score` 有 PUBLIC
+EXECUTE；stannum schema 未授 USAGE、`score_bound`/`score_bound_indexed`
+为 owner-only——角色身份执行的引擎限定调用链 42501。授权与收口：
+
+- 落点=部署面 `setup_db.py`（`load_stage` 之后、`run_probes` 同位），
+  不进 SQL 文件：filter H6「零 `stannum.` 限定名」/memory K4「恰 3」
+  扫描断言封死 SQL 内授权；本 plan §1.1 硬边界禁改上游 SQL。
+- 蓝本=`v13/filter/setup_db.py` GRANTS 块（`GRANT USAGE ON SCHEMA
+  stannum` + `GRANT EXECUTE ON FUNCTION stannum.score_bound(...) /
+  stannum.score_bound_indexed(...)`，角色 `v13_recall, v13_resolve,
+  v13_route`）。filter/memory/economy/summary/periphery 五处已带同款
+  块，保持原样。
+- 终局追认的唯一回填=`v13/characterize/setup_db.py`（扩展首次出现
+  的库）。`v13/recall/setup_db.py` 禁止回填——第 8 位前缀库无
+  stannum schema，GRANT 将在部署期失败。
+- gate 侧：characterize gate 增 SET ROLE 真执行断言（权限位断言
+  不充分——dp8 L4 §5.3-5 教训）；若真执行暴露蓝本外的引擎函数
+  ACL 需求，同面（setup_db）追加，仍不进 SQL。

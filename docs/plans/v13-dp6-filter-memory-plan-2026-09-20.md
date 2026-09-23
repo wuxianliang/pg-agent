@@ -2040,3 +2040,28 @@ v13_file_vetoes(p_sid)
 
 既有 gate 不动:A–H / I–N / C 组 F2 / G-ctx4 / OQ4 / 记忆真表 / 文档与记忆分索引——一律不删不弱化。G-cjk-file `must_include∩skipped=∅` 不弱化。后续 G-file-secret(+veto) / veto join 探针只加不减。
 
+## Erratum（实施期裁决，2026-09-23）
+
+> 追加节，正文与 v2 对齐节既有 inline `ERRATUM:` 行零改动。权威链：
+> dp6 L4 §5 悬置移交（docs/reviews/v13-dp6-impl-l4-review-2026-09-22.md）
+> → 本节收口；实施提交 `e4c5646`/`29a8a10`；终局裁决
+> docs/reviews/v13-impl-erratum-resolution-2026-09-23.md 项6/项2。
+
+E-DP6-1（v2 对齐节 A4/A11 只立法；依赖对象不在 v13 树；终局归属 RP 线）：
+
+A4（`bootstrap_done` 论域闸：file corpus 存在性 Noul 仅
+`bootstrap_done=true` 后允许）与 A11（`v13_file_vetoes(p_sid)` 人
+veto，deselect 高于超集）维持 v2 节立法原文：只立法、不实现、不改
+SQL。v13 现树（14 stage 全交付后）零 `bootstrap_done`、零
+`v13_file_vetoes`（检索实证）——不构成 dp6 两提交的实施缺口；DP7/
+DP8 亦未实现。终局归属：消费与对账归 RP 原生化线
+（docs/analysis/repoprompt-native-on-v13-feasibility-v2-2026-09-21.md
+及 v13.1 线），接线时按 v2 节既有 `ERRATUM:` 行对账、只加不减。
+先例同型：dp5 L4 边界#2 对 `v13_visible_files` 未实现裁 ACCEPT、
+不记缺口。
+
+E-DP6-2（部署 ACL 指针）：
+
+stannum schema/函数部署期 ACL 的定性与授权见 dp5 plan 文末
+Erratum（E-DP5-2）。本 DP 两 `setup_db.py` 的 GRANTS 块是蓝本实例，
+不是授权源；本 DP SQL 零改动。

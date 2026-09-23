@@ -1629,3 +1629,21 @@ chunks 行自证三纪律**保留不动**:
 - 纪律③:外部只记 `content_hash`(C 组)
 
 既有 gate 不动:A/B/C 组三纪律 / D 组 F3 保留与回放 / D3 `chunk_gc` dry-run-only / E 组 rebuild 幂等 / 不变量 9 锁协议 / J 组 一律保留。可达集扩展若后续加指针/水位探针,只加不减。本轮不 invent file 面摄取里程碑、不改 `v13_chunks.sql`。
+
+## Erratum（实施期裁决，2026-09-23）
+
+> 追加节，正文零改动。权威链：dp4 L4 边界#2 / P1-A
+> （docs/reviews/v13-dp4-impl-l4-review-2026-09-22.md）→ 本节追认；
+> 实施提交 `7b619ab`；终局裁决 docs/reviews/v13-impl-erratum-resolution-2026-09-23.md 项1。
+
+E-DP4-1（§1.1 封闭清单漏计第三处换体；正文原句保持）：
+
+§1.1「对既有对象的变更恰两处」未计实现必要缝：
+`CREATE OR REPLACE FUNCTION v13_manifest_validate`（同签名；
+`required_revision` 闭集七键→八键（+`corpus`），并校验 `corpus ≥ 0`；
+其余段落与七键原体同构）。具身=`v13/chunks/v13_chunks.sql`（八键体）；
+DP3 源文件 `v13/manifest/v13_manifest.sql` 零改动，前缀库不加载第 7 号
+文件、七键体照常。无此缝则 token 扩 `corpus` 后真实
+parse→advance→settle 必 V3003（gate G2）。封闭清单按本节补计为三处；
+权威=本节+实施文件，`v13/chunks/README.md` 台账⑨为记录层。本节范围
+止于 corpus 八键；`recall_ver` 九键同步见 dp5 plan 文末 Erratum（E-DP5-1）。
