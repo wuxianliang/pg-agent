@@ -872,6 +872,19 @@ def main() -> int:
                "", "R3: route SELECT canary denied")
     cur.execute("RESET ROLE")
 
+    # E-DP5-2 (deploy-plane engine ACL, backfilled in setup_db): real
+    # execution under a role — the recall chain reaches engine-qualified
+    # calls (stannum schema USAGE + full_score), so privilege-bit asserts
+    # alone are insufficient (dp8 L4 §5.3-5 lesson).
+    cur.execute("SET ROLE v13_recall")
+    try:
+        cur.execute("SELECT v13_build_tinql(%s)", ("quasar",))
+        tinql_r3 = cur.fetchone()[0]
+        cur.execute("SELECT count(*) FROM v13_recall(%s, 8)", (tinql_r3,))
+        check("R3: recall role recall-chain real exec", cur.fetchone()[0] >= 1)
+    finally:
+        cur.execute("RESET ROLE")
+
     for needle in (
         "索引可丢基础行不可丢",
         "连接池预热",

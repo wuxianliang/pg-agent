@@ -17,6 +17,19 @@ from v13.resolve.setup_db import run_probes
 DB = "agent_v13_characterize"
 STAGE = "characterize"
 
+# Deployment ACL (DP5 部署面，蓝本=filter setup_db；E-DP5-2 授权):
+# 角色对 stannum.full_score 有 PUBLIC EXECUTE，但 engine schema 无 USAGE、
+# 其内部 score_bound/score_bound_indexed 带 owner-only ACL——角色身份执行
+# 的引擎限定调用(recall 链)会 42501。授予放部署面(setup_db,run_probes
+# 同位)，不进 SQL 文件(R 组扫描断言「9 号 stannum. 恰 3」封死 SQL 内授权)。
+GRANTS = """
+GRANT USAGE ON SCHEMA stannum TO v13_recall, v13_resolve, v13_route;
+GRANT EXECUTE ON FUNCTION
+  stannum.score_bound(text,text,integer,integer,integer,real,real,real,text[],text[]),
+  stannum.score_bound_indexed(tid,text,integer,integer,integer,real,real,real,text[],text[])
+TO v13_recall, v13_resolve, v13_route;
+"""
+
 
 def probe_extension(server) -> None:
     conn = psycopg2.connect(server.get_uri("postgres"))
@@ -39,6 +52,7 @@ def main() -> int:
     run_psql(s, "postgres", f"DROP DATABASE IF EXISTS {DB} WITH (FORCE);")
     run_psql(s, "postgres", f"CREATE DATABASE {DB};")
     load_stage(s, DB, STAGE)
+    run_psql(s, DB, GRANTS)
     run_probes(s, DB)
     print("[ready]", DB)
     return 0
