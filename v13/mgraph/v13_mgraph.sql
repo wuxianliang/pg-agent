@@ -2582,3 +2582,544 @@ GRANT EXECUTE ON FUNCTION
 TO v13_resolve;
 
 COMMIT;
+
+BEGIN;
+
+-- =========================================================================
+-- DP9 M4 consolidation (v13_mgraph.sql M4 segment, plan §3.4 固化①-⑥ /
+-- §3.1 memory_consolidations / §5 F-gates): five-question pair
+-- consolidation + generation upgrade on the NEW effect kind
+-- mgraph_consolidate (OQ6: never kind=llm — v13_complete writes
+-- llm/message unconditionally for llm and route P0 would finish the turn
+-- on it; never context_summary — that is another pipeline eating the
+-- summary day-cap) + fidelity gate + consolidation nodes (first
+-- remote-plane artifacts; retrieval object = node content_hash, reachable
+-- only via traversal, never a candidate anchor — F9).
+-- Roles (Oracle review P1-4): route only enqueues/completes; resolve only
+-- asks questions, inserts nodes, settles (reads effects.result, updates
+-- the queue). kind CHECK + cap v3 + narrow requeue + the whole chain load
+-- in ONE transaction: no state exists where the CHECK admits the kind but
+-- the cap lacks the key or the requeue walls it (F8; 禁先扩 CHECK 后补
+-- cap). v13_complete is NOT touched (generic CAS branch: effect_done
+-- only — zero llm/message, zero turn/end, zero resolve/failed, route
+-- cannot finish on it — F2). Error family V3009; zero DEFINER; source
+-- scan five tokens stay zero; the stannum bind operator count stays 1.
+-- =========================================================================
+
+-- === effect kind 第七值(词表 append-only,旧六值零动,仪式照
+--     summary:25-28) ===
+ALTER TABLE effects DROP CONSTRAINT effects_kind_check;
+ALTER TABLE effects ADD CONSTRAINT effects_kind_check CHECK (kind IN
+  ('judge','tool','llm','context_refresh','human','context_summary',
+   'mgraph_consolidate'));
+
+-- === effect_attempt_cap v3(七键齐全;仪式照 summary:31-40:INSERT
+--     inactive→双 UPDATE 同事务翻;v2 六键逐字保留;本键 cap=2=两轮
+--     封顶,与 context_summary 同量级;README 翻新纪律:新版本必含全
+--     七键,降 cap 需清场) ===
+INSERT INTO v13_policies (name, version, value, active) VALUES
+('effect_attempt_cap', 3,
+ '{"judge":4,"tool":3,"llm":3,"human":2,"context_refresh":3,'
+ '"context_summary":2,"mgraph_consolidate":2}'::jsonb,
+ false);
+UPDATE v13_policies SET active = false
+ WHERE name = 'effect_attempt_cap' AND active;
+UPDATE v13_policies SET active = true
+ WHERE name = 'effect_attempt_cap' AND version = 3;
+
+-- === 窄 v13_requeue_stale(活体 OR REPLACE——§1.2-1 允许的唯一触碰点;
+--     替换基底=periphery 库 pg_get_functiondef 导出的活体定义,与
+--     twophase:33 加载源逐字一致,非 recall 文本)。仅 mgraph_consolidate
+--     加入 judge 待遇:cap 内回收 ready(只 fence+1,attempt_no 不动)、
+--     超 cap 转 failed+lease_exhausted+唤醒;cap 判定按行 kind 调
+--     v13_attempt_ok(kind, attempt_no)(core:196 共用谓词,不硬编码
+--     'judge'——F8);其余 kind(tool/llm/human/context_refresh/
+--     context_summary)走 (a2) unknown 墙,行为字节不变 ===
+CREATE OR REPLACE FUNCTION v13_requeue_stale() RETURNS jsonb
+LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+  v_j int; v_u int; v_w int := 0; v_k int; v_f int; r record; v_id uuid;
+  v_ids uuid[];
+BEGIN
+  UPDATE effects
+     SET status='ready', fence=fence+1,            -- attempt_no 不动(turn 9,#58)
+         lease_owner=NULL, lease_until=NULL
+   WHERE status='claimed' AND kind IN ('judge','mgraph_consolidate')
+     AND lease_until < clock_timestamp()
+     AND v13_attempt_ok(kind, attempt_no);  -- 共用 cap(turn 8,#55;按行 kind 判定,M4/F8)
+  GET DIAGNOSTICS v_j = ROW_COUNT;                   -- (a1) judge+mgraph_consolidate 回收重放数
+  WITH capped AS (
+    UPDATE effects
+       SET status='failed', fence=fence+1,         -- attempt_no 不动(turn 9,#58)
+           lease_owner=NULL, lease_until=NULL,
+           error=jsonb_build_object('code','lease_exhausted')
+     WHERE status='claimed' AND kind IN ('judge','mgraph_consolidate')
+       AND lease_until < clock_timestamp()
+       AND NOT v13_attempt_ok(kind, attempt_no)  -- 超 cap:可结算终态(按行 kind,M4)
+    RETURNING effect_id)
+  SELECT coalesce(array_agg(effect_id), '{}'::uuid[]) INTO v_ids FROM capped;
+  v_f := coalesce(array_length(v_ids, 1), 0);        -- (a1') lease 耗竭终态数
+  UPDATE effects
+     SET status='unknown', fence=fence+1,           -- attempt_no 不动(turn 9,#58)
+         lease_owner=NULL, lease_until=NULL
+   WHERE status='claimed' AND kind NOT IN ('judge','mgraph_consolidate')
+     AND lease_until < clock_timestamp();
+  GET DIAGNOSTICS v_u = ROW_COUNT;                   -- (a2) 转墙数(其余 kind 行为不变)
+  FOR r IN SELECT effect_id FROM effects WHERE status='ready' LOOP
+    PERFORM v13_send_work(r.effect_id);              -- 唤醒重建(可丢消息的地基)
+    v_w := v_w + 1;
+  END LOOP;
+  FOREACH v_id IN ARRAY v_ids LOOP
+    PERFORM v13_send_work(v_id);                     -- 唤醒 settle(turn 8,#55)
+  END LOOP;
+  SELECT count(*) INTO v_k FROM effects WHERE status='unknown';
+  RETURN jsonb_build_object('reclaimed_ready', v_j, 'walled_unknown', v_u,
+                            'lease_exhausted', v_f,
+                            'woken_ready', v_w, 'walls_total', v_k);
+END $$;
+-- ACL 经 OR REPLACE 原样保留(REVOKE PUBLIC + GRANT v13_route,twophase 尾)
+
+-- === §1.5 pair_digest(v13_body_hash(src||'>'||dst),输入已是哈希,稳定) ===
+CREATE FUNCTION v13_mgraph_pair_digest(p_src text, p_dst text)
+RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT v13_body_hash(p_src || '>' || p_dst);
+$$;
+
+-- === §3.4 固化① 选对枚举:同会话 episodic 节点按 source_at ASC,
+--     content_hash ASC 的相邻对(「source_at 近、哈希序」;与 temporal
+--     边同序)。「未被 consolidation_key 覆盖」的排除仅 status='adopted'
+--     (§3.1:rejected 允许重入队),由调用方按队列行判定 ===
+CREATE FUNCTION v13_mgraph_cons_pairs(p_sid uuid)
+RETURNS TABLE(src text, dst text, src_body text, dst_body text,
+              consolidation_key text)
+LANGUAGE sql STABLE AS $$
+  WITH ord AS (
+    SELECT content_hash, body,
+           row_number() OVER (ORDER BY source_at ASC, content_hash ASC) AS rn
+      FROM memory_nodes
+     WHERE session_id = p_sid AND origin = 'episodic')
+  SELECT a.content_hash, b.content_hash, a.body, b.body,
+         v13_mgraph_pair_digest(a.content_hash, b.content_hash)
+    FROM ord a JOIN ord b ON b.rn = a.rn + 1;
+$$;
+
+-- === §3.4 固化② 五问集(每对一封;同一 left/right state,representation
+--     与四 Noul 同投影 ["left","right"] 可同批——不变量 7/§1.3-OQ6;
+--     obsolete 在列=证据可落库,子型/门控不读它) ===
+CREATE FUNCTION v13_mgraph_cons_questions(p_src text, p_dst text,
+                                          p_left_body text, p_right_body text)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE v_key text;
+BEGIN
+  IF p_src IS NULL OR p_src !~ '^[0-9a-f]{64}$'
+     OR p_dst IS NULL OR p_dst !~ '^[0-9a-f]{64}$'
+     OR p_left_body IS NULL OR octet_length(p_left_body) = 0
+     OR p_right_body IS NULL OR octet_length(p_right_body) = 0 THEN
+    RAISE EXCEPTION
+      'v13: cons question inputs must be 64hex hashes + non-empty bodies'
+      USING ERRCODE = 'V3009';
+  END IF;
+  v_key := v13_mgraph_pair_digest(p_src, p_dst);
+  RETURN jsonb_build_array(
+    jsonb_build_object('signal', 'mem_cons::' || v_key || '::redundant',
+                       'template_name', 'mem_cons_redundant'),
+    jsonb_build_object('signal', 'mem_cons::' || v_key || '::contradiction',
+                       'template_name', 'mem_cons_contradiction'),
+    jsonb_build_object('signal', 'mem_cons::' || v_key || '::obsolete',
+                       'template_name', 'mem_cons_obsolete'),
+    jsonb_build_object('signal', 'mem_cons::' || v_key || '::link',
+                       'template_name', 'mem_cons_link'),
+    jsonb_build_object('signal', 'mem_cons::' || v_key || '::representation',
+                       'template_name', 'mem_cons_representation'));
+END $$;
+
+-- === §3.4 固化③ 子型(apply 只读 decisions):consolidation_priority 序
+--     首个 noul≥relation_threshold 的方面;无过阈者退 link(合并产物
+--     至少 related_to)。obsolete 不进判定(只作证据,P1-5;不进
+--     priority 数组) ===
+CREATE FUNCTION v13_mgraph_cons_subtype(p_sid uuid, p_key text)
+RETURNS text LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_pol jsonb; v_thr numeric; v_prio text[]; v_asp text;
+BEGIN
+  v_pol := v13_mgraph_policy();
+  v_thr := (v_pol->>'relation_threshold')::numeric;
+  v_prio := ARRAY(SELECT jsonb_array_elements_text(v_pol->'consolidation_priority'));
+  FOREACH v_asp IN ARRAY v_prio LOOP
+    IF v13_mgraph_signal_class(p_sid, 'mem_cons::' || p_key || '::' || v_asp)
+         = 'noul'
+       AND coalesce(v13_mgraph_component(
+             p_sid, 'mem_cons::' || p_key || '::' || v_asp), 0) >= v_thr THEN
+      RETURN v_asp;
+    END IF;
+  END LOOP;
+  RETURN 'link';
+END $$;
+
+-- === §3.4 固化③ 生成门:choice∈{merge,promote} ∧ 所选概率≥
+--     consolidation_choice_min ∧ contradiction<consolidation_threshold
+--     (矛盾过阈即使 choice=merge 也不入队,OQ6);任一判断缺失=exclude
+--     (OQ11 mem_cons 三态),不伪造概率 ===
+CREATE FUNCTION v13_mgraph_cons_gate(p_sid uuid, p_key text)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_pol jsonb; v_rep jsonb; v_choice text; v_contra numeric;
+BEGIN
+  v_pol := v13_mgraph_policy();
+  SELECT d.answer INTO v_rep
+    FROM decisions d
+   WHERE d.session_id = p_sid
+     AND d.signal = 'mem_cons::' || p_key || '::representation'
+     AND d.answer IS NOT NULL AND d.status IN ('answered','cached')
+   ORDER BY d.answered_at DESC NULLS LAST LIMIT 1;
+  IF v_rep IS NULL OR jsonb_typeof(v_rep->'choice') IS DISTINCT FROM 'string'
+  THEN
+    RETURN jsonb_build_object('allowed', false, 'reason', 'representation_missing');
+  END IF;
+  v_choice := v_rep->>'choice';
+  IF v_choice NOT IN ('merge','promote') THEN
+    RETURN jsonb_build_object('allowed', false, 'reason', 'choice_' || v_choice);
+  END IF;
+  IF jsonb_typeof(v_rep->'probabilities'->v_choice) IS DISTINCT FROM 'number'
+     OR (v_rep->'probabilities'->>v_choice)::numeric
+        < (v_pol->>'consolidation_choice_min')::numeric THEN
+    RETURN jsonb_build_object('allowed', false, 'reason', 'choice_prob');
+  END IF;
+  v_contra := v13_mgraph_component(p_sid, 'mem_cons::' || p_key || '::contradiction');
+  IF v_contra IS NULL THEN
+    RETURN jsonb_build_object('allowed', false, 'reason', 'contradiction_missing');
+  END IF;
+  IF v_contra >= (v_pol->>'consolidation_threshold')::numeric THEN
+    RETURN jsonb_build_object('allowed', false, 'reason', 'contradiction');
+  END IF;
+  RETURN jsonb_build_object('allowed', true, 'reason', NULL,
+                            'subtype', v13_mgraph_cons_subtype(p_sid, p_key));
+END $$;
+
+-- === §3.4 固化①②③ resolve 侧驱动:选对+每对五问一封+apply 只读
+--     decisions(③ 的 gate 报告在返回值里;队列写入不在此面——
+--     memory_consolidations INSERT 是 route 侧 enqueue 的事,M1 ACL 预授)。
+--     每调用至多一封真实 ask(GUC mock 单批形状限制,一步一封=偏差
+--     台账 #17/#19 同族;缓存命中的对零 ask 连续处理),judge_spend
+--     over→零 ask 跳过(§3.5);resolve failed→failed 停(零队列副作用) ===
+CREATE FUNCTION v13_mgraph_consolidate(p_sid uuid, p_limit int DEFAULT 10)
+RETURNS jsonb LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+  v_pm jsonb; v_elig jsonb := '[]'::jsonb;
+  v_seen int := 0; v_asks int := 0; v_c0 bigint; v_c1 bigint;
+  v_stop text; v_failed boolean := false;
+  v_state jsonb; v_qs jsonb; v_env jsonb; v_res jsonb; v_gate jsonb;
+  v_pver int; r record;
+BEGIN
+  IF p_limit IS NULL OR p_limit < 1 THEN
+    RAISE EXCEPTION 'v13: mgraph consolidate limit must be >= 1'
+      USING ERRCODE = 'V3009';
+  END IF;
+  IF (v13_judge_spend(p_sid)->>'over')::boolean THEN
+    RETURN jsonb_build_object('status','skipped','skipped','spend',
+                              'failed', false, 'asks', 0, 'pairs', 0,
+                              'eligible', '[]'::jsonb);
+  END IF;
+  SELECT version INTO v_pver FROM v13_policies
+   WHERE name = 'mgraph' AND active;
+  v_pm := v13_mgraph_capture_pm(p_sid);
+  <<pairs>> FOR r IN
+    SELECT p.src, p.dst, p.src_body, p.dst_body, p.consolidation_key
+      FROM v13_mgraph_cons_pairs(p_sid) p
+  LOOP
+    CONTINUE pairs WHEN EXISTS (
+      SELECT 1 FROM memory_consolidations q
+       WHERE q.session_id = p_sid
+         AND q.consolidation_key = r.consolidation_key
+         AND q.status = 'adopted');
+    v_seen := v_seen + 1;
+    v_state := jsonb_build_object(
+      'left',  jsonb_build_object('content', r.src_body),
+      'right', jsonb_build_object('content', r.dst_body));
+    v_qs := v13_mgraph_cons_questions(r.src, r.dst, r.src_body, r.dst_body);
+    v_env := v13_mgraph_envelope(p_sid, v_state, v_qs,
+                                 v_pm->>'provider', v_pm->>'model');
+    SELECT count(*) INTO v_c0 FROM judgment_calls WHERE session_id = p_sid;
+    SELECT v13_resolve_judgments(v_env, 1) INTO v_res;
+    SELECT count(*) INTO v_c1 FROM judgment_calls WHERE session_id = p_sid;
+    v_asks := v_asks + (v_c1 - v_c0)::int;
+    IF coalesce(v_res->>'failed', 'false')::boolean THEN
+      v_failed := true; v_stop := 'failed'; EXIT pairs;
+    END IF;
+    v_gate := v13_mgraph_cons_gate(p_sid, r.consolidation_key);
+    IF (v_gate->>'allowed')::boolean THEN
+      v_elig := v_elig || jsonb_build_array(jsonb_build_object(
+        'consolidation_key', r.consolidation_key,
+        'src', r.src, 'dst', r.dst,
+        'subtype', v_gate->>'subtype'));
+    END IF;
+    EXIT pairs WHEN v_seen >= least(p_limit, 512);
+    IF (v_c1 - v_c0) > 0 THEN
+      v_stop := 'step'; EXIT pairs;      -- 一步一封:真实 ask 后收步
+    END IF;
+    IF (v13_judge_spend(p_sid)->>'over')::boolean THEN
+      v_stop := 'spend'; EXIT pairs;
+    END IF;
+  END LOOP pairs;
+  RETURN jsonb_build_object(
+    'status', CASE WHEN v_failed THEN 'failed'
+                  WHEN v_stop IS NOT NULL THEN 'stopped' ELSE 'ok' END,
+    'stop_reason', v_stop, 'failed', v_failed,
+    'pairs', v_seen, 'asks', v_asks, 'policy_version', v_pver,
+    'eligible', v_elig);
+END $$;
+
+-- === §3.4 固化④ route 侧入队(队列写入面):入口先做失败收敛 sweep
+--     (generating 行的 effect 已死——行丢失/failed/cancelled/unknown
+--     →rejected;不建第四态,§3.1),再过单活跃闸(会话已有
+--     ready|claimed|unknown→NULL,闸面与 advance ① 一致,强于摘要闸的
+--     ready|claimed——README 运维注记③),再按 consolidation_priority
+--     并列序(key 升序终裁)选最高优先 eligible 对:队列行 INSERT
+--     (queued;rejected→queued 翻回=显式重入队)→v13_enqueue_effect
+--     (幂等唯一权威=queue PK;effect_id 用其返回值,不自行推导;cap
+--     七键缺键 fail-loud)→行转 generating ===
+CREATE FUNCTION v13_mgraph_consolidate_enqueue(p_sid uuid)
+RETURNS uuid LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+  v_pver int; v_prio text[]; r record;
+  v_rank int; v_best_rank int; v_best_key text;
+  v_best_left text; v_best_right text;
+  v_gate jsonb; v_id uuid; v_st text;
+BEGIN
+  UPDATE memory_consolidations q
+     SET status = 'rejected', decided_at = now()
+   WHERE q.session_id = p_sid AND q.status = 'generating'
+     AND NOT EXISTS (
+       SELECT 1 FROM effects e
+        WHERE e.effect_id = q.effect_id
+          AND e.status IN ('ready','claimed','succeeded'));
+  IF EXISTS (SELECT 1 FROM effects
+              WHERE session_id = p_sid
+                AND status IN ('ready','claimed','unknown')) THEN
+    RETURN NULL;
+  END IF;
+  SELECT version INTO v_pver FROM v13_policies
+   WHERE name = 'mgraph' AND active;
+  v_prio := ARRAY(SELECT jsonb_array_elements_text(
+                     v13_mgraph_policy()->'consolidation_priority'));
+  v_best_rank := NULL;
+  FOR r IN
+    SELECT p.src, p.dst, p.consolidation_key
+      FROM v13_mgraph_cons_pairs(p_sid) p
+  LOOP
+    CONTINUE WHEN EXISTS (
+      SELECT 1 FROM memory_consolidations q
+       WHERE q.session_id = p_sid
+         AND q.consolidation_key = r.consolidation_key
+         AND q.status = 'adopted');
+    v_gate := v13_mgraph_cons_gate(p_sid, r.consolidation_key);
+    CONTINUE WHEN NOT (v_gate->>'allowed')::boolean;
+    v_rank := array_position(v_prio, v_gate->>'subtype');
+    IF v_best_rank IS NULL OR v_rank < v_best_rank
+       OR (v_rank = v_best_rank AND r.consolidation_key < v_best_key) THEN
+      v_best_rank := v_rank; v_best_key := r.consolidation_key;
+      v_best_left := r.src; v_best_right := r.dst;
+    END IF;
+  END LOOP;
+  IF v_best_key IS NULL THEN RETURN NULL; END IF;
+  INSERT INTO memory_consolidations (session_id, consolidation_key, status)
+  VALUES (p_sid, v_best_key, 'queued')
+  ON CONFLICT (session_id, consolidation_key) DO UPDATE
+     SET status = 'queued', decided_at = NULL
+   WHERE memory_consolidations.status = 'rejected';
+  v_id := v13_enqueue_effect(p_sid, 'mgraph_consolidate',
+    jsonb_build_object(
+      'purpose', 'mgraph_consolidate',
+      'left_hash', v_best_left, 'right_hash', v_best_right,
+      'consolidation_key', v_best_key, 'policy_version', v_pver));
+  SELECT status INTO v_st FROM effects WHERE effect_id = v_id;
+  IF v_st IN ('ready','claimed') THEN
+    UPDATE memory_consolidations
+       SET status = 'generating', effect_id = v_id, decided_at = NULL
+     WHERE session_id = p_sid AND consolidation_key = v_best_key;
+    RETURN v_id;
+  ELSIF v_st = 'succeeded' THEN
+    RETURN NULL;            -- complete 已落、settle 待跑:不重复 enqueue(queue PK 幂等)
+  END IF;
+  UPDATE memory_consolidations          -- 重挂被 cap 拒(行终态):收敛 rejected(§3.1)
+     SET status = 'rejected', decided_at = now()
+   WHERE session_id = p_sid AND consolidation_key = v_best_key;
+  RETURN NULL;
+END $$;
+
+-- === §3.4 固化⑤⑥ resolve 侧结算:读 effect.result→确定性检查(非空、
+--     字节≤consolidate_max_body_bytes、两枚亲本哈希仍在;任一失败→行
+--     rejected+body_hash 回填,零 fidelity ask——§6.4 确定性检查失败不
+--     调 Jev)→fidelity 信封(投影 ["source","summary"])→include 才插
+--     consolidation 节点+固化边(src=left_hash,dst=新 content_hash,
+--     rel=子型映射 contradiction→contradicts、redundant→redundant_with、
+--     link→related_to,origin='consolidation';原文节点与既有边不
+--     DELETE)+行 adopted;非 include→rejected(rejected 不重问同一正文
+--     ——重试必须新正文,由 effect attempt 承载);幂等:adopted/
+--     rejected 行二次 settle 零 ask;探测 effect 非 succeeded 即
+--     rejected(§3.1)。图变更段持 mgraph-build 同 key 事务级咨询锁 ===
+CREATE FUNCTION v13_mgraph_consolidate_settle(p_effect uuid)
+RETURNS jsonb LANGUAGE plpgsql VOLATILE AS $$
+DECLARE
+  v_eff effects%ROWTYPE; v_sid uuid; v_key text; v_left text; v_right text;
+  v_row memory_consolidations%ROWTYPE; v_pol jsonb; v_pver int;
+  v_text text; v_hash text; v_lb text; v_rb text;
+  v_lat timestamptz; v_rat timestamptz; v_reason text;
+  v_state jsonb; v_qs jsonb; v_env jsonb; v_res jsonb; v_pm jsonb;
+  v_asks int := 0; v_c0 bigint; v_c1 bigint; v_fid numeric;
+  v_rel text; v_asp text;
+BEGIN
+  SELECT * INTO v_eff FROM effects WHERE effect_id = p_effect;
+  IF v_eff.effect_id IS NULL THEN
+    RAISE EXCEPTION 'v13: mgraph settle on unknown effect %', p_effect
+      USING ERRCODE = 'V3009';
+  END IF;
+  IF v_eff.kind <> 'mgraph_consolidate' THEN
+    RAISE EXCEPTION 'v13: mgraph settle on non-consolidation effect %', p_effect
+      USING ERRCODE = 'V3009';
+  END IF;
+  v_sid := v_eff.session_id;
+  SELECT * INTO v_row FROM memory_consolidations
+   WHERE session_id = v_sid AND effect_id = p_effect;
+  IF v_row.consolidation_key IS NULL THEN
+    RETURN jsonb_build_object('status','orphan','asks',0);
+  END IF;
+  v_key := v_row.consolidation_key;
+  IF v_row.status IN ('adopted','rejected') THEN
+    RETURN jsonb_build_object('status', v_row.status, 'asks', 0,
+                              'consolidation_key', v_key);
+  END IF;
+  IF v_eff.status <> 'succeeded' THEN
+    UPDATE memory_consolidations
+       SET status = 'rejected', decided_at = now()
+     WHERE session_id = v_sid AND consolidation_key = v_key;
+    RETURN jsonb_build_object('status','rejected','asks',0,'reason',
+                              'effect_' || v_eff.status,
+                              'consolidation_key', v_key);
+  END IF;
+  v_pol := v13_mgraph_policy();
+  SELECT version INTO v_pver FROM v13_policies
+   WHERE name = 'mgraph' AND active;
+  v_left := v_eff.request->>'left_hash';
+  v_right := v_eff.request->>'right_hash';
+  v_text := NULL;
+  IF jsonb_typeof(v_eff.result) = 'object'
+     AND jsonb_typeof(v_eff.result->'text') = 'string' THEN
+    v_text := v_eff.result->>'text';
+  END IF;
+  -- 图变更与亲本读取同锁(build 同 key:读写不并发,已提交前缀自洽)
+  PERFORM pg_advisory_xact_lock(v13_lock_key(v_sid, 'mgraph-build'));
+  v_reason := NULL;
+  IF v_text IS NULL OR btrim(v_text) = '' THEN
+    v_reason := 'empty_text';
+  ELSIF octet_length(v_text)
+          > (v_pol->>'consolidate_max_body_bytes')::int THEN
+    v_reason := 'over_budget';
+  ELSIF (SELECT count(DISTINCT content_hash) FROM memory_nodes
+          WHERE session_id = v_sid
+            AND content_hash IN (v_left, v_right)) <> 2 THEN
+    v_reason := 'parent_gone';
+  END IF;
+  IF v_reason IS NOT NULL THEN
+    UPDATE memory_consolidations
+       SET status = 'rejected', decided_at = now(),
+           body_hash = coalesce(
+             CASE WHEN v_text IS NOT NULL AND btrim(v_text) <> ''
+                  THEN v13_body_hash(v_text) END, body_hash)
+     WHERE session_id = v_sid AND consolidation_key = v_key;
+    RETURN jsonb_build_object('status','rejected','asks',0,'reason', v_reason,
+                              'consolidation_key', v_key);
+  END IF;
+  IF (v13_judge_spend(v_sid)->>'over')::boolean THEN
+    RETURN jsonb_build_object('status','skipped','skipped','spend','asks',0,
+                              'consolidation_key', v_key);
+  END IF;
+  SELECT body, source_at INTO v_lb, v_lat FROM memory_nodes
+   WHERE session_id = v_sid AND content_hash = v_left;
+  SELECT body, source_at INTO v_rb, v_rat FROM memory_nodes
+   WHERE session_id = v_sid AND content_hash = v_right;
+  v_state := jsonb_build_object('source', v_lb || E'\n' || v_rb,
+                                'summary', v_text);
+  v_qs := jsonb_build_array(jsonb_build_object(
+           'signal', 'mem_cons::' || v_key || '::fidelity',
+           'template_name', 'mem_cons_fidelity'));
+  v_pm := v13_mgraph_capture_pm(v_sid);
+  v_env := v13_mgraph_envelope(v_sid, v_state, v_qs,
+                               v_pm->>'provider', v_pm->>'model');
+  SELECT count(*) INTO v_c0 FROM judgment_calls WHERE session_id = v_sid;
+  SELECT v13_resolve_judgments(v_env, 1) INTO v_res;
+  SELECT count(*) INTO v_c1 FROM judgment_calls WHERE session_id = v_sid;
+  v_asks := (v_c1 - v_c0)::int;
+  IF coalesce(v_res->>'failed', 'false')::boolean THEN
+    UPDATE memory_consolidations
+       SET status = 'rejected', decided_at = now(),
+           body_hash = coalesce(v13_body_hash(v_text), body_hash)
+     WHERE session_id = v_sid AND consolidation_key = v_key;
+    RETURN jsonb_build_object('status','rejected','asks',v_asks,
+                              'reason','fidelity_failed',
+                              'consolidation_key', v_key);
+  END IF;
+  v_fid := v13_mgraph_component(v_sid, 'mem_cons::' || v_key || '::fidelity');
+  IF v_fid IS NULL
+     OR v_fid < (v_pol->>'consolidation_choice_min')::numeric THEN
+    UPDATE memory_consolidations
+       SET status = 'rejected', decided_at = now(),
+           body_hash = coalesce(v13_body_hash(v_text), body_hash)
+     WHERE session_id = v_sid AND consolidation_key = v_key;
+    RETURN jsonb_build_object('status','rejected','asks',v_asks,
+                              'reason','fidelity_exclude',
+                              'consolidation_key', v_key);
+  END IF;
+  v_hash := v13_body_hash(v_text);
+  v_asp := v13_mgraph_cons_subtype(v_sid, v_key);
+  v_rel := CASE v_asp WHEN 'contradiction' THEN 'contradicts'
+                      WHEN 'redundant'  THEN 'redundant_with'
+                      ELSE 'related_to' END;
+  INSERT INTO memory_nodes (session_id, content_hash, body, origin,
+                            source_hashes, source_at, builder_version,
+                            consolidation_key)
+  VALUES (v_sid, v_hash, v_text, 'consolidation', ARRAY[v_left, v_right],
+          GREATEST(v_lat, v_rat), v_pver, v_key)
+  ON CONFLICT (session_id, content_hash) DO NOTHING;
+  INSERT INTO memory_links (session_id, src_hash, dst_hash, rel, origin,
+                            decision_id, structural, policy_version)
+  VALUES (v_sid, v_left, v_hash, v_rel, 'consolidation', NULL, NULL, v_pver)
+  ON CONFLICT DO NOTHING;
+  UPDATE memory_consolidations
+     SET status = 'adopted', decided_at = now(), body_hash = v_hash
+   WHERE session_id = v_sid AND consolidation_key = v_key;
+  RETURN jsonb_build_object('status','adopted','asks',v_asks,
+                            'consolidation_key', v_key,
+                            'node_hash', v_hash, 'edge_rel', v_rel);
+END $$;
+
+-- === §4 ACL(M4 面;settle 面补齐:resolve 读 effects.result;
+--     enqueue 的 ③ apply 再读面:route 读 decisions——偏差台账;
+--     队列写入面=M1 预授的 route INSERT/UPDATE) ===
+GRANT SELECT ON effects TO v13_resolve;
+GRANT SELECT ON decisions TO v13_route;
+REVOKE EXECUTE ON FUNCTION
+  v13_mgraph_pair_digest(text,text),
+  v13_mgraph_cons_pairs(uuid),
+  v13_mgraph_cons_questions(text,text,text,text),
+  v13_mgraph_cons_subtype(uuid,text),
+  v13_mgraph_cons_gate(uuid,text),
+  v13_mgraph_consolidate(uuid,int),
+  v13_mgraph_consolidate_enqueue(uuid),
+  v13_mgraph_consolidate_settle(uuid)
+FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION
+  v13_mgraph_pair_digest(text,text),
+  v13_mgraph_cons_pairs(uuid),
+  v13_mgraph_cons_questions(text,text,text,text),
+  v13_mgraph_cons_subtype(uuid,text),
+  v13_mgraph_cons_gate(uuid,text)
+TO v13_resolve, v13_route;                     -- 选对/五问/apply 共享只读面
+GRANT EXECUTE ON FUNCTION v13_mgraph_consolidate(uuid,int)
+TO v13_resolve;
+GRANT EXECUTE ON FUNCTION v13_mgraph_consolidate_enqueue(uuid)
+TO v13_route;
+GRANT EXECUTE ON FUNCTION v13_mgraph_consolidate_settle(uuid)
+TO v13_resolve;
+
+COMMIT;

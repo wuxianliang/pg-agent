@@ -1,14 +1,15 @@
-# v13/mgraph — DP9 M1 暗库 + M2 写与重建 + M3 读环 B1
+# v13/mgraph — DP9 M1 暗库 + M2 写与重建 + M3 读环 B1 + M4 固化
 
 Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphery
 全部前序 14 文件;本 stage 库 = `agent_v13_mgraph`(`files_through('mgraph')`
 前缀切片,15 文件;stannum 前置探针 fail-closed,形态照 memory/summary)。
 设计:`docs/designs/v13-context-on-pg.md` v2 §4.4/§6.1/§6.5/§8。计划:
-`docs/plans/v13-dp9-memory-graph-plan-2026-09-23.md`(M1=暗库;**M2=写与
-重建已交付**;**M3=读环 B1 已交付**;M4 固化由后续里程碑追加)。gate:
-`uv run python v13/mgraph/test_mgraph.py`(G-mg 族 **A+D+E 三组**,退出码
+`docs/plans/v13-dp9-memory-graph-plan-2026-09-23.md`(M1=暗库;M2=写与
+重建;M3=读环 B1;**M4=固化已交付**)。gate:
+`uv run python v13/mgraph/test_mgraph.py`(G-mg 族 **A+D+E+F 四组**,退出码
 0=通过;write/read 默认关——D/E 组以「INSERT 新策略版本+翻 active」打开、
-测毕翻回 v1)。
+测毕翻回 v1;固化链不读 write/read 开关,仅 `consolidate_mode='manual'`
+响亮键执法)。
 
 ## 机制(M1 范围;错误码一律 V3009)
 
@@ -169,6 +170,46 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
     当前 generation + 活动 policy 的 stopped walk,按 score DESC,
     content_hash ASC 取 ≤`inject_top_k`。无 walk → 空集零 ask。不进
     `recall_candidates`,不改装配。
+20. **固化链(M4,OQ6/§3.4①–⑥)**。选对=`v13_mgraph_cons_pairs`
+    (同会话 episodic 按 source_at ASC,content_hash ASC 的相邻对;
+    排除仅 status='adopted');五问一封=`v13_mgraph_cons_questions`
+    (redundant/contradiction/obsolete/link 四 Noul+representation
+    choice,投影 ["left","right"],signal `mem_cons::<pair_digest>::
+    <aspect>`,pair_digest=v13_body_hash(src||'>'||dst));生成门=
+    `v13_mgraph_cons_gate`(choice∈{merge,promote} ∧ 所选概率 ≥
+    consolidation_choice_min ∧ contradiction<consolidation_threshold;
+    缺任一判断=exclude;obsolete 只作证据);子型=`v13_mgraph_cons_subtype`
+    (priority 序首个 noul≥relation_threshold 的方面,无过阈者退 link)。
+    resolve 侧 `v13_mgraph_consolidate(sid,limit)` 驱动发问(每调用至多
+    一封真实 ask,一步一封同 #17/#19;eligible 报告在返回值)。
+21. **生成升级 kind=`mgraph_consolidate`(M4)**。kind CHECK 第七值+
+    `effect_attempt_cap` v3(七键,本键 cap=2,仪式照 summary)+窄
+    `v13_requeue_stale`(活体 OR REPLACE,基底=periphery 库 pg_proc 导出
+    活体,与 twophase:33 逐字一致):本 kind 与 judge 同待遇(cap 内回
+    收 ready 只 fence+1、超 cap failed+lease_exhausted+唤醒),cap 判定
+    按行 kind 调 `v13_attempt_ok(kind,attempt_no)`;其余 kind 行为字节
+    不变(仍 unknown 墙)。三者与全链同一加载事务(禁先扩 CHECK 后补
+    cap)。route 侧 `v13_mgraph_consolidate_enqueue(sid)`:入口失败收敛
+    sweep(generating 行对应 effect 已死→rejected)→单活跃闸
+    (ready|claimed|unknown→NULL,与 advance ① 同面)→按 priority 序选
+    最高 eligible 对→队列行 INSERT(queued;rejected→queued 翻回=显式
+    重入队)→`v13_enqueue_effect`(request 只含 purpose/left_hash/
+    right_hash/consolidation_key/policy_version 五键)→行转 generating;
+    worker 走 `v13_claim`/`v13_complete`(通用 CAS 分支:只有
+    effect_done,零 llm/message、零 turn/end、零 resolve/failed,路由
+    不 finish——F2)。resolve 侧 `v13_mgraph_consolidate_settle(
+    effect_id)`:读 effect.result→确定性检查(非空、字节≤
+    consolidate_max_body_bytes、两枚亲本哈希仍在;失败→rejected+
+    body_hash 回填零 fidelity ask)→fidelity 信封(投影
+    ["source","summary"],source=两亲本正文换行拼接)→include(≥
+    consolidation_choice_min,见台账 #31)才插 consolidation 节点
+    (source_hashes=两亲本、source_at=较晚者、consolidation_key)+固化
+    边(src=left_hash,dst=产物哈希,rel=子型映射,origin=
+    'consolidation')+行 adopted;非 include→rejected;幂等:
+    adopted/rejected 行二次 settle 零 ask;settle 探测 effect 非
+    succeeded 即 rejected。图变更段持 mgraph-build 同 key 事务级咨询锁。
+    产物=远程层首批实现:检索对象是节点 content_hash,只经 semantic
+    桶遍历可达,不作候选锚(F9)。
 
 ## 运维纪律(README 必记)
 
@@ -182,7 +223,7 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
   本 stage 模板种子在加载事务内逐模板 bump cgr(28 内容行+28 freeze=56,
   A5 断言 ≥28;实测恰 56)——在途回合一次 stale 失配,既有语义,重解析
   零 ask。
-- **③ unknown 墙注记(M4 预记)**:固化 enqueue 闸面=会话已有
+- **③ unknown 嘣注记(M4 已实施)**:固化 enqueue 闸面=会话已有
   `ready|claimed|unknown` 时返回 NULL(与 advance ① 同面,强于摘要闸的
   ready|claimed)。**代价:会话一旦落 unknown 墙,v1 永不能再固化**;
   清墙后恢复(运维动作),`consolidate_mode=manual` 下不调度。
@@ -219,15 +260,13 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
   `judgment_calls` 的 provider/model(GUC 已被清除)。elapsed 由驱动
   累计传入,latency 只在收轮时比较。
 
-## 明确不做(M4 与 §8 台账;M3 已交付)
+## 明确不做(M4 后余项与 §8 台账)
 
-- **M4**:固化链(五问+representation choice+fidelity)、kind
-  `mgraph_consolidate`+cap 七键+窄 requeue(活体 OR REPLACE)、enqueue/
-  settle、consolidation 节点=远程层首批。
 - admission 五问(OQ5 不做;键 true→V3009);`consolidation_interval`
   自动计数(代码默认 0,论文附录「每 20 写」不采用);AGE(§8 台账三
   条件);B2 装配接线(下一张计划);walk/round 生命周期清理(保留策略
-  =不清理,触发=下一张计划)。
+  =不清理,触发=下一张计划);自动固化调度(v1 manual,driver 显式调
+  consolidate/enqueue/settle)。
 
 ## 实现偏差台账(M1 实施与计划的偏差,逐条)
 
@@ -348,6 +387,49 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
 28. **锚的 need_g 取主桶(M3)**:首轮锚没有入边。`need_g` 用权重最大
     的桶(并列名字升序)。扩展出去的邻居带上认领它的桶(桶序
     causal…temporal,先到先得)。
+29. **enqueue 的 apply 再读面=route 侧 SELECT decisions(M4)**:计划
+    §3.4③ 的 apply(只读 decisions)与 ④入队按 M1 预授 ACL 面拆开——
+    consolidate(resolve)只发问并返回 eligible 报告(队列 INSERT 在
+    route),enqueue 内部重放同一 gate(`v13_mgraph_cons_gate` 单一
+    事实源)。为此 M4 ACL 追授 `GRANT SELECT ON decisions TO
+    v13_route`(计划 §4 ACL 清单未列;替代方案=队列 INSERT 落 resolve
+    侧,与 M1 预授的「队列写入面=route」矛盾)。
+30. **consolidate 一步一封(M4,同 #17/#19)**:GUC mock 单批形状限制;
+    `v13_mgraph_consolidate` 每调用至多一封真实 ask(缓存命中的对零
+    ask 连续处理),stop_reason='step'。生产 provider 要一次调用内问完
+    全部对=把步进循环放进驱动,机制不变。
+31. **fidelity include 判据绑定 consolidation_choice_min(M4)**:计划未
+    钉 fidelity noul 的 include 阈;不变量 12 禁函数体字面阈、种子又无
+    专用键 → 取固化提交置信键 consolidation_choice_min(0.85)为
+    fidelity include 下限(summary 先例=自有 accept.lo;需独立阈=新
+    策略版本加键)。
+32. **settle 的 body_hash 语义(M4)**:采纳行=产物哈希(覆盖此前拒绝
+    尝试的记录);拒绝行 COALESCE 保留首次可哈希尝试文本的哈希;无
+    文本(如 complete failed)保持 NULL。计划只说「settle 时回填,仅作
+    审计」。
+33. **窄 requeue 基底=periphery 库 pg_proc 活体(M4)**:pg_get_functiondef
+    导出后修改——(a1)/(a1') 的 kind 谓词 `='judge'` 改 `IN ('judge',
+    'mgraph_consolidate')`、cap 判定改按行 kind 调 v13_attempt_ok,
+    其余语句逐字保留;计数器语义不变(reclaimed_ready 现含 mgraph
+    行);ACL 经 OR REPLACE 保留。
+34. **enqueue 的 post-enqueue 三分支(M4)**:`v13_enqueue_effect` 返回
+    id 后按行状态分流:ready|claimed→generating;succeeded→不重复
+    enqueue 返 NULL(settle 待跑,queue PK 幂等权威);failed/cancelled
+    (重挂被 cap 拒)→行收敛 rejected 返 NULL。计划只裁了超 cap→
+    rejected;complete-后-settle-前的 succeeded 窗口由此保护。推论:
+    effect 已 succeeded 而 settle 拒绝(确定性检查/fidelity)后,同
+    turn 内不可再生成——重试身份随 effect(request 五键闭集无 attempt
+    位),跨 turn 或翻 policy_version 才有新 identity;worker 主动重试
+    (complete failed→重挂→attempt 2)不受影响(F11 (c)/(d))。
+35. **子型无过阈者退 link(M4)**:三个 Noul 方面无一 ≥
+    relation_threshold 时子型取 link(→related_to)——被 choice 门放行
+    的对必有合并关系,产物至少 related_to。计划未言明无过阈者的落点。
+36. **选对池=episodic 相邻对(M4)**:`v13_mgraph_cons_pairs` 只枚举
+    episodic 节点按 (source_at ASC, content_hash ASC) 的相邻对(与
+    temporal 边同序——「source_at 近、哈希序」的最小实现);
+    consolidation 节点不作对员(与「不作候选锚」同向)。consolidation
+    节点的 source_at=两亲本较晚者,新节点插入后可与既有对员再成对,
+    由 adopted 排除面闸住同 key 重复。
 
 ## 回退
 

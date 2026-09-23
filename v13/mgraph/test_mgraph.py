@@ -5,7 +5,9 @@ untouched + cgr bump, ACL negative face, source scan, zero side effects,
 envelope constructor batch shape. M2 group D (write & rebuild): build/apply/
 rebuild/candidates, caps & cursor semantics, concurrency, poisoned-rebuild
 zero-ask. M3 group E (read loop B1): route/allocate/run_round/should_stop/
-evidence. M4 group F lands with its milestone.
+evidence. M4 group F (consolidation): five-question pair gate, effect kind
+mgraph_consolidate + cap v3 + narrow requeue, enqueue/settle, fidelity
+gate, consolidation nodes as the first remote-plane artifacts.
 
 Run: uv run python v13/mgraph/test_mgraph.py  (exit 0 = pass)
 """
@@ -1938,6 +1940,562 @@ def main() -> int:
           and cur.fetchone()[0] == calls_deg, (deg, ev_deg))
     set_active("memory_stack", 1)
 
+    # =====================================================================
+    # DP9 M4 group F: consolidation (G-mg/F1-F11). One envelope per call
+    # (consolidate steps after the first real ask; settle asks at most the
+    # fidelity envelope). The predictor mirrors the SQL builders exactly
+    # (cons_pairs / cons_questions / pair state) so the global cache closes
+    # gaps across calls. Worker cycles use v13_claim + v13_complete like
+    # any other effect kind — mgraph_consolidate rides the generic CAS
+    # branch (effect_done only; no llm/message, no turn/end).
+    # =====================================================================
+    set_active("mgraph", 1)
+    C.ensure()
+    cur = C.cur
+
+    def cons_step(sid, over=None, limit=100):
+        """Predict the next pending pair envelope, mock it, run one
+        consolidate call; returns (result, key of the pair asked)."""
+        over = over or {}
+        C.ensure()
+        cc = C.cur
+        cc.execute("SELECT src,dst,src_body,dst_body,consolidation_key"
+                   " FROM v13_mgraph_cons_pairs(%s)", (sid,))
+        target = None
+        for src, dst, sb, db_, key in cc.fetchall():
+            cc.execute("SELECT status FROM memory_consolidations"
+                       " WHERE session_id=%s AND consolidation_key=%s",
+                       (sid, key))
+            row = cc.fetchone()
+            if row and row[0] == "adopted":
+                continue
+            cc.execute("SELECT v13_mgraph_cons_questions(%s,%s,%s,%s)",
+                       (src, dst, sb, db_))
+            qs = cc.fetchone()[0]
+            env = envelope_of(cc, sid,
+                              {"left": {"content": sb},
+                               "right": {"content": db_}}, qs)
+            gap = gap_of_env(cc, env)
+            if gap:
+                target = (gap, key)
+                break
+        if target is None:
+            cc.execute("SELECT v13_mgraph_consolidate(%s, %s)", (sid, limit))
+            return cc.fetchone()[0], None
+        gap, key = target
+        answers = {}
+        for g in gap:
+            sig = g["signal"]
+            if sig.endswith("::representation"):
+                ch = over.get("choice", "merge")
+                answers[sig] = {"type": "choice", "choice": ch,
+                                "probabilities": {ch: over.get("prob", 0.9)},
+                                "confidence": over.get("prob", 0.9)}
+            else:
+                answers[sig] = {"type": "noul",
+                                "noul": over.get(sig.rsplit("::", 1)[1], 0.1)}
+        cc.execute("SELECT set_config('typesafe.mock_response', %s, true)",
+                   (json.dumps({"model": "jev-mock", "answers": answers,
+                                "usage": {"input_tokens": 1,
+                                          "output_tokens": 1}}),))
+        cc.execute("SELECT v13_mgraph_consolidate(%s, %s)", (sid, limit))
+        res = cc.fetchone()[0]
+        C.commit()
+        check("F0: consolidate call did not fail", res.get("failed") is False,
+              res)
+        return res, key
+
+    def worker_cycle(text=None, outcome="succeeded"):
+        """Claim the single ready effect and complete it like a worker."""
+        cur.execute("SELECT v13_claim('fworker', 60000)")
+        cl = cur.fetchone()[0]
+        check("F0: claim picked the mgraph_consolidate effect",
+              cl["kind"] == "mgraph_consolidate", cl)
+        C.commit()
+        if outcome == "succeeded":
+            cur.execute("SELECT v13_complete(%s,%s,%s,'succeeded',%s::jsonb)",
+                        (cl["effect_id"], cl["attempt_no"], cl["fence"],
+                         json.dumps({"text": text})))
+        else:
+            cur.execute("SELECT v13_complete(%s,%s,%s,'failed',NULL)",
+                        (cl["effect_id"], cl["attempt_no"], cl["fence"]))
+        out = cur.fetchone()[0]
+        C.commit()
+        return cl, out
+
+    def settle_fid(eid, sid, key, sb, db_, text, fid):
+        """Predict the fidelity envelope, mock fid, settle."""
+        C.ensure()
+        cc = C.cur
+        fqs = [{"signal": f"mem_cons::{key}::fidelity",
+                "template_name": "mem_cons_fidelity"}]
+        env = envelope_of(cc, sid, {"source": sb + "\n" + db_,
+                                    "summary": text}, fqs)
+        gap = gap_of_env(cc, env)
+        if gap:
+            cc.execute("SELECT set_config('typesafe.mock_response', %s, true)",
+                       (json.dumps({"model": "jev-mock",
+                                    "answers": {g["signal"]: {
+                                        "type": "noul", "noul": fid}
+                                        for g in gap},
+                                    "usage": {"input_tokens": 1,
+                                              "output_tokens": 1}}),))
+        cc.execute("SELECT v13_mgraph_consolidate_settle(%s)", (eid,))
+        r = cc.fetchone()[0]
+        C.commit()
+        return r
+
+    def forbidden_event_counts(sid):
+        cur.execute(
+            "SELECT count(*) FILTER (WHERE type='llm/message'),"
+            " count(*) FILTER (WHERE type='turn/end'),"
+            " count(*) FILTER (WHERE type='resolve/failed')"
+            " FROM events WHERE session_id=%s", (sid,))
+        return cur.fetchone()
+
+    # ---------------- F1 contradiction over threshold ----------------
+    sid_f1, _ = put_nodes(cur, ["Nadia forged the brass key blank.",
+                                "Nadia forged the brass key copy."])
+    C.commit()
+    res_f1, key_f1 = cons_step(sid_f1, over={"contradiction": 0.9})
+    check("F1: gate blocks on contradiction over threshold",
+          res_f1["eligible"] == [] and res_f1["asks"] == 1, res_f1)
+    cur.execute("SELECT v13_mgraph_cons_gate(%s,%s)", (sid_f1, key_f1))
+    gate_f1 = cur.fetchone()[0]
+    check("F1: gate reason is contradiction",
+          gate_f1["allowed"] is False and gate_f1["reason"] == "contradiction",
+          gate_f1)
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f1,))
+    check("F1: enqueue returns NULL (no eligible pair)",
+          cur.fetchone()[0] is None)
+    cur.execute("SELECT count(*) FROM effects WHERE kind='mgraph_consolidate'")
+    check("F1: zero generation effects", cur.fetchone()[0] == 0)
+    cur.execute("SELECT count(*) FROM memory_consolidations WHERE session_id=%s",
+                (sid_f1,))
+    check("F1: zero queue rows", cur.fetchone()[0] == 0)
+    C.commit()
+
+    # ---------------- F2 happy chain + P0 zero-claims --------------------
+    FB = ["Priya racked the copper still.", "Priya racked the copper kettle."]
+    sid_f2, h_f2 = put_nodes(cur, FB)
+    # give the pair a pre-existing edge: settle must not touch it (F5)
+    cur.execute(
+        "INSERT INTO memory_links (session_id, src_hash, dst_hash, rel,"
+        " origin, decision_id, structural, policy_version)"
+        " VALUES (%s, least(%s,%s), greatest(%s,%s), 'temporal', 'temporal',"
+        " NULL, NULL, 1)", (sid_f2, h_f2[0], h_f2[1], h_f2[0], h_f2[1]))
+    C.commit()
+    before_links_f2 = links_of(cur, sid_f2)
+    fb_forbidden0 = forbidden_event_counts(sid_f2)
+    res_f2, key_f2 = cons_step(sid_f2)
+    cur = C.cur
+    check("F2: five-question envelope asked once, pair eligible",
+          res_f2["asks"] == 1 and len(res_f2["eligible"]) == 1
+          and res_f2["eligible"][0]["consolidation_key"] == key_f2, res_f2)
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f2,))
+    eid_f2 = cur.fetchone()[0]
+    check("F2: enqueue created the mgraph_consolidate effect",
+          eid_f2 is not None)
+    C.commit()
+    cur.execute("SELECT kind, status, jsonb_object_keys(request)"
+                " FROM effects WHERE effect_id=%s ORDER BY 3", (eid_f2,))
+    req_keys = sorted(r[2] for r in cur.fetchall())
+    cur.execute("SELECT status FROM effects WHERE effect_id=%s", (eid_f2,))
+    eff_status_f2 = cur.fetchone()[0]
+    cur.execute("SELECT status, effect_id FROM memory_consolidations"
+                " WHERE session_id=%s AND consolidation_key=%s",
+                (sid_f2, key_f2))
+    q_f2 = cur.fetchone()
+    check("F2: request carries exactly the five adjudicated keys",
+          req_keys == ["consolidation_key", "left_hash", "policy_version",
+                       "purpose", "right_hash"]
+          and eff_status_f2 == "ready", req_keys)
+    check("F2: queue row generating bound to the effect",
+          q_f2 == ("generating", eid_f2), q_f2)
+    # second enqueue while the effect is live -> NULL (single-active gate)
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f2,))
+    check("F2: live effect blocks a second enqueue (gate face)",
+          cur.fetchone()[0] is None)
+    cl_f2, comp_f2 = worker_cycle("Merged: Priya racked the copper vessels.")
+    check("F2: worker complete accepted", comp_f2 == "accepted", comp_f2)
+    cur.execute("SELECT count(*) FROM effects WHERE kind='mgraph_consolidate'")
+    check("F2: exactly one mgraph_consolidate effect", cur.fetchone()[0] == 1)
+    fb_forbidden1 = forbidden_event_counts(sid_f2)
+    check("F2: zero llm/message, zero turn/end, zero resolve/failed"
+          " (route cannot finish on it)",
+          fb_forbidden1 == (0, 0, 0) and fb_forbidden0 == (0, 0, 0),
+          (fb_forbidden0, fb_forbidden1))
+    # ---------------- F5 settle include (continues the F2 chain) ---------
+    cur.execute("SELECT src, dst, src_body, dst_body FROM"
+                " v13_mgraph_cons_pairs(%s)", (sid_f2,))
+    src_f2, dst_f2, sb_f2, db_f2 = cur.fetchone()
+    TEXT_F2 = "Merged: Priya racked the copper vessels."
+    st_f5 = settle_fid(eid_f2, sid_f2, key_f2, sb_f2, db_f2, TEXT_F2, 0.9)
+    cur = C.cur
+    check("F5: settle adopts on fidelity include",
+          st_f5["status"] == "adopted" and st_f5["asks"] == 1, st_f5)
+    cur.execute("SELECT v13_body_hash(%s)", (TEXT_F2,))
+    new_hash_f2 = cur.fetchone()[0]
+    cur.execute(
+        "SELECT source_hashes, consolidation_key, origin, source_at"
+        " FROM memory_nodes WHERE session_id=%s AND content_hash=%s",
+        (sid_f2, new_hash_f2))
+    node_f5 = cur.fetchone()
+    check("F5: new node hash, both parent hashes, key, consolidation origin",
+          node_f5 is not None and sorted(node_f5[0]) == sorted([src_f2, dst_f2])
+          and node_f5[1] == key_f2 and node_f5[2] == "consolidation", node_f5)
+    after_links_f2 = links_of(cur, sid_f2)
+    new_edges_f2 = [e for e in after_links_f2 if e not in before_links_f2]
+    check("F5: original edges intact + exactly one new consolidation edge",
+          set(before_links_f2) <= set(after_links_f2) and len(new_edges_f2) == 1
+          and new_edges_f2[0][2] == "related_to"
+          and new_edges_f2[0][0] == src_f2 and new_edges_f2[0][1] == new_hash_f2
+          and new_edges_f2[0][3] == "consolidation",
+          (before_links_f2, after_links_f2))
+    cur.execute("SELECT count(*) FROM memory_nodes WHERE session_id=%s"
+                " AND origin='episodic'", (sid_f2,))
+    check("F5: both parents still present", cur.fetchone()[0] == 2)
+    cur.execute("SELECT status, body_hash FROM memory_consolidations"
+                " WHERE session_id=%s AND consolidation_key=%s",
+                (sid_f2, key_f2))
+    q_f5 = cur.fetchone()
+    check("F5: queue adopted with product body_hash",
+          q_f5 == ("adopted", new_hash_f2), q_f5)
+
+    # ---------------- F3 deterministic check failure ----------------
+    sid_f3, _ = put_nodes(cur, ["Ravi tuned the drone oscillator.",
+                                "Ravi tuned the drone receiver."])
+    C.commit()
+    res_f3, key_f3 = cons_step(sid_f3)
+    cur = C.cur
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f3,))
+    eid_f3 = cur.fetchone()[0]
+    C.commit()
+    worker_cycle("x" * 32769)
+    cur.execute("SELECT src_body, dst_body FROM v13_mgraph_cons_pairs(%s)",
+                (sid_f3,))
+    sb_f3, db_f3 = cur.fetchone()
+    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s"
+                " AND signal LIKE '%%::fidelity'", (sid_f3,))
+    fid0_f3 = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
+                (sid_f3,))
+    calls0_f3 = cur.fetchone()[0]
+    C.ensure()
+    cur = C.cur
+    cur.execute("SELECT v13_mgraph_consolidate_settle(%s)", (eid_f3,))
+    st_f3 = cur.fetchone()[0]
+    C.commit()
+    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s"
+                " AND signal LIKE '%%::fidelity'", (sid_f3,))
+    fid1_f3 = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
+                (sid_f3,))
+    calls1_f3 = cur.fetchone()[0]
+    check("F3: over-budget text -> rejected with zero fidelity asks",
+          st_f3["status"] == "rejected" and st_f3["reason"] == "over_budget"
+          and st_f3["asks"] == 0 and fid1_f3 == fid0_f3
+          and calls1_f3 == calls0_f3, st_f3)
+    cur.execute("SELECT v13_body_hash(%s)", ("x" * 32769,))
+    bh_big = cur.fetchone()[0]
+    cur.execute("SELECT status, body_hash FROM memory_consolidations"
+                " WHERE session_id=%s AND consolidation_key=%s",
+                (sid_f3, key_f3))
+    q_f3 = cur.fetchone()
+    check("F11: rejected row backfills the attempt body_hash",
+          q_f3 == ("rejected", bh_big), q_f3)
+    cur.execute("SELECT v13_mgraph_consolidate_settle(%s)", (eid_f3,))
+    st_f3b = cur.fetchone()[0]
+    C.commit()
+    check("F11: rejected row second settle is a zero-ask no-op",
+          st_f3b["status"] == "rejected" and st_f3b["asks"] == 0, st_f3b)
+
+    # ---------------- F4 fidelity exclude ----------------
+    sid_f4, _ = put_nodes(cur, ["Sasha brewed the oat porter.",
+                                "Sasha brewed the oat lager."])
+    C.commit()
+    res_f4, key_f4 = cons_step(sid_f4)
+    cur = C.cur
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f4,))
+    eid_f4 = cur.fetchone()[0]
+    C.commit()
+    worker_cycle("Merged: Sasha brewed the oat ales.")
+    cur.execute("SELECT src_body, dst_body FROM v13_mgraph_cons_pairs(%s)",
+                (sid_f4,))
+    sb_f4, db_f4 = cur.fetchone()
+    st_f4 = settle_fid(eid_f4, sid_f4, key_f4, sb_f4, db_f4,
+                       "Merged: Sasha brewed the oat ales.", 0.1)
+    cur = C.cur
+    check("F4: fidelity exclude -> rejected, no node",
+          st_f4["status"] == "rejected"
+          and st_f4["reason"] == "fidelity_exclude" and st_f4["asks"] == 1,
+          st_f4)
+    cur.execute("SELECT count(*) FROM memory_nodes WHERE session_id=%s"
+                " AND origin='consolidation'", (sid_f4,))
+    check("F4: zero new nodes; both parents remain",
+          cur.fetchone()[0] == 0, None)
+    cur.execute("SELECT count(*) FROM memory_nodes WHERE session_id=%s"
+                " AND origin='episodic'", (sid_f4,))
+    check("F4: both parents still present", cur.fetchone()[0] == 2)
+
+    # ---------------- F6 re-run same key ----------------
+    res_f6, key_f6 = cons_step(sid_f2)
+    cur = C.cur
+    check("F6: second consolidate run asks nothing, pair excluded",
+          res_f6["asks"] == 0 and res_f6["pairs"] == 0
+          and res_f6["eligible"] == [] and key_f6 is None, res_f6)
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f2,))
+    check("F6: enqueue on adopted key returns NULL", cur.fetchone()[0] is None)
+    cur.execute("SELECT v13_mgraph_consolidate_settle(%s)", (eid_f2,))
+    st_f6 = cur.fetchone()[0]
+    C.commit()
+    check("F6: second settle idempotent zero-ask adopted",
+          st_f6["status"] == "adopted" and st_f6["asks"] == 0, st_f6)
+    cur.execute("SELECT count(*) FROM memory_nodes WHERE session_id=%s"
+                " AND origin='consolidation'", (sid_f2,))
+    check("F6: node not double-inserted", cur.fetchone()[0] == 1)
+
+    # ---------------- F7 isolation from the document corpus -------------
+    sql_f7 = SQL_FILE.read_text(encoding="utf-8")
+    cur.execute("SELECT v13_recall_candidates(%s)", (sid_f2,))
+    rc_f7 = cur.fetchone()[0]
+    rc_hashes = {c["content_hash"] for c in rc_f7["candidates"]}
+    cur.execute("SELECT content_hash FROM memory_nodes WHERE session_id=%s",
+                (sid_f2,))
+    graph_hashes = {r[0] for r in cur.fetchall()}
+    check("F7: recall_candidates intersects no graph node hash",
+          rc_hashes.isdisjoint(graph_hashes),
+          rc_hashes & graph_hashes)
+    check("F7: the new consolidation node is not a chunk candidate",
+          new_hash_f2 not in rc_hashes)
+    cur.execute(
+        "SELECT pg_get_functiondef('v13_needed_judgments(uuid)'::regprocedure)")
+    check("F7: needed_judgments still carries no mem_ face",
+          "mem_" not in cur.fetchone()[0])
+    check("F7: ALTER TABLE targets are effects only (prior files untouched)",
+          set(re.findall(r"ALTER TABLE (\w+)", sql_f7)) == {"effects"},
+          set(re.findall(r"ALTER TABLE (\w+)", sql_f7)))
+    check("F7: OR REPLACE targets are the two adjudicated functions",
+          set(re.findall(r"CREATE OR REPLACE FUNCTION (\w+)", sql_f7))
+          == {"v13_mgraph_envelope", "v13_requeue_stale"},
+          set(re.findall(r"CREATE OR REPLACE FUNCTION (\w+)", sql_f7)))
+
+    # ---------------- F8 cap + narrow requeue ----------------
+    cur.execute("SELECT version, value FROM v13_policies"
+                " WHERE name='effect_attempt_cap' AND active")
+    ver_f8, cap_f8 = cur.fetchone()
+    check("F8: cap v3 active with seven keys, six verbatim",
+          ver_f8 == 3 and cap_f8 == {"judge": 4, "tool": 3, "llm": 3,
+                                     "human": 2, "context_refresh": 3,
+                                     "context_summary": 2,
+                                     "mgraph_consolidate": 2}, cap_f8)
+    cur.execute("SELECT v13_attempt_ok('mgraph_consolidate',1),"
+                " v13_attempt_ok('mgraph_consolidate',2)")
+    check("F8: attempt belt for the new kind (cap=2)",
+          cur.fetchone() == (True, False))
+    check("F8: requeue cap check is per-row kind, not hardcoded",
+          "v13_attempt_ok(kind, attempt_no)" in sql_f7)
+    sid_f8 = u()
+    cur.execute("INSERT INTO sessions (session_id) VALUES (%s)", (sid_f8,))
+
+    def f8_effect(kind, attempt):
+        e = u()
+        s8 = u()
+        cur.execute("INSERT INTO sessions (session_id) VALUES (%s)", (s8,))
+        cur.execute(
+            "INSERT INTO effects (effect_id, session_id, kind, request,"
+            " request_hash, idempotency_key, origin_user_seq, attempt_no,"
+            " fence, lease_owner, lease_until, status)"
+            " VALUES (%s,%s,%s,'{}'::jsonb,%s,%s,-1,%s,0,'f8',"
+            " clock_timestamp() - interval '1 hour','claimed')",
+            (e, s8, kind, sha(e), "v13:f8:" + e, attempt))
+        return e
+
+    e_j = f8_effect("judge", 0)
+    e_m1 = f8_effect("mgraph_consolidate", 0)
+    e_m2 = f8_effect("mgraph_consolidate", 2)
+    e_l = f8_effect("llm", 0)
+    C.commit()
+    cur.execute("SELECT v13_requeue_stale()")
+    rq_f8 = cur.fetchone()[0]
+    C.commit()
+    by_id = {}
+    cur.execute(
+        "SELECT effect_id, status, attempt_no, fence, error FROM effects"
+        " WHERE effect_id = ANY(%s::uuid[])", ([e_j, e_m1, e_m2, e_l],))
+    for eid, st, at, fn, err in cur.fetchall():
+        by_id[eid] = (st, at, fn, err)
+    check("F8: judge in-cap reclaimed ready, fence+1 attempt kept",
+          by_id[e_j] == ("ready", 0, 1, None), by_id[e_j])
+    check("F8: mgraph_consolidate in-cap reclaimed ready, fence+1 attempt kept",
+          by_id[e_m1] == ("ready", 0, 1, None), by_id[e_m1])
+    check("F8: mgraph_consolidate over cap -> failed + lease_exhausted",
+          by_id[e_m2][0] == "failed" and by_id[e_m2][1] == 2
+          and by_id[e_m2][3] == {"code": "lease_exhausted"}, by_id[e_m2])
+    check("F8: other kinds keep the unknown wall (byte behavior)",
+          by_id[e_l][0] == "unknown", by_id[e_l])
+    check("F8: requeue counters",
+          rq_f8["reclaimed_ready"] == 2 and rq_f8["lease_exhausted"] == 1
+          and rq_f8["walled_unknown"] == 1 and rq_f8["walls_total"] == 1,
+          rq_f8)
+    cur.execute("UPDATE effects SET status='cancelled'"
+                " WHERE effect_id IN (%s,%s)", (e_j, e_m1))
+    C.commit()
+
+    # ---------------- F9 reachability through the semantic bucket -----
+    open_read()
+    C.ensure()
+    cur = C.cur
+    _outs_f9, _sh_f9, _pm_f9 = drive(
+        sid_f2, "Priya racked copper",
+        spec={"*::sufficient": 0.10, "*::missing": 0.10,
+              "*::contradiction": 0.10, "*::continue": 0.90, "*": 0.50})
+    cur = C.cur
+    w_f9 = walk_row(cur, sid_f2)
+    visited_f9 = set(w_f9["budgets"].get("visited", [])) \
+        if isinstance(w_f9["budgets"], dict) else set()
+    frontier_f9 = {x["content_hash"] for x in (w_f9["frontier"] or [])}
+    check("F9: consolidation node reached via traversal (not an anchor)",
+          new_hash_f2 in (visited_f9 | frontier_f9),
+          {"visited": sorted(visited_f9), "frontier": sorted(frontier_f9)})
+    set_active("mgraph", 1)
+
+    # ---------------- F10 ACL negative face ----------------
+    cur.execute(
+        "SELECT has_function_privilege('v13_resolve',"
+        " 'v13_enqueue_effect(uuid,text,jsonb,text)','EXECUTE'),"
+        " has_function_privilege('v13_route',"
+        " 'v13_enqueue_effect(uuid,text,jsonb,text)','EXECUTE')")
+    hp_a = cur.fetchone()
+    cur.execute(
+        "SELECT has_function_privilege('v13_resolve',"
+        " 'v13_mgraph_consolidate_enqueue(uuid)','EXECUTE'),"
+        " has_function_privilege('v13_route',"
+        " 'v13_mgraph_consolidate_enqueue(uuid)','EXECUTE')")
+    hp_b = cur.fetchone()
+    cur.execute(
+        "SELECT has_function_privilege('v13_resolve',"
+        " 'v13_mgraph_consolidate_settle(uuid)','EXECUTE'),"
+        " has_function_privilege('v13_route',"
+        " 'v13_mgraph_consolidate(uuid,integer)','EXECUTE')")
+    hp_c = cur.fetchone()
+    check("F10: enqueue faces split resolve(denied)/route(allowed)",
+          hp_a == (False, True) and hp_b == (False, True), (hp_a, hp_b))
+    check("F10: settle is resolve-only, consolidate is resolve-only",
+          hp_c == (True, False), hp_c)
+    cur.execute("SET ROLE v13_resolve")
+    fails_with(cur, "SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f2,),
+               "permission denied",
+               "F10: resolve EXECUTE consolidate_enqueue denied")
+    cur.execute("RESET ROLE")
+    C.commit()
+
+    # ---------------- F11 retry via effect attempts + obsolete -----
+    sid_f11, _ = put_nodes(cur, ["Tomas glazed the clay pitcher.",
+                                 "Tomas glazed the clay platter."])
+    C.commit()
+    res_f11, key_f11 = cons_step(sid_f11)
+    cur = C.cur
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f11,))
+    eid_f11 = cur.fetchone()[0]
+    C.commit()
+    cl_f11a, _ = worker_cycle(outcome="failed")
+    check("F11: first worker attempt failed on the same effect",
+          cl_f11a["effect_id"] == eid_f11 and cl_f11a["attempt_no"] == 1)
+    C.ensure()
+    cur = C.cur
+    cur.execute("SELECT v13_mgraph_consolidate_settle(%s)", (eid_f11,))
+    st_f11a = cur.fetchone()[0]
+    C.commit()
+    check("F11: settle on failed effect converges the row to rejected",
+          st_f11a["status"] == "rejected" and st_f11a["asks"] == 0, st_f11a)
+    res_f11b, key_f11b = cons_step(sid_f11)
+    cur = C.cur
+    check("F11: re-consolidate is zero-ask (cached) and re-eligible",
+          res_f11b["asks"] == 0 and len(res_f11b["eligible"]) == 1
+          and key_f11b is None, res_f11b)
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f11,))
+    eid_f11b = cur.fetchone()[0]
+    cur.execute("SELECT status, attempt_no, fence FROM effects"
+                " WHERE effect_id=%s", (eid_f11,))
+    eff_f11b = cur.fetchone()
+    C.commit()
+    check("F11: retry re-mounts the same effect id (attempt rides the row)",
+          eid_f11b == eid_f11 and eff_f11b[0] == "ready"
+          and eff_f11b[1] == 1 and eff_f11b[2] == 2, (eid_f11b, eff_f11b))
+    TEXT_F11 = "Merged: Tomas glazed the clay vessels."
+    cl_f11c, _ = worker_cycle(TEXT_F11)
+    check("F11: second attempt is attempt 2", cl_f11c["attempt_no"] == 2)
+    cur.execute("SELECT src_body, dst_body FROM v13_mgraph_cons_pairs(%s)",
+                (sid_f11,))
+    sb_f11, db_f11 = cur.fetchone()
+    st_f11c = settle_fid(eid_f11, sid_f11, key_f11, sb_f11, db_f11,
+                         TEXT_F11, 0.9)
+    cur = C.cur
+    check("F11: retry with new text adopts",
+          st_f11c["status"] == "adopted", st_f11c)
+    cur.execute("SELECT count(*) FROM memory_consolidations"
+                " WHERE session_id=%s AND consolidation_key=%s",
+                (sid_f11, key_f11))
+    check("F11: one queue row across the retry (no new row per text)",
+          cur.fetchone()[0] == 1)
+    cur.execute("SELECT count(*) FROM memory_nodes WHERE session_id=%s"
+                " AND origin='consolidation'", (sid_f11,))
+    check("F11: retry produced the product node", cur.fetchone()[0] == 1)
+    # cap exhaustion: second failed attempt closes the pair for this turn
+    sid_f11b, _ = put_nodes(cur, ["Ulla charted the reef pass.",
+                                  "Ulla charted the reef cove."])
+    C.commit()
+    _, key_f11b2 = cons_step(sid_f11b)
+    cur = C.cur
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f11b,))
+    eid_f11b2 = cur.fetchone()[0]
+    C.commit()
+    worker_cycle(outcome="failed")
+    C.ensure()
+    cur = C.cur
+    cur.execute("SELECT v13_mgraph_consolidate_settle(%s)", (eid_f11b2,))
+    C.commit()
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f11b,))
+    eid_f11b3 = cur.fetchone()[0]
+    C.commit()
+    check("F11: in-cap re-mount after first failure",
+          eid_f11b3 == eid_f11b2)
+    worker_cycle(outcome="failed")
+    C.ensure()
+    cur = C.cur
+    cur.execute("SELECT v13_mgraph_consolidate_settle(%s)", (eid_f11b2,))
+    C.commit()
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f11b,))
+    r_cap = cur.fetchone()[0]
+    cur.execute("SELECT status, attempt_no FROM effects WHERE effect_id=%s",
+                (eid_f11b2,))
+    eff_cap = cur.fetchone()
+    cur.execute("SELECT status FROM memory_consolidations"
+                " WHERE session_id=%s AND consolidation_key=%s",
+                (sid_f11b, key_f11b2))
+    q_cap = cur.fetchone()
+    C.commit()
+    check("F11: over-cap third enqueue refuses and converges rejected",
+          r_cap is None and eff_cap == ("failed", 2) and q_cap == ("rejected",),
+          (r_cap, eff_cap, q_cap))
+    # obsolete high alone never enqueues
+    sid_f11c, _ = put_nodes(cur, ["Vera stowed the main halyard.",
+                                  "Vera stowed the main jib."])
+    C.commit()
+    res_f11c, _ = cons_step(sid_f11c, over={"obsolete": 0.9,
+                                            "choice": "uncertain"})
+    cur = C.cur
+    check("F11: obsolete high score alone does not enqueue",
+          res_f11c["eligible"] == [], res_f11c)
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_f11c,))
+    check("F11: enqueue returns NULL, zero effects for obsolete-only",
+          cur.fetchone()[0] is None)
+    cur.execute("SELECT count(*) FROM effects WHERE kind='mgraph_consolidate'"
+                " AND session_id=%s", (sid_f11c,))
+    check("F11: obsolete fixture produced no effect", cur.fetchone()[0] == 0)
+    C.commit()
+
     # ---------------- M3 source discipline ---------------------------------
     sql_m3 = SQL_FILE.read_text(encoding="utf-8")
     norm_m3 = strip_sql_comments(sql_m3)
@@ -1958,17 +2516,29 @@ def main() -> int:
           all(sql_m2.count(tok) == 0 for tok in (
               "typesafe_ask", "v13_append_event", "FOR UPDATE",
               "mock_response", "cypher(")))
+
+    # ---------------- M4 source discipline + policy restore -------------
+    sql_m4 = SQL_FILE.read_text(encoding="utf-8")
+    norm_m4 = strip_sql_comments(sql_m4)
+    check("M4: bind operator still exactly 1", norm_m4.count("==>") == 1,
+          norm_m4.count("==>"))
+    check("M4: whole-file scan still clean (A7 five tokens)",
+          all(sql_m4.count(tok) == 0 for tok in (
+              "typesafe_ask", "v13_append_event", "FOR UPDATE",
+              "mock_response", "cypher(")))
+    check("M4: no set_config in mgraph SQL", "set_config" not in sql_m4)
     set_active("mgraph", 1)
     cur.execute(
-        "SELECT version, (value->>'write_enabled')::boolean FROM v13_policies"
+        "SELECT version, (value->>'write_enabled')::boolean,"
+        " (value->>'read_enabled')::boolean FROM v13_policies"
         " WHERE name='mgraph' AND active")
-    v_fin, w_fin = cur.fetchone()
-    check("M2: policy restored to v1 with write back off",
-          v_fin == 1 and w_fin is False, (v_fin, w_fin))
+    v_fin, w_fin, r_fin = cur.fetchone()
+    check("M4: policy restored to v1 with write/read back off",
+          v_fin == 1 and w_fin is False and r_fin is False, (v_fin, w_fin, r_fin))
     C.conn.rollback()
     C.conn.close()
 
-    print("\n[mgraph M1+M2+M3] groups A+D+E: ALL GREEN")
+    print("\n[mgraph M1+M2+M3+M4] groups A+D+E+F: ALL GREEN")
     return 0
 
 
