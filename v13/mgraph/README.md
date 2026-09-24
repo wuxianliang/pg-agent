@@ -300,7 +300,8 @@ active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consoli
 
 - admission 五问(OQ5 不做;键 true→V3009);`consolidation_interval`
   自动计数(代码默认 0,论文附录「每 20 写」不采用);AGE(§8 台账三
-  条件);B2 装配接线(下一张计划);walk/round 生命周期清理(保留策略
+三条条件);B2 装配接线(已开工:`v13/mgraph_assembly/`(Stage 16,计划
+`docs/plans/v13-mgraph-assembly-wiring-plan-2026-09-24.md`));walk/round 生命周期清理(保留策略
   =不清理,触发=下一张计划);自动固化调度(v1 manual,driver 显式调
   consolidate/enqueue/settle);**CJK 路由升级(v2 OQ13=D 不做:route/
   意图链/权重零改动,CJK→superset 语义维持 DP9-OQ3,两个
