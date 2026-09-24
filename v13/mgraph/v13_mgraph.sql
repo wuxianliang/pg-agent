@@ -1066,7 +1066,8 @@ BEGIN
           END IF;
         END IF;
         EXIT nodes WHEN v_stop IS NOT NULL;
-        v_env := v13_mgraph_envelope(p_sid, v_state, v_questions);
+        v_env := v13_mgraph_envelope(p_sid, v_state, v_questions,
+                                      v_provider, v_model);
         SELECT count(*) INTO v_c0 FROM judgment_calls WHERE session_id = p_sid;
         SELECT v13_resolve_judgments(v_env, 1) INTO v_res;
         SELECT count(*) INTO v_c1 FROM judgment_calls WHERE session_id = p_sid;

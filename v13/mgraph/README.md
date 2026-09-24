@@ -510,6 +510,26 @@ active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consoli
     provider 面(demo)。另:快照槽 mem_rel_contradicts 为 v13-local 且
     携带 criteria 对——快照解析器改为「3 块 noul 槽一律按组合规则 v1
     拼接」,fidelity 单块本地槽不受扰。
+43. **build 关系信封 3 参漏改(重跑 P0 修复)**:v2 V1 统一加宽信封为
+    5 参直传时漏了 build 体内第二处——类型信封(:1029)已换、关系信封
+    (:1069)仍 3 参(经委托体读 typesafe.provider GUC);该占位符 GUC
+    在同连接首次判断 IO 加载 typesafe 库时被清除且前缀保留不可重设,
+    wmb≥2 的真实多信封 tick 第二封必炸 V3002(实证:docs/investigations/
+    v13-dp9-mgraph-v2-demo-rerun-2026-09-24.md §8 异常 2;真实栈 wmb=8
+    首 tick 即炸,gate 没抓到的结构性原因=D/H 组单批纪律 wmb/wma=1 使
+    每连接恰一 ask,且 GUC mock 路径不加载 typesafe 库,该路径结构性
+    不可达)。修复=:1069 就地改 5 参直传(provider/model 用与类型信封
+    相同的起点一次捕获变量);全文件调用点清点:build×2(类型+关系)、
+    run_round、consolidate、consolidate_settle 均 5 参,3 参委托体保留
+    为 M1 外部兼容面(体内即调 5 参 NULL,NULL→GUC 回退;test 直调
+    :532/:663 走 GUC mock 新连接、不加载库,故安全)。新 gate H8 堵
+    覆盖洞:(a) 结构断言——pg_proc 活体定义 + 去注释源码 $$ 体内全部
+    v13_mgraph_envelope( 调用恰 5 个顶层参(ACL 签名列表在 $$ 外不
+    计);(b) 功能断言——同一连接首封 3 参成功、模拟 GUC 清除(置空串)
+    后 3 参面 V3002、5 参面仍构造成功。局限:模拟清除以空串代真实
+    purge(v13_guc_required 对 NULL/空串同等 fail-closed,真实 purge=
+    库加载在 gate 内不可达);build 内 wmb≥2 的连续两封未走功能路径
+    直测,由结构断言+5 参构造语义合围。
 
 ## 回退
 

@@ -17,6 +17,10 @@ slot (29th template, canonical (lo,hi) signal endpoints), apply_relations
 closed set + contradicts, proximity-derived cons_pairs with byte-stable
 v1 digests, semantic-bucket reachability, dual-gate semantics, multi-tick
 rel_cursor resume under write_max_batches=8.
+H8 (rerun P0 fix): relation-envelope provider passthrough — structural
+5-arg scan of every live + source envelope call site, spent-connection
+functional (3-arg face V3002 after a simulated GUC purge, 5-arg face
+constructs).
 
 Run: uv run python v13/mgraph/test_mgraph.py  (exit 0 = pass)
 """
@@ -3039,6 +3043,113 @@ def main() -> int:
           prog_h7)
     set_active("mgraph", 2)
     C.commit()
+
+    # ---------------- H8 relation-envelope passthrough (rerun P0) -------
+    # Rerun report docs/investigations/v13-dp9-mgraph-v2-demo-rerun-2026-09-24.md
+    # §8 item 2: the RELATION envelope inside v13_mgraph_build was left on
+    # the 3-arg GUC-reading face while the type envelope had already moved
+    # to the 5-arg explicit passthrough. typesafe.provider is a placeholder
+    # GUC purged when the typesafe library loads (the connection's first
+    # judgment IO) and re-set is refused (reserved prefix), so the second
+    # envelope of a real multi-envelope tick (wmb>=2) raised V3002. Gates
+    # could not see it: single-batch discipline (wmb/wma=1) asks exactly
+    # once per connection and the GUC-mock path never loads the library —
+    # the path was structurally unreachable. Coverage: (a) structural —
+    # every envelope call site in the LIVE function bodies (pg_proc defs,
+    # G6 precedent) AND in the comment-stripped dollar-quoted bodies of
+    # the source passes provider/model explicitly (exactly 5 top-level
+    # args; the sanctioned GUC read lives only inside the constructor
+    # itself); (b) functional — after a simulated purge the 3-arg face
+    # fails closed V3002 while the 5-arg face still constructs on the
+    # same connection (the fix).
+
+    def envelope_call_argcs(fragment: str) -> list:
+        """Top-level argument count of every v13_mgraph_envelope( CALL in
+        fragment. CREATE ... FUNCTION headers are not calls (skipped);
+        commas inside nested parens or ' literals do not count."""
+        argcs = []
+        i = 0
+        needle = "v13_mgraph_envelope("
+        while True:
+            j = fragment.find(needle, i)
+            if j < 0:
+                return argcs
+            if re.search(r"FUNCTION\s+(\w+\.)?\s*$", fragment[:j]):
+                i = j + len(needle)   # definition header (schema-qualified too)
+                continue
+            depth = 0
+            args = 1
+            k = j + len(needle)
+            while fragment[k] != ")" or depth > 0:
+                ch = fragment[k]
+                if ch == "'":                        # skip ' literals
+                    k += 1
+                    while fragment[k] != "'":
+                        k += 1
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                elif ch == "," and depth == 0:
+                    args += 1
+                k += 1
+            argcs.append(args)
+            i = k + 1
+
+    cur.execute(
+        "SELECT proname, pg_get_functiondef(oid) FROM pg_proc"
+        " WHERE prokind = 'f' AND position('v13_mgraph_envelope(' in"
+        " pg_get_functiondef(oid)) > 0 ORDER BY oid")
+    defs_h8 = cur.fetchall()
+    names_h8 = {d[0] for d in defs_h8}
+    check("H8: envelope callers present in live defs (build/run_round/"
+          "consolidate/settle/delegate)",
+          {"v13_mgraph_build", "v13_mgraph_run_round", "v13_mgraph_consolidate",
+           "v13_mgraph_consolidate_settle", "v13_mgraph_envelope"} <= names_h8,
+          sorted(names_h8))
+    live_h8 = {f"{d[0]}#{n}": a for d in defs_h8
+               for n, a in enumerate(envelope_call_argcs(d[1]), 1)}
+    check("H8: every live envelope call passes 5 args (GUC-reading call"
+          " face absent from all function bodies)",
+          bool(live_h8) and all(a == 5 for a in live_h8.values()), live_h8)
+    sql_h8 = SQL_FILE.read_text(encoding="utf-8")
+    bodies_h8 = strip_sql_comments(sql_h8).split("$$")[1::2]
+    src_h8 = {f"body#{b}#{n}": a for b, seg in enumerate(bodies_h8, 1)
+              for n, a in enumerate(envelope_call_argcs(seg), 1)}
+    check("H8: comment-stripped source: 6 envelope calls, all 5-arg",
+          len(src_h8) == 6 and all(a == 5 for a in src_h8.values()), src_h8)
+
+    # (b) functional: one connection, two envelopes, purge in between
+    conn_h8, k8 = fresh_conn()
+    sid_h8 = u()
+    qs_h8 = [{"signal": f"mem_type::{sha('h8')}::episodic",
+              "template_name": "mem_type_episodic"}]
+    st_h8 = {"body": "Ivo greased the spare winch."}
+    k8.execute("SELECT v13_mgraph_envelope(%s,%s::jsonb,%s::jsonb)",
+               (sid_h8, json.dumps(st_h8), json.dumps(qs_h8)))
+    env_h8a = k8.fetchone()[0]
+    check("H8: 3-arg face constructs while the GUCs hold (first envelope)",
+          env_h8a["provider"] == "mock" and env_h8a["model"] == "jev-mock",
+          (env_h8a["provider"], env_h8a["model"]))
+    # simulated purge: the real one is the typesafe library load (the mock
+    # path never loads it); v13_guc_required fails closed on NULL and ''
+    k8.execute("SELECT set_config('typesafe.provider', '', false)")
+    k8.execute("SELECT set_config('typesafe.model', '', false)")
+    fails_with(k8, "SELECT v13_mgraph_envelope(%s,%s::jsonb,%s::jsonb)",
+               (sid_h8, json.dumps(st_h8), json.dumps(qs_h8)),
+               "must be configured",
+               "H8: 3-arg face raises V3002 once the GUC is gone (the"
+               " wmb>=2 second-envelope crash mechanism)", pgcode="V3002")
+    k8.execute("SELECT v13_mgraph_envelope(%s,%s::jsonb,%s::jsonb,%s,%s)",
+               (sid_h8, json.dumps(st_h8), json.dumps(qs_h8),
+                "mock", "jev-mock"))
+    env_h8b = k8.fetchone()[0]
+    check("H8: 5-arg face constructs on the same spent connection (fix)",
+          env_h8b["provider"] == "mock" and env_h8b["model"] == "jev-mock"
+          and env_h8b["candidate_set_hash"] == env_h8a["candidate_set_hash"],
+          (env_h8b["provider"], env_h8b["model"]))
+    conn_h8.rollback()
+    conn_h8.close()
 
     # ---------------- M3 source discipline ---------------------------------
     sql_m3 = SQL_FILE.read_text(encoding="utf-8")
