@@ -315,7 +315,7 @@ END $$;
 --     epoch='pre-finalize' 显式(列默认 pre-bind);writer/wire/canon=v13_resolve/1/1;
 --     投影禁 ["*"];criteria:noul 族 NULL(上游 true/false 文本已并入 question),
 --     choice 族(仅 mem_cons_representation)保留闭集对象 ===
-INSERT INTO v13_judgment_template_versions (template_name, template_version) VALUES ('mem_type_episodic', 1), ('mem_type_semantic', 1), ('mem_type_procedural', 1), ('mem_type_preference', 1), ('mem_rel_semantic', 1), ('mem_rel_causes', 1), ('mem_rel_caused_by', 1), ('mem_rel_entity', 1), ('mem_cons_redundant', 1), ('mem_cons_contradiction', 1), ('mem_cons_obsolete', 1), ('mem_cons_link', 1), ('mem_cons_representation', 1), ('mem_routing_semantic', 1), ('mem_routing_temporal', 1), ('mem_routing_causal', 1), ('mem_routing_entity', 1), ('mem_routing_multi_hop_need', 1), ('mem_routing_recency_importance', 1), ('mem_stop_sufficient', 1), ('mem_stop_continue', 1), ('mem_stop_missing', 1), ('mem_stop_contradiction', 1), ('mem_trav_relevance', 1), ('mem_trav_relation_usefulness', 1), ('mem_trav_new_information', 1), ('mem_trav_supports', 1), ('mem_cons_fidelity', 1);
+INSERT INTO v13_judgment_template_versions (template_name, template_version) VALUES ('mem_type_episodic', 1), ('mem_type_semantic', 1), ('mem_type_procedural', 1), ('mem_type_preference', 1), ('mem_rel_semantic', 1), ('mem_rel_causes', 1), ('mem_rel_caused_by', 1), ('mem_rel_entity', 1), ('mem_rel_contradicts', 1), ('mem_cons_redundant', 1), ('mem_cons_contradiction', 1), ('mem_cons_obsolete', 1), ('mem_cons_link', 1), ('mem_cons_representation', 1), ('mem_routing_semantic', 1), ('mem_routing_temporal', 1), ('mem_routing_causal', 1), ('mem_routing_entity', 1), ('mem_routing_multi_hop_need', 1), ('mem_routing_recency_importance', 1), ('mem_stop_sufficient', 1), ('mem_stop_continue', 1), ('mem_stop_missing', 1), ('mem_stop_contradiction', 1), ('mem_trav_relevance', 1), ('mem_trav_relation_usefulness', 1), ('mem_trav_new_information', 1), ('mem_trav_supports', 1), ('mem_cons_fidelity', 1);
 
 INSERT INTO judgment_templates (template_name, template_version, kind, epoch,
                                 question, criteria, answer_schema_version,
@@ -344,6 +344,9 @@ VALUES
  NULL, 1, '["left","right"]'::jsonb, 'v13_resolve', 1, 1),
 ('mem_rel_entity', 1, 'noul', 'pre-finalize',
  'Compare `new_memory.content` with `candidates[0].content`. Using `new_memory.entities` and `candidates[0].entities`, do any names or aliases refer to the same real-world entity? TRUE if: Context supports a shared identity despite differing names or aliases. FALSE if: Distinct entities or insufficient evidence to resolve the alias; similar names alone are insufficient.',
+ NULL, 1, '["left","right"]'::jsonb, 'v13_resolve', 1, 1),
+('mem_rel_contradicts', 1, 'noul', 'pre-finalize',
+ 'Compare `new_memory.content` with `candidates[0].content`. Do these two observations make claims that cannot both be true at the same time? TRUE if: The two accounts assert mutually exclusive facts, quantities or outcomes. FALSE if: The accounts are consistent, unrelated, or one merely elaborates the other.',
  NULL, 1, '["left","right"]'::jsonb, 'v13_resolve', 1, 1),
 ('mem_cons_redundant', 1, 'noul', 'pre-finalize',
  'Compare `new_memory.content` with `candidates[0].content`. Do these observations repeat the same fact with no additional recallable detail? TRUE if: One is a duplicate or paraphrase without a new detail or time-specific update. FALSE if: They provide different details or describe distinct occurrences.',
@@ -407,7 +410,7 @@ VALUES
  NULL, 1, '["source","summary"]'::jsonb, 'v13_resolve', 1, 1);
 
 UPDATE v13_judgment_template_versions SET state = 'frozen'
- WHERE template_name IN ('mem_type_episodic', 'mem_type_semantic', 'mem_type_procedural', 'mem_type_preference', 'mem_rel_semantic', 'mem_rel_causes', 'mem_rel_caused_by', 'mem_rel_entity', 'mem_cons_redundant', 'mem_cons_contradiction', 'mem_cons_obsolete', 'mem_cons_link', 'mem_cons_representation', 'mem_routing_semantic', 'mem_routing_temporal', 'mem_routing_causal', 'mem_routing_entity', 'mem_routing_multi_hop_need', 'mem_routing_recency_importance', 'mem_stop_sufficient', 'mem_stop_continue', 'mem_stop_missing', 'mem_stop_contradiction', 'mem_trav_relevance', 'mem_trav_relation_usefulness', 'mem_trav_new_information', 'mem_trav_supports', 'mem_cons_fidelity') AND template_version = 1;
+ WHERE template_name IN ('mem_type_episodic', 'mem_type_semantic', 'mem_type_procedural', 'mem_type_preference', 'mem_rel_semantic', 'mem_rel_causes', 'mem_rel_caused_by', 'mem_rel_entity', 'mem_rel_contradicts', 'mem_cons_redundant', 'mem_cons_contradiction', 'mem_cons_obsolete', 'mem_cons_link', 'mem_cons_representation', 'mem_routing_semantic', 'mem_routing_temporal', 'mem_routing_causal', 'mem_routing_entity', 'mem_routing_multi_hop_need', 'mem_routing_recency_importance', 'mem_stop_sufficient', 'mem_stop_continue', 'mem_stop_missing', 'mem_stop_contradiction', 'mem_trav_relevance', 'mem_trav_relation_usefulness', 'mem_trav_new_information', 'mem_trav_supports', 'mem_cons_fidelity') AND template_version = 1;
 
 -- === §3.2 judgment_defaults 追点(OQ11 三态:mem_relation/mem_type/mem_cons/
 --     mem_stopping/mem_routing 三态全 exclude;mem_traversal 三态全 degrade;
@@ -779,9 +782,13 @@ BEGIN
 END $$;
 
 -- === §3.4⑦ 关系信封问题集(每 pair 一封;基础三问 semantic/causes/
---     caused_by;entity 问仅当双方实体集非空且无交集——OQ10;
---     signal 形状 §1.5:mem_rel::<src>::<dst>::<rel>;state 由调用方组装,
---     本函数是 entity 闸的单一事实源,亦供 gate 直测) ===
+--     caused_by;entity 问仅当双方实体集非空且无交集——OQ10;v2 V2 B3:
+--     第四问 mem_rel_contradicts 仅在 canonical 方向(p_src<p_dst,
+--     content_hash 字典序)入封,signal=mem_rel::<小>::<大>::contradicts
+--     (OQ17 P1-3)——request_hash 携带 pair ctx(正反 ctx 不同),双向
+--     都入封会以不同哈希重复问同一 signal(双份 ask+同 signal 双行,
+--     违 D5 唯一性与「同一无序 pair 恰一套 signal 一条边」);不扩签名;
+--     state 由调用方组装,本函数是 entity 闸的单一事实源,亦供 gate 直测 ===
 CREATE FUNCTION v13_mgraph_pair_questions(p_src text, p_dst text,
                                           p_left_body text, p_right_body text)
 RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
@@ -814,13 +821,22 @@ BEGIN
           THEN jsonb_build_array(
                  jsonb_build_object('signal', v_pre || 'entity',
                                     'template_name', 'mem_rel_entity'))
-          ELSE '[]'::jsonb END;
+          ELSE '[]'::jsonb END
+  || CASE WHEN p_src < p_dst THEN
+       jsonb_build_array(
+         jsonb_build_object(
+           'signal', 'mem_rel::' || p_src || '::' || p_dst
+                     || '::contradicts',
+           'template_name', 'mem_rel_contradicts'))
+     ELSE '[]'::jsonb END;
 END $$;
 
 -- === §3.4⑧ apply_relations:扫本会话已答 mem_rel:: 行,各 rel 独立过
 --     relation_threshold 才插边,ON CONFLICT DO NOTHING,不镜像反向;
---     决不重试:迟到 decision 只允许随后的 apply 补插从未写过的边,
---     不 UPDATE 旧边(行不可变) ===
+--     v2 V2 B3:允许关系闭集扩 contradicts(Oracle P0-2——算法不变仅扩
+--     闭集;canonical signal 端点已由 pair_questions 保证 (小,大) hash 序,
+--     边方向=signal 端点序);决不重试:迟到 decision 只允许随后的 apply
+--     补插从未写过的边,不 UPDATE 旧边(行不可变) ===
 CREATE FUNCTION v13_mgraph_apply_relations(p_sid uuid) RETURNS jsonb
 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
@@ -842,7 +858,8 @@ BEGIN
     IF array_length(v_parts, 1) <> 4
        OR v_parts[2] !~ '^[0-9a-f]{64}$'
        OR v_parts[3] !~ '^[0-9a-f]{64}$'
-       OR v_parts[4] NOT IN ('semantic','causes','caused_by','entity') THEN
+       OR v_parts[4] NOT IN ('semantic','causes','caused_by','entity',
+                             'contradicts') THEN
       RAISE EXCEPTION 'v13: malformed mem_rel signal (%)', r.signal
         USING ERRCODE = 'V3009';
     END IF;
@@ -2694,22 +2711,49 @@ RETURNS text LANGUAGE sql IMMUTABLE AS $$
   SELECT v13_body_hash(p_src || '>' || p_dst);
 $$;
 
--- === §3.4 固化① 选对枚举:同会话 episodic 节点按 source_at ASC,
---     content_hash ASC 的相邻对(「source_at 近、哈希序」;与 temporal
---     边同序)。「未被 consolidation_key 覆盖」的排除仅 status='adopted'
---     (§3.1:rejected 允许重入队),由调用方按队列行判定 ===
+-- === §3.4 固化① 选对枚举(v2 V2 B2 对源=proximity-derived,OQ17 裁决):
+--     同会话 origin='proximity' 的边、两端均 episodic → 按
+--     (source_at ASC, content_hash ASC) 规范化为无序对 (early,late) →
+--     去重 → digest=v13_mgraph_pair_digest(early,late)(v1 相邻对方向
+--     一致 ⇒ digest 字节级不变,决策缓存不失效;时间相邻但零词法激活的
+--     对不再进对源——语义收窄已裁)。「未被 consolidation_key 覆盖」的
+--     排除仅 status='adopted'(§3.1:rejected 允许重入队),由调用方按
+--     队列行判定。诚实语义:这是由已落库的激活 proximity 对
+--     (lexical_norm≥graph_activation_threshold 才插边)衍生的固化候选,
+--     不是所有历史关系封的审计池(README 机制 20;覆盖低于阈值的已问对
+--     须另建关系候选审计表) ===
 CREATE FUNCTION v13_mgraph_cons_pairs(p_sid uuid)
 RETURNS TABLE(src text, dst text, src_body text, dst_body text,
               consolidation_key text)
 LANGUAGE sql STABLE AS $$
-  WITH ord AS (
-    SELECT content_hash, body,
-           row_number() OVER (ORDER BY source_at ASC, content_hash ASC) AS rn
+  WITH ends AS (
+    SELECT content_hash, body, source_at
       FROM memory_nodes
-     WHERE session_id = p_sid AND origin = 'episodic')
-  SELECT a.content_hash, b.content_hash, a.body, b.body,
-         v13_mgraph_pair_digest(a.content_hash, b.content_hash)
-    FROM ord a JOIN ord b ON b.rn = a.rn + 1;
+     WHERE session_id = p_sid AND origin = 'episodic'),
+  linked AS (
+    SELECT a.content_hash AS ah, a.body AS ab, a.source_at AS at_,
+           b.content_hash AS bh, b.body AS bb, b.source_at AS bt
+      FROM memory_links l
+      JOIN ends a ON a.content_hash = l.src_hash
+      JOIN ends b ON b.content_hash = l.dst_hash
+     WHERE l.session_id = p_sid
+       AND l.origin = 'proximity'
+       AND l.src_hash <> l.dst_hash),
+  canon AS (
+    SELECT DISTINCT
+           CASE WHEN (l.at_, l.ah) < (l.bt, l.bh)
+                THEN l.ah ELSE l.bh END AS eh,
+           CASE WHEN (l.at_, l.ah) < (l.bt, l.bh)
+                THEN l.ab ELSE l.bb END AS eb,
+           CASE WHEN (l.at_, l.ah) < (l.bt, l.bh)
+                THEN l.bh ELSE l.ah END AS lh,
+           CASE WHEN (l.at_, l.ah) < (l.bt, l.bh)
+                THEN l.bb ELSE l.ab END AS lb
+      FROM linked l)
+  SELECT c.eh AS src, c.lh AS dst, c.eb AS src_body, c.lb AS dst_body,
+         v13_mgraph_pair_digest(c.eh, c.lh) AS consolidation_key
+    FROM canon c
+   ORDER BY c.eh, c.lh;
 $$;
 
 -- === §3.4 固化② 五问集(每对一封;同一 left/right state,representation

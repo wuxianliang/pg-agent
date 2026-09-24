@@ -12,6 +12,11 @@ V2 V1 group G (candidate-discovery wake-up): mgraph-local anchor compiler
 (terms/tinql/guard, STABLE), guard swap at the candidates entry, anchor
 source swap at build/anchors/transition_score, policy v2 (41 keys,
 candidate_top_k 10->5, anchor_ngram_n/anchor_max_terms).
+V2 V2 group H (contradiction path): snapshot-frozen mem_rel_contradicts
+slot (29th template, canonical (lo,hi) signal endpoints), apply_relations
+closed set + contradicts, proximity-derived cons_pairs with byte-stable
+v1 digests, semantic-bucket reachability, dual-gate semantics, multi-tick
+rel_cursor resume under write_max_batches=8.
 
 Run: uv run python v13/mgraph/test_mgraph.py  (exit 0 = pass)
 """
@@ -203,7 +208,10 @@ def parse_snapshot(path: Path):
         shas = dict(re.findall(r"- sha256\(([^)]+)\) = `([0-9a-f]{64})`",
                               body))
         blocks = re.findall(r"```(?:text|json)\n(.*?)\n```", body, re.S)
-        if kind == "noul" and not local and len(blocks) == 3:
+        # v2 V2: a 3-block noul slot combines per rule v1 regardless of the
+        # v13-local marker (mem_rel_contradicts carries a criteria pair;
+        # single-block local slots like mem_cons_fidelity stay raw).
+        if kind == "noul" and len(blocks) == 3:
             instr, c_true, c_false = blocks
             question = (instr + " TRUE if: " + c_true
                         + " FALSE if: " + c_false)
@@ -284,7 +292,8 @@ def bump_policy(cur, name: str, value: dict) -> int:
 
 def main() -> int:
     slots, stopwords = parse_snapshot(SNAPSHOT)
-    check("snapshot: 28 slots parsed", len(slots) == 28, sorted(slots))
+    check("snapshot: 29 slots parsed (28 upstream + fidelity + contradicts)",
+          len(slots) == 29, sorted(slots))
     check("snapshot: 28 stopwords parsed", len(stopwords) == 28, stopwords)
 
     setup_db()
@@ -393,7 +402,7 @@ def main() -> int:
         " AND w.template_version=t.template_version"
         " WHERE t.template_name LIKE 'mem\\_%'")
     rows = {r[0]: r for r in cur.fetchall()}
-    check("A3: 28 mem_* templates registered", len(rows) == 28, sorted(rows))
+    check("A3: 29 mem_* templates registered", len(rows) == 29, sorted(rows))
     for name, s in slots.items():
         r = rows.get(name)
         if r is None:
@@ -467,7 +476,7 @@ def main() -> int:
         "SELECT candidate_generation_revision FROM v13_tools_meta WHERE singleton")
     cgr_post = cur.fetchone()[0]
     check("A5: cgr bumped by mgraph load (>= 1 per template row-level trigger)",
-          cgr_post - cgr_pre >= 28, f"pre={cgr_pre} post={cgr_post} "
+          cgr_post - cgr_pre >= 29, f"pre={cgr_pre} post={cgr_post} "
           f"delta={cgr_post - cgr_pre}")
 
     # ---------------- A6 ACL negative face ----------------
@@ -1043,18 +1052,24 @@ def main() -> int:
     check("D7: mixed body -> latin CamelCase entities only",
           cur.fetchone()[0] == ["Alice"])
     hA = body_hash_of(cur, "Alice met Bob.")
+    hZh = body_hash_of(cur, "中文正文。")
     cur.execute("SELECT v13_mgraph_pair_questions(%s,%s,%s,%s)",
-                (hA, body_hash_of(cur, "中文正文。"), "Alice met Bob.", "中文正文。"))
+                (hA, hZh, "Alice met Bob.", "中文正文。"))
     pqA = cur.fetchone()[0]
-    check("D7: mixed pair asks no entity relation (one side empty)",
-          len(pqA) == 3 and not any(q["signal"].endswith("::entity") for q in pqA),
+    check("D7: mixed pair asks no entity relation (one side empty;"
+          " contradicts only in the canonical direction)",
+          len(pqA) == 3 + (1 if hA < hZh else 0)
+          and not any(q["signal"].endswith("::entity") for q in pqA)
+          and any(q["signal"].endswith("::contradicts") for q in pqA)
+              == (hA < hZh),
           [q["signal"] for q in pqA])
+    hC = body_hash_of(cur, "Carol met Dave.")
     cur.execute("SELECT v13_mgraph_pair_questions(%s,%s,%s,%s)",
-                (hA, body_hash_of(cur, "Carol met Dave."),
-                 "Alice met Bob.", "Carol met Dave."))
+                (hA, hC, "Alice met Bob.", "Carol met Dave."))
     pqB = cur.fetchone()[0]
     check("D7: disjoint non-empty entity sets include the entity question",
-          len(pqB) == 4 and any(q["signal"].endswith("::entity") for q in pqB))
+          len(pqB) == 4 + (1 if hA < hC else 0)
+          and any(q["signal"].endswith("::entity") for q in pqB))
     sid7 = mk_session(cur, ["Alice shipped the crate.",
                             "Alice shipped the crate with 备注。"])
     stepper(sid7)
@@ -1126,8 +1141,8 @@ def main() -> int:
     cur.execute(
         "SELECT count(*) FROM decisions WHERE session_id=%s"
         " AND signal LIKE 'mem\\_%%'", (sid11,))
-    check("D11: full coverage 4x4 type + 12x3 pair = 52",
-          cur.fetchone()[0] == 52)
+    check("D11: full coverage 4x4 type + 6x4 canonical + 6x3 reverse = 58",
+          cur.fetchone()[0] == 58)
     cur.execute("SELECT v13_mgraph_progress(%s)", (sid11,))
     prog11 = cur.fetchone()[0]
     check("D11: final cursor=last node, watermark=its seq",
@@ -1424,7 +1439,7 @@ def main() -> int:
         return json.dumps({"model": "jev-mock", "answers": answers,
                            "usage": {"input_tokens": 1, "output_tokens": 1}})
 
-    def put_nodes(c, bodies, at="2020-01-01 00:00:00+00"):
+    def put_nodes(c, bodies, at="2020-01-01 00:00:00+00", prox=False):
         sid = u()
         c.execute("INSERT INTO sessions (session_id) VALUES (%s)", (sid,))
         hashes = []
@@ -1437,6 +1452,19 @@ def main() -> int:
                 " VALUES (%s,%s,%s,'episodic',%s,%s::timestamptz,1)",
                 (sid, h, b, [h], at))
             hashes.append(h)
+        if prox:
+            # v2 V2 B2: cons_pairs is proximity-derived — consolidation
+            # fixtures need production-shaped proximity edges (origin=
+            # 'proximity', structural score, both endpoints episodic).
+            for i in range(len(hashes)):
+                for j in range(i + 1, len(hashes)):
+                    c.execute(
+                        "INSERT INTO memory_links (session_id, src_hash,"
+                        " dst_hash, rel, origin, decision_id, structural,"
+                        " policy_version) VALUES (%s, least(%s,%s),"
+                        " greatest(%s,%s), 'proximity', 'proximity', NULL,"
+                        " 0.5, 2)",
+                        (sid, hashes[i], hashes[j], hashes[i], hashes[j]))
         return sid, hashes
 
     def open_read(**over):
@@ -2060,7 +2088,7 @@ def main() -> int:
 
     # ---------------- F1 contradiction over threshold ----------------
     sid_f1, _ = put_nodes(cur, ["Nadia forged the brass key blank.",
-                                "Nadia forged the brass key copy."])
+                                "Nadia forged the brass key copy."], prox=True)
     C.commit()
     res_f1, key_f1 = cons_step(sid_f1, over={"contradiction": 0.9})
     check("F1: gate blocks on contradiction over threshold",
@@ -2082,7 +2110,7 @@ def main() -> int:
 
     # ---------------- F2 happy chain + P0 zero-claims --------------------
     FB = ["Priya racked the copper still.", "Priya racked the copper kettle."]
-    sid_f2, h_f2 = put_nodes(cur, FB)
+    sid_f2, h_f2 = put_nodes(cur, FB, prox=True)
     # give the pair a pre-existing edge: settle must not touch it (F5)
     cur.execute(
         "INSERT INTO memory_links (session_id, src_hash, dst_hash, rel,"
@@ -2169,7 +2197,7 @@ def main() -> int:
 
     # ---------------- F3 deterministic check failure ----------------
     sid_f3, _ = put_nodes(cur, ["Ravi tuned the drone oscillator.",
-                                "Ravi tuned the drone receiver."])
+                                "Ravi tuned the drone receiver."], prox=True)
     C.commit()
     res_f3, key_f3 = cons_step(sid_f3)
     cur = C.cur
@@ -2217,7 +2245,7 @@ def main() -> int:
 
     # ---------------- F4 fidelity exclude ----------------
     sid_f4, _ = put_nodes(cur, ["Sasha brewed the oat porter.",
-                                "Sasha brewed the oat lager."])
+                                "Sasha brewed the oat lager."], prox=True)
     C.commit()
     res_f4, key_f4 = cons_step(sid_f4)
     cur = C.cur
@@ -2397,7 +2425,7 @@ def main() -> int:
 
     # ---------------- F11 retry via effect attempts + obsolete -----
     sid_f11, _ = put_nodes(cur, ["Tomas glazed the clay pitcher.",
-                                 "Tomas glazed the clay platter."])
+                                 "Tomas glazed the clay platter."], prox=True)
     C.commit()
     res_f11, key_f11 = cons_step(sid_f11)
     cur = C.cur
@@ -2449,7 +2477,7 @@ def main() -> int:
     check("F11: retry produced the product node", cur.fetchone()[0] == 1)
     # cap exhaustion: second failed attempt closes the pair for this turn
     sid_f11b, _ = put_nodes(cur, ["Ulla charted the reef pass.",
-                                  "Ulla charted the reef cove."])
+                                  "Ulla charted the reef cove."], prox=True)
     C.commit()
     _, key_f11b2 = cons_step(sid_f11b)
     cur = C.cur
@@ -2486,7 +2514,7 @@ def main() -> int:
           (r_cap, eff_cap, q_cap))
     # obsolete high alone never enqueues
     sid_f11c, _ = put_nodes(cur, ["Vera stowed the main halyard.",
-                                  "Vera stowed the main jib."])
+                                  "Vera stowed the main jib."], prox=True)
     C.commit()
     res_f11c, _ = cons_step(sid_f11c, over={"obsolete": 0.9,
                                             "choice": "uncertain"})
@@ -2798,6 +2826,220 @@ def main() -> int:
     set_active("mgraph", 2)
     C.commit()
 
+    # =====================================================================
+    # mgraph v2 V2 group H: contradiction path (G-mg/H1-H7).
+    # Plan: docs/plans/v13-dp9-mgraph-v2-plan-2026-09-24.md §5 H table.
+    # B3 write side: mem_rel_contradicts (29th template, snapshot-frozen,
+    # canonical (lo,hi) hash-order signal endpoints) + apply closed set.
+    # B2 pair source: proximity-derived cons_pairs, v1-adjacent digests
+    # byte-stable. Cache is cross-session (request_hash carries no sid —
+    # D4 precedent), so every H fixture uses bodies fresh to this run.
+    # =====================================================================
+
+    # ---------------- H1 pair-source wake-up (proximity-derived) -------
+    open_write(write_max_batches=1, write_max_asks=1)
+    HTA = "本次上线之后大约有三万个账号受影响"
+    HTM = "备份策略是每晚全量快照"
+    HTB = "受影响账号最终统计只有八千个"
+    HE1 = "Faye sorted the spare cables."
+    HE2 = "sorted the spare cables Faye."
+    sid_h1 = mk_session(cur, [HTA, HTM, HTB, HE1, HE2], same_txn=False)
+    stepper(sid_h1)
+    cur = C.cur
+    hTA, hTM, hTB = (body_hash_of(cur, x) for x in (HTA, HTM, HTB))
+    hE1, hE2 = body_hash_of(cur, HE1), body_hash_of(cur, HE2)
+    prox_h1 = links_of(cur, sid_h1, "proximity")
+    check("H1: real A5 build produced proximity edges for the non-adjacent"
+          " contradiction pair and the adjacent echo pair",
+          {frozenset((p[0], p[1])) for p in prox_h1}
+          == {frozenset((hTA, hTB)), frozenset((hE1, hE2))}, prox_h1)
+    cur.execute(
+        "SELECT src, dst, consolidation_key FROM v13_mgraph_cons_pairs(%s)",
+        (sid_h1,))
+    pairs_h1 = cur.fetchall()
+    got_h1 = {frozenset((r[0], r[1])) for r in pairs_h1}
+    check("H1: non-adjacent T2/T6-type proximity pair selected",
+          frozenset((hTA, hTB)) in got_h1, sorted(map(str, pairs_h1)))
+    check("H1: adjacent echo pair with a proximity edge still selected",
+          frozenset((hE1, hE2)) in got_h1, sorted(map(str, pairs_h1)))
+    check("H1: no-proximity episodic pairs excluded (time-adjacency alone"
+          " no longer selects — narrowing adjudicated)",
+          hTM not in {h for r in pairs_h1 for h in r[:2]} and len(pairs_h1) == 2,
+          sorted(map(str, pairs_h1)))
+
+    # ---------------- H2 canonical digest + v1 byte-stability ----------
+    row_h2 = {frozenset((r[0], r[1])): r[2] for r in pairs_h1}
+    check("H2: one key per unordered proximity pair, keys unique",
+          len(set(row_h2.values())) == len(row_h2) == 2, sorted(row_h2.values()))
+    cur.execute(
+        "SELECT v13_mgraph_pair_digest(%s,%s), v13_mgraph_pair_digest(%s,%s)",
+        (hTA, hTB, hE1, hE2))
+    dig_h2 = cur.fetchone()
+    check("H2: digest = pair_digest(early, late) by (source_at, content_hash)",
+          row_h2[frozenset((hTA, hTB))] == dig_h2[0]
+          and row_h2[frozenset((hE1, hE2))] == dig_h2[1],
+          (row_h2, dig_h2))
+    cur.execute(
+        "WITH ord AS (SELECT content_hash, row_number() OVER"
+        " (ORDER BY source_at ASC, content_hash ASC) AS rn FROM memory_nodes"
+        " WHERE session_id=%s AND origin='episodic')"
+        " SELECT a.content_hash, b.content_hash,"
+        " v13_mgraph_pair_digest(a.content_hash, b.content_hash)"
+        " FROM ord a JOIN ord b ON b.rn = a.rn + 1", (sid_h1,))
+    v1_h2 = {frozenset((r[0], r[1])): r[2] for r in cur.fetchall()}
+    check("H2: v1 adjacent enumeration finds 4 pairs, target pair NOT among"
+          " them (selection genuinely widened)",
+          len(v1_h2) == 4 and frozenset((hTA, hTB)) not in v1_h2
+          and frozenset((hE1, hE2)) in v1_h2, sorted(map(str, v1_h2.items())))
+    check("H2: v1-adjacent pair digest byte-identical (cache not invalidated)",
+          v1_h2[frozenset((hE1, hE2))] == row_h2[frozenset((hE1, hE2))],
+          (v1_h2[frozenset((hE1, hE2))], row_h2[frozenset((hE1, hE2))]))
+    cur.execute(
+        "INSERT INTO memory_consolidations (session_id, consolidation_key,"
+        " status) VALUES (%s, %s, 'queued') ON CONFLICT DO NOTHING", (sid_h1, dig_h2[1]))
+    cur.execute(
+        "INSERT INTO memory_consolidations (session_id, consolidation_key,"
+        " status) VALUES (%s, %s, 'queued') ON CONFLICT DO NOTHING", (sid_h1, dig_h2[1]))
+    C.commit()
+    cur.execute(
+        "SELECT count(*) FROM memory_consolidations WHERE session_id=%s"
+        " AND consolidation_key=%s", (sid_h1, dig_h2[1]))
+    check("H2: queue PK keeps a single row per consolidation key (F6 face)",
+          cur.fetchone()[0] == 1)
+
+    # ---------------- H3 contradicts write side (canonical signal) -----
+    HGA = "本次发布会到场人数约为三千二百人"
+    HGB = "实际统计的到场人数只有九百人"
+    sid_h3 = mk_session(cur, [HGA, HGB], same_txn=False)
+    hGA, hGB = body_hash_of(cur, HGA), body_hash_of(cur, HGB)
+    lo_h3, hi_h3 = sorted([hGA, hGB])
+    sig_contra_h3 = f"mem_rel::{lo_h3}::{hi_h3}::contradicts"
+    stepper(sid_h3, over={sig_contra_h3: 0.9,
+                          f"mem_rel::{hGA}::{hGB}::semantic": 0.9})
+    cur = C.cur
+    contra_h3 = [e for e in links_of(cur, sid_h3, "jev")
+                 if e[2] == "contradicts"]
+    check("H3: over-threshold contradicts lands one jev edge in canonical"
+          " (lo,hi) direction with an in-session decision",
+          len(contra_h3) == 1 and contra_h3[0][0] == lo_h3
+          and contra_h3[0][1] == hi_h3
+          and contra_h3[0][4] not in ("None", None), contra_h3)
+    check("H3: existing rel family unaffected (semantic edge still lands)",
+          any(e[2] == "semantic" and (e[0], e[1]) == (hGA, hGB)
+              for e in links_of(cur, sid_h3, "jev")))
+    cur.execute(
+        "SELECT count(*) FROM decisions WHERE session_id=%s AND signal=%s",
+        (sid_h3, sig_contra_h3))
+    check("H3: one canonical signal per unordered pair (A->B / B->A share"
+          " a single signal set)", cur.fetchone()[0] == 1)
+    cur.execute(
+        "SELECT count(*) FROM memory_links WHERE session_id=%s"
+        " AND rel='contradicts'", (sid_h3,))
+    check("H3: contradicts edge not mirrored (exactly one edge)",
+          cur.fetchone()[0] == 1)
+    cur.execute("SELECT v13_mgraph_apply_relations(%s)", (sid_h3,))
+    check("H3: apply re-entry inserts nothing (idempotent replay)",
+          cur.fetchone()[0]["jev_edges"] == 0)
+    C.commit()
+
+    # ---------------- H4 semantic-bucket reachability ------------------
+    cur.execute("SELECT v13_mgraph_bucket_rels('semantic')")
+    rels_h4 = cur.fetchone()[0]
+    check("H4: semantic bucket rel set already carries contradicts"
+          " (zero-change read face)", "contradicts" in rels_h4, rels_h4)
+    cur.execute("SELECT dst_hash, rel FROM v13_mgraph_neighbors(%s, %s, %s, NULL)",
+                (sid_h3, lo_h3, rels_h4))
+    nbrs_h4 = cur.fetchall()
+    check("H4: one-hop traversal from the canonical src reaches the peer"
+          " over contradicts",
+          any(h == hi_h3 and rel == "contradicts" for h, rel in nbrs_h4),
+          nbrs_h4)
+
+    # ---------------- H5 dual-gate semantics ---------------------------
+    res_h5, key_h5 = cons_step(sid_h3, over={"contradiction": 0.9,
+                                             "choice": "merge", "prob": 0.9})
+    cur = C.cur
+    check("H5: strong contradiction blocks consolidation (eligible empty)",
+          res_h5["eligible"] == [] and res_h5["asks"] == 1, res_h5)
+    cur.execute("SELECT v13_mgraph_cons_gate(%s, %s)", (sid_h3, key_h5))
+    gate_h5 = cur.fetchone()[0]
+    check("H5: gate reason is contradiction (cons_gate zero change)",
+          gate_h5["allowed"] is False and gate_h5["reason"] == "contradiction",
+          gate_h5)
+    cur.execute("SELECT v13_mgraph_consolidate_enqueue(%s)", (sid_h3,))
+    check("H5: enqueue returns NULL (no merge/promote effect)",
+          cur.fetchone()[0] is None)
+    cur.execute(
+        "SELECT count(*) FROM effects WHERE kind='mgraph_consolidate'"
+        " AND session_id=%s", (sid_h3,))
+    check("H5: zero consolidation effects", cur.fetchone()[0] == 0)
+    cur.execute(
+        "SELECT count(*) FROM memory_consolidations WHERE session_id=%s",
+        (sid_h3,))
+    check("H5: zero queue rows", cur.fetchone()[0] == 0)
+    cur.execute(
+        "SELECT count(*) FROM memory_links WHERE session_id=%s"
+        " AND rel='contradicts' AND origin='jev'", (sid_h3,))
+    check("H5: the jev contradicts edge persists — blocks the merge AND"
+          " keeps the edge", cur.fetchone()[0] == 1)
+    C.commit()
+
+    # ---------------- H6 template/snapshot counts ----------------------
+    cur.execute(
+        "SELECT count(*) FROM judgment_templates WHERE template_name LIKE 'mem\\_%'")
+    check("H6: 29 mem_* templates in DB", cur.fetchone()[0] == 29)
+    contra_slot = slots["mem_rel_contradicts"]
+    check("H6: contradicts slot is v13-local, combined per rule v1",
+          contra_slot["source"].startswith("v13-local")
+          and contra_slot["projection"] == ["left", "right"]
+          and contra_slot["question"].startswith("Compare `new_memory.content`")
+          and " TRUE if: " in contra_slot["question"]
+          and " FALSE if: " in contra_slot["question"],
+          contra_slot["source"])
+    check("H6: cgr delta exactly 58 (29 content rows + 29 freeze, P2-4)",
+          cgr_post - cgr_pre == 58, cgr_post - cgr_pre)
+
+    # ---------------- H7 multi-tick resume under batches=8 -------------
+    # write_max_batches=8 is the P0-4 caliber; the GUC mock answers exactly
+    # one ask-batch shape per value (deviation #17 family), so the per-tick
+    # throttle rides write_max_asks=1 — every call makes exactly one clean
+    # ask (<= 8) and stops at a resume point; >1 real ask per call needs a
+    # real-provider face (deviation ledger).
+    open_write(write_max_batches=8, write_max_asks=1)
+    p7 = ["Axel Bree Cole Drew unloaded the truck.",
+          "Bree Cole Drew Axel unloaded the truck.",
+          "Cole Drew Axel Bree unloaded the truck.",
+          "Drew Axel Bree Cole unloaded the truck."]
+    sid_h7 = mk_session(cur, p7)
+    res_h7, waves_h7 = stepper(sid_h7)
+    cur = C.cur
+    check("H7: every build call asked <= 8 batches (batch cap in place)",
+          all(r["asks"] <= 8 for r in res_h7), [r["asks"] for r in res_h7])
+    check("H7: multiple build calls complete the build (cursor resume)",
+          len(res_h7) > 1, len(res_h7))
+    check("H7: per-tick truncation observable (asks/batches stop reasons)",
+          any(r["stop_reason"] in ("asks", "batches") for r in res_h7[:-1]),
+          [r["stop_reason"] for r in res_h7])
+    check("H7: cumulative asks = 4 type + 12 pair envelopes = 16",
+          sum(r["asks"] for r in res_h7) == 16, [r["asks"] for r in res_h7])
+    check("H7: per-call signal increments non-empty and pairwise disjoint",
+          all(len(w) > 0 for w in waves_h7)
+          and len(set().union(*waves_h7)) == sum(len(w) for w in waves_h7),
+          [len(w) for w in waves_h7])
+    h7 = [body_hash_of(cur, b) for b in p7]
+    cur.execute(
+        "SELECT DISTINCT ON (content_hash) content_hash, seq_from"
+        " FROM transcript_chunks WHERE session_id=%s"
+        " ORDER BY content_hash, seq_from", (sid_h7,))
+    fs_h7 = dict(cur.fetchall())
+    cur.execute("SELECT v13_mgraph_progress(%s)", (sid_h7,))
+    prog_h7 = cur.fetchone()[0]
+    check("H7: final cursor=last node, watermark=its seq",
+          prog_h7["rel_cursor"] == h7[3] and prog_h7["watermark"] == fs_h7[h7[3]],
+          prog_h7)
+    set_active("mgraph", 2)
+    C.commit()
+
     # ---------------- M3 source discipline ---------------------------------
     sql_m3 = SQL_FILE.read_text(encoding="utf-8")
     norm_m3 = strip_sql_comments(sql_m3)
@@ -2840,7 +3082,7 @@ def main() -> int:
     C.conn.rollback()
     C.conn.close()
 
-    print("\n[mgraph M1+M2+M3+M4+v2-V1] groups A+D+E+F+G: ALL GREEN")
+    print("\n[mgraph M1+M2+M3+M4+v2-V1+V2] groups A+D+E+F+G+H: ALL GREEN")
     return 0
 
 

@@ -20,6 +20,7 @@
 总计:修改既有三文件(SQL/测试/README)+快照文件加一槽,**零新增文件、零新 stage**;2 次提交(AGENTS.md:一里程碑一提交,G/H 组各自全绿后按路径 add→commit→push)。gate 族沿用 **G-mg**(OQ12),新组字母 **G/H**——A–F 已占(A=M1 暗库、D=M2 写、E=M3 读环、F=M4 固化);B/C 弃用(DP9 计划 §4 曾以「组 C」预留源码扫描,实施折叠进 A7,弃用避歧义)。**I 组已随 OQ13=D 整体移出本计划**(v0.9 的 I1–I6 不进交付);既有 E2 的 CJK superset 断言**原样保留**(OQ13 裁决机制)。
 
 > **实施进度**:V1 ✅(2026-09-24 交付;G1–G9 全绿,A+D+E+F 全组回归绿——G-mg 共 408 PASS;前序 14 stage gate 回归全绿(2927 PASS,twophase/envelope 跑前暂挪 gitignored demo 树、跑完恢复);策略种子就地升 v2(41 键)+三函数 STABLE+四调用点换源(含 transition_score 第四调用点——计划 §3.2 表未列,「E 组回归必须绿」红线推导,台账 #37);偏差台账 #37–#39+#12 后记见 v13/mgraph/README.md)。
+> **V2 ✅(2026-09-24 交付;v2 计划范围完结)**:H1–H7 全绿,A–G 全组回归绿——G-mg 共 444 PASS;前序 14 stage gate 回归全绿(2927 PASS,twophase/envelope 跑前暂挪 gitignored demo 树、跑完恢复)。交付面:快照先行新增 mem_rel_contradicts v13-local 槽(29 槽,三块本地槽按组合规则 v1 拼接)+第 29 枚模板(实测 cgr 58)+pair_questions 第四问(canonical (小,大) hash 序端点)+apply_relations 闭集扩 contradicts(P0-2)+cons_pairs 重写为 proximity-derived(P0-3,诚实语义句入 README 机制 20)。实施修正两条(台账 #40/#42):①contradicts 问仅在 canonical 方向(src<dst)入封——request_hash 携带 pair ctx,双向入封会以不同哈希双问同一 signal(违 D5 每 signal 单行与 OQ17「恰一套 signal/双份 ask 不采」),连带 D11 计数实测=58 非 §6.2 预估的 64(P2-4 以实测为准);②H7 以 write_max_asks=1 步进走查 batches=8 帽下续跑(GUC mock 精确键匹配,单调用内多封不可行,#17 同族)。CJK 路由 OQ13=D 维持不做,重开条件见 §8。
 
 ---
 

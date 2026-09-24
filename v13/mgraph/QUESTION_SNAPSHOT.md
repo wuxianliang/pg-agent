@@ -16,12 +16,14 @@ v13 `judgment_templates.question` 须为单行 ASCII(`^[\x20-\x7E]+$`),而 v13 �
   (四个拼接段之间以单空格分隔;`TRUE if:`/`FALSE if:` 为标记词;组合后字节进 request_hash 缓存键)。
 - **choice 槽**(`mem_cons_representation`):criteria 保留为 JSON 闭集对象(键序 keep_separate, merge,
   promote, uncertain;值逐字);`question = instructions`(原样,不再拼接)。
-- **v13 本地槽**(`mem_cons_fidelity`,无上游原文):`question` 即所记原文,不参与拼接。
+- **v13 本地槽**:`mem_cons_fidelity`(无上游原文)只有 instructions 单块,`question` 即所记原文,
+  不参与拼接;`mem_rel_contradicts`(v2 V2)为三块本地槽(instructions + criteria 对),**按上方 noul
+  组合规则拼接**——「3 块 noul 槽一律拼接」是解析纪律,fidelity 单块槽不受影响。
 - **实例化下标钉死**:上游 `relation_questions(index)`/`traversal_questions(index)`/`consolidation_questions(index)`
   按 `candidates[{index}]` 生成题面;本快照与 SQL 种子一律取 **index=0**(逐 pair 身份由 signal 与
   state 承载,不进题面——同模板题面跨 pair 恒定,缓存键差异来自 signal+state)。
 
-## 槽位清单(27 上游槽 + 1 本地槽 = 28 模板)
+## 槽位清单(27 上游槽 + 2 本地槽 = 29 模板)
 
 | 族 | 模板 | 源 |
 |---|---|---|
@@ -33,6 +35,7 @@ v13 `judgment_templates.question` 须为单行 ASCII(`^[\x20-\x7E]+$`),而 v13 �
 | rel | `mem_rel_causes` | memory/jev_questions.py:72-74 |
 | rel | `mem_rel_caused_by` | memory/jev_questions.py:75-77 |
 | rel | `mem_rel_entity` | memory/jev_questions.py:80-82 |
+| rel | `mem_rel_contradicts` | v13-local(v2 V2 本仓拟定,无上游槽;携带 criteria 对,按 noul 组合规则拼接) |
 | cons | `mem_cons_redundant` | memory/jev_questions.py:89-91 |
 | cons | `mem_cons_contradiction` | memory/jev_questions.py:92-94 |
 | cons | `mem_cons_obsolete` | memory/jev_questions.py:95-97 |
@@ -227,6 +230,25 @@ Context supports a shared identity despite differing names or aliases.
 ```
 ```text
 Distinct entities or insufficient evidence to resolve the alias; similar names alone are insufficient.
+```
+
+### slot mem_rel_contradicts
+
+- source: v13-local (v2 V2 本仓拟定,无上游槽;题面为 v2 计划 §3.4 冻结候选原文——缓存键含组合后字节,不得临场改措辞)
+- kind: noul  ·  projection: ["left","right"]
+- sha256(instructions) = `68f3954908b73293d3b2e458239cfbf1067af06a93ea3e40e901176c8c405c72`
+- sha256(criteria_true) = `2247509968eef14b73cc465b82ae262b4864c03bf699e5c4bf4351c831ccae9e`
+- sha256(criteria_false) = `2d27e32306786193ad718904a70525d75c365f17e88e3dc9d2558b03933ad185`
+- sha256(question-combined) = `1e6ea64e7936ff9f8b7fea1160a6276486aa5f41ce8ee69dd366d5d2d07cc1c8`
+
+```text
+Compare `new_memory.content` with `candidates[0].content`. Do these two observations make claims that cannot both be true at the same time?
+```
+```text
+The two accounts assert mutually exclusive facts, quantities or outcomes.
+```
+```text
+The accounts are consistent, unrelated, or one merely elaborates the other.
 ```
 
 ### slot mem_cons_redundant

@@ -1,4 +1,4 @@
-# v13/mgraph — DP9 M1 暗库 + M2 写与重建 + M3 读环 B1 + M4 固化 + v2 V1 候选发现唤醒
+# v13/mgraph — DP9 M1 暗库 + M2 写与重建 + M3 读环 B1 + M4 固化 + v2 V1 候选发现唤醒 + v2 V2 矛盾通路
 
 Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphery
 全部前序 14 文件;本 stage 库 = `agent_v13_mgraph`(`files_through('mgraph')`
@@ -6,9 +6,9 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
 设计:`docs/designs/v13-context-on-pg.md` v2 §4.4/§6.1/§6.5/§8。计划:
 `docs/plans/v13-dp9-memory-graph-plan-2026-09-23.md`(M1=暗库;M2=写与
 重建;M3=读环 B1;M4=固化)+ `docs/plans/v13-dp9-mgraph-v2-plan-2026-09-24.md`
-(V1=候选发现唤醒,已交付)。gate:
-`uv run python v13/mgraph/test_mgraph.py`(G-mg 族 **A+D+E+F+G 五组**,退出码
-0=通过;write/read 默认关——D/E/G 写路径 gate 以「INSERT 新策略版本+翻
+(V1=候选发现唤醒+V2=矛盾通路,均已交付)。gate:
+`uv run python v13/mgraph/test_mgraph.py`(G-mg 族 **A+D+E+F+G+H 六组**,退出码
+0=通过;write/read 默认关——D/E/G/H 写路径 gate 以「INSERT 新策略版本+翻
 active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consolidate_mode=
 'manual'` 响亮键执法;G 组锚面纯函数/直调可在默认关下测)。
 
@@ -50,8 +50,10 @@ active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consoli
    (v1 无实现即配置错误,读取时炸;M2 build 只经本读取器取值)。
    函数体零动作阈字面量(0/1 域界与数组形状常数除外;anchor 域=
    非负/正整数,沿 v_nznint/v_posint 既有两档)。
-5. **六族 mem_* 模板(28 枚)**:type×4(投影 `["body"]`)/rel×4
-   (`["left","right"]`)/routing×6(`["query"]`)/stopping×4
+5. **六族 mem_* 模板(29 枚)**:type×4(投影 `["body"]`)/rel×5
+   (`["left","right"]`,含 v2 V2 `mem_rel_contradicts` v13-local 槽——题面
+   为 v2 计划 §3.4 冻结候选原文,携带 criteria 对按组合规则 v1 拼接)/routing×6
+   (`["query"]`)/stopping×4
    (`["query","evidence"]`)/traversal×4(`["query","candidate","path"]`)/
    cons×6(四 Noul+representation choice 闭集 `keep_separate|merge|promote|
    uncertain`+fidelity `["source","summary"]`)。题面=**入库快照**
@@ -131,7 +133,10 @@ active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consoli
     source_at ASC,content_hash ASC 全量重连;⑦从 rel_cursor 之后按首现
     seq 推进:每节点类型信封(四 Noul 一 state,只记录)→anchor_tinql→candidates
     取对(锚自身除外),每 pair 一封关系信封(`v13_mgraph_pair_questions`
-    =entity 闸单一事实源),lexical_norm≥graph_activation_threshold 插
+    =entity 闸单一事实源;v2 V2:canonical 方向(src<dst)加第四问
+    mem_rel_contradicts,反向不加——request_hash 携带 pair ctx,双向入封
+    会以不同哈希重复问同一 signal,违反「同一无序 pair 恰一套 signal」与
+    同 signal 单行纪律),lexical_norm≥graph_activation_threshold 插
     proximity 边(structural=lexical_norm);帽(spend.over/
     write_max_batches/write_max_asks;计数=judgment_calls 行增量=每封发出
     即+1 含失败批)任一用尽→停在断点,resolve failed→停且该节点不标记
@@ -141,6 +146,11 @@ active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consoli
 13. **`v13_mgraph_apply_relations(sid)`(§3.4⑧)**:扫本会话已答
     `mem_rel::` 行,各 rel 独立过 relation_threshold 才插边,ON CONFLICT
     DO NOTHING,不镜像反向;重入零 ask(迟到 decision 只补插未写过的边)。
+    v2 V2:允许关系闭集=semantic/causes/caused_by/entity/**contradicts**
+    (Oracle P0-2——算法不变仅扩闭集);contradicts signal 端点由
+    `v13_mgraph_pair_questions` 保证 canonical(小,大)hash 序,边方向
+    =signal 端点序——同一无序 pair 恰一套 signal 一条边(单向遍历不对
+    称已裁接受,对端经词法锚定可达)。
 14. **`v13_mgraph_rebuild(sid)`(§3.5)**:按端点删除(全部 episodic 节点
     +两端都不是 consolidation 节点的边——固化节点及其关联边幸存)→
     watermark=-1 且 rel_cursor=NULL 两列一起复位→build(无界 limit);
@@ -185,9 +195,15 @@ active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consoli
     当前 generation + 活动 policy 的 stopped walk,按 score DESC,
     content_hash ASC 取 ≤`inject_top_k`。无 walk → 空集零 ask。不进
     `recall_candidates`,不改装配。
-20. **固化链(M4,OQ6/§3.4①–⑥)**。选对=`v13_mgraph_cons_pairs`
-    (同会话 episodic 按 source_at ASC,content_hash ASC 的相邻对;
-    排除仅 status='adopted');五问一封=`v13_mgraph_cons_questions`
+20. **固化链(M4,OQ6/§3.4①–⑥;v2 V2 B2 对源改 proximity-derived)**。选对=`v13_mgraph_cons_pairs`
+    (同会话 `memory_links.origin='proximity'` 边、两端均 episodic → 按
+    (source_at ASC,content_hash ASC) 规范化为无序对 (early,late) → 去重;
+    digest=v13_mgraph_pair_digest(early,late)——v1 相邻对方向一致 ⇒
+    字节级不变,决策缓存不失效;时间相邻但零词法激活的对不再进对源;
+    排除仅 status='adopted');**诚实语义:这是由已落库的激活 proximity
+    对(lexical_norm≥graph_activation_threshold 才插边)衍生的固化候选,
+    不是所有历史关系封的审计池**——若产品要求覆盖低于阈值的已问对,
+    须另建关系候选审计表(v2 计划 §7 停止条件);五问一封=`v13_mgraph_cons_questions`
     (redundant/contradiction/obsolete/link 四 Noul+representation
     choice,投影 ["left","right"],signal `mem_cons::<pair_digest>::
     <aspect>`,pair_digest=v13_body_hash(src||'>'||dst));生成门=
@@ -235,8 +251,8 @@ active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consoli
 - **② dec-refresh 注记(不变量 14)**:任何 `mem_%` 行落 decisions 会使
   活体 `v13_context_required` 的 `dec` 计数变化 → 下一次装配 token 失配
   一次 refresh(已知代价,不改 dec 定义);默认双 false 下零发生。同族:
-  本 stage 模板种子在加载事务内逐模板 bump cgr(28 内容行+28 freeze=56,
-  A5 断言 ≥28;实测恰 56)——在途回合一次 stale 失配,既有语义,重解析
+  本 stage 模板种子在加载事务内逐模板 bump cgr(29 内容行+29 freeze=58,
+  A5 断言 ≥29;实测恰 58)——在途回合一次 stale 失配,既有语义,重解析
   零 ask。
 - **③ unknown 嘣注记(M4 已实施)**:固化 enqueue 闸面=会话已有
   `ready|claimed|unknown` 时返回 NULL(与 advance ① 同面,强于摘要闸的
@@ -472,6 +488,28 @@ active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consoli
     `anchor_ngram_n=-1`)在 `!~ '^[0-9]+$'` 处即抛「must be an
     integer」,先于「>=0」域检查——fail-closed 语义等价(仍 V3009),
     G9 断言按实际消息钉定。
+40. **contradicts 只在 canonical 方向入封(V2)**:计划 §1.5/OQ17 只钉了
+    signal 端点 canonical(小,大)与「双向边=双份 ask 不采」;但
+    request_hash 携带 pair ctx(正反信封 ctx 互换⇒不同哈希),若
+    pair_questions 双向都返回 contradicts 问,反向信封会以新哈希重问
+    同一 signal——双份 ask+同 signal 双 decision 行,直接碰 D5 的
+    「每 signal 恰一行」既有 gate。实施取:仅 p_src<p_dst 时入封,每无序
+    pair 恰问一次。连带计数修正:计划 §6.2 的「12×4=64」未考虑该交互,
+    实测 D11 计数=4×4 类型+6×4 canonical+6×3 反向=**58**(P2-4 以实测
+    为准);封问数面=canonical 向 4–5 问、反向 3–4 问(批数不变)。
+41. **B2 选对重写为 proximity-derived(V2,OQ17 裁决)**:对源从 v1 相邻对
+    改为「origin='proximity' 边两端均 episodic,按 (source_at ASC,
+    content_hash ASC) 规范化为无序对 (early,late) 去重」,输出加
+    ORDER BY early(确定性;v1 无显式序);F 组固化夹具补插生产形状
+    proximity 边(put_nodes prox 参数);时间相邻但零词法激活的对不再
+    进对源(语义收窄已裁)。
+42. **H7 以 write_max_asks=1 步进(V2)**:GUC mock 为精确键匹配(实测
+    多余键即 failed;#17 同族),单次 build 调用内发多封须每封独立 mock,
+    不可行——跨 tick 续跑在 write_max_batches=8 帽在位下以 wma=1 步进
+    走查(每次调用恰 1 ask≤8、cursor 逐节点推进);>1 真实 ask/调用需真
+    provider 面(demo)。另:快照槽 mem_rel_contradicts 为 v13-local 且
+    携带 criteria 对——快照解析器改为「3 块 noul 槽一律按组合规则 v1
+    拼接」,fidelity 单块本地槽不受扰。
 
 ## 回退
 
@@ -487,3 +525,9 @@ P2-2 已裁不要求)但**不可退 AND 形态**——AND 编译器已被 V1 替
 恢复须代码级回退(一里程碑一提交,V1 可独立 revert);mgraph v2 键集
 与 v1 读取器不兼容,回退=恢复 v1 SQL+重建 stage 库,不能只翻 active
 标记;整体回退=stage 库 DROP-CREATE,前序 14 stage 文件字节不变。
+
+**V2 面回退补充(v2 计划 §7)**:第 29 枚模板种子与既有 28 枚同批
+bump cgr(不可撤,同运维②);contradicts decision 在旧代码下不被
+apply(闭集不含)但不破 schema,cons_pairs 回退=代码级(前 v1 相邻对
+语义);canonical contradicts 单向边的遍历不对称已裁接受(P1-3),对端
+经词法锚定可达;一里程碑一提交,V2 可独立 revert+重建 stage 库。
