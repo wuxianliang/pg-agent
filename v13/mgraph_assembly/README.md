@@ -45,6 +45,38 @@ stage 文件;再改 `v13/periphery/v13_periphery.sql` 只影响 ≤14 号库,16 
 - 前 15 个 SQL 文件字节冻结(J3 内嵌 sha256 表;mgraph 两文件在列——F7 精神
   由 J7 再钉一次)。
 
+## W2 交付面(J4–J7)
+
+- 五个新函数(§3.1,均 STABLE 零副作用):`v13_mgraph_turn_query`(最新
+  user/message 的 btrim 文本,无行返 '',走 events 不走 canonical);
+  `v13_mgraph_provenance`(七键闭集:origin/speaker/conflict/seq_count/
+  seq_first/seq_last/source_hashes;同文折叠=mixed+conflict,意外 type=
+  unknown+conflict 不 RAISE,consolidation 不展开亲本,无节点=belt 形);
+  `v13_mgraph_section_plan` 单一分支表(判定顺序锁死:empty_query →
+  disabled → degraded(不读 walk)→ no_walk → no_rows → emit);
+  `section_status`/`section_material` 两包装(JSON null ↔ SQL NULL,
+  禁止两套条件)。
+- assemble 复制体就地增量(§3.2/§3.3 闭集):sec_src 第六支
+  (`memory_graph` 单段,Session/LastResort,blob 化 payload_ref);
+  `cls`/`fcls` 两份 bkind CASE 平行加 `WHEN 'memory_graph' THEN
+  'retrieval'`(fcls 侧是死代码,保持文本平行);final_sec 加
+  `memory_inject` 臂;sections 聚合过滤未 applied 的 memory_graph 段
+  (其它 kind 一个不丢——预算裁掉的段不留在数组里,wire 看不到)。
+- validate 交叉检查(§3.4⑥):kind=memory_graph ⇒ cache_scope=Session、
+  payload_ref.kind=blob、applied 时 name=memory_inject(V3009;priority
+  不锁死)。
+- refresh memory belt(§3.6③,summary belt 后、artifact_land 前):段在
+  →重算材料 digest 恒等 + blob_land 两参落行复核;段不在→不 land、
+  不因材料非 NULL 而 RAISE(P0-3 只正向复核);degraded 审计(§3.6④,\n  指针后 shadow_observe 后):仅 status=degraded 落一条
+  audit/memory_degraded,审计型不进策展词表、不推 sem/dec。
+- 材料不进 `sec_full`(B-E2):J4 断言同夹具有/无 walk 的
+  economics.pressure.t_used 恒等。
+- est 复用既有整数式:J4 断言 est*divisor ≥ bytes 且 (est-1)*divisor <
+  bytes,不另建 memory token estimator。
+- 隔离保留(J7=F7 精神再钉):recall/query_side 候选与 memory_nodes
+  不相交;needed_judgments 无 mem_;econ_ver 函数体仍只列
+  context_tiers/context_budget;前 15 文件字节冻结复断言。
+
 ## 身份升版注意(fork/replay)
 
 `prefix_identity` 含 `manifest_version`(3→4):子会话现算身份不等于父
@@ -71,6 +103,20 @@ artifact 冻结的旧哈希,`v13_fork` 的 validate-spawn 拒 v3/v4 不一致—
    (signal 11,后端崩溃),干净树同样复现,与本计划无关(characterize
    stage 自交付未改)。W1 提交时 characterize 其余断言全绿、O2 因该环境
    崩溃不可达;待 stannum 修复后复跑。
+5. **J6d/J6e blob 断言口径**:`v13_blob_land` 对 context_section 是内容寻址
+   去重(ON CONFLICT DO NOTHING),tools 内容跨会话相同→首个 effect 持有
+   该行,按 produced_by 计数天然不稳定。断言改为「memory 材料哈希从未落成
+   context_section artifact」(精确对应计划「不产生 memory blob」)。
+6. **J6e retrieval 比例不能置 0**:refresh 的 context_budget 形状守卫要求
+   三桶均 >0。夹具用 retrieval=0.0001(+history=0.5499 保持和 1.0):
+   retrieval_cap=floor(effective_budget*0.0001)=0,预算裁照样生效。
+7. **J6b asks=0 断言面**:judgment_calls 无 signal 列(信号在 decisions);
+   且 LIKE 'mem\_%' 与 psycopg2 参数插值冲突。断言改为
+   next_action 返回 skip(skipped=disabled)+ 该会话 judgment_calls 零行。
+8. **J5 consolidation 夹具须带 consolidation_key**:memory_nodes 的
+   `v13_mn_consolidation_shape` CHECK 要求 origin=consolidation 时
+   consolidation_key 非空;夹具用 `v13_mgraph_pair_digest(两亲本哈希)`
+   单源取值(与 M4 固化产物同式)。
 
 ## 回退
 
@@ -79,9 +125,7 @@ artifact 冻结的旧哈希,`v13_fork` 的 validate-spawn 拒 v3/v4 不一致—
 validate v4 拒(V3003,非静默);`v13_replay` 仍能读出旧字节。不要只翻
 active 策略来「回退」——装配行为在函数体里,不在 mgraph 策略 JSON 里。
 
-## 待办(W2/W3 预告,本 README 随各里程碑同提交更新)
+## 待办(W3 预告,本 README 随各里程碑同提交更新)
 
-- W2:段注入(J4–J7)——provenance 七键口径、memory belt、degraded audit、
-  隔离断言。
 - W3:工人双连接契约(J8–J9)——步数帽 `maximum_jev_calls*6+8`、续租、
   SET ROLE 实测 ACL。

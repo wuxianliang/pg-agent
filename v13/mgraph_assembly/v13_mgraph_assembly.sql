@@ -15,10 +15,13 @@
 --   * 复制源 = periphery(14 号)文件正文加载态;periphery 源文件里的
 --     manifest_version 3 / 十一键是 ≤14 号库墓碑,不在 periphery 文件里改。
 --
--- W1 增量(§4.2 步骤 3 闭集):version 字面量 3->4、mgraph_ver 第十二键、
--- validate 词表(memory_graph/memory_inject)与十二键、refresh 锁名单+advisory、
--- GRANT。W1 的 assemble 尚无 sec_src 第六支、refresh 尚无 memory belt(§3.2-3.6
--- 增量属 W2,就地编辑本文件,不出现第二份同名 OR REPLACE)。
+-- W1 增量:version 字面量 3->4、mgraph_ver 第十二键、validate 词表与十二键、
+-- refresh 锁名单+advisory、GRANT。
+-- W2 增量(已就地编辑,仍只有一份同名定义):turn_query/provenance/
+-- section_plan(+status/material 包装)五个新函数;assemble sec_src 第六支、
+-- bkind memory 臂(cls+fcls 平行)、final_sec memory_inject、sections 过滤;
+-- validate memory_graph 交叉检查;refresh memory belt(正向复核)与
+-- degraded 审计;新函数 ACL。
 --
 -- 运维第一条:16 文件库里 pg_get_functiondef 才是装配活体;再改 periphery
 -- 只影响 ≤14 号库。
@@ -45,6 +48,153 @@ BEGIN
   RETURN encode(digest(jsonb_build_object(
     'generation', v_gen, 'policy_version', v_ver)::text, 'sha256'), 'hex');
 END $$;
+
+-- ===== [B2] §3.1 新函数(W2):查询串 / provenance / 段计划单一分支表 =====
+--   全部 STABLE、非 SECURITY DEFINER、零 typesafe_ask(§1.3 #11);不调
+--   run_round、不写表(材料函数零副作用)。
+
+-- 最新 user/message 的 btrim 文本;无行返回 ''(不 RAISE)。走 events
+-- (ix_events_last_user),不读 canonical——历史压缩窗口裁掉问题本身后
+-- walk 仍有锚(§2)。walk/材料只许经此函数取查询串(W3 工人契约)。
+CREATE FUNCTION v13_mgraph_turn_query(p_sid uuid) RETURNS text
+LANGUAGE sql STABLE AS $$
+  SELECT coalesce(
+    (SELECT btrim(coalesce(e.payload->>'text', ''))
+       FROM events e
+      WHERE e.session_id = p_sid AND e.type = 'user/message'
+      ORDER BY e.seq DESC LIMIT 1), '')
+$$;
+
+-- provenance 闭集七键(§1.4 OQ-D=D1 读时两跳):content_hash ->
+-- transcript_chunks(session_id,seq_from) -> events.type。同文折叠口径:
+-- 双方同文=mixed+conflict(不挑赢家,不称 hash collision);意外 type=
+-- unknown+conflict(不 RAISE);consolidation 不展开亲本说话人;无界 seq
+-- 数组不进 material(blob 会被 render 整段送进 wire——七键替全量 seqs)。
+CREATE FUNCTION v13_mgraph_provenance(p_sid uuid, p_hash text)
+RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
+DECLARE n memory_nodes%ROWTYPE;
+        v_types text[]; v_seqs bigint[];
+        v_speaker text; v_conflict boolean;
+BEGIN
+  IF p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'v13: mgraph provenance hash must be 64 hex'
+      USING ERRCODE = 'V3009';
+  END IF;
+  SELECT * INTO n FROM memory_nodes
+   WHERE session_id = p_sid AND content_hash = p_hash;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object(
+      'origin', NULL, 'speaker', 'unknown', 'conflict', false,
+      'seq_count', 0, 'seq_first', NULL, 'seq_last', NULL,
+      'source_hashes', '[]'::jsonb);
+  END IF;
+  IF n.origin = 'consolidation' THEN
+    RETURN jsonb_build_object(
+      'origin', 'consolidation', 'speaker', 'consolidation',
+      'conflict', false, 'seq_count', 0, 'seq_first', NULL,
+      'seq_last', NULL,
+      'source_hashes', (SELECT jsonb_agg(h ORDER BY h)
+                          FROM (SELECT DISTINCT unnest(n.source_hashes) h) s));
+  END IF;
+  SELECT coalesce(array_agg(e.type ORDER BY e.seq), ARRAY[]::text[]),
+         coalesce(array_agg(c.seq_from ORDER BY c.seq_from), ARRAY[]::bigint[])
+    INTO v_types, v_seqs
+    FROM transcript_chunks c
+    JOIN events e
+      ON e.session_id = c.session_id AND e.seq = c.seq_from
+   WHERE c.session_id = p_sid AND c.content_hash = p_hash;
+  IF cardinality(v_types) = 0 THEN
+    v_speaker := 'unknown'; v_conflict := false;      -- episodic 却无投影行
+  ELSIF EXISTS (SELECT 1 FROM unnest(v_types) t
+                 WHERE t NOT IN ('user/message','llm/message')) THEN
+    v_speaker := 'unknown'; v_conflict := true;       -- 意外事件型,不 RAISE
+  ELSIF 'user/message' = ANY(v_types) AND 'llm/message' = ANY(v_types) THEN
+    v_speaker := 'mixed'; v_conflict := true;         -- 同文折叠,不可分辨
+  ELSIF 'user/message' = ANY(v_types) THEN
+    v_speaker := 'user'; v_conflict := false;
+  ELSE
+    v_speaker := 'llm'; v_conflict := false;
+  END IF;
+  RETURN jsonb_build_object(
+    'origin', n.origin, 'speaker', v_speaker, 'conflict', v_conflict,
+    'seq_count', cardinality(v_seqs),
+    'seq_first', CASE WHEN cardinality(v_seqs) = 0 THEN NULL
+                      ELSE to_jsonb(v_seqs[1]) END,
+    'seq_last', CASE WHEN cardinality(v_seqs) = 0 THEN NULL
+                     ELSE to_jsonb(v_seqs[cardinality(v_seqs)]) END,
+    'source_hashes', (SELECT jsonb_agg(h ORDER BY h)
+                        FROM (SELECT DISTINCT unnest(n.source_hashes) h) s));
+END $$;
+
+-- 段计划单一分支表:{status, material};material 仅 status='emit' 时为
+-- 对象,否则 JSON null。判定顺序锁死(§3.1):empty_query -> disabled ->
+-- degraded(不读 walk)-> no_walk -> no_rows -> emit。status/material
+-- 两包装函数只是它的包装,禁止两套条件写岔。
+CREATE FUNCTION v13_mgraph_section_plan(p_sid uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE v_q text; v_qh text; v_pol jsonb;
+        v_gen bigint; v_pver int; v_rows jsonb; v_out jsonb;
+BEGIN
+  v_q := v13_mgraph_turn_query(p_sid);
+  IF v_q = '' THEN
+    RETURN jsonb_build_object('status', 'empty_query', 'material', NULL);
+  END IF;
+  v_pol := v13_mgraph_policy();
+  IF NOT (v_pol->>'read_enabled')::boolean THEN
+    RETURN jsonb_build_object('status', 'disabled', 'material', NULL);
+  END IF;
+  IF (v13_transcript_freshness(p_sid)->>'degraded')::boolean THEN
+    RETURN jsonb_build_object('status', 'degraded', 'material', NULL);
+  END IF;
+  v_qh := v13_body_hash(v_q);
+  v_gen := (v13_mgraph_progress(p_sid)->>'generation')::bigint;
+  SELECT version INTO v_pver FROM v13_policies
+   WHERE name = 'mgraph' AND active;
+  IF v_pver IS NULL THEN
+    RAISE EXCEPTION 'v13: no active mgraph policy row (seed lost?)'
+      USING ERRCODE = 'V3009';
+  END IF;
+  PERFORM 1 FROM memory_walks w
+   WHERE w.session_id = p_sid
+     AND w.query_hash = v_qh
+     AND w.mgraph_generation = v_gen
+     AND w.policy_version = v_pver
+     AND w.status = 'stopped';
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('status', 'no_walk', 'material', NULL);
+  END IF;
+  v_rows := v13_mgraph_evidence(p_sid, v_qh) -> 'rows';
+  IF jsonb_array_length(coalesce(v_rows, '[]'::jsonb)) = 0 THEN
+    RETURN jsonb_build_object('status', 'no_rows', 'material', NULL);
+  END IF;
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'content_hash', r->>'content_hash',
+           'score', r->'score',
+           'body', r->>'body',
+           'provenance', v13_mgraph_provenance(p_sid, r->>'content_hash'))
+           ORDER BY (r->>'score')::numeric DESC, r->>'content_hash' ASC),
+         '[]'::jsonb)
+    INTO v_out
+    FROM jsonb_array_elements(v_rows) r;
+  RETURN jsonb_build_object(
+    'status', 'emit',
+    'material', jsonb_build_object(
+      'query_hash', v_qh, 'generation', v_gen,
+      'policy_version', v_pver, 'rows', v_out));
+END $$;
+
+CREATE FUNCTION v13_mgraph_section_status(p_sid uuid) RETURNS text
+LANGUAGE sql STABLE AS $$
+  SELECT (v13_mgraph_section_plan(p_sid) ->> 'status')
+$$;
+
+CREATE FUNCTION v13_mgraph_section_material(p_sid uuid) RETURNS jsonb
+LANGUAGE sql STABLE AS $$
+  SELECT CASE WHEN jsonb_typeof(p.plan->'material') = 'object'
+              THEN p.plan->'material' ELSE NULL END
+    FROM v13_mgraph_section_plan(p_sid) AS p(plan)
+$$;
+
 
 -- ===== [B2] 换体一:v13_context_required 十二键全谱(W1) =====
 --   墓碑:十一键体唯一存活于 ≤15 号文件库;十二键全谱唯一存活于 ≥16 号库。
@@ -310,6 +460,14 @@ WITH RECURSIVE pol AS MATERIALIZED (
          NULL::bigint, ds.content, ds.reason
   FROM drops ds, (SELECT count(*) AS n FROM drops) dc, sact
   WHERE sact.action IN ('round_drop','final_trim')
+  UNION ALL
+  SELECT 'memory_graph','memory_graph','Session','LastResort',  -- [B2] §3.2
+         encode(digest(coalesce(smm.mat::text, ''), 'sha256'),
+                'hex'),
+         octet_length(coalesce(smm.mat::text, '')),
+         NULL::bigint, smm.mat, NULL
+  FROM (SELECT v13_mgraph_section_material(p_sid) AS mat) smm
+  WHERE smm.mat IS NOT NULL
 ), sec_full AS MATERIALIZED (           -- [DP7-S] v2 sec_src 原文(全量材料;决策基面)
   SELECT 'goal'::text AS section_id, 'goal'::text AS kind,
          'Session'::text AS cache_scope, 'First'::text AS def_prio,
@@ -337,6 +495,7 @@ WITH RECURSIVE pol AS MATERIALIZED (
   SELECT r.*,
          CASE r.kind WHEN 'goal' THEN 'core' WHEN 'tools' THEN 'core'
                      WHEN 'history' THEN 'history'
+                     WHEN 'memory_graph' THEN 'retrieval'   -- [B2]
                      ELSE 'retrieval' END AS bkind,
          CASE WHEN (pol.prio_ovr ->> r.kind)
                    IN ('First','Normal','Never','LastResort') IS TRUE
@@ -369,6 +528,7 @@ WITH RECURSIVE pol AS MATERIALIZED (
   SELECT r.*,
          CASE r.kind WHEN 'goal' THEN 'core' WHEN 'tools' THEN 'core'
                      WHEN 'history' THEN 'history'
+                     WHEN 'memory_graph' THEN 'retrieval'   -- [B2]
                      ELSE 'retrieval' END AS bkind,
          CASE WHEN (pol.prio_ovr ->> r.kind)
                    IN ('First','Normal','Never','LastResort') IS TRUE
@@ -652,6 +812,8 @@ WITH RECURSIVE pol AS MATERIALIZED (
                        jsonb_build_object('applied', true, 'name',
                          CASE o.section_id WHEN 'goal'   THEN 'verbatim'
                                            WHEN 'summary' THEN 'summarize'
+                                           WHEN 'memory_graph' THEN
+                                             'memory_inject'      -- [B2]
                                            WHEN 'history' THEN
                                              CASE WHEN sact.action IN
                                                       ('spill','round_drop',
@@ -900,7 +1062,10 @@ SELECT jsonb_build_object(
                                FROM summary_calc sm)),
   'sections',  (SELECT coalesce(jsonb_agg(section ORDER BY prank, section_id),
                              '[]'::jsonb)
-                  FROM final_sec),
+                  FROM final_sec
+                 WHERE NOT (section->>'section_id' = 'memory_graph'  -- [B2]
+                            AND (section->'transform'->>'applied')::boolean
+                                IS DISTINCT FROM true)),
   'query_side',(SELECT q FROM qside),
   'judgments', (SELECT j FROM jud),
   'replay',    jsonb_build_object('mode', (SELECT m FROM mode),
@@ -1283,6 +1448,18 @@ BEGIN
       RAISE EXCEPTION 'v13: section transform shape violation for % (V3003)',
         s->>'section_id' USING ERRCODE = 'V3003';
     END IF;
+    -- [B2] memory_graph 交叉检查(cache_scope/payload_ref/applied 名;
+    --      priority 不锁死——overrides 合法;新 RAISE=V3009,§3.4⑥)
+    IF s->>'kind' = 'memory_graph'
+       AND (  s->>'cache_scope' IS DISTINCT FROM 'Session'
+              OR s->'payload_ref'->>'kind' IS DISTINCT FROM 'blob'
+              OR (   (s->'transform'->>'applied')::boolean
+                 AND s->'transform'->>'name' IS DISTINCT FROM
+                     'memory_inject')) THEN
+      RAISE EXCEPTION
+        'v13: memory_graph section cross-field violation for % (V3009)',
+        s->>'section_id' USING ERRCODE = 'V3009';
+    END IF;
   END LOOP;
   -- [DP7-S] section_id 全局唯一(V3007)
   SELECT t.sid INTO v_dupt
@@ -1411,6 +1588,7 @@ DECLARE v_row effects; v_sid uuid; v_manifest jsonb; v_art uuid; v_out text;
         v_tiers jsonb; v_cbud jsonb; v_gate jsonb; v_ft jsonb; v_rp jsonb;
         v_g2 jsonb; v_lat jsonb; v_cp jsonb;                       -- [DP8]
         v_sf jsonb; v_sw jsonb; v_ig jsonb;                        -- [DP8]
+        v_mem jsonb;                                               -- [B2]
         v_b jsonb; v_i int; v_lo int; v_hi int; v_prev_hi int; v_sum numeric;
 BEGIN
   SELECT * INTO v_row FROM public.effects WHERE effect_id = p_effect;
@@ -1750,6 +1928,27 @@ BEGIN
     END IF;
   END IF;
 
+  -- ===== [B2] memory belt(§3.6③;summary belt 后、artifact_land 前;
+  --       只做正向复核——预算滤掉发生在 packing 之后,材料函数此时仍返回
+  --       非 NULL;「有材料却没段就 RAISE」会在 kinds_disabled/retrieval
+  --       装不下时误报。无段:不 land、不因材料非 NULL 而 RAISE) =====
+  SELECT s->>'content_hash' INTO v_mh
+    FROM jsonb_array_elements(v_manifest->'sections') s
+   WHERE s->>'section_id' = 'memory_graph';
+  IF FOUND THEN
+    v_mem := public.v13_mgraph_section_material(v_sid);
+    IF v_mem IS NULL
+       OR encode(digest(coalesce(v_mem::text, ''), 'sha256'), 'hex')
+          IS DISTINCT FROM v_mh THEN
+      RAISE EXCEPTION 'v13: memory blob hash drift vs manifest section (V3009)'
+        USING ERRCODE = 'V3009';
+    END IF;
+    IF public.v13_blob_land(p_effect, v_mem) IS DISTINCT FROM v_mh THEN
+      RAISE EXCEPTION 'v13: memory blob land drift vs manifest section (V3009)'
+        USING ERRCODE = 'V3009';
+    END IF;
+  END IF;
+
   v_art := public.v13_artifact_land(p_effect, 'context', v_manifest);
   UPDATE public.effects SET result = coalesce(result,'{}'::jsonb) ||
            jsonb_build_object('context_artifact_id', v_art)
@@ -1759,15 +1958,36 @@ BEGIN
          context_active_artifact = v_art
    WHERE session_id = v_sid;
   PERFORM public.v13_shadow_observe(v_sid);   -- [DP8] 换体七(d):settle 尾观察
+  -- [B2] degraded 审计(§3.6④):仅 status=degraded 落一条
+  --      audit/memory_degraded(消费契约:degraded 时记忆不得当可靠召回面,
+  --      当前 turn 消息永远直读);审计型不进策展词表、不推 sem/dec——
+  --      不自激(检验在 J6)。
+  IF public.v13_mgraph_section_status(v_sid) = 'degraded' THEN
+    PERFORM public.v13_append_event(v_sid, gen_random_uuid(),
+             'audit/memory_degraded',
+             jsonb_build_object('basis', 'degraded'));
+  END IF;
   RETURN 'accepted';
 END $$;
 
 
 -- ===== [B2] ACL(§1.7;REVOKE PUBLIC 后按调用角色授权;重复 GRANT 保持,
 --       不先探测「是不是已经有」) =====
-REVOKE EXECUTE ON FUNCTION v13_mgraph_asm_ver(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION
+  v13_mgraph_asm_ver(uuid),
+  v13_mgraph_turn_query(uuid),
+  v13_mgraph_provenance(uuid,text),
+  v13_mgraph_section_plan(uuid),
+  v13_mgraph_section_material(uuid),
+  v13_mgraph_section_status(uuid)
+FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION
-  v13_mgraph_asm_ver(uuid)
+  v13_mgraph_asm_ver(uuid),
+  v13_mgraph_turn_query(uuid),
+  v13_mgraph_provenance(uuid,text),
+  v13_mgraph_section_plan(uuid),
+  v13_mgraph_section_material(uuid),
+  v13_mgraph_section_status(uuid)
 TO v13_route, v13_resolve, v13_recall;
 -- route 手直调 assemble(INVOKER)会读 evidence/材料面:补 route(原
 -- mgraph 只授 recall/resolve);progress/policy/body_hash/freshness 显式
