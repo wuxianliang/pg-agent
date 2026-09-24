@@ -8,6 +8,10 @@ zero-ask. M3 group E (read loop B1): route/allocate/run_round/should_stop/
 evidence. M4 group F (consolidation): five-question pair gate, effect kind
 mgraph_consolidate + cap v3 + narrow requeue, enqueue/settle, fidelity
 gate, consolidation nodes as the first remote-plane artifacts.
+V2 V1 group G (candidate-discovery wake-up): mgraph-local anchor compiler
+(terms/tinql/guard, STABLE), guard swap at the candidates entry, anchor
+source swap at build/anchors/transition_score, policy v2 (41 keys,
+candidate_top_k 10->5, anchor_ngram_n/anchor_max_terms).
 
 Run: uv run python v13/mgraph/test_mgraph.py  (exit 0 = pass)
 """
@@ -38,7 +42,8 @@ SQL_FILE = ROOT / "v13_mgraph.sql"
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 EXPECTED_POLICY = {
-    "relation_threshold": 0.60, "candidate_top_k": 10,
+    "relation_threshold": 0.60, "candidate_top_k": 5,
+    "anchor_ngram_n": 3, "anchor_max_terms": 48,
     "total_graph_budget": 20, "probability_exponent": 1.5,
     "graph_activation_threshold": 0.15, "beam_width": 5, "maximum_depth": 5,
     "maximum_nodes": 30, "maximum_edges": 200, "maximum_jev_calls": 10,
@@ -343,7 +348,7 @@ def main() -> int:
     cur.execute(
         "SELECT version, value FROM v13_policies WHERE name='mgraph' AND active")
     ver, val = cur.fetchone()
-    check("A2: mgraph v1 active", ver == 1, ver)
+    check("A2: mgraph v2 active", ver == 2, ver)
     check("A2: mgraph seed equals §3.2 JSON key-for-key",
           val == EXPECTED_POLICY,
           {k: (val.get(k), EXPECTED_POLICY.get(k))
@@ -375,7 +380,7 @@ def main() -> int:
     conn.commit()
     cur.execute(
         "SELECT count(*) FROM v13_policies WHERE name='mgraph'")
-    check("A2: bad-version fixtures rolled back (single v1 row)",
+    check("A2: bad-version fixtures rolled back (single v2 row)",
           cur.fetchone()[0] == 1)
 
     # ---------------- A3 template families vs snapshot ----------------
@@ -696,7 +701,7 @@ def main() -> int:
                 return state, [g["signal"] for g in gap]
             c.execute(
                 "SELECT * FROM v13_mgraph_candidates("
-                "%s, v13_build_tinql(%s), %s)",
+                "%s, v13_mgraph_anchor_tinql(%s), %s)",
                 (sid, body, EXPECTED_POLICY["candidate_top_k"]))
             for ch, sc, ln in c.fetchall():
                 if ch == h:
@@ -832,7 +837,7 @@ def main() -> int:
           cur.fetchone()[0]["jev_edges"] == 0)
     C.commit()
     # OQ7: same-pool double call byte-identical
-    cur.execute("SELECT v13_build_tinql(%s)", (PB1,))
+    cur.execute("SELECT v13_mgraph_anchor_tinql(%s)", (PB1,))
     tq1 = cur.fetchone()[0]
     cur.execute("SELECT * FROM v13_mgraph_candidates(%s, %s, 10)", (sid1, tq1))
     ca1 = [tuple(str(x) for x in r) for r in cur.fetchall()]
@@ -858,7 +863,7 @@ def main() -> int:
     check("D2: proximity edges recorded with structural score",
           len(prox_d2) >= 1 and all(r[5] not in ("None", None) for r in prox_d2),
           prox_d2)
-    cur.execute("SELECT * FROM v13_mgraph_candidates(%s, v13_build_tinql(%s), 10)",
+    cur.execute("SELECT * FROM v13_mgraph_candidates(%s, v13_mgraph_anchor_tinql(%s), 10)",
                 (sid2, n0))
     rows_d2 = cur.fetchall()
     sc_d2 = {r[0]: str(r[1]) for r in rows_d2}
@@ -1396,7 +1401,7 @@ def main() -> int:
     # =====================================================================
     C.ensure()
     cur = C.cur
-    set_active("mgraph", 1)
+    set_active("mgraph", 2)
 
     BUCKETS = ("causal", "entity", "multi_hop", "recency", "semantic",
                "temporal")
@@ -1553,7 +1558,7 @@ def main() -> int:
                         "recency": 1, "semantic": 1, "temporal": 1})
     check("E1: borrow funds every active bucket",
           got_b == {b: 1 for b in BUCKETS} and sum(got_b.values()) == 6, got_b)
-    set_active("mgraph", 1)
+    set_active("mgraph", 2)
 
     # ---------------- E2 route + E4/E9 on one read policy -----------------
     open_read()
@@ -1898,7 +1903,7 @@ def main() -> int:
           eff2 == eff0 and rf2 == rf0, (eff2, rf2))
 
     # ---------------- E8 read off / degraded --------------------------------
-    set_active("mgraph", 1)
+    set_active("mgraph", 2)
     sid_off = u()
     cur.execute("INSERT INTO sessions (session_id) VALUES (%s)", (sid_off,))
     C.commit()
@@ -1949,7 +1954,7 @@ def main() -> int:
     # any other effect kind — mgraph_consolidate rides the generic CAS
     # branch (effect_done only; no llm/message, no turn/end).
     # =====================================================================
-    set_active("mgraph", 1)
+    set_active("mgraph", 2)
     C.ensure()
     cur = C.cur
 
@@ -2358,7 +2363,7 @@ def main() -> int:
     check("F9: consolidation node reached via traversal (not an anchor)",
           new_hash_f2 in (visited_f9 | frontier_f9),
           {"visited": sorted(visited_f9), "frontier": sorted(frontier_f9)})
-    set_active("mgraph", 1)
+    set_active("mgraph", 2)
 
     # ---------------- F10 ACL negative face ----------------
     cur.execute(
@@ -2496,6 +2501,303 @@ def main() -> int:
     check("F11: obsolete fixture produced no effect", cur.fetchone()[0] == 0)
     C.commit()
 
+    # =====================================================================
+    # mgraph v2 V1 group G: candidate-discovery wake-up (G-mg/G1-G9).
+    # Plan: docs/plans/v13-dp9-mgraph-v2-plan-2026-09-24.md §5 G table.
+    # Anchor compiler = latin whole-segment + CJK char n-gram (n=3 default),
+    # dedup-preserving-order, capped at anchor_max_terms; OR-form tinql;
+    # mgraph-local guard (quoted-phrase OR closed set, V3005 fail-closed).
+    # Mock discipline unchanged: one ask batch shape per GUC value, so the
+    # write-path gates (G4/G8) run under write caps=1 with the stepper.
+    # =====================================================================
+
+    # ---------------- G1 compiler determinism + policy sensitivity ------
+    set_active("mgraph", 2)
+    C.commit()
+
+    def anchor_terms_of(c, body):
+        c.execute("SELECT v13_mgraph_anchor_terms(%s)", (body,))
+        return c.fetchone()[0]
+
+    def anchor_tinql_of(c, body):
+        c.execute("SELECT v13_mgraph_anchor_tinql(%s)", (body,))
+        return c.fetchone()[0]
+
+    CJK_G1 = "用户无法登录系统因为密码过期"
+    MIX_G1 = "Alice shipped 用户受影响 counts 三万"
+    for g1b in (CJK_G1, MIX_G1, PB1):
+        t_a = anchor_terms_of(cur, g1b)
+        t_b = anchor_terms_of(cur, g1b)
+        q_a = anchor_tinql_of(cur, g1b)
+        q_b = anchor_tinql_of(cur, g1b)
+        check(f"G1: same body + same active policy -> identical terms/tinql ({g1b[:10]})",
+              t_a == t_b and q_a == q_b and (t_a == []) == (q_a == ""),
+              (t_a, q_a))
+    t_cjk_full = anchor_terms_of(cur, CJK_G1)
+    t_mix_full = anchor_terms_of(cur, MIX_G1)
+    check("G1: repeated segments dedup preserving first-seen order",
+          anchor_terms_of(cur, "abc abc def abc") == ["abc", "def"])
+    bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_ngram_n=2))
+    C.commit()
+    t_n2 = anchor_terms_of(cur, CJK_G1)
+    check("G1: policy flip (anchor_ngram_n 3->2) changes terms for the same body",
+          t_n2 != t_cjk_full and t_n2 == ["用户", "户无", "无法", "法登", "登录",
+                                         "录系", "系统", "统因", "因为",
+                                         "为密", "密码", "码过", "过期"], t_n2)
+    set_active("mgraph", 2)
+    C.commit()
+    bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_max_terms=3))
+    C.commit()
+    t_cap3 = anchor_terms_of(cur, MIX_G1)
+    check("G1: truncation keeps the first N terms in order (anchor_max_terms=3)",
+          len(t_mix_full) > 3 and t_cap3 == t_mix_full[:3], (t_mix_full, t_cap3))
+    set_active("mgraph", 2)
+    C.commit()
+    bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_ngram_n=0))
+    C.commit()
+    t_n0 = anchor_terms_of(cur, MIX_G1)
+    cur.execute("SELECT v13_query_segments(%s)", (MIX_G1,))
+    segs_g1 = cur.fetchone()[0]
+    q_n0 = anchor_tinql_of(cur, MIX_G1)
+    check("G1: n=0 degrades to whole-segment OR semantics (== segments, OR-joined)",
+          t_n0 == segs_g1 and q_n0 == " OR ".join(f'"{s}"' for s in segs_g1)
+          and " AND " not in q_n0, (t_n0, q_n0))
+    set_active("mgraph", 2)
+    C.commit()
+
+    # ---------------- G2 n-gram boundaries + mixed + bytes vs chars ------
+    check("G2: CJK segment of n-1 chars -> zero items",
+          anchor_terms_of(cur, "一二") == [])
+    check("G2: CJK segment of exactly n chars -> exactly one item",
+          anchor_terms_of(cur, "一二三") == ["一二三"])
+    check("G2: CJK segment of n+1 chars -> two sliding-window items",
+          anchor_terms_of(cur, "一二三四") == ["一二三", "二三四"])
+    check("G2: mixed body keeps latin segments whole (never n-grammed)",
+          anchor_terms_of(cur, "abc一二三") == ["abc", "一二三"])
+    check("G2: latin segment shorter than n still whole",
+          anchor_terms_of(cur, "ab cd") == ["ab", "cd"])
+    check("G2: 3-char CJK run is 9 UTF-8 bytes but yields exactly one gram"
+          " (chars, not bytes)",
+          len("一二三".encode("utf-8")) == 9
+          and anchor_terms_of(cur, "一二三") == ["一二三"])
+    # 85 distinct CJK chars = 255 bytes (passes the segmenter's byte cap);
+    # 83 distinct sliding grams -> capped at anchor_max_terms=48.
+    g2_85 = "".join(chr(0x4E00 + i) for i in range(85))
+    check("G2: 255-byte CJK segment passes the byte cap and truncates at 48 grams",
+          len(g2_85.encode("utf-8")) == 255
+          and len(anchor_terms_of(cur, g2_85)) == 48)
+    fails_with(cur, "SELECT v13_mgraph_anchor_terms(%s)", ("字" * 87,),
+               "max bytes", "G2: >256B segment propagates the segmenter V3005",
+               pgcode="V3005")
+    check("G2: separator-only body -> empty anchor -> empty tinql",
+          anchor_terms_of(cur, "。。。") == []
+          and anchor_tinql_of(cur, "。。。") == "")
+
+    # ---------------- G3 guard fail-closed closed set -------------------
+    def guard_of(t):
+        cur.execute("SELECT v13_mgraph_anchor_guard(%s)", (t,))
+        return cur.fetchone()[0]
+
+    check("G3: legal OR phrase string passes",
+          guard_of('"abc" OR "def"') == ["abc", "def"])
+    check("G3: legal CJK OR string passes",
+          guard_of('"用户受影响" OR "三万"') == ["用户受影响", "三万"])
+    check("G3: empty string -> empty normalized set", guard_of("") == [])
+    fails_with(cur, "SELECT v13_mgraph_anchor_guard(%s)", (None,),
+               "must not be NULL", "G3: NULL tinql -> V3005", pgcode="V3005")
+    fails_with(cur, "SELECT v13_mgraph_anchor_guard(%s)", ('"a" AND "b"',),
+               "grammar", "G3: AND form -> V3005 (not the emitted grammar)",
+               pgcode="V3005")
+    fails_with(cur, "SELECT v13_mgraph_anchor_guard(%s)", ("abc",),
+               "grammar", "G3: bare word -> V3005", pgcode="V3005")
+    fails_with(cur, "SELECT v13_mgraph_anchor_guard(%s)", ('"a"OR"b"',),
+               "grammar", "G3: unspaced OR / embedded quotes -> V3005",
+               pgcode="V3005")
+    fails_with(cur, "SELECT v13_mgraph_anchor_guard(%s)", ('"ab*"',),
+               "character domain", "G3: wildcard -> V3005", pgcode="V3005")
+    fails_with(cur, "SELECT v13_mgraph_anchor_guard(%s)", ('"a(b"',),
+               "character domain", "G3: regex metachar -> V3005", pgcode="V3005")
+    fails_with(cur, "SELECT v13_mgraph_anchor_guard(%s)", ('"ab~"',),
+               "character domain", "G3: fuzzy marker -> V3005", pgcode="V3005")
+    fails_with(cur, "SELECT v13_mgraph_anchor_guard(%s)", ('"a b"',),
+               "character domain", "G3: embedded space -> V3005", pgcode="V3005")
+    fails_with(cur, "SELECT v13_mgraph_anchor_guard(%s)", ('"' + "a" * 300 + '"',),
+               "out of bounds", "G3: >256B phrase -> V3005", pgcode="V3005")
+    check("G3: 48 distinct phrases accepted at the cap",
+          len(guard_of(" OR ".join(f'"w{i}"' for i in range(48)))) == 48)
+    fails_with(cur, "SELECT v13_mgraph_anchor_guard(%s)",
+               (" OR ".join(f'"w{i}"' for i in range(49)),), "max terms",
+               "G3: > anchor_max_terms phrases -> V3005", pgcode="V3005")
+    for g3b in (CJK_G1, MIX_G1, PB1):
+        t_rt = anchor_terms_of(cur, g3b)
+        q_rt = anchor_tinql_of(cur, g3b)
+        g_rt = guard_of(q_rt)
+        check(f"G3: guard(compiler output) == compiler terms ({g3b[:10]})",
+              g_rt == t_rt, (q_rt, g_rt, t_rt))
+
+    # ---------------- G4 wake-up: rare-shared-3gram pair asked ----------
+    open_write(write_max_batches=1, write_max_asks=1)
+    GA = "今天系统里有三万个受影响的用户账号"
+    GB = "昨天统计的受影响用户大约只有八千个"
+    GN = "数据库每晚做全量备份"
+    sid_g4 = mk_session(cur, [GA, GB])
+    stepper(sid_g4)
+    cur = C.cur
+    hA, hB = body_hash_of(cur, GA), body_hash_of(cur, GB)
+    sigs_g4 = answered_sigs(cur, sid_g4)
+    check("G4: zero-clause-intersection pair sharing rare 3-grams gets its"
+          " base relation envelope",
+          {f"mem_rel::{hA}::{hB}::semantic", f"mem_rel::{hA}::{hB}::causes",
+           f"mem_rel::{hA}::{hB}::caused_by"} <= sigs_g4,
+          sorted(s for s in sigs_g4 if s.startswith("mem_rel::")))
+    prox_g4 = links_of(cur, sid_g4, "proximity")
+    check("G4: proximity edge recorded for the awakened pair",
+          any({p[0], p[1]} == {hA, hB} for p in prox_g4), prox_g4)
+    cur.execute("SELECT v13_mgraph_anchor_tinql(%s)", (GA,))
+    tqA = cur.fetchone()[0]
+    cur.execute("SELECT content_hash FROM v13_mgraph_candidates(%s, %s, 5)",
+                (sid_g4, tqA))
+    pool_g4 = {r[0] for r in cur.fetchall()}
+    check("G4: candidate pool contains both endpoints under the OR anchor",
+          {hA, hB} <= pool_g4, pool_g4)
+    sid_g4n = mk_session(cur, [GA, GN])
+    stepper(sid_g4n)
+    cur = C.cur
+    sigs_g4n = answered_sigs(cur, sid_g4n)
+    check("G4: zero shared n-gram -> zero relation envelopes (negative clean)",
+          not any(s.startswith("mem_rel::") for s in sigs_g4n), sorted(sigs_g4n))
+    cur.execute("SELECT v13_mgraph_anchor_tinql(%s)", (GA,))
+    tqA2 = cur.fetchone()[0]
+    cur.execute("SELECT content_hash FROM v13_mgraph_candidates(%s, %s, 5)",
+                (sid_g4n, tqA2))
+    pool_g4n = {r[0] for r in cur.fetchall()}
+    check("G4: negative session pool = the anchor itself only",
+          pool_g4n == {hA}, pool_g4n)
+
+    # ---------------- G5 read-side anchor on a CJK graph ---------------
+    set_active("mgraph", 2)
+    C.commit()
+    sid_g5, _ = put_nodes(cur, ["用户无法登录系统因为密码过期"])
+    C.commit()
+    cur.execute("SELECT v13_mgraph_anchors(%s, %s, 'semantic')",
+                (sid_g5, "为什么用户无法登录"))
+    anch_g5 = cur.fetchone()[0]
+    check("G5: pure CJK query anchors non-empty on a CJK graph"
+          " (structurally empty pre-V1)", len(anch_g5) >= 1, anch_g5)
+    cur.execute("SELECT v13_mgraph_anchors(%s, %s, 'semantic')",
+                (sid_g5, "数据库备份策略怎么样"))
+    check("G5: unrelated CJK query stays empty", cur.fetchone()[0] == [])
+
+    # ---------------- G6 discipline rescan ------------------------------
+    sql_g6 = SQL_FILE.read_text(encoding="utf-8")
+    norm_g6 = strip_sql_comments(sql_g6)
+    check("G6: bind operator exactly 1 in comment-stripped source",
+          norm_g6.count("==>") == 1, norm_g6.count("==>"))
+    for fname_g6 in ("v13_mgraph_anchor_terms", "v13_mgraph_anchor_tinql",
+                     "v13_mgraph_anchor_guard"):
+        cur.execute("SELECT pg_get_functiondef(oid) FROM pg_proc WHERE proname = %s",
+                    (fname_g6,))
+        fdef = cur.fetchone()[0]
+        check(f"G6: {fname_g6} STABLE, zero dynamic binding, zero bind operator",
+              "STABLE" in fdef and "EXECUTE" not in fdef and "==>" not in fdef)
+    cur.execute(
+        "SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a"
+        " WHERE p.proname LIKE 'v13\\_mgraph\\_anchor%' AND a.grantee = 0")
+    check("G6: anchor functions carry no PUBLIC grant (grantee=0)",
+          cur.fetchone()[0] == 0)
+    cur.execute("SELECT v13_mgraph_anchor_tinql(%s)", ("为什么用户无法登录",))
+    tq_g6 = cur.fetchone()[0]
+    cur.execute("SET enable_seqscan = off")
+    cur.execute(
+        "EXPLAIN (ANALYZE, FORMAT TEXT) SELECT n.content_hash FROM memory_nodes n"
+        " WHERE n.session_id = %s AND n.origin = 'episodic' AND n.body ==> %s",
+        (sid_g5, tq_g6))
+    plan_g6 = "\n".join(r[0] for r in cur.fetchall())
+    cur.execute("SET enable_seqscan = on")
+    check("G6: OR-form anchor pool query still drives the stannum predicate",
+          "Seq Scan on memory_nodes" not in plan_g6 and "stannum" in plan_g6,
+          plan_g6)
+    cur.execute(
+        "SELECT count(*) FROM memory_nodes n"
+        " WHERE n.session_id = %s AND n.origin = 'episodic' AND n.body ==> %s",
+        (sid_g5, tq_g6))
+    check("G6: the stannum operator matches the CJK node through the OR tinql",
+          cur.fetchone()[0] == 1)
+
+    # ---------------- G7 D1/D2 preserved under the OR anchor ------------
+    C.ensure()
+    cur = C.cur
+    cur.execute("SELECT v13_mgraph_anchor_tinql(%s)", (GA,))
+    tq_g7 = cur.fetchone()[0]
+    cur.execute("SELECT * FROM v13_mgraph_candidates(%s, %s, 10)", (sid_g4, tq_g7))
+    ca_g7 = [tuple(str(x) for x in r) for r in cur.fetchall()]
+    cur.execute("SELECT * FROM v13_mgraph_candidates(%s, %s, 10)", (sid_g4, tq_g7))
+    cb_g7 = [tuple(str(x) for x in r) for r in cur.fetchall()]
+    check("G7: same-pool double call byte-identical (D1 condition preserved)",
+          ca_g7 == cb_g7 and len(ca_g7) >= 1, (ca_g7, cb_g7))
+    fails_with(
+        cur, "SELECT * FROM v13_mgraph_candidates(%s, %s, 10)",
+        (sid_g4, '"用户无法" AND "登录系统"'), "grammar",
+        "G7: AND-form tinql rejected at the candidates entry (guard swap live)",
+        pgcode="V3005")
+
+    # ---------------- G8 entity gate awake through the write path -------
+    open_write(write_max_batches=1, write_max_asks=1)
+    sid_g8 = mk_session(cur, ["Alice shipped the crate.", "Bob ferried the drum."])
+    stepper(sid_g8)
+    cur = C.cur
+    sigs_g8 = answered_sigs(cur, sid_g8)
+    ent_g8 = [s for s in sigs_g8
+              if s.startswith("mem_rel::") and s.endswith("::entity")]
+    check("G8: disjoint-entity pair gets its entity question (deviation #12"
+          " postscript: gate awake post-V1)", len(ent_g8) >= 1, sorted(sigs_g8))
+    set_active("mgraph", 2)
+    C.commit()
+
+    # ---------------- G9 policy v2 shape -------------------------------
+    cur.execute("SELECT v13_mgraph_policy()")
+    pol_g9 = cur.fetchone()[0]
+    check("G9: v2 keyset 41 keys, anchor keys in, routing intent keys out",
+          len(pol_g9) == 41 and pol_g9["anchor_ngram_n"] == 3
+          and pol_g9["anchor_max_terms"] == 48 and pol_g9["candidate_top_k"] == 5
+          and "routing_intent_causal" not in pol_g9
+          and "routing_intent_temporal" not in pol_g9, sorted(pol_g9))
+    bump_policy(cur, "mgraph",
+                {k: v for k, v in EXPECTED_POLICY.items() if k != "anchor_ngram_n"})
+    C.commit()
+    fails_with(cur, "SELECT v13_mgraph_policy()", (), "key set mismatch",
+               "G9: missing anchor key -> V3009 (closed keyset)", pgcode="V3009")
+    set_active("mgraph", 2)
+    C.commit()
+    bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_ngram_n=2.5))
+    C.commit()
+    fails_with(cur, "SELECT v13_mgraph_policy()", (), "must be an integer",
+               "G9: fractional anchor_ngram_n -> V3009 (integer domain)",
+               pgcode="V3009")
+    set_active("mgraph", 2)
+    C.commit()
+    bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_ngram_n=-1))
+    C.commit()
+    fails_with(cur, "SELECT v13_mgraph_policy()", (), "must be an integer",
+               "G9: negative anchor_ngram_n -> V3009 (fail-closed domain)",
+               pgcode="V3009")
+    set_active("mgraph", 2)
+    C.commit()
+    bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_max_terms=0))
+    C.commit()
+    fails_with(cur, "SELECT v13_mgraph_policy()", (), ">= 1",
+               "G9: zero anchor_max_terms -> V3009 (positive domain)",
+               pgcode="V3009")
+    set_active("mgraph", 2)
+    C.commit()
+    bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, routing_intent_causal=0.8))
+    C.commit()
+    fails_with(cur, "SELECT v13_mgraph_policy()", (), "key set mismatch",
+               "G9: routing_intent key refused by the closed keyset (OQ13=D)",
+               pgcode="V3009")
+    set_active("mgraph", 2)
+    C.commit()
+
     # ---------------- M3 source discipline ---------------------------------
     sql_m3 = SQL_FILE.read_text(encoding="utf-8")
     norm_m3 = strip_sql_comments(sql_m3)
@@ -2527,18 +2829,18 @@ def main() -> int:
               "typesafe_ask", "v13_append_event", "FOR UPDATE",
               "mock_response", "cypher(")))
     check("M4: no set_config in mgraph SQL", "set_config" not in sql_m4)
-    set_active("mgraph", 1)
+    set_active("mgraph", 2)
     cur.execute(
         "SELECT version, (value->>'write_enabled')::boolean,"
         " (value->>'read_enabled')::boolean FROM v13_policies"
         " WHERE name='mgraph' AND active")
     v_fin, w_fin, r_fin = cur.fetchone()
-    check("M4: policy restored to v1 with write/read back off",
-          v_fin == 1 and w_fin is False and r_fin is False, (v_fin, w_fin, r_fin))
+    check("M4: policy restored to v2 with write/read back off",
+          v_fin == 2 and w_fin is False and r_fin is False, (v_fin, w_fin, r_fin))
     C.conn.rollback()
     C.conn.close()
 
-    print("\n[mgraph M1+M2+M3+M4] groups A+D+E+F: ALL GREEN")
+    print("\n[mgraph M1+M2+M3+M4+v2-V1] groups A+D+E+F+G: ALL GREEN")
     return 0
 
 

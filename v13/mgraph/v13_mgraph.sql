@@ -5,7 +5,8 @@ BEGIN;
 -- two-table graph (OQ1=A: indexed one-hop JOIN face; no graph extension in
 -- runtime) + per-session v13_mgraph_meta (watermark/rel_cursor semantics)
 -- + memory_consolidations queue (single-row-per-key, status closed set) +
--- mgraph policy row v1 (§3.2 seed; reader fail-closed) + six mem_* template
+-- mgraph policy row v2 (V1 候选发现唤醒就地升版:anchor 两键+top_k 10→5;
+-- reader fail-closed) + six mem_* template
 -- families (question bytes = QUESTION_SNAPSHOT.md combination-rule v1) +
 -- judgment_defaults six new mem_ points (OQ11 tri-state) + defaults reader
 -- + progress reader + envelope constructor v13_mgraph_envelope (12-key set
@@ -141,14 +142,19 @@ CREATE TABLE memory_consolidations (
   PRIMARY KEY (session_id, consolidation_key)
 );
 
--- === §3.2 mgraph 策略行 v1 种子(OQ9 裁决后逐键;consolidate_max_body_bytes
+-- === §3.2 mgraph 策略行 v2 种子(V1 候选发现唤醒:candidate_top_k 10→5
+--     (OQ18)+anchor_ngram_n/anchor_max_terms 两键(OQ15;39→41 键,就地
+--     升版+读取器同批——v1/v2 键集不兼容,旧读取器读 v2 JSON 即 V3009,
+--     回退=恢复 v1 SQL 重建 stage,不能只翻 active 标记);OQ9 裁决后逐键;
+--     consolidate_max_body_bytes
 --     来源=v13 本地护栏(对齐 summary_accept.checks.max_body_bytes 量级),
 --     非 Jev-Mem 默认值;三帽单位同为 ask 批数:maximum_jev_calls(一次
 --     read walk)/write_max_batches(每 tick)/write_max_asks(每次 build),
 --     共同下游=judge_spend;write/read 默认双 false=部署暗) ===
 INSERT INTO v13_policies (name, version, value, active) VALUES
-('mgraph', 1, '{
-  "relation_threshold": 0.60, "candidate_top_k": 10,
+('mgraph', 2, '{
+  "relation_threshold": 0.60, "candidate_top_k": 5,
+  "anchor_ngram_n": 3, "anchor_max_terms": 48,
   "total_graph_budget": 20, "probability_exponent": 1.5,
   "graph_activation_threshold": 0.15, "beam_width": 5, "maximum_depth": 5,
   "maximum_nodes": 30, "maximum_edges": 200, "maximum_jev_calls": 10,
@@ -191,14 +197,14 @@ DECLARE
                            'transition_recency_coef','candidate_recency_coef'];
   v_posnum text[] := ARRAY['probability_exponent'];
   v_nnnnum text[] := ARRAY['lexical_coef','entity_coef','keyword_coef'];
-  v_posint text[] := ARRAY['candidate_top_k','total_graph_budget','beam_width',
+  v_posint text[] := ARRAY['candidate_top_k','anchor_max_terms','total_graph_budget','beam_width',
                            'maximum_depth','maximum_nodes','maximum_edges',
                            'maximum_jev_calls','keyword_cap',
                            'candidate_recency_halflife_s','write_max_batches',
                            'deterministic_floor','inject_top_k',
                            'consolidate_max_body_bytes','write_max_asks'];
   -- max_latency_ms 允许 0(E7:0 = 第一轮提交后即 latency 停);其余计数仍 ≥1
-  v_nznint text[] := ARRAY['consolidation_interval','max_latency_ms'];
+  v_nznint text[] := ARRAY['anchor_ngram_n','consolidation_interval','max_latency_ms'];
   k        text;
 BEGIN
   SELECT value INTO v FROM v13_policies WHERE name = 'mgraph' AND active;
@@ -209,7 +215,7 @@ BEGIN
   SELECT string_agg(ok, ',' ORDER BY ok) INTO v_keys
     FROM jsonb_object_keys(v) ok;
   IF v_keys IS DISTINCT FROM
-     'admission_enabled,beam_width,candidate_recency_coef,candidate_recency_halflife_s,candidate_top_k,consolidate_max_body_bytes,consolidate_mode,consolidation_choice_min,consolidation_interval,consolidation_priority,consolidation_threshold,continue_min,contradiction_stop_hi,deterministic_floor,entity_coef,entity_stopwords,evidence_sufficient_min,graph_activation_threshold,inject_top_k,keyword_cap,keyword_coef,lexical_coef,max_latency_ms,maximum_depth,maximum_edges,maximum_jev_calls,maximum_nodes,missing_stop_hi,probability_exponent,read_enabled,relation_threshold,routing_mode,routing_shadow,total_graph_budget,transition_recency_coef,transition_weights,write_enabled,write_max_asks,write_max_batches' THEN
+     'admission_enabled,anchor_max_terms,anchor_ngram_n,beam_width,candidate_recency_coef,candidate_recency_halflife_s,candidate_top_k,consolidate_max_body_bytes,consolidate_mode,consolidation_choice_min,consolidation_interval,consolidation_priority,consolidation_threshold,continue_min,contradiction_stop_hi,deterministic_floor,entity_coef,entity_stopwords,evidence_sufficient_min,graph_activation_threshold,inject_top_k,keyword_cap,keyword_coef,lexical_coef,max_latency_ms,maximum_depth,maximum_edges,maximum_jev_calls,maximum_nodes,missing_stop_hi,probability_exponent,read_enabled,relation_threshold,routing_mode,routing_shadow,total_graph_budget,transition_recency_coef,transition_weights,write_enabled,write_max_asks,write_max_batches' THEN
     RAISE EXCEPTION 'v13: mgraph policy key set mismatch (%)', v_keys
       USING ERRCODE = 'V3009';
   END IF;
@@ -641,8 +647,9 @@ BEGIN;
 
 -- === §3.4/OQ10 实体抽取:英文段 ^[A-Z][a-z]+$ 减 entity_stopwords;
 --     CJK 段不贡献不 RAISE(锚定 ASCII 字符类天然不匹配多字节段);
---     停用词表=策略行(可先 [],多抽不假抽)。段面函数供 tinql 项复用
---     (v13_build_tinql 保留段的重复度,anchor 面与 body 面同源) ===
+--     停用词表=策略行(可先 [],多抽不假抽)。段面函数供锚项复用
+--     (V1 起 anchor 面经 v13_mgraph_anchor_terms 去重保序,body 面仍
+--     全段——两面同源分段器、重复度口径不同) ===
 CREATE FUNCTION v13_mgraph_entities_of(p_segs text[]) RETURNS text[]
 LANGUAGE plpgsql STABLE AS $$
 DECLARE v_stop text[];
@@ -696,8 +703,10 @@ LANGUAGE sql IMMUTABLE AS $$
                    / (SELECT count(*) FROM u)::numeric END;
 $$;
 
--- === OQ7 候选发现 T0(签名三参;p_tinql 必须来自 v13_build_tinql——入口
---     v13_tinql_terms 文法守卫把用户文本挡在 EXECUTE 串之外,设计 §4.1
+-- === OQ7 候选发现 T0(签名三参;p_tinql 必须来自 v13_mgraph_anchor_tinql
+--     ——入口 v13_mgraph_anchor_guard 本地文法守卫(引号短语 OR 闭集,
+--     v2 R2 修订:OQ7 原 recall 守卫面正式 supersede)把用户文本挡在
+--     EXECUTE 串之外,设计 §4.1
 --     三禁;本文件去注释源码的绑定算符计数=恰 1,即本函数 EXECUTE 串;
 --     池=本会话全部 episodic(consolidation 不作候选锚——只经遍历可达);
 --     谓词驱动 stannum 索引扫描,禁裸表扫描后算分;插完全批再计分由
@@ -727,7 +736,7 @@ BEGIN
       USING ERRCODE = 'V3009';
   END IF;
   IF p_tinql = '' THEN RETURN; END IF;
-  v_terms := ARRAY(SELECT jsonb_array_elements_text(v13_tinql_terms(p_tinql)));
+  v_terms := ARRAY(SELECT jsonb_array_elements_text(v13_mgraph_anchor_guard(p_tinql)));
   v_pol := v13_mgraph_policy();
   v_lc := (v_pol->>'lexical_coef')::numeric;
   v_ec := (v_pol->>'entity_coef')::numeric;
@@ -865,7 +874,7 @@ END $$;
 --     本会话 origin='temporal' 边再按 source_at ASC,content_hash ASC
 --     全量重连;⑦发问从 rel_cursor 之后按插入序(首现 seq 升序)推进:
 --     每节点类型信封(四 Noul 一 state)→resolve→只记录,然后
---     v13_build_tinql(body)→candidates 取对(锚自身除外),每 pair 一封
+--     v13_mgraph_anchor_tinql(body)→candidates 取对(锚自身除外),每 pair 一封
 --     关系信封,lexical_norm≥graph_activation_threshold 插 proximity 边
 --     (structural=lexical_norm);帽(spend.over/write_max_batches/
 --     write_max_asks,计数=judgment_calls 行增量=每封发出即+1 含失败批)
@@ -1010,7 +1019,7 @@ BEGIN
       END IF;
 
       -- (b) 候选对:proximity 结构边 + 每 pair 一封关系信封
-      v_tinql := v13_build_tinql(v_node.body);
+      v_tinql := v13_mgraph_anchor_tinql(v_node.body);
       FOR v_cand IN SELECT * FROM v13_mgraph_candidates(p_sid, v_tinql, v_topk)
       LOOP
         IF v_cand.content_hash = v_node.content_hash THEN CONTINUE; END IF;
@@ -1644,7 +1653,7 @@ BEGIN
   v_pol := v13_mgraph_policy();
   v_k := (v_pol->>'candidate_top_k')::int;
   v_beam := (v_pol->>'beam_width')::int;
-  v_tinql := v13_build_tinql(p_query);
+  v_tinql := v13_mgraph_anchor_tinql(p_query);
   IF v_tinql IS NULL OR v_tinql = '' THEN RETURN '[]'::jsonb; END IF;
   RETURN coalesce((
     SELECT jsonb_agg(jsonb_build_object(
@@ -1769,7 +1778,7 @@ BEGIN
     FROM jsonb_array_elements(v_pol->'transition_weights')
          WITH ORDINALITY AS t(e, ord);
   v_pre := 'mem_trav::' || p_walk::text || '::' || p_hash || '::';
-  v_tinql := v13_build_tinql(p_query);
+  v_tinql := v13_mgraph_anchor_tinql(p_query);
   IF v_tinql IS NOT NULL AND v_tinql <> '' THEN
     SELECT coalesce(max(c.lexical_norm), 0) INTO v_lex
       FROM v13_mgraph_candidates(p_sid, v_tinql, 1024) c
@@ -3121,5 +3130,150 @@ GRANT EXECUTE ON FUNCTION v13_mgraph_consolidate_enqueue(uuid)
 TO v13_route;
 GRANT EXECUTE ON FUNCTION v13_mgraph_consolidate_settle(uuid)
 TO v13_resolve;
+
+COMMIT;
+
+BEGIN;
+
+-- =========================================================================
+-- mgraph v2 V1 候选发现唤醒(v2 计划 docs/plans/v13-dp9-mgraph-v2-plan-
+-- 2026-09-24.md §3.1;OQ15=2 A5/OQ16=1):本地锚编译器三函数。recall 三
+-- 函数(v13_query_segments/v13_build_tinql/v13_tinql_terms)字节不变,
+-- OR/n-gram 文法留在 mgraph 自有文件(新树只追加纪律;R2 修订 OQ7 的
+-- 守卫面与锚源正式切换)。三函数均 STABLE:经 v13_mgraph_policy() 读
+-- 活动策略,禁 IMMUTABLE(P1-1——策略翻版必须能改变锚形态,IMMUTABLE
+-- 声明可能让 planner/预编译计划缓存旧策略结果);零 IO、不访问图、
+-- 零 `==>`、零第二动态绑定点(G6 执法)。错误码 V3005(文法域,沿
+-- recall 守卫族)。机制:latin 段整项+CJK 段按字符切 n-gram
+-- (anchor_ngram_n;0=关=全段 OR 语义退化,P2-2);边界钉死(P1-2):
+-- 段字符长=n 恰一项、<n 零项、>n 滑窗 L−n+1 项;去重保序;超
+-- anchor_max_terms 保序截断;空 body→空项→空 tinql→candidates 空集
+-- 零 ask。确定性口径:同一 body+同一活动策略快照→相同 terms→相同
+-- tinql→相同谓词输入(非跨策略版本全局不可变)。
+-- =========================================================================
+
+-- === 亚子句锚项:latin 段整项 + CJK 段按字符 n-gram;返回去重保序项集 ===
+CREATE FUNCTION v13_mgraph_anchor_terms(p_body text) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_pol  jsonb; v_n int; v_max int;
+  v_segs text[]; v_seg text;
+  v_len  int; v_i int; v_gram text;
+  v_terms text[] := '{}';
+BEGIN
+  IF p_body IS NULL OR p_body = '' THEN RETURN '[]'::jsonb; END IF;
+  v_pol := v13_mgraph_policy();
+  v_n := (v_pol->>'anchor_ngram_n')::int;
+  v_max := (v_pol->>'anchor_max_terms')::int;
+  v_segs := ARRAY(SELECT jsonb_array_elements_text(v13_query_segments(p_body)));
+  FOREACH v_seg IN ARRAY v_segs LOOP
+    EXIT WHEN cardinality(v_terms) >= v_max;
+    IF v_n = 0 OR v_seg ~ '^[A-Za-z0-9]+$' THEN
+      -- latin 段整项(n-gram 不切);n=0 时 CJK 段也整项(A2 全段 OR 退化)
+      IF NOT (v_seg = ANY(v_terms)) THEN
+        v_terms := v_terms || v_seg;
+      END IF;
+    ELSE
+      -- CJK 段按字符切 n-gram:长度=n 恰一项(P1-2 边界钉死),<n 零项
+      v_len := char_length(v_seg);
+      IF v_len >= v_n THEN
+        FOR v_i IN 1 .. v_len - v_n + 1 LOOP
+          EXIT WHEN cardinality(v_terms) >= v_max;
+          v_gram := substring(v_seg FROM v_i FOR v_n);
+          IF NOT (v_gram = ANY(v_terms)) THEN
+            v_terms := v_terms || v_gram;
+          END IF;
+        END LOOP;
+      END IF;
+    END IF;
+  END LOOP;
+  RETURN (SELECT coalesce(jsonb_agg(t ORDER BY ord), '[]'::jsonb)
+            FROM unnest(v_terms) WITH ORDINALITY AS u(t, ord));
+END $$;
+
+-- === OR 形 tinql:引号短语以 ' OR ' 连接;空项集返回空串 ===
+CREATE FUNCTION v13_mgraph_anchor_tinql(p_body text) RETURNS text
+LANGUAGE sql STABLE AS $$
+  SELECT coalesce(string_agg('"' || t || '"', ' OR '), '')
+    FROM jsonb_array_elements_text(v13_mgraph_anchor_terms(p_body)) AS t
+$$;
+
+-- === 本地文法守卫:引号段 OR 闭集;段 ≤256B(UTF-8 字节)/词项 ≤
+--     anchor_max_terms;AND 形/裸词/内嵌引号/通配/正则/fuzzy/发射域外
+--     字符 → V3005 fail-closed(不降级为裸表扫描);返回规范化项集
+--     (candidates 的 entity/关键词子项复用)。字符白名单=v13_query_
+--     segments 发射域(latin [A-Za-z0-9] ∪ CJK 五区间,同一权威码点
+--     表内联——route 同款先例;空白/操作符一律拒) ===
+CREATE FUNCTION v13_mgraph_anchor_guard(p_tinql text) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_pol jsonb; v_max int;
+  v_parts text[]; v_n int; v_i int; v_j int;
+  v_inner text; v_ch text; v_cp int;
+  v_terms text[] := '{}';
+BEGIN
+  IF p_tinql IS NULL THEN
+    RAISE EXCEPTION 'v13: mgraph anchor tinql must not be NULL'
+      USING ERRCODE = 'V3005';
+  END IF;
+  IF p_tinql = '' THEN RETURN '[]'::jsonb; END IF;
+  v_pol := v13_mgraph_policy();
+  v_max := (v_pol->>'anchor_max_terms')::int;
+  v_parts := string_to_array(p_tinql, ' OR ');
+  v_n := array_length(v_parts, 1);
+  IF v_n > v_max THEN
+    RAISE EXCEPTION 'v13: mgraph anchor tinql exceeds max terms (%)', v_max
+      USING ERRCODE = 'V3005';
+  END IF;
+  FOR v_i IN 1 .. v_n LOOP
+    v_inner := v_parts[v_i];
+    IF length(v_inner) < 2
+       OR left(v_inner, 1) <> '"'
+       OR right(v_inner, 1) <> '"'
+       OR position('"' in substring(v_inner FROM 2 FOR length(v_inner) - 2)) > 0
+    THEN
+      RAISE EXCEPTION
+        'v13: mgraph anchor tinql not in emitted grammar (quoted phrases joined by OR)'
+        USING ERRCODE = 'V3005';
+    END IF;
+    v_inner := substring(v_inner FROM 2 FOR length(v_inner) - 2);
+    IF octet_length(v_inner) = 0 OR octet_length(v_inner) > 256 THEN
+      RAISE EXCEPTION 'v13: mgraph anchor tinql segment out of bounds'
+        USING ERRCODE = 'V3005';
+    END IF;
+    FOR v_j IN 1 .. char_length(v_inner) LOOP
+      v_ch := substring(v_inner FROM v_j FOR 1);
+      v_cp := ascii(v_ch);
+      IF v_ch !~ '[A-Za-z0-9]'
+         AND NOT (v_cp BETWEEN 12352 AND 12543)
+         AND NOT (v_cp BETWEEN 13312 AND 19903)
+         AND NOT (v_cp BETWEEN 19968 AND 40959)
+         AND NOT (v_cp BETWEEN 44032 AND 55215)
+         AND NOT (v_cp BETWEEN 63744 AND 64255)
+      THEN
+        RAISE EXCEPTION
+          'v13: mgraph anchor tinql segment outside emitted character domain'
+          USING ERRCODE = 'V3005';
+      END IF;
+    END LOOP;
+    IF NOT (v_inner = ANY(v_terms)) THEN
+      v_terms := v_terms || v_inner;
+    END IF;
+  END LOOP;
+  RETURN (SELECT coalesce(jsonb_agg(t ORDER BY ord), '[]'::jsonb)
+            FROM unnest(v_terms) WITH ORDINALITY AS u(t, ord));
+END $$;
+
+-- === §4 ACL(V1 面;列举式 REVOKE,零 DEFINER):三函数被 candidates/
+--     build/anchors/transition_score 以 invoker 权限调起,授权面照
+--     candidates 镜像(resolve=写驱动、recall=读锚复用、route=读环) ===
+REVOKE EXECUTE ON FUNCTION
+  v13_mgraph_anchor_terms(text), v13_mgraph_anchor_tinql(text),
+  v13_mgraph_anchor_guard(text)
+FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION
+  v13_mgraph_anchor_terms(text), v13_mgraph_anchor_tinql(text),
+  v13_mgraph_anchor_guard(text)
+TO v13_resolve, v13_recall, v13_route;
 
 COMMIT;

@@ -1,15 +1,16 @@
-# v13/mgraph — DP9 M1 暗库 + M2 写与重建 + M3 读环 B1 + M4 固化
+# v13/mgraph — DP9 M1 暗库 + M2 写与重建 + M3 读环 B1 + M4 固化 + v2 V1 候选发现唤醒
 
 Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphery
 全部前序 14 文件;本 stage 库 = `agent_v13_mgraph`(`files_through('mgraph')`
 前缀切片,15 文件;stannum 前置探针 fail-closed,形态照 memory/summary)。
 设计:`docs/designs/v13-context-on-pg.md` v2 §4.4/§6.1/§6.5/§8。计划:
 `docs/plans/v13-dp9-memory-graph-plan-2026-09-23.md`(M1=暗库;M2=写与
-重建;M3=读环 B1;**M4=固化已交付**)。gate:
-`uv run python v13/mgraph/test_mgraph.py`(G-mg 族 **A+D+E+F 四组**,退出码
-0=通过;write/read 默认关——D/E 组以「INSERT 新策略版本+翻 active」打开、
-测毕翻回 v1;固化链不读 write/read 开关,仅 `consolidate_mode='manual'`
-响亮键执法)。
+重建;M3=读环 B1;M4=固化)+ `docs/plans/v13-dp9-mgraph-v2-plan-2026-09-24.md`
+(V1=候选发现唤醒,已交付)。gate:
+`uv run python v13/mgraph/test_mgraph.py`(G-mg 族 **A+D+E+F+G 五组**,退出码
+0=通过;write/read 默认关——D/E/G 写路径 gate 以「INSERT 新策略版本+翻
+active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consolidate_mode=
+'manual'` 响亮键执法;G 组锚面纯函数/直调可在默认关下测)。
 
 ## 机制(M1 范围;错误码一律 V3009)
 
@@ -37,13 +38,18 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
    PK `(session_id,consolidation_key)` 同 key 至多一行——重试语义由
    effect attempt 承载;status∈queued|generating|adopted|rejected;
    「rejected 可审计」的载体;M4 消费)。
-4. **策略行 `mgraph` v1**(§3.2 种子逐键 39 键,含 `write_max_asks=64`;
+4. **策略行 `mgraph` v2**(§3.2 种子逐键 **41 键**;V1 就地升版(1→2):
+   +`anchor_ngram_n=3`/`anchor_max_terms=48`,`candidate_top_k` 10→5
+   (OQ15/OQ18;读取器键集全等串与类型域数组同批——**v1/v2 键集不兼容**,
+   旧读取器读 v2 JSON 即 V3009;回退=恢复 v1 SQL+重建 stage,不能只翻
+   active 标记);含 `write_max_asks=64`;
    `consolidate_max_body_bytes=32768` 为 v13 本地护栏非上游默认)。
    读取器 `v13_mgraph_policy()` fail-closed:键集漂移/类型域违例/权重
    五数和≠1/priority 非三值排列 → V3009;**「保留但响亮」键执法**:
    `admission_enabled=true`(OQ5)或 `consolidate_mode≠'manual'` → V3009
    (v1 无实现即配置错误,读取时炸;M2 build 只经本读取器取值)。
-   函数体零动作阈字面量(0/1 域界与数组形状常数除外)。
+   函数体零动作阈字面量(0/1 域界与数组形状常数除外;anchor 域=
+   非负/正整数,沿 v_nznint/v_posint 既有两档)。
 5. **六族 mem_* 模板(28 枚)**:type×4(投影 `["body"]`)/rel×4
    (`["left","right"]`)/routing×6(`["query"]`)/stopping×4
    (`["query","evidence"]`)/traversal×4(`["query","candidate","path"]`)/
@@ -93,19 +99,28 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
    =恰 1(候选函数 EXECUTE 串,memory K4 同款 stripper)。
 10. **实体/关键词/相似度(OQ10/OQ7 系数面)**:`v13_mgraph_entities_of(
     segs)`=`^[A-Z][a-z]+$` 减 `entity_stopwords`(锚定 ASCII 类,CJK 段
-    天然不匹配不 RAISE;段面函数供 tinql 项复用——`v13_build_tinql` 保留
-    段重复度,anchor 面与 body 面同源);`v13_mgraph_keywords_of(segs)`=
+    天然不匹配不 RAISE;段面函数供锚项复用——V1 起 anchor 面经
+    `v13_mgraph_anchor_terms` 去重保序,body 面仍全段(同源分段器、
+    重复度口径不同));`v13_mgraph_keywords_of(segs)`=
     latin 段频次顶 `keyword_cap`(并列 token 升序);`v13_mgraph_jaccard
     (a,b)`=集合交并比,空并集=0。
-11. **候选发现 `v13_mgraph_candidates(sid,tinql,k)`(OQ7)**:签名三参,
-    `p_tinql` 必须来自 `v13_build_tinql`(入口 `v13_tinql_terms` 文法
-    守卫,用户文本不得直拼 EXECUTE);谓词驱动 stannum 索引扫描(禁裸表
-    扫描后算分),池=本会话全部 episodic(consolidation 不作锚);
+11. **候选发现 `v13_mgraph_candidates(sid,tinql,k)`(OQ7;v2 V1 锚形态=
+    A5)**:签名三参,`p_tinql` 必须来自 `v13_mgraph_anchor_tinql`——入口
+    `v13_mgraph_anchor_guard` 本地文法守卫(引号短语 **OR** 闭集,非法输入
+    V3005 fail-closed 不降级裸扫;recall 三函数字节不变,v2 计划 R2 修订
+    OQ7 守卫面)把用户文本挡在 EXECUTE 串之外;锚编译器 `v13_mgraph_anchor_
+    terms/tinql`(均 STABLE,经读取器取 n/max 两键,禁 IMMUTABLE——策略
+    翻版必须能改变锚形态)=latin 段整项+CJK 段按字符 n-gram
+    (`anchor_ngram_n=3`;段长=n 恰一项、<n 零项;0=全段 OR 语义退化),
+    去重保序,超 `anchor_max_terms=48` 保序截断,空锚→空串→空集零 ask;
+    CJK n-gram 项对 entity/关键词子项天然中性(不匹配 ASCII 字符类)。
+    谓词驱动 stannum 索引扫描(禁裸表扫描后算分),池=本会话全部
+    episodic(consolidation 不作锚);
     `score = lexical_coef·lexical_norm + entity_coef·entity_jaccard +
     keyword_coef·keyword_jaccard + candidate_recency_coef·recency`,
     lexical_norm=bm25/max(bm25)(池内归一化),recency=1/(1+Δsource_at 秒/
     halflife);并列 score DESC,content_hash ASC;同事务内同池两次调用
-    字节级相同(D1)。
+    字节级相同(D1/G7)。
 12. **写路径 `v13_mgraph_build(sid,limit)`(§3.4①–⑨)**:①write 关→
     skipped:disabled 零写;②admission 真→V3009(读取器「保留但响亮」
     执法);③freshness.degraded→skipped:degraded;④整次 build 会话级
@@ -114,7 +129,7 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
     (ON CONFLICT 折叠保 source_at 最早者;source_at=events.at 经
     (session_id,seq_from) 回查);⑥先 DELETE 本会话 temporal 边再按
     source_at ASC,content_hash ASC 全量重连;⑦从 rel_cursor 之后按首现
-    seq 推进:每节点类型信封(四 Noul 一 state,只记录)→tinql→candidates
+    seq 推进:每节点类型信封(四 Noul 一 state,只记录)→anchor_tinql→candidates
     取对(锚自身除外),每 pair 一封关系信封(`v13_mgraph_pair_questions`
     =entity 闸单一事实源),lexical_norm≥graph_activation_threshold 插
     proximity 边(structural=lexical_norm);帽(spend.over/
@@ -237,12 +252,17 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
   时已与 codeload 该 commit tarball `diff` 验证逐字同);`/tmp` 失效时从
   commit 重取,摘不到对应槽则闸门保持红。题面漂移=新模板 version,旧
   决策自然失配(只费钱)。
-- **⑦ 写帽预估(M2 已实施,OQ2)**:`judge_spend` 数 judgment_calls 行
-  =ask 批数;每新 episodic 节点 ≤11 批(1 类型封+≤10 关系封),
-  session_asks_cap=512 ⇒ ≈46 新节点触顶;开启 write 前按 transcript
-  规模评估/上调会话帽;独立 `write_max_asks=64`(每次 build)+`write_
-  max_batches=8`(每 tick)两帽防首建吃穿封死用户回合;三帽全为 ask 批
-  数单位、共同下游 judge_spend,失败批也计数(与 spend 行数同口径)。
+- **⑦ 写帽预估(M2 已实施,OQ2;v2 V1 双口径改写)**:`judge_spend` 数
+  judgment_calls 行=ask 批数;A5 3-gram k=5 下每新 episodic 节点 ≤6 批
+  (1 类型封+≤5 关系封,k=candidate_top_k=5);`write_max_batches=8` 是
+  **每次 build tick 的实际截断**——逻辑首建是**跨 tick 总量**(12 节点
+  中文转录活体实测 59 ask≈8 tick,由 rel_cursor 续跑消化),
+  `write_max_asks=64` 为单次调用累计帽,该形态下不成为主限制;
+  session_asks_cap=512 与用户回合/读 walk 共享:**≈104 新节点=活体平均
+  估计(≈4.9 ask/节点),非硬上界**;每节点硬上界=6 封,写路径隔离时
+  保守上界≈512/6≈**85 节点**(k=10 饱和池旧估计≈46 适用于上调 k 后的
+  最坏形态);开启 write 前按 transcript 规模评估/上调会话帽;失败批也
+  计数(与 spend 行数同口径)。
 - **⑧ provider 占位符与连接纪律(M2 实测)**:`typesafe.provider` 是
   占位符 GUC,连接上首次判断 IO 加载 typesafe 库时被清除、且 typesafe
   前缀已保留不可重设——**一条连接一旦 ask 过就再也无法构造任何信封**
@@ -266,7 +286,10 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
   自动计数(代码默认 0,论文附录「每 20 写」不采用);AGE(§8 台账三
   条件);B2 装配接线(下一张计划);walk/round 生命周期清理(保留策略
   =不清理,触发=下一张计划);自动固化调度(v1 manual,driver 显式调
-  consolidate/enqueue/settle)。
+  consolidate/enqueue/settle);**CJK 路由升级(v2 OQ13=D 不做:route/
+  意图链/权重零改动,CJK→superset 语义维持 DP9-OQ3,两个
+  routing_intent 策略键不进键集;重开条件=v2 计划 §8 三条夹具式触发,
+  重开时须新计划显式 supersede DP9-OQ3)**。
 
 ## 实现偏差台账(M1 实施与计划的偏差,逐条)
 
@@ -318,6 +341,9 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
     ⇒ 候选实体集⊇锚实体集 ⇒ 交集非空 ⇒ entity 问永不入封。闸逻辑在位
     并经 pair_questions 直测(空侧/不相交两侧正反向);模板与 signal
     形状保留,未来窄查询面(M3 锚/词法放宽)出现即活。
+    **V1 后记(2026-09-24)**:候选发现已换 A5 锚(latin 整项+CJK
+    3-gram,OR 池),匹配候选不再蕴含锚 token 集,不相交实体对经真实
+    build 得到 entity 问(G8)——原不可达推导失效;条目留档不改写。
 13. **rebuild 在 write 关或 degraded 时 V3009 拒绝(计划未言明)**:
     rebuild→build 若 build skip 会留下「已删未建」的空图;取 fail-closed
     拒绝优于静默删库。D16 的复位态观察改用 spend 帽 0 夹具(内层 build
@@ -430,6 +456,22 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
     consolidation 节点不作对员(与「不作候选锚」同向)。consolidation
     节点的 source_at=两亲本较晚者,新节点插入后可与既有对员再成对,
     由 adopted 排除面闸住同 key 重复。
+37. **transition_score 锚源同批切换(V1)**:计划 §3.2 就地表只列三
+    调用点(candidates :730/build :1013/anchors :1649);实测
+    `v13_mgraph_transition_score`(mgraph:1772 一带)也以
+    `v13_build_tinql(p_query)` 直喂 `v13_mgraph_candidates`——新守卫
+    fail-closed 拒 AND 形 tinql,不换源则 E 组读环回归结构性红。由
+    「A+D+E+F 全组回归必须仍绿」红线推导为必改面,同批就地切换(仍属
+    R2/OQ16 锚源修订的完整实施,非范围扩张)。
+38. **守卫字符白名单=发射域内联(V1)**:计划只列「通配/正则/fuzzy
+    →V3005」;实施具体化为段内逐字符白名单(latin [A-Za-z0-9] ∪ CJK
+    五区间,与 `v13_query_segments` 同一权威码点表内联——route 内联先例
+    同款;空白/操作符/任意其它符号一律拒);词项上限按裸分片数判
+    (去重前),去重保序返回「规范化项集」。
+39. **负值域执法在整数正则先炸(V1)**:读取器对负整数(如
+    `anchor_ngram_n=-1`)在 `!~ '^[0-9]+$'` 处即抛「must be an
+    integer」,先于「>=0」域检查——fail-closed 语义等价(仍 V3009),
+    G9 断言按实际消息钉定。
 
 ## 回退
 
@@ -438,3 +480,10 @@ agent_v13_mgraph` 即净;前 14 stage 文件字节不变。模板种子对共享
 cgr bump 无法撤(与 summary 先例同);暗库默认双 false 零消费者,
 `judgment_defaults` v4 的六个 mem_ point 可随库丢弃,无持久化用户数据
 迁移(stage 库 DROP-CREATE)。
+
+**V1 面回退补充(v2 计划 §7)**:策略种子可退 A2 语义
+(`anchor_ngram_n=0`,命中语义退化,**不与旧 AND 编译器字节一致**——
+P2-2 已裁不要求)但**不可退 AND 形态**——AND 编译器已被 V1 替换,完全
+恢复须代码级回退(一里程碑一提交,V1 可独立 revert);mgraph v2 键集
+与 v1 读取器不兼容,回退=恢复 v1 SQL+重建 stage 库,不能只翻 active
+标记;整体回退=stage 库 DROP-CREATE,前序 14 stage 文件字节不变。
