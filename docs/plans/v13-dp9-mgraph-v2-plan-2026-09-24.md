@@ -357,6 +357,7 @@ AGENTS.md 纪律:V1(G 组全绿→收尾工件→按路径 add→commit→push);
 | **admission 五问** | DP9 §8 原触发 |
 | **consolidation_interval 自动化** | DP9 §8 原触发 |
 | **关系候选审计表**(全量已问对的持久化) | 仅当产品要求覆盖低于 activation 阈值的已问对(§7 停止条件) |
+| ***contradicts 边可达性缺口(锚池方向不对称)*** | *v2 真实栈重跑实证(2026-09-24,`docs/investigations/v13-dp9-mgraph-v2-demo-rerun-2026-09-24.md` §6):T2↔T6 矛盾对的 contradicts 边未落图——T6 不在 T2 锚的 top-5(候选发现按锚方向不对称 + top-k 截断),canonical 方向门(偏差 #40)遇单向候选池即整对漏问;矛盾语义当前由固化面兜底(contradiction 1.000/keep_separate 正确关门)。触发:锚池对称性(双向并集/共享池)或 k 放宽作为 OQ 进下一张计划(B2 装配或 CJK 路由 supersede)同批裁决 |
 | A1/A3/A4 候选形态 | 调查判死(§2.2);无触发 |
 | walk/round 生命周期清理 | DP9 §8 原触发(下一张计划) |
 | E2 CJK superset 断言族/E4/E9/D12/shadow 面 | **保留原样**(OQ13=D;v0.9 的「平移改写」随 V3 移出作废) |
