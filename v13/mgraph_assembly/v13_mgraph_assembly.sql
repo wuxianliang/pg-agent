@@ -1999,6 +1999,22 @@ GRANT EXECUTE ON FUNCTION
   v13_body_hash(text), v13_transcript_freshness(uuid)
 TO v13_route, v13_resolve, v13_recall;
 GRANT SELECT ON memory_nodes TO v13_route, v13_resolve, v13_recall;
+-- [B2] J9 SET ROLE 实测暴露的既有缺口:assemble 的 jud CTE 读
+-- judgment_calls(DP7 起),envelope 只授了 resolve/recall——补 route
+-- SELECT(§1.7:只补 GRANT,不改函数体)
+GRANT SELECT ON judgment_calls TO v13_route;
+-- [B2] 同源缺口:assemble 尾部调 v13_render_receipt(INVOKER 链),
+-- periphery 只授了 route——补 resolve/recall(§1.7 同缝)
+GRANT EXECUTE ON FUNCTION v13_render_receipt(uuid,jsonb)
+TO v13_resolve, v13_recall;
+-- [B2] recall 直调 assemble 的 adopt CTE 读 effects(DP7 起)——补
+-- SELECT;econ0/rec 面 ro_reserve/recovery_active 同为 INVOKER 链缺口
+-- (manifest 对三角色授了 assemble EXECUTE,链随家族补齐——periphery
+-- 「invoker 链补全」先例同款)
+GRANT SELECT ON effects TO v13_recall;
+GRANT EXECUTE ON FUNCTION
+  v13_ro_reserve(uuid), v13_recovery_active(uuid)
+TO v13_recall;
 -- run_round/next_action 维持仅 resolve;v13_lock_key 不授予 route(只由
 -- DEFINER refresh 以属主调用)——J9 负向断言。
 

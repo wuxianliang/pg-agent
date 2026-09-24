@@ -30,7 +30,7 @@ W2 J4-J7: section injection —
       nodes, needed_judgments without mem_, econ_ver untouched, prefix
       byte freeze re-asserted.
 
-W3 will add J8-J9 (driver & ACL).
+W3 J8-J9: worker driver & ACL (see J4/J5 blocks in main).
 
 Run: uv run python v13/mgraph_assembly/test_mgraph_assembly.py
      (exit 0 = pass)
@@ -41,6 +41,8 @@ import hashlib
 import json
 import re
 import sys
+import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -699,7 +701,424 @@ def main() -> int:
               PREFIX_FREEZE.get(p_.name) == h_,
               (p_.name, PREFIX_FREEZE.get(p_.name), h_))
 
-    # group-end policy restore: mgraph back to seed (read off)
+    # ================= J8 driver timing (W3, §3.7 worker contract) =======
+    def fresh_conn():
+        c = psycopg2.connect(server.get_uri(DB))
+        c.autocommit = False
+        k = c.cursor()
+        k.execute("SET search_path TO public, pg_catalog")
+        k.execute("SELECT set_config('typesafe.provider', 'mock', false)")
+        k.execute("SELECT set_config('typesafe.model', 'jev-mock', false)")
+        return c, k
+
+    def noul_mock(sigs, spec):
+        answers = {}
+        for s in sigs:
+            v = spec.get(s, spec.get("*", 0.5))
+            answers[s] = {"type": "noul", "noul": v}
+        return json.dumps({"model": "jev-mock", "answers": answers,
+                           "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+    ev_spec = {"*::sufficient": 0.95, "*::missing": 0.10,
+               "*::contradiction": 0.10, "*::continue": 0.90, "*": 0.50}
+
+    def worker_walk(sid, spec=ev_spec, elapsed=0, step_cap=None):
+        """§3.7 worker contract: resolve-side loop, one transaction per
+        round, query re-read via v13_mgraph_turn_query each round, step
+        cap enforced worker-side (not in SQL). Returns round results."""
+        wc, wk = fresh_conn()
+        rounds = []
+        steps = 0
+        try:
+            while True:
+                if step_cap is not None and steps >= step_cap:
+                    rounds.append({"capped": True})
+                    break
+                wk.execute("SELECT v13_mgraph_turn_query(%s)", (sid,))
+                q = wk.fetchone()[0]
+                wk.execute("SELECT v13_mgraph_next_action(%s,%s,%s)",
+                           (sid, q, elapsed))
+                act = wk.fetchone()[0]
+                if act["action"] in ("done", "skip"):
+                    rounds.append({"preview": act})
+                    break
+                if act["action"] == "ask":
+                    wk.execute(
+                        "SELECT current_setting('typesafe.provider', true),"
+                        " current_setting('typesafe.model', true)")
+                    pm = wk.fetchone()
+                    if not pm[0] or not pm[1]:
+                        # typesafe machinery DELETES provider/model on spent
+                        # connections (mgraph README #17/#19); the reserved
+                        # prefix forbids re-creating them via set_config on
+                        # the same backend — the worker reconnects instead
+                        wc.rollback()
+                        wc.close()
+                        wc, wk = fresh_conn()
+                        pm = ("mock", "jev-mock")
+                    wk.execute(
+                        "SELECT v13_mgraph_envelope(%s,%s::jsonb,%s::jsonb,"
+                        "%s,%s)",
+                        (sid, json.dumps(act["state"]),
+                         json.dumps(act["questions"]), pm[0], pm[1]))
+                    env = wk.fetchone()[0]
+                    wk.execute("SELECT v13_gap(%s::jsonb)", (json.dumps(env),))
+                    gap = wk.fetchone()[0]
+                    if gap:
+                        wk.execute(
+                            "SELECT set_config('typesafe.mock_response', %s,"
+                            " true)",
+                            (noul_mock([g["signal"] for g in gap], spec),))
+                wk.execute("SELECT v13_mgraph_run_round(%s,%s,%s)",
+                           (sid, q, elapsed))
+                r = wk.fetchone()[0]
+                wc.commit()                      # one transaction per round
+                rounds.append(r)
+                steps += 1
+                if (r.get("status") in ("stopped", "skipped")
+                        or r.get("action") in ("done", "skip")):
+                    break
+        finally:
+            wc.rollback()
+            wc.close()
+        return rounds
+
+    cur.execute("RESET ROLE")
+    bump_policy(cur, "mgraph", dict(mgraph_seed_value, read_enabled=True))
+    conn.commit()
+
+    sid_j8 = new_session(cur, "alpha beacon")
+    cur.execute("SELECT v13_body_hash(v13_mgraph_turn_query(%s))", (sid_j8,))
+    qh_j8 = cur.fetchone()[0]
+    cur.execute(
+        "INSERT INTO transcript_chunks (session_id, seq_from, seq_to, body,"
+        " content_hash) SELECT %s, seq, seq, payload->>'text', v13_body_hash"
+        "(payload->>'text') FROM events WHERE session_id=%s"
+        " AND type='user/message'", (sid_j8, sid_j8))
+    for i in range(5):
+        seed_node(cur, sid_j8, f"alpha beacon j8 {i}")
+    conn.commit()
+
+    # route txn: enqueue + claim BEFORE the walk (§3.7)
+    cur.execute("SELECT v13_goal_hash(%s)", (sid_j8,))
+    gh_j8 = cur.fetchone()[0]
+    append(cur, sid_j8, "turn/route", {"action": "refresh"})
+    cur.execute(
+        "SELECT v13_enqueue_effect(%s,'context_refresh',"
+        "jsonb_build_object('goal_hash',%s))", (sid_j8, gh_j8))
+    eff_j8 = cur.fetchone()[0]
+    cur.execute("SELECT v13_claim('t')")
+    cl_j8 = cur.fetchone()[0]
+    conn.commit()
+
+    rounds_j8 = worker_walk(sid_j8)
+    check("J8: worker loop terminates without the step cap",
+          not any(r.get("capped") for r in rounds_j8)
+          and len(rounds_j8) >= 1)
+    cur.execute("SELECT status, stop_reason FROM memory_walks"
+                " WHERE session_id=%s", (sid_j8,))
+    w_j8 = cur.fetchone()
+    check("J8: walk stopped before refresh", w_j8[0] == "stopped", w_j8)
+
+    cur.execute("SELECT v13_refresh_context(%s,%s,%s)",
+                (eff_j8, cl_j8["attempt_no"], cl_j8["fence"]))
+    out_j8 = cur.fetchone()[0]
+    check("J8: refresh after walk settles accepted", out_j8 == "accepted",
+          out_j8)
+    cur.execute(
+        "SELECT a.inline FROM artifacts a JOIN sessions s "
+        "ON s.context_active_artifact=a.artifact_id WHERE s.session_id=%s",
+        (sid_j8,))
+    m_j8 = cur.fetchone()[0]
+    sec_j8 = mem_section(m_j8)
+    check("J8: memory section in the settled manifest", sec_j8 is not None)
+    cur.execute("SELECT v13_mgraph_section_material(%s)->>'query_hash'",
+                (sid_j8,))
+    check("J8: section query_hash equals body_hash(turn_query)",
+          cur.fetchone()[0] == qh_j8)
+    conn.commit()
+
+    # second worker loop: zero judgment_calls, section hash unchanged
+    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
+                (sid_j8,))
+    jc_0 = cur.fetchone()[0]
+    worker_walk(sid_j8)
+    cur.execute("SELECT count(*) FROM judgment_calls WHERE session_id=%s",
+                (sid_j8,))
+    jc_1 = cur.fetchone()[0]
+    check("J8: second loop adds zero judgment calls (cached + done)",
+          jc_1 == jc_0, (jc_0, jc_1))
+    cur.execute("SELECT v13_assemble_manifest(%s)", (sid_j8,))
+    m2_j8 = cur.fetchone()[0]
+    sec2_j8 = mem_section(m2_j8)
+    check("J8: memory section hash unchanged after second loop",
+          sec2_j8 is not None
+          and sec2_j8["content_hash"] == sec_j8["content_hash"])
+    conn.commit()
+
+    # walk holds no session row lock: append_event during a blocked round <5s
+    sid_lock = new_session(cur)
+    conn.commit()
+    cur.execute(
+        "SELECT v13_mgraph_stop_questions("
+        " v13_mgraph_walk_id(%s, v13_body_hash(btrim(%s)),"
+        "  (v13_mgraph_progress(%s)->>'generation')::bigint,"
+        "  (SELECT version FROM v13_policies WHERE name='mgraph' AND active)),"
+        " 1)",
+        (sid_lock, "lock probe", sid_lock))
+    stop_qs_j8 = cur.fetchone()[0]
+    mock_lock = noul_mock([q["signal"] for q in stop_qs_j8], {"*": 0.2})
+    lc, lk = fresh_conn()
+    lk.execute("SELECT pg_advisory_lock(v13_lock_key(%s,'mgraph-build'))",
+               (sid_lock,))
+    box_j8 = {}
+
+    def _j8_round():
+        c_b, k_b = fresh_conn()
+        try:
+            k_b.execute(
+                "SELECT set_config('typesafe.mock_response', %s, true)",
+                (mock_lock,))
+            k_b.execute("SELECT v13_mgraph_run_round(%s,%s,0)",
+                        (sid_lock, "lock probe"))
+            box_j8["res"] = k_b.fetchone()[0]
+            c_b.commit()
+        except Exception as exc:
+            box_j8["err"] = repr(exc)
+            c_b.rollback()
+        finally:
+            c_b.close()
+
+    t_j8 = threading.Thread(target=_j8_round)
+    t_j8.start()
+    time.sleep(0.6)
+    ac, ak = fresh_conn()
+    t0_j8 = time.monotonic()
+    ak.execute("SELECT v13_append_event(%s,%s,'user/message',%s::jsonb)",
+               (sid_lock, u(), json.dumps({"text": "j8 probe"})))
+    dt_j8 = time.monotonic() - t0_j8
+    ac.commit()
+    ac.close()
+    check("J8: append_event while run_round waits on the advisory lock < 5s",
+          dt_j8 < 5.0 and t_j8.is_alive(), (dt_j8, t_j8.is_alive()))
+    lk.execute("SELECT pg_advisory_unlock(v13_lock_key(%s,'mgraph-build'))",
+               (sid_lock,))
+    lc.commit()
+    lc.close()
+    t_j8.join(timeout=20)
+    check("J8: blocked run_round finished and did not raise",
+          not t_j8.is_alive() and "res" in box_j8 and "err" not in box_j8,
+          box_j8)
+    conn.commit()
+
+    # spend cap 0: loop skips, settle still accepted, session not failed
+    cur.execute("SELECT version FROM v13_policies "
+                "WHERE name='judge_spend_gate' AND active")
+    spend_seed_ver = cur.fetchone()[0]
+    bump_policy(cur, "judge_spend_gate",
+                {"session_asks_cap": 0, "day_asks_cap": 8192,
+                 "scope": "fast_path"})
+    conn.commit()
+    sid_sp = new_session(cur, "alpha beacon spend")
+    cur.execute(
+        "INSERT INTO transcript_chunks (session_id, seq_from, seq_to, body,"
+        " content_hash) SELECT %s, seq, seq, payload->>'text',"
+        " v13_body_hash(payload->>'text') FROM events WHERE session_id=%s"
+        " AND type='user/message'", (sid_sp, sid_sp))
+    seed_node(cur, sid_sp, "alpha beacon spend node")
+    conn.commit()
+    rounds_sp = worker_walk(sid_sp)
+    check("J8: spend cap 0 -> loop stops on spend with zero asks",
+          any(r.get("stop_reason") == "spend"
+              or r.get("preview", {}).get("skipped") == "spend"
+              for r in rounds_sp)
+          and all(r.get("asks", 0) == 0 for r in rounds_sp), rounds_sp)
+    restore_policy(cur, "judge_spend_gate", spend_seed_ver)
+    conn.commit()
+    cur.execute("SELECT v13_assemble_manifest(%s)", (sid_sp,))
+    m_sp0 = cur.fetchone()[0]
+    out_sp, m_sp, _eff_sp = refresh_n(cur, sid_sp,
+                                      m_sp0["required_revision"]["goal"])
+    check("J8: spend-skip settle returns accepted", out_sp == "accepted",
+          out_sp)
+    check("J8: no memory section after spend skip",
+          mem_section(m_sp) is None)
+    cur.execute("SELECT status FROM sessions WHERE session_id=%s", (sid_sp,))
+    check("J8: session not failed by the memory fault",
+          cur.fetchone()[0] != "failed")
+    conn.commit()
+
+    # closing assertions: fresh, dec includes mem rows, stable re-assemble
+    cur.execute("SELECT v13_context_fresh(%s)", (sid_j8,))
+    check("J8: fresh after settle", cur.fetchone()[0] is True)
+    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s"
+                " AND answer IS NOT NULL", (sid_j8,))
+    dec_all = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM decisions WHERE session_id=%s"
+                " AND signal ~ '^mem_' AND answer IS NOT NULL", (sid_j8,))
+    dec_mem = cur.fetchone()[0]
+    check("J8: required_revision.dec includes the walk's mem rows",
+          dec_mem > 0 and m_j8["required_revision"]["dec"] == dec_all,
+          (dec_mem, dec_all, m_j8["required_revision"]["dec"]))
+    check("J8: re-assemble keeps mgraph_ver and section hash",
+          m2_j8["required_revision"]["mgraph_ver"]
+          == m_j8["required_revision"]["mgraph_ver"]
+          and sec2_j8["content_hash"] == sec_j8["content_hash"])
+
+    # OQ-E non-gating observation (A.5 trigger evidence; never a check)
+    obs = {}
+    for tag, with_edge in (("no_edge", False), ("with_edge", True)):
+        sid_o = new_session(cur, "alpha beacon")
+        cur.execute(
+            "INSERT INTO transcript_chunks (session_id, seq_from, seq_to,"
+            " body, content_hash) SELECT %s, seq, seq, payload->>'text',"
+            " v13_body_hash(payload->>'text') FROM events"
+            " WHERE session_id=%s AND type='user/message'", (sid_o, sid_o))
+        hs_o = [seed_node(cur, sid_o, f"alpha beacon obs {tag} {i}")
+                for i in range(5)]
+        if with_edge:
+            cur.execute(
+                "INSERT INTO memory_links (session_id, src_hash, dst_hash,"
+                " rel, origin, decision_id, structural, policy_version)"
+                " VALUES (%s, %s, %s, 'contradicts', 'proximity', NULL,"
+                " 0.9, 2)", (sid_o, min(hs_o[0], hs_o[1]),
+                              max(hs_o[0], hs_o[1])))
+        conn.commit()
+        worker_walk(sid_o)
+        cur.execute("SELECT edges_used, depth FROM memory_walks"
+                    " WHERE session_id=%s AND status='stopped'", (sid_o,))
+        row_o = cur.fetchone()
+        cur.execute("SELECT v13_mgraph_section_material(%s)", (sid_o,))
+        mat_o = cur.fetchone()[0]
+        obs[tag] = {"edges_used": row_o[0] if row_o else None,
+                    "depth": row_o[1] if row_o else None,
+                    "section": mat_o is not None}
+        conn.commit()
+    print(f"[obs] J8 OQ-E no_edge={obs['no_edge']} with_edge={obs['with_edge']}"
+          " (W4 only if section evidence differs between the two)")
+
+    # ================= J9 permissions & locks (SET ROLE, P0-6) ==========
+    sid_j9 = new_session(cur, "alpha beacon")
+    cur.execute(
+        "INSERT INTO transcript_chunks (session_id, seq_from, seq_to,"
+        " body, content_hash) SELECT %s, seq, seq, payload->>'text',"
+        " v13_body_hash(payload->>'text') FROM events WHERE session_id=%s"
+        " AND type='user/message'", (sid_j9, sid_j9))
+    for i in range(3):
+        seed_node(cur, sid_j9, f"alpha beacon j9 {i}")
+    conn.commit()
+    worker_walk(sid_j9)
+    cur.execute("SELECT status FROM memory_walks WHERE session_id=%s",
+                (sid_j9,))
+    check("J9: fixture walk stopped", cur.fetchone()[0] == "stopped")
+    conn.commit()
+
+    # route: assemble + claim + refresh (SET ROLE positive path)
+    cur.execute("SET ROLE v13_route")
+    cur.execute("SELECT v13_assemble_manifest(%s)", (sid_j9,))
+    m_route = cur.fetchone()[0]
+    check("J9: route can assemble (evidence EXECUTE present)",
+          mem_section(m_route) is not None)
+    cur.execute("SELECT v13_mgraph_section_material(%s) IS NOT NULL",
+                (sid_j9,))
+    check("J9: route can read section material", cur.fetchone()[0] is True)
+    cur.execute("SELECT v13_enqueue_effect(%s,'context_refresh',"
+                "jsonb_build_object('goal_hash',%s))",
+                (sid_j9, m_route["required_revision"]["goal"]))
+    eff_j9 = cur.fetchone()[0]
+    cur.execute("SELECT v13_claim('t')")
+    cl_j9 = cur.fetchone()[0]
+    cur.execute("SELECT v13_refresh_context(%s,%s,%s)",
+                (eff_j9, cl_j9["attempt_no"], cl_j9["fence"]))
+    check("J9: route settles refresh (SET ROLE positive path)",
+          cur.fetchone()[0] == "accepted")
+    conn.commit()
+    cur.execute("RESET ROLE")
+
+    # resolve: run_round + assemble + material
+    cur.execute("SET ROLE v13_resolve")
+    cur.execute("SELECT v13_mgraph_run_round(%s,%s,0)",
+                (sid_lock, "lock probe"))
+    rr_j9 = cur.fetchone()[0]
+    check("J9: resolve can run_round", "action" in rr_j9, rr_j9)
+    cur.execute("SELECT v13_assemble_manifest(%s)", (sid_j9,))
+    cur.fetchone()
+    check("J9: resolve can assemble", True)
+    cur.execute("SELECT v13_mgraph_section_material(%s) IS NOT NULL",
+                (sid_j9,))
+    check("J9: resolve can read section material",
+          cur.fetchone()[0] is True)
+    conn.commit()
+    cur.execute("RESET ROLE")
+
+    cur.execute("SET ROLE v13_recall")
+    cur.execute("SELECT v13_assemble_manifest(%s)", (sid_j9,))
+    cur.fetchone()
+    check("J9: recall can assemble", True)
+    cur.execute("SELECT v13_mgraph_section_material(%s) IS NOT NULL",
+                (sid_j9,))
+    check("J9: recall can read section material",
+          cur.fetchone()[0] is True)
+    conn.commit()
+    cur.execute("RESET ROLE")
+    conn.commit()
+
+    # negatives + prose shape + source scan
+    cur.execute("SELECT has_function_privilege('v13_route',"
+                " 'v13_mgraph_run_round(uuid,text,int)', 'EXECUTE'),"
+                " has_function_privilege('v13_recall',"
+                " 'v13_refresh_context(uuid,int,bigint)', 'EXECUTE')")
+    check("J9: route cannot run_round; recall cannot refresh",
+          cur.fetchone() == (False, False))
+    cur.execute(
+        "SELECT proname, prosecdef FROM pg_proc WHERE proname IN ("
+        "'v13_mgraph_asm_ver','v13_mgraph_turn_query','v13_mgraph_provenance',"
+        "'v13_mgraph_section_plan','v13_mgraph_section_material',"
+        "'v13_mgraph_section_status') ORDER BY proname")
+    prose_j9 = cur.fetchall()
+    check("J9: six new functions exist and none is SECURITY DEFINER",
+          len(prose_j9) == 6 and not any(r[1] for r in prose_j9), prose_j9)
+
+    src_lines_j9 = SQL_FILE.read_text(encoding="utf-8").split("\n")
+
+    def fn_body(name):
+        start = None
+        for i, l_ in enumerate(src_lines_j9):
+            if (l_.startswith("CREATE FUNCTION " + name + "(")
+                    or l_.startswith("CREATE OR REPLACE FUNCTION " + name
+                                      + "(")):
+                start = i
+                break
+        assert start is not None, name
+        dq = False
+        for j in range(start, len(src_lines_j9)):
+            l_ = src_lines_j9[j]
+            if not dq:
+                if "$$" in l_ and len(l_.split("$$")) == 2:
+                    dq = True
+            elif "$$;" in l_:
+                return "\n".join(src_lines_j9[start:j + 1])
+        raise AssertionError(name)
+
+    for nm in ("v13_mgraph_asm_ver", "v13_mgraph_turn_query",
+               "v13_mgraph_provenance", "v13_mgraph_section_plan",
+               "v13_mgraph_section_material", "v13_mgraph_section_status"):
+        body_j9 = fn_body(nm)
+        check(f"J9: {nm} body has no FOR UPDATE / append_event / ask",
+              "FOR UPDATE" not in body_j9
+              and "v13_append_event" not in body_j9
+              and "typesafe_ask" not in body_j9)
+    refresh_body_j9 = fn_body("v13_refresh_context")
+    check("J9: refresh copy takes the mgraph-build advisory before assemble",
+          "v13_lock_key" in refresh_body_j9
+          and "'mgraph-build'" in refresh_body_j9
+          and refresh_body_j9.index(
+              "pg_advisory_xact_lock(public.v13_lock_key(v_sid, "
+              "'mgraph-build'))")
+          < refresh_body_j9.index(
+              "v_manifest := public.v13_assemble_manifest(v_sid, NULL);"))
+    conn.commit()
+
     restore_policy(cur, "mgraph", mgraph_seed_ver)
     conn.commit()
     cur.execute("SELECT version, (value->>'read_enabled')::boolean"
@@ -710,7 +1129,7 @@ def main() -> int:
           (ver_end, read_end))
 
     conn.close()
-    print("ALL J GREEN (W1: J1-J3; W2: J4-J7)")
+    print("ALL J GREEN (W1: J1-J3; W2: J4-J7; W3: J8-J9)")
     return 0
 
 
