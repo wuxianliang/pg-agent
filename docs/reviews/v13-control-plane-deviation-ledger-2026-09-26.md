@@ -31,3 +31,20 @@
 | # | 条目 | 理由 |
 |---|---|---|
 | X1 | `v13/mgraph_assembly/test_mgraph_assembly.py` 的 J3：`len(SQL_LOAD_ORDER) == 16` 改为 `>= 16`，文案改为 “at least 16 files”。仅此一行。`SQL_LOAD_ORDER[:15]` 字节冻结切片不动 | 控制器 2026-09-26 裁决。该断言是注册完整性快照，字面钉死 16 与「新 stage 只追加注册」冲突。`>= 16` 保底语义不变，前缀加载语义零改动。本轮唯一被允许触碰的 stage 1–16 文件 |
+
+## P2 实现差
+
+本期相对 R3 §1 附、§3、§8（含 §8.8）无未授权实现差。下列是安装期事实，不是第三种写法。
+
+| # | 事实 | 处置 |
+|---|---|---|
+| F9 | 属主角色名未冻结 | 自定 `v13_spawn_owner`（NOLOGIN NOSUPERUSER）。R3c 全文允许实施自定名字 |
+| F10 | `repair`/`replan` 的 nudge fingerprint 用 seq 数组文本，不哈希；`children_terminal` 用 sha256 | 按 §8.4 字面，不把 grokBuild「三指纹都哈希」写进来 |
+| F11 | 计划 §4.2 仍写 max_turns / reserved 聚合 | 后裁优先：准入按 §8.1 席位三键，不加 `sessions.reserved` |
+
+## P2 计划文档 vs R3*
+
+| # | 冲突 | 采用 |
+|---|---|---|
+| C5 | 计划 §4.2：准入 = 非终态子孙 max_turns 之和 + requested ≤ 剩余 | §8.1：占用 + requested ≤ max_nonterminal，另加 depth / fanout |
+| C6 | §8.2 单数 tool_call_id、tasks_hash、一条 child-created | §8.8：逐子回执、task 走 args.task、返回闭集无 tasks_hash |

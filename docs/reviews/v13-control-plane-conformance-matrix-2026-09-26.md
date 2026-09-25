@@ -1,6 +1,6 @@
 # v13 控制面覆盖矩阵（2026-09-26）
 
-对照 R3 §2 / §6.5 / §7 与计划 §3.3。状态只记实跑。P2–P4 不在本期。
+对照 R3 §2 / §6.5 / §7 / §8（含 §8.8）与计划 §3.3 / §4.3。状态只记实跑。P3–P4 不在本期。
 
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
@@ -23,3 +23,16 @@
 | 17 | pg_jsonschema 0.3.4 装上且 draft-07 date-time 探针在安装事务内 | ✅ | `v13/control/v13_control.sql` 安装 DO + 测试首断言 | 无 |
 | 18 | stage 1–15 回归 | ✅ | schema / resolve / loop / twophase / envelope / manifest / chunks / recall / characterize / filter / memory / economy / summary / periphery / mgraph，退出码均 0 | 无 |
 | 19 | stage 16 `test_mgraph_assembly.py` | ✅ | J3 改为 `len(SQL_LOAD_ORDER) >= 16`（台账 X1）。2026-09-26 重跑退出码 0 | 无 |
+| 20 | R3 §8.6 + §8.8 G-spawn-unique-writer | ✅ | `v13/spawn/test_spawn.py` | 无。2026-09-26 退出码 0 |
+| 21 | G-open-session-shape | ✅ | 同上 | 无 |
+| 22 | G-sql-write-closed | ✅ | 同上 | 无 |
+| 23 | G-spawn-fanout（N 或 0；坏形状整批拒、不烧 claim） | ✅ | 同上 | 无。回执形状按 §8.8，不用 §8.2 的 tasks_hash |
+| 24 | G-ctx1-spawn（xact 咨询锁；无外部 IO） | ✅ | 同上 | 无 |
+| 25 | 双根互不占席位；墙上子仍占席位 | ✅ | 同上 | 无 |
+| 26 | 并发 sibling 无超售；spawn 不改父 turn_no | ✅ | 同上 | 无 |
+| 27 | children_terminal wake 正负例；缺失/重复 RAISE | ✅ | 同上 | 无 |
+| 28 | recover/nudge 幂等；源码含 SKIP LOCKED | ✅ | 同上 | 无 |
+| 29 | 收据 children 两态；children_open 拦 cancel | ✅ | 同上 | 无 |
+| 30 | v_goal_tree 列序 / 环 / 深度 | ✅ | 同上 | 无 |
+| 31 | stage 1–17 回归 | ✅ | schema…control 全部 `test_*.py` 退出码 0。twophase 在去掉 spawn SQL 的 `set_config` 后重跑退出码 0 | 无 |
+| 32 | stage 18 `test_spawn.py` | ✅ | 2026-09-26 `uv run python v13/spawn/test_spawn.py` 退出码 0 | 无 |
