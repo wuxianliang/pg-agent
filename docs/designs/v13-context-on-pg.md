@@ -183,7 +183,8 @@ Feedback)多数映射到既有表(meta、tools、sessions、events、artifacts)�
 ```sql
 latches(session_id, name, value, fired_at)     -- INSERT once;UPDATE/DELETE 被触发器拒;
                                                -- 参与前缀身份哈希(§5.6;版本化
-                                               -- latch 名单内,worktree 默认排除)
+                                               -- latch 名单内,worktree 默认排除;
+                                               -- stage 19: v13_latch_identity_excluded)
 emergent(session_id, kind, content_hash, payload, expires_turn, consumed_at)
                                                -- UNIQUE(content_hash) 写时去重;
                                                -- CHECK 行数 ≤ cap(fail-closed 不静默丢);
@@ -448,6 +449,14 @@ key 取锁,顺序一致无环)。合同细则见 ch06/ch14 与 DP1 A17 修订。
 closeout 收据顶层键：`schema_version`、`origin_user_seq`、`spent`（`turn_no` / `cycle_no` / `max_cycles` / `material_count`）、`produced_hashes`、`children`（P1 恒 `[]`）、`unconsumed` 五数组、`state_hash`、`turn_end_reason`。`state_hash` 是 jsonb 数组 `::text` 的 sha256；印章三 type 不进第四段。活体 ⑤ 不写 `turn_no`，closeout 禁止对 `turn_no` 赋值，只抄已提交值。
 
 P1 边界：`children_terminal` 在 schema 通过后仍 RAISE `children_terminal requires stage 18`；未满足的 evidence/quota wait 保持 `waiting`，唤醒者是驱动重调；fold cap、`closeout/inbox_residual`、steer 正文、`quota/spent` 不在 stage 17。
+
+**(vii) P3 控制面机器形状（2026-09-26 R3c §8.7 / 全文 F，stage 19）**
+
+`v13_cancel` 同事务扇出：子树全部 `session_id` 升序锁完再写；应用序为相对 depth 升、同层 `session_id` 升。非终态各一条既有 `cancel/requested`（`scope` 仍 `session`）。终态零事件。不改 `sessions.status`，不动 `unknown`。
+
+`interruptible` 是 `v13_interruptible(name)` 字面量，缺省 `unsupported`。不新增列、不进 `param_spec`、不进策略行。`v13_complete` 的 `cancelled` 出口只在未消费 cancel 且（`best_effort` 或 `required`+`kind=llm`）时打开。`kind=tool` 且 `required` 禁止 `cancelled`，必须 `complete(unknown)` 走 P1 抬墙。第四务是 worker 在 `v13_renew_lease` 成功后轮询 `v13_cancel_pending`。无 LISTEN，无新队列，SQL 不出现 `pg_terminate_backend`。
+
+worktree 是 `kind=tool` 三目录行 `worktree_prepare|worktree_merge|worktree_release`。latch 名 `worktree`，值闭集 `{schema_version:1, binding_artifact_id, state:prepared|released}`。`latches` 仍 INSERT-once，生产路径只在 prepare 的下一格 advance 写 `state=prepared`。artifact `kind=worktree_binding`。`v13_requires_worktree` 仅 merge/release。claim 跳过无 latch 的这两行，返回空，不 RAISE。`v13_latch_identity_excluded` 本期只有 `worktree`；`v13_latch_digest` 排除后，无该 latch 的 digest 逐字节不变。非 fresh fork 复制 latch 时跳过 `worktree`。
 
 ## 7. 检索分层(T0/T1/T2 重排)
 

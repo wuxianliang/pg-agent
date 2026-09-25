@@ -48,3 +48,22 @@
 |---|---|---|
 | C5 | 计划 §4.2：准入 = 非终态子孙 max_turns 之和 + requested ≤ 剩余 | §8.1：占用 + requested ≤ max_nonterminal，另加 depth / fanout |
 | C6 | §8.2 单数 tool_call_id、tasks_hash、一条 child-created | §8.8：逐子回执、task 走 args.task、返回闭集无 tasks_hash |
+
+## P3 实现差
+
+本期相对 R3c §8.7 / 全文 F 无未授权实现差。下列是安装期事实与已写明收窄，不是第三种写法。
+
+| # | 事实 | 处置 |
+|---|---|---|
+| F12 | `artifacts.kind` 无 CHECK | 直接用 `worktree_binding`。不 ALTER，不做 latch-only 降级 |
+| F13 | latches INSERT-once，不能把 `state` 从 prepared 改成 released | 值闭集仍接受两态；生产路径只在 prepare 的下一格 advance 写 `prepared`。不 UPDATE |
+| F14 | 未消费 cancel 缺失时 `complete(cancelled)` 的 RAISE 文案未冻结 | 用 `v13: cancel not pending`。零写。不是新出口 |
+| F15 | codex review 把「tool+required 调 cancelled → RAISE 零写」读成未抬墙 | 拒绝。已裁就是该 RAISE；抬墙只走 `complete(unknown)`。不改裁 |
+
+## P3 计划 / ch08 vs R3c（后裁优先）
+
+| # | 冲突 | 采用 |
+|---|---|---|
+| C7 | 计划 §5.2 / ch08：`allowlist.interruptible` 键 | R3c：`v13_interruptible` 字面量，禁列 / param_spec / 策略行 |
+| C8 | ch12：加锁与写入同一全序；「无跨会话锁序」 | R3c F：锁序全部 `session_id` 升序锁完再写；应用序 depth 升、同层 id 升。这是锁细化，不是改扇出语义 |
+| C9 | 计划 §5.3「无 binding 拒 claim」可读成 RAISE | R3c：claim 跳过 `requires_worktree` 且无 latch 的行，返回空，不 RAISE |

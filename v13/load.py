@@ -33,6 +33,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "mgraph_assembly" / "v13_mgraph_assembly.sql",
     V13_ROOT / "control" / "v13_control.sql",
     V13_ROOT / "spawn" / "v13_spawn.sql",
+    V13_ROOT / "fanout" / "v13_fanout.sql",
 ]
 
 STAGE_THROUGH = {
@@ -54,6 +55,7 @@ STAGE_THROUGH = {
     "mgraph_assembly": 16,
     "control": 17,
     "spawn": 18,
+    "fanout": 19,
 }
 
 

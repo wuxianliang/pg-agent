@@ -1,6 +1,6 @@
 # v13 控制面覆盖矩阵（2026-09-26）
 
-对照 R3 §2 / §6.5 / §7 / §8（含 §8.8）与计划 §3.3 / §4.3。状态只记实跑。P3–P4 不在本期。
+对照 R3 §2 / §6.5 / §7 / §8（含 §8.7、§8.8）与计划 §3.3 / §4.3 / §5.3。状态只记实跑。P4 不在本期。
 
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
@@ -36,3 +36,10 @@
 | 30 | v_goal_tree 列序 / 环 / 深度 | ✅ | 同上 | 无 |
 | 31 | stage 1–17 回归 | ✅ | schema…control 全部 `test_*.py` 退出码 0。twophase 在去掉 spawn SQL 的 `set_config` 后重跑退出码 0 | 无 |
 | 32 | stage 18 `test_spawn.py` | ✅ | 2026-09-26 `uv run python v13/spawn/test_spawn.py` 退出码 0 | 无 |
+| 33 | R3c F cancel 扇出序 / 锁序 / 终态零事件 | ✅ | `v13/fanout/test_fanout.py` | 无。锁序是对祖先优先的细化，不是改扇出语义 |
+| 34 | G6 required→cancelled；unsupported 粘性吸收；mutating→unknown 且 cancel 不改它 | ✅ | 同上 | 无。ch08 双语言/op_seq 不在本期重跑，不发明新条 |
+| 35 | interruptible 三档负例；complete cancelled 条件矩阵 | ✅ | 同上 | 无 |
+| 36 | worktree 三目录 + latch + binding + requires_worktree + claim 跳过 + digest 排除 + fork 不继承 | ✅ | 同上 | 无。`artifacts.kind` 无 CHECK，直接用 `worktree_binding` |
+| 37 | cancel_pending 轮询；SQL 无 `pg_terminate_backend` | ✅ | 同上 | 无 |
+| 38 | stage 19 `test_fanout.py` | ✅ | 2026-09-26 `uv run python v13/fanout/test_fanout.py` 退出码 0 | 无 |
+| 39 | stage 1–18 回归 | ✅ | schema…spawn 全部 `test_*.py` 退出码 0 | 无 |
