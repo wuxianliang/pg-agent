@@ -67,3 +67,23 @@
 | C7 | 计划 §5.2 / ch08：`allowlist.interruptible` 键 | R3c：`v13_interruptible` 字面量，禁列 / param_spec / 策略行 |
 | C8 | ch12：加锁与写入同一全序；「无跨会话锁序」 | R3c F：锁序全部 `session_id` 升序锁完再写；应用序 depth 升、同层 id 升。这是锁细化，不是改扇出语义 |
 | C9 | 计划 §5.3「无 binding 拒 claim」可读成 RAISE | R3c：claim 跳过 `requires_worktree` 且无 latch 的行，返回空，不 RAISE |
+
+## P4 实现差
+
+本期相对 R3 §8.7 无未授权实现差。下列是安装期事实与已写明收窄，不是第三种写法。
+
+| # | 事实 | 处置 |
+|---|---|---|
+| F16 | 审查意见把「无带」读成「信号零行不算超限」 | 拒绝。§8.7 是无带或命中 reject → human。默认 v1 无 cap 带，有 repair/replan 事件即入队 `{reason}` human。不改 v1 带 |
+| F17 | 空 fold 若无 user 锚，closeout 因 `origin_user_seq` 不能封账 | 空 fold = 没有非空白 `user/message` 文本。测试用空白文本，closeout `triage_reject`。不改 closeout 逃生名单 |
+| F18 | 活体 `v13_needed_judgments` 的 `v13_is_spawn_tool(name, kind)` 在换体重编译时 `kind` 与 OUT 参数歧义 | 只在 stage 20 换体里改成 `tools.kind`。不改 stage 18 文件 |
+
+## P4 计划 / ch04 / R2 vs R3 §8.7（后裁优先）
+
+| # | 冲突 | 采用 |
+|---|---|---|
+| C10 | 计划 §6.3：`thresholds.action` 仍六值 | §8.7：列保持 `pass|reject`。六值是路由出口。gate 断言 CHECK，不 ALTER |
+| C11 | R2 §3.2 `min_child_max_turns` / `max_spawn_depth` | H1 席位：`remaining_turns < 1` 禁 decompose；深度只读 `spawn_budget.max_depth`。不加列、不加 v1 带 |
+| C12 | ch04 / R2 §3.4 再次 review 种子含子 direct | 已探索的 review 格走 human（R2 §3.3 + §8.7 一次 explore）。子会话无 override 仍是规则 6 direct，不进该格 |
+| C13 | ch01：证据本体是 artifact，`explore/completed` 可选 | §8.7：事件是标记。本期不新增 artifact kind |
+| C14 | R2 §1.3 带满 → human 或 reject | §8.7：human request，不 session reject，不写 `interaction_kind` |

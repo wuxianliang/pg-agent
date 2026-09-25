@@ -458,6 +458,10 @@ P1 边界：`children_terminal` 在 schema 通过后仍 RAISE `children_terminal
 
 worktree 是 `kind=tool` 三目录行 `worktree_prepare|worktree_merge|worktree_release`。latch 名 `worktree`，值闭集 `{schema_version:1, binding_artifact_id, state:prepared|released}`。`latches` 仍 INSERT-once，生产路径只在 prepare 的下一格 advance 写 `state=prepared`。artifact `kind=worktree_binding`。`v13_requires_worktree` 仅 merge/release。claim 跳过无 latch 的这两行，返回空，不 RAISE。`v13_latch_identity_excluded` 本期只有 `worktree`；`v13_latch_digest` 排除后，无该 latch 的 digest 逐字节不变。非 fresh fork 复制 latch 时跳过 `worktree`。
 
+**(viii) P4 triage（2026-09-26 R3 §8.7，stage 20）**
+
+阶梯仍是 R2 §3.2。`v13_triage_decide` 是纯函数，返回 `direct|decompose|human|reject|none`。`thresholds.action` 保持 `pass|reject`，不 ALTER。`goal/override` 唯一写者是 `v13_submit_override`（只授 route）。`duty_cycle` 是策略行 `triage`。0 写一次 `triage/hold` 并返回 `waiting`。fold cap 读 `harness.repair_count` / `harness.replan_count`，超限或无带入队 `{reason:'repair_cap'|'replan_cap'}` human，不 session reject。explore 是同会话 `llm`，`route.reason='explore'`，本 user turn 一次，不占 depth/席位，不 spawn。标记事件 `explore/completed`。`material_cap` 仍不生产。
+
 ## 7. 检索分层(T0/T1/T2 重排)
 
 | 层 | 形态 | 触发 |

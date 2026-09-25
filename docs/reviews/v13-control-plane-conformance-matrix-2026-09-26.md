@@ -1,6 +1,6 @@
 # v13 控制面覆盖矩阵（2026-09-26）
 
-对照 R3 §2 / §6.5 / §7 / §8（含 §8.7、§8.8）与计划 §3.3 / §4.3 / §5.3。状态只记实跑。P4 不在本期。
+对照 R3 §2 / §6.5 / §7 / §8（含 §8.7、§8.8）与计划 §3.3 / §4.3 / §5.3 / §6.3。状态只记实跑。
 
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
@@ -43,3 +43,10 @@
 | 37 | cancel_pending 轮询；SQL 无 `pg_terminate_backend` | ✅ | 同上 | 无 |
 | 38 | stage 19 `test_fanout.py` | ✅ | 2026-09-26 `uv run python v13/fanout/test_fanout.py` 退出码 0 | 无 |
 | 39 | stage 1–18 回归 | ✅ | schema…spawn 全部 `test_*.py` 退出码 0 | 无 |
+| 40 | G-triage-action-closed | ✅ | `v13/triage/test_triage.py` | 无。CHECK 仍只有 pass 与 reject。计划「六值」记台账 C10，未 ALTER |
+| 41 | G-triage-explore-depth | ✅ | 同上 | 无。explore 零子；explore 的 tool/call 不 spawn |
+| 42 | G-triage-evidence-hash | ✅ | 同上 | 无。`explore_evidence_hash` 变 → `request_hash` 变 |
+| 43 | G-triage-10a-null-tree | ✅ | 同上 | 无。null 树不点火规则 5–6；根上无 Jev 证据不是 SQL-direct |
+| 44 | override 打穿预算 → 零 child + human；已探索仍 review → human；fold cap `{reason}` | ✅ | 同上 | 无。`triage_reject` 不进 closeout 逃生名单 |
+| 45 | stage 20 `test_triage.py` | ✅ | 2026-09-26 `uv run python v13/triage/test_triage.py` 退出码 0 | 无 |
+| 46 | stage 1–19 回归 | ✅ | schema…fanout 全部 `test_*.py` 退出码 0。同轮 stage 20 退出码 0 | 无 |
