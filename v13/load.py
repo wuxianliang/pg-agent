@@ -31,6 +31,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "periphery" / "v13_periphery.sql",
     V13_ROOT / "mgraph" / "v13_mgraph.sql",
     V13_ROOT / "mgraph_assembly" / "v13_mgraph_assembly.sql",
+    V13_ROOT / "control" / "v13_control.sql",
 ]
 
 STAGE_THROUGH = {
@@ -50,6 +51,7 @@ STAGE_THROUGH = {
     "periphery": 14,
     "mgraph": 15,
     "mgraph_assembly": 16,
+    "control": 17,
 }
 
 

@@ -372,7 +372,7 @@ def main() -> int:
           < src_j3.index("v_manifest := public.v13_assemble_manifest(v_sid, "
                          "NULL);"))
     # first 15 SQL files byte-frozen vs plan start
-    check("J3: load order has 16 files", len(SQL_LOAD_ORDER) == 16)
+    check("J3: load order has at least 16 files", len(SQL_LOAD_ORDER) >= 16)
     for p in SQL_LOAD_ORDER[:15]:
         h = hashlib.sha256(p.read_bytes()).hexdigest()[:16]
         check(f"J3: prefix byte freeze {p.name}",

@@ -439,6 +439,16 @@ key 取锁,顺序一致无环)。合同细则见 ch06/ch14 与 DP1 A17 修订。
 先加 `candidate_source_count`,版本化 module_key 存在后才加 `candidate_module_count`)。
 细则见 ch01/ch04/ch05/ch13 与 A20;`thresholds.action` 闭集不变(§3.1)。
 
+**(vi) P1 控制面机器形状（2026-09-26 R3/R3a/R3b，stage 17）**
+
+生产者是目录行 `harness_turn`（`kind=tool`）。request 六键闭集：`tool`、`params`、`handler`、`tools_revision`、`logical_turn_id`、`continuation_index`。唯一盖章点是 `v13_advance`（已持 session 锁、`v13_enqueue_effect` 之前）。续传不经 `v13_route`：advance 在锁内直接入队下一枚 harness，并先写 `turn/route`，payload 恰 `{action:tool, reason:harness_continuation, tool:harness_turn, params:{}}`。
+
+`harness_result/v1` 十键闭集住策略行 `harness_result_schema`（draft-07，`pg_jsonschema`）。`wake` 四变体严格 one-of。`v13_wake_is_satisfied_v1` 为 VOLATILE（`not_before` 用 `clock_timestamp()`，不用 `now()`）。三注解键默认（R1/设计无字面类型）：`harness_session_ref` 1..256、字符集 `[A-Za-z0-9_./:-]+`；`resume_token` 1..512；`partial` boolean。三者可缺席、禁 null，与 `delivery_kind`、`content_hash` 一并盲读。
+
+closeout 收据顶层键：`schema_version`、`origin_user_seq`、`spent`（`turn_no` / `cycle_no` / `max_cycles` / `material_count`）、`produced_hashes`、`children`（P1 恒 `[]`）、`unconsumed` 五数组、`state_hash`、`turn_end_reason`。`state_hash` 是 jsonb 数组 `::text` 的 sha256；印章三 type 不进第四段。活体 ⑤ 不写 `turn_no`，closeout 禁止对 `turn_no` 赋值，只抄已提交值。
+
+P1 边界：`children_terminal` 在 schema 通过后仍 RAISE `children_terminal requires stage 18`；未满足的 evidence/quota wait 保持 `waiting`，唤醒者是驱动重调；fold cap、`closeout/inbox_residual`、steer 正文、`quota/spent` 不在 stage 17。
+
 ## 7. 检索分层(T0/T1/T2 重排)
 
 | 层 | 形态 | 触发 |
@@ -514,7 +524,15 @@ G-ctx10-wake:wait_reason=approval 的 wake=human settle;evidence/quota wait 必�
               机器可判定 wake(事件类型/not_before/artifact 到达/子终态),
               缺失 → v13_complete 拒收
 G-ctx10-spend:同 logical_turn_id material 次数=1;progress+repair/replan 同批零
-              spend;超限 repair 后零新 spawn、走 human/reject
+              spend;超限 repair 后零新 spawn、走 human/reject。
+              stage 17 标注:超限 repair 不在本期(归 P4)。本期只断言 finish 与无
+              signal 的 progress 各记 1、同批 signal 记 0、同 source 重放不第二扣、
+              另一 effect 复用同一 logical_turn_id 时 RAISE 且收据仍为 1
+G-ctx10-logical-turn:首枚六键 idx0;ready 期间二次 advance 零新行;failed 后同
+              route 同 effect_id fence+1;material 后新 uuid idx0;续传不经 route,
+              reason=harness_continuation
+G-ctx10-wake 增补:四变体正负例;children_terminal P1 拒收;重复 advance 恰一条
+              wake/satisfied;stale/replay 先于 schema 错误
 G-closeout(A16):三终结事件的收据五字段(spent/produced hashes/children 汇总/
               unconsumed/state_hash)、session 终态与预算终态同一事务;closeout
               本身不再扣预算;子 closeout 不持子锁写父事件;前置 fail-closed——
