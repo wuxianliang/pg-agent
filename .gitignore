@@ -28,5 +28,6 @@ prompt-exports/
 # Local spike scratch (DuckDB sdist + flock checkout)
 .spike-flock/
 
-# Local v13 Chainlit demo (never push)
+# Local v13 Chainlit demo workspace (never push; relocated out of v13/ 2026-09-25)
 /v13/demo/
+/demo_v13/

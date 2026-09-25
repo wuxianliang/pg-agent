@@ -152,12 +152,16 @@ artifact 冻结的旧哈希,`v13_fork` 的 validate-spawn 拒 v3/v4 不一致—
    的 demo 树(`v13/demo/sql/demo_api.sql` 合法使用 `typesafe.mock_response`
    GUC)。该红在无本计划改动的干净树上同样出现(stash 验证),与 Stage 16
    无关。处理:跑这两组 gate 时把 `v13/demo` 临时移出扫描范围、跑完移回
-   (demo 内容零字节改动、永不进提交)。
+   (demo 内容零字节改动、永不进提交)。**(2026-09-25 更新:demo 工作区已整体
+   迁至仓库根 `demo_v13/`,永久移出 rglob 扫描范围;上述临时移出/移回的
+   workaround 作废,两组 gate 已在无 workaround 下全绿)**
 4. **characterize O2 在本机段错误(环境阻塞,既有)**:O2 的 1030 词
    `==>` 查询触发 stannum 0.3.0(pgembed 0.3.0rc2/PG18.4)扩展段错误
    (signal 11,后端崩溃),干净树同样复现,与本计划无关(characterize
    stage 自交付未改)。W1 提交时 characterize 其余断言全绿、O2 因该环境
-   崩溃不可达;待 stannum 修复后复跑。
+   崩溃不可达;待 stannum 修复后复跑。**0.4.0 未复现**(2026-09-25 实测:
+   stannum 0.4.0 全新安装下 `[info] O2 1030-term hits=[500001] dt=0.063s`,
+   两条 O2 check PASS、全日志无 signal 11——该环境阻塞视为解除,W4 台账可摘)。
 5. **J6d/J6e blob 断言口径**:`v13_blob_land` 对 context_section 是内容寻址
    去重(ON CONFLICT DO NOTHING),tools 内容跨会话相同→首个 effect 持有
    该行,按 produced_by 计数天然不稳定。断言改为「memory 材料哈希从未落成
@@ -190,6 +194,12 @@ artifact 冻结的旧哈希,`v13_fork` 的 validate-spawn 拒 v3/v4 不一致—
 11. **J8 锁探针夹具**:E6 原样(空会话 + 预置 stop 问题 mock);带节点的
    会话首轮问 traverse 问题,预置 stop mock 不匹配会引发真 HTTP
    (api_key 未设报错)——偏差记录以免重蹈。
+12. **J3/J7 前缀字节冻结重钉(v13_characterize.sql,2026-09-25 M0)**:
+   stannum 版本记载消歧把 `v13_characterize.sql` 头部 Engine facts 注释
+   从 0.1.0 更新为 0.4.0 实测(纯注释,零 SQL 语义/断言面改动),文件字节
+   变化触发 PREFIX_FREEZE 失配;按「随实测重钉,不宽化」先例把
+   `v13_characterize.sql` 冻结哈希重钉为 `be1562ab2f2cb813`(J3/J7 强度
+   不变,仍逐字节钉死其余 14 文件)。
 
 ## 回退
 

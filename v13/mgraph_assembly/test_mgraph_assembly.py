@@ -81,7 +81,7 @@ PREFIX_FREEZE = {
     "v13_manifest.sql": "2620ea4c365985a2",
     "v13_chunks.sql": "6b4963c07bbc2e54",
     "v13_recall.sql": "982ea218015de48b",
-    "v13_characterize.sql": "b9de1b8618e125e1",
+    "v13_characterize.sql": "be1562ab2f2cb813",
     "v13_filter.sql": "416aadea57501588",
     "v13_memory.sql": "0fdd32d219f11f47",
     "v13_economy.sql": "494091769d27a93a",

@@ -5,6 +5,13 @@ Gate: `uv run python v13/characterize/test_characterize.py`（退出码 0 = 通�
 库名 `agent_v13_characterize`。加载前缀九文件。setup **硬前置探针**
 `pg_available_extensions` 无名即 exit 非 0（fail-closed，无降级）。
 
+> **当前 installed_version：stannum 0.4.0**（2026-09-25 实测：pgembed 捆绑
+> pin ad4d3b7，stage 库 DROP/CREATE 后 `CREATE EXTENSION` 落
+> default_version=0.4.0，K–R 八组同日全绿重跑）。历史记载出处：
+> 0.1.0 = DP5 刻画时代实测（文末实测记录节），0.3.0 = mgraph_assembly
+> 交付时代实装（其 README 自述，未随记载更新）；版本一律以
+> `pg_extension.extversion` 实测为准。
+
 ## runbook 六件
 
 1. **索引可丢基础行不可丢**：`DROP INDEX ix_chunks_stannum` 不丢 chunks/artifacts
@@ -14,7 +21,8 @@ Gate: `uv run python v13/characterize/test_characterize.py`（退出码 0 = 通�
    热查询（`SELECT v13_recall('"quasar"', 8)`）再接流量。
 3. **fold 毛刺**：M1 数字见 gate 打印。宽松守门 `p99_fold ≤ max(p99_base×10, 200ms)`。
 4. **升级**：扩展版本变更 → 重跑 K3（无索引回落）与 K5（三禁路径一致性）。
-   0.1.0 实测三禁路径与 EXECUTE 等价，**实测等价 ≠ 禁令撤销**。
+   0.1.0 实测三禁路径与 EXECUTE 等价，**实测等价 ≠ 禁令撤销**
+   （0.4.0 复测 2026-09-25：K3/K5 同绿）。
 5. **REINDEX 演练**：`REINDEX INDEX ix_chunks_stannum; REINDEX INDEX ix_v13_canary;`
    然后复跑 K2/N1。基础行不动。
 6. **AGPL 分发审查**：分发本扩展或链接产物前走 AGPL 合规审查；触发 =
@@ -38,7 +46,8 @@ verify 体用 `SET enable_seqscan` 不用 `set_config`（避开 G-ctx1-5(b) 全�
 
 ## >1024 展开
 
-编译器 64 段上限挡用户面；引擎面 1030 词项 AND 直测保守回查（0.1.0 成功返回）。
+编译器 64 段上限挡用户面；引擎面 1030 词项 AND 直测保守回查（0.1.0 成功返回；
+0.4.0 亦绿，2026-09-25 实测 `[info] O2 1030-term hits=[500001] dt=0.063s`）。
 
 ## 尺寸刻画面
 
@@ -78,7 +87,7 @@ verify 体用 `SET enable_seqscan` 不用 `set_config`（避开 G-ctx1-5(b) 全�
   K4 补执行面错咬（EXPLAIN 识别所绑索引后执行 64B 查询：绑 default ⇒ 漏召
   doc 1 / 绑 split ⇒ 命中 doc 1；测后 DROP 复原）。
 
-## 0.1.0 实测记录
+## 0.1.0 实测记录（历史：DP5 时代实测；现环境版本见顶部活记载行）
 
 - Custom Scan / `Stannum Text Search Scan`（K1 钉死，升级若改节点形态随 README 重钉，不做 OR 宽化）
 - 降级面：无索引回落默认 comparator；同列双索引错绑（K4 实测 planner 绑 split 索引，

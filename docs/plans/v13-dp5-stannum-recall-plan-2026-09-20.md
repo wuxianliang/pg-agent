@@ -4,7 +4,7 @@
 > 设计输入:`docs/designs/v13-context-on-pg.md` §4.1/§4.6/§4.7(BM25 长度归化刻画面)/§4.8/§7/§8(stannum runbook+verify_index)/§9(recall_boosts 策略行切片)/§10(G-ctx3)/§12/§13(第 10 章)(冻结禁改)。
 > 评审输入:`docs/reviews/v13-context-on-pg-design-review-by-stepfun-2026-09-20.md` **F4(P0,反向提示:stannum 侧刻画不得重蹈「零刻画却承重」——刻画 gate 六件必须真实执行,runbook 全落)/F5(P0,k 上界与 (k,tier)→延迟账在 DP5 范围:②一页账+首版 k 硬上限本 plan 立法;①解析相花费闸、③哪些 tier 允许快路超 1 批记 DP7 缝)**。
 > 撰写方式注记:**context_builder 通道 ACP 故障(MCPToolExecutionCancelledError,与 turn 13×2/turn 18×4/turn 22 同型),经 brief 授权由主会话代行撰写**;全部基座文档(DP1 §1.3/#59/§3.2/§3.5、DP2 §1.4/§3.4、DP3 §1.3/OQ1/OQ4/§1.4/§3.4/校验器层 6、DP4 全文含 §1.4 契约①–⑨/§3.1–§3.8、设计稿全文、stepfun F4/F5、教程 ch10 全文、ch1 events 表、v12 payload 惯例)已逐一通读并按契约消费;探针批判子会话照 DP3/DP4 先例补一轮(见文末执行记录)。
-> 引擎实证注记:stannum 0.1.0 + PG18.4(pgembed)临时探针库已于本轮实机盘点与行为实测(API 面/索引选项/绑定机制/降级面/canary 物理/REINDEX/fold 段),全部事实记 §1.3 OQ6/OQ7/OQ9 与附 B;探针库 `v13_dp5_probe` 用毕即删(环境复原)。
+> 引擎实证注记:stannum 0.1.0 + PG18.4(pgembed)临时探针库已于本轮实机盘点与行为实测(API 面/索引选项/绑定机制/降级面/canary 物理/REINDEX/fold 段),全部事实记 §1.3 OQ6/OQ7/OQ9 与附 B;探针库 `v13_dp5_probe` 用毕即删(环境复原)。版本消歧(2026-09-25,M0):本行 0.1.0 为 DP5 探针时代实测记载,保持原样;现环境 installed_version=0.4.0(pgembed 捆绑 pin ad4d3b7,16 gate 全绿重跑),中间态 0.3.0 曾实装于 mgraph_assembly 时代未随记载更新——后续版本记载一律以 `pg_extension.extversion` 实测为准。
 
 ## 0. 执行索引
 

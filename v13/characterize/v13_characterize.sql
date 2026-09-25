@@ -4,7 +4,10 @@ BEGIN;
 -- DP5 characterize: text-search extension + production index + canary
 -- fixture + definition swap (recall / recall_count / extract_spans v2)
 -- + verify v2 (8th check). Gate = test_characterize.py (K-R).
--- Engine facts: pgembed PG18.4 + extension 0.1.0. Bind operator lives in
+-- Engine facts: pgembed PG18.4 + extension 0.4.0 (installed_version 实测
+-- 2026-09-25, pgembed 捆绑 pin ad4d3b7; 历史记载 0.1.0 = DP5 刻画时代、
+-- 0.3.0 = mgraph_assembly 时代, 均已被 stage 库 DROP/CREATE 重建覆盖).
+-- Bind operator lives in
 -- pg_catalog; planner support rewrites any expr to bind_query(expr, oid);
 -- Custom Scan provider = 'Stannum Text Search Scan'.
 -- =========================================================================
