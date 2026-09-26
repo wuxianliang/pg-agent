@@ -39,6 +39,8 @@ L0 循环（秒–分）   stage 1–16 冻结；17–20 已落子集    唯一�
 | L32 | 补齐 | parity 拒绝把 `duty_cycle=0` 当成停/复；另立事件门，不加列 |
 | L38 L6 | 补齐 | 能力门与窗口重算。`quota/spent\|voided` 与 reward 生产者仍不建 |
 
+**R4 终裁（2026-09-26，四模型一致）**：表达形式维持——概念进具名 STABLE 函数、开放事件与全局策略行；不进表、VIEW 或物化视图。物化视图、投影表、同事务概念缓存表与新表同禁。分桶 13/29/29、分期与 stage 序不变。记录：`docs/reviews/v13-control-plane-oracle-r4-2026-09-26.md`。
+
 ## 1. 分层模型
 
 | 层 | 尺度 | 范例边界 | v13 现状 | 本路线图 |
@@ -46,6 +48,8 @@ L0 循环（秒–分）   stage 1–16 冻结；17–20 已落子集    唯一�
 | L0 | 秒–分 | Codex 管 turn。完备性已判闭合，不重开 | stage 1–16：effect/event/claim/complete/两阶段墙 | 冻结。只许后 stage `CREATE OR REPLACE` |
 | L1 | 时–日 | RP-CE 管会话与委托。**不提供**资格账本、should-run、停复、注意力 | stage 17–20 已落单会话动词 + spawn + cancel 扇出 + triage 子集 | 补工作流动词。不把 RP-CE 进程机搬进来 |
 | L2 | 天–周 | LoopX 管 goal 活过任何一次执行。**不提供** steer/respond/interrupt | 结算三次事务已在；治理投影几乎未写（L26 落点未写） | 投影优先。最少新结构；新表/新列只经 §4 |
+
+存储责任划分（R4）：控制面对象不得按源系统名词一一生成表。身份落 sessions，运行事实落 effects/events，策略落既有策略行，历史干预落 append-only events，派生读面落函数/SRF，准入落谓词与唯一推进函数。源系统的 registry、attention、quota、scheduler 等名词只决定语义，不决定 v13 的物理表形。
 
 层间只传递有界工作段，上层对下层只用观察/注入/应答/取消的变体（谱系文 §2）。L1 的「授权/交接」是这四动词的准入与出口，不是第五个推进函数。L2 的 should-run 是 advance **入队前读的投影**，不是节拍器，也不是 `v13_agent_run`。
 
@@ -104,8 +108,8 @@ L1 计数：补齐 5（F8 F17 F18 F23 F29）/ 保持改变 16 / 永不建 9。
 | L2 | 永不建 | 无 `ACTIVE_GOAL_STATE` 文件。goal=sessions 行 | 迁移 §3 |
 | L3 | 永不建 | 无 `runs/*.json`。events 是日志 | 迁移 §3 |
 | L4 | 永不建 | 无紧凑 index 文件。公开列约束并进 L5 输出，不单建表 | 迁移 §3；R1.5 |
-| L5 | 补齐 | STABLE `v13_attention(root)`：读 `v_goal_tree` + L26。`attention_rank` 只作输出列。零写入、不授权 | 迁移 §2.6；SQL 零 `attention_rank`；§4 D10 |
-| L6 | 补齐 | STABLE `v13_quota_eligible`：策略行窗口 × 既有 `turn/material_spent` 重算。**不写** `quota/spent\|voided`，不做窗内冲销 | R3b 明确不做；R3c §8.7；迁移 §3；§4 D9 |
+| L5 | 补齐 | STABLE `v13_attention(root)`：读 `v_goal_tree` + L26。`attention_rank` 只作输出列。零写入、不授权。参数化 STABLE 函数；禁止 VIEW 与物化表（R2 §5 / A21；R4） | 迁移 §2.6；SQL 零 `attention_rank`；§4 D10 |
+| L6 | 补齐 | STABLE `v13_quota_eligible`：策略行窗口 × 既有 `turn/material_spent` 重算。**不写** `quota/spent\|voided`，不做窗内冲销。**禁止配额账本表**（迁移 §0/§3 与 R3c §8.7 双禁叠加；R4）。窗口时钟只用事件行已有时间列；没有可用时钟就停工 | R3b 明确不做；R3c §8.7；迁移 §3；§4 D9 |
 | L7 | 永不建 | 无三档 flock。崩溃释放=租约 + 事务咨询锁 | R3c 锁序；迁移 §3 |
 | L8 | 保持改变 | 唯一索引 + `replay`。不建 `command_receipts` | 迁移 §3 |
 | L9 | 保持改变 | 身份=`v13_effect_id`。XOR 被否；repair/replan 是事件 | R2 §1.1 |
@@ -120,12 +124,12 @@ L1 计数：补齐 5（F8 F17 F18 F23 F29）/ 保持改变 16 / 永不建 9。
 | L18 | 保持改变 | request 六键；`result_kind` 四值权威；路由不读 `delivery_kind` | R2 §1.1；R3b §7.1 |
 | L19 | 永不建 | 不建 lane fence、不新返回词。单活跃=已有唯一索引 + 会话锁 | 迁移 §3 证实不吸收 |
 | L20 | 永不建 | 不建 11 种提示表。帽=`effect_attempt_cap`。间隔并进 L21 | 迁移 §2.6 |
-| L21 | 补齐 | STABLE `v13_scheduler_hint`：只读 L26，返回 `run_now\|wait\|dont_notify`。pg_cron 调用后必须再判一次才 advance。无 RRULE、无 ack、无常驻心跳 | 迁移 §2.6；ch13 |
+| L21 | 补齐 | STABLE `v13_scheduler_hint`：只读 L26，返回 `run_now\|wait\|dont_notify`。pg_cron 调用后必须再判一次才 advance。无 RRULE、无 ack、无常驻心跳。禁 scheduler 状态表（R4） | 迁移 §2.6；ch13 |
 | L22 | 永不建 | 无 `scheduler_ack`。陈旧 hint 由步 0 水位 + L26 再判挡住 | 迁移 §2.6；R3b 不新增收据族 |
 | L23 | 永不建 | 不建 `BoundedTurnBudget`。步内不 spend 已由 R1.11 持有；超限走已裁 closeout，不改成 ValueError | R3b 逃生前置 |
 | L24 | 永不建 | 不建 `[15,30,60]` 相位机。停滞不自动插 `replan/required`（那是第二个推进者）；只让 L26 返回假 | 迁移 §2.6；R1.5 |
 | L25 | 永不建 | 无 heartbeat 收据。收据≠执行权已由 R1.5 持有 | 迁移 §0 |
-| L26 | 补齐 | STABLE `v13_should_run`，advance 入队前读；假则零新 effect。序住策略行，不建状态列，不搬七态名字 | 迁移 §2.6 **落点未写**；§4 D10 |
+| L26 | 补齐 | STABLE `v13_should_run`，advance 入队前读；假则零新 effect。序住策略行，不建状态列，不搬七态名字。禁 should-run 状态表与物化（R4；权威必须读时重算） | 迁移 §2.6 **落点未写**；§4 D10 |
 | L27 | 补齐 | 不建 plan/runtime/transaction 三存储。F29 读策略行 `handoff_policy` 做前置 | 迁移 §2.2；与 F29 同缺口 |
 | L28 | 永不建 | head/receipt 分表不建。id 冲突已由 spawn ledger / fence 承担 | 迁移 §0/§3 |
 | L29 | 补齐 | 占用到顶或策略不允许时，路由不选 spawn（键缺席，不发空对象，不加 route 键）。依赖 Phase A R6 | R3c H1；台账目录缝 ≠ parity F22 |
@@ -137,7 +141,7 @@ L1 计数：补齐 5（F8 F17 F18 F23 F29）/ 保持改变 16 / 永不建 9。
 | L35 | 保持改变 | 坏 `tool_calls` RAISE、零子。N 或 0 | R2 §2.6；R3c §8.3/§8.8 |
 | L36 | 永不建 | 源侧亦无实现。席位已在 L34 | parity L36 |
 | L37 | 保持改变 | `wait_reason` 三分。approval ≠ 配额。reward 生产者不另开「已实现」 | R2 §1.2；迁移 §2.6 |
-| L38 | 补齐 | STABLE `v13_missing_capabilities` 纯集合差；非空则不入队。`human_reward` 仍无生产者，且不得改已判 run | 迁移 §2.6 |
+| L38 | 补齐 | STABLE `v13_missing_capabilities` 纯集合差；非空则不入队。`human_reward` 仍无生产者，且不得改已判 run。集合两端必须已在策略 jsonb 与目录或事件中；找不到减数则停工，不建能力表（R4） | 迁移 §2.6 |
 | L39 | 永不建 | 不建 receipt 相位表。语义见 L8 | 迁移 §0/§3 |
 | L40 | 永不建 | 不建 outbox。唤醒=`v13_recover_idle` / 驱动重入 | 迁移 §0；R1.7 |
 | L41 | 永不建 | 不建租约表。`effects.fence` 已令旧令牌 `stale` | 迁移 §3 |
@@ -159,9 +163,30 @@ L6 的**表和事件族仍永不建**；计入补齐的只是窗口资格投影�
 | L29 | 2 推进函数 | 路由不选 spawn | 不加 route 键 |
 | L26 的读 | 2 | advance 入队前读 `v13_should_run` | 函数本身不入队、不 closeout |
 
+### 2.4 公共读面（R4）
+
+「概念直接建成投影表」的骨架收益由这张函数目录补，不建新关系。概念按源系统命名，语义按唯一真相与唯一推进纪律落地：
+
+| 概念 | 表达（函数/SRF，均只读） | 写面（开放事件/策略行） |
+|---|---|---|
+| goal tree | `v_goal_tree(root)`（已有，参数化 STABLE SRF，非 VIEW） | — |
+| should-run 门 | `v13_should_run(sid)`（stage 26） | 序住策略行版本 |
+| 配额窗口资格 | `v13_quota_eligible(sid)`（stage 27） | 窗口策略行 |
+| 能力差 | `v13_missing_capabilities(...)`（stage 27） | 能力集在策略/目录/事件 |
+| 注意力 | `v13_attention(root)`（stage 28） | — |
+| 调度提示 | `v13_scheduler_hint(sid)`（stage 28） | — |
+| 停/复现状 | `v13_goal_lifecycle(sid)`（stage 29，唯一折叠函数体） | `goal/stopped\|resumed` |
+| 多目标观察 | `v13_observe(actor, ids[])`（stage 24） | — |
+| 会话日志 | `v13_session_log(actor, sid)`（stage 24） | — |
+| 交接 | （无读面函数；收据即事件） | `control/handoff` |
+
+这张表是函数目录，不是新关系。`\df v13_*` + 各 stage README 映射即骨架视图；仪表盘用 GRANT EXECUTE 模式，不建全局 VIEW。
+
 ## 3. 分期路线
 
 依赖序 A → B → C。一期 = 一个 stage = 一次按路径 commit。新 SQL 只追加 `SQL_LOAD_ORDER`（现 20 项）。换体以 `pg_get_functiondef` 活体为底，不改 stage 1–20 文件字节。测试 Fake，不调真实 provider。外部 IO 不进事务。
+
+每期收尾加架构审计（R4）：该 stage 不新增概念性控制表、物化控制投影或影子状态源；新增读面必须是函数/SRF；新增写面必须归入既有事件/策略/具名函数路径。
 
 目录名是计划约定，不是裁决。
 
@@ -198,14 +223,14 @@ L6 的**表和事件族仍永不建**；计入补齐的只是窗口资格投影�
 
 ### Phase C · L2 治理投影
 
-投影优先。验收读法：**性质组闭合 = 自动推进有唯一门（L26）/ 资格可从窗口重算且≠奖励（L6+L37+L38）/ 可停可复且停≠cancel≠删行（L32）/ 注意力与调度提示无副作用（L5+L21）。** 结算完备、不丢运行、不超售已在 17–20，不重做。
+投影优先。本阶段读面以参数化 STABLE 函数交付；禁止 VIEW、物化视图和投影表（R4）。L32 的折叠函数在 stage 29 与事件一起落地，再 `CREATE OR REPLACE` 接上 `v13_should_run` 与 recover；stage 26 不预写一份停/复查询。验收读法：**性质组闭合 = 自动推进有唯一门（L26）/ 资格可从窗口重算且≠奖励（L6+L37+L38）/ 可停可复且停≠cancel≠删行（L32）/ 注意力与调度提示无副作用（L5+L21）。** 结算完备、不丢运行、不超售已在 17–20，不重做。
 
 | stage | 目录 | 补齐 | 硬依赖 | gate 要点 |
 |---|---|---|---|---|
 | 26 | `v13/should_run/` | L26 | D10；Phase A 绿 | advance 入队前读；假 → 零新 effect、不写第二 status；投影本身零写入；改序=新策略版本，不改函数体 |
 | 27 | `v13/quota_window/` | L6 L38 | D9；stage 26 | 窗口外不计入资格；源码零 `quota/spent` 与 `quota/voided`；能力差非空则不入队；reward 仍无生产者 |
 | 28 | `v13/attention/` | L5 L21 | stage 26 | `attention_rank` 不落表列；hint 不是 ack；连续两次调用零事件；pg_cron 路径再判一次才 advance |
-| 29 | `v13/govern/` | L32 L27 L29 | D15；stage 25；R6 | stop 后 recover 零 nudge、advance 零新 effect；指纹不符零写；`duty_cycle=0` 行为不变；handoff 缺政策则拒；到顶时路由不选 spawn |
+| 29 | `v13/govern/` | L32 L27 L29 | D15；stage 25；R6 | stop 后 recover 零 nudge、advance 零新 effect；指纹不符零写；`duty_cycle=0` 行为不变；handoff 缺政策则拒；到顶时路由不选 spawn；STABLE `v13_goal_lifecycle(sid)` 读最后一条停/复事件（零写入，R4） |
 
 凡要新表或新列的项不得偷偷进上表，必须先有 §4 裁决改倾向。
 
@@ -218,14 +243,14 @@ L6 的**表和事件族仍永不建**；计入补齐的只是窗口资格投影�
 | D | 题 | 倾向 | 影响面 | 不开工就停 |
 |---|---|---|---|---|
 | D7 | F17 谁能控谁。不加 sessions 列放哪 | 谓词 + 已有 `parent_session_id`。actor 只来自调用方会话 id（服务器传入），不读工具参数。`current_user` 为控制角色则可控任意非终态会话（同 D4 带层）。agent actor 只能控直接子且非自身。拒绝文案一律不可区分（与源合同同形）。自答 human 同一谓词拒绝 | stage 23 接入 cancel / human complete / observe / handoff。不建 link 表（F30 仍永不建） | 是 |
-| D8 | goal registry 用 sessions+policies 够不够 | 够。`goal_id=session_id`（PK 即拒重复）。资格=策略行（`spawn_budget` / `triage` / 新 `quota_window`）。账本=events。不建 registry 表。`requires_parent_approval` 折进 D7，不另开列 | L1 永不建得以成立；L6/L26 的策略行有住所 | 否（默认按此开工；要表则停） |
-| D9 | 窗口资格，且不写 `quota/spent\|voided` | STABLE 重算：策略行 `{window_hours, slot_minutes, allowed}` × 窗内 `turn/material_spent` 条数。过期=滑出窗口，不撤回事件。窗内冲销不做（那才需要 void 事件，仍禁）。无负债：不够则 L26 返回假，不记负 | stage 27。不改 `turn_no`（R1.11 / R3b 禁 closeout 赋值） | 是 |
+| D8 | goal registry 用 sessions+policies 够不够 | **R4 已裁：倾向成立。** `goal_id=session_id`（PK 即拒重复，只覆盖身份唯一性，不替代资格判断）。资格=策略行（`spawn_budget` / `triage` / 新 `quota_window`）。账本=events。不建 registry 表。per-goal 差异化挂载（agents/self_repair/execution_profile/coordination）仍属永不建；真出现则停，第一候选是策略表上的作用域键，不是 registry 表。`requires_parent_approval` 折进 D7，不另开列 | L1 永不建得以成立；L6/L26 的策略行有住所 | 否（默认按此开工；要表则停） |
+| D9 | 窗口资格，且不写 `quota/spent\|voided` | **R4 已裁：倾向成立。** STABLE 重算：策略行 `{window_hours, slot_minutes, allowed}` × 窗内 `turn/material_spent` 条数。过期=滑出窗口，不撤回事件。窗内冲销不做（那才需要 void 事件，仍禁）。无负债：不够则 L26 返回假，不记负。账本表与事件族是两道独立禁令（迁移 §0/§3 × R3c §8.7），俱在。窗口时钟只用事件行已有时间列；没有可用时钟就停工报事实，不借机建表 | stage 27。不改 `turn_no`（R1.11 / R3b 禁 closeout 赋值） | 是 |
 | D10 | should-run / attention 是投影还是策略行 | 函数 STABLE 只读；**优先序住策略行**（版本化，改序不改函数，同 R2 §3.4 改种子）。序用迁移 §2.6 已写的硬门：human > unknown > cancel > `duty_cycle=0`，其后接 D9 窗口与 L38 能力，不搬 LoopX 七态名字。`attention_rank` 只是 `v13_attention` 的输出列。advance 读函数，函数不授权 | stage 26/28。不扩 `sessions.status` | 是 |
 | D11 | repair_cap × tail gap | 已答 cap 免除被取代链的续传义务。不选先补 index+1 | stage 21 换体 `v13_harness_tail_gap`（或它的豁免谓词） | 是 |
 | D12 | F23 谁把 latch 写成 `released` | release 成功才 `v13_latch_fire`；失败保持 `prepared` | stage 21。不重开 A19 | 是 |
 | D13 | F4 静默 no-op | 不移植。台账一行。零 SQL | 无 stage。不重开 C4 | 否（文档即可） |
 | D14 | R6 catalog 缝 | 具名 sql 写者对 parse 可见；其余 VOLATILE 仍拒。不把 `enabled=false` 当架构 | stage 22 换体 `v13_tools_catalog_frozen`。台账 F22 ≠ parity F22 | 是 |
-| D15 | L32 停/复放哪。不加列 | 开放事件 `goal/stopped\|resumed`，指纹=已有 `v13_state_hash`。不符则 RAISE 零写。stop 不扫 claimed、不 closeout、不删行。resume 只追加事件。与 `duty_cycle=0` 并列，不等同 | stage 29。recover_idle 与 advance 入队前读最后一条 | 是 |
+| D15 | L32 停/复放哪。不加列 | 开放事件 `goal/stopped\|resumed`，指纹=已有 `v13_state_hash`。不符则 RAISE 零写。stop 不扫 claimed、不 closeout、不删行。resume 只追加事件。与 `duty_cycle=0` 并列，不等同。「最后一条事件赢」的折叠只有一个函数体（`v13_goal_lifecycle`）；advance、recover_idle、`v13_should_run` 调用它，不散落多份查询。允许 events 上的部分索引。不建状态表，不扩 `sessions.status`，不因此调整 stage 序 | stage 29。recover_idle 与 advance 入队前读最后一条 | 是 |
 | D16 | F29 信封键集 | 迁移 §2.2 字面：`{schema_version:1, delivery_id, transcript_hash, up_to_seq}`。不采 XML（R1.4）。不含水合文件。不升成第二 transcript | stage 25。文件字节归姊妹篇 | 是 |
 
 D8 若被改成「要 registry 表」，L1 从永不建改为 §4 例外，Phase C 不得先开工。其余倾向被否时，只停对应 stage。
@@ -233,7 +258,7 @@ D8 若被改成「要 registry 表」，L1 从永不建改为 §4 例外，Phase
 ## 5. 不变量与红线
 
 1. 五机制不可违反。观察是投影，不是 poll 函数。资格是 advance 入队前的读，不是第二个循环。交接是一条事件，不是 fork 的替身。
-2. 零新表、零新列是默认。例外只经 §4 改倾向之后。策略行与开放事件不算新表。
+2. 零新表、零新列是默认。例外只经 §4 改倾向之后。策略行与开放事件不算新表。物化视图、概念状态表、registry、配额账本、快照表、同事务概念缓存表不是零新表的近亲，同禁（R4）。可读性用 §2.4 的函数名 + COMMENT + README 补，不用占位 DDL。未来任何新表提案必须全答例外四问才受理：①唯一写者是谁；②与 advance 会话锁的锁序证明；③对 unknown 墙的崩溃语义；④证明「事件 + STABLE 投影」机制上承载不了。
 3. stage 1–20 文件字节冻结。行为变更只许后 stage `CREATE OR REPLACE`。`SQL_LOAD_ORDER` 只在末尾追加。
 4. 外部 IO 不进事务。第四务、harness 结果、worktree FS 都在驱动器。SQL 不杀进程（无 `pg_terminate_backend`）。
 5. 投影不授权（R1.5）。`v13_attention` / hint / should-run 的假不得被驱动器无视；真也只表示「可以再调 advance」，不表示已经执行。
