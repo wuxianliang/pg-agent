@@ -70,7 +70,7 @@ LoopX 六层文件不是施工图（迁移 §3 整包不迁）。要保住的是
 | F1 | 保持改变 | 已有 `v13_open_session`；续跑=同会话新 effect。不建进程幂等返回 | 迁移 §2.1；R3 §1 附 |
 | F2 | 保持改变 | 干预=`steer/injected` + 步 0 七键 `stale`。正文生产者按 R3b 不做；指令走已有 `user/message` | R1.9；迁移 §2.1；R3b §7.3 |
 | F3 | 保持改变 | 动词=`v13_cancel`。四值 ACK 不建。第四务见 Phase A R4，不是新动词 | R2 A18；R3c §8.7 |
-| F4 | 保持改变 | 维持 C4 RAISE。静默 no-op 不移植。Phase A 只补台账一行 | R3 C4；parity §4 #2；§4 D13 |
+| F4 | 保持改变 | 维持 C4 RAISE。静默 no-op 不移植（R5 已裁）。Phase A 台账 F23 一行 | R3 C4；parity §4 #2；R5 §3；§4 D13 |
 | F5 | 永不建 | 无 `v13_shutdown`。停=cancel + 租约过期 | 迁移 §2.1；§0 不建 dormant |
 | F6 | 保持改变 | 同 F1。`detach`/超时不进事件 | 迁移 §2.2；R3 §1 附 |
 | F7 | 保持改变 | 观察=读行 + `v13_recover_idle`。不建 poll/wait | 迁移 §2.2；R1.7；R3c §8.4 |
@@ -89,7 +89,7 @@ LoopX 六层文件不是施工图（迁移 §3 整包不迁）。要保住的是
 | F20 | 永不建 | 不建 grant/指纹类。执行前授权=human 两段 + allowlist | 迁移 §2.3 折叠；§0 零新表；§6 |
 | F21 | 永不建 | 不建 presenter FIFO。应答=`v13_complete` | 迁移 §2.2 respond |
 | F22 | 保持改变 | latch `worktree` + 三 FS effect。子不继承（与源默认相反，已裁） | R2 A19；R3c §8.7 |
-| F23 | 补齐 | 热修：`worktree_release` 成功才 `v13_latch_fire(..., released)`；失败保持 `prepared` | parity §4 #8；R3c 词表有 `released` 无写入者；§4 D12 |
+| F23 | 补齐 | 热修（R5 已裁形状）：latch 永远表达 prepared binding；首次成功 release 写 `worktree/released` 事件（首次转移幂等）；`v13_worktree_state` 折叠 released；失败/unknown 零事件 | parity §4 #8；R5 §2；§4 D12 |
 | F24 | 永不建 | 无冷恢复。行在即活。不把活跃行收成 idle | 迁移 §2.4 |
 | F25 | 永不建 | 无 session claim、不铸 generation。排他=advance 会话锁；续跑=新 effect_id | 迁移 §2.4 无此栅栏；A15 |
 | F26 | 永不建 | 同 F5。无 waiter 可摘 | 迁移 §2.1 |
@@ -156,7 +156,7 @@ L6 的**表和事件族仍永不建**；计入补齐的只是窗口资格投影�
 
 | ID | 机制 | 具体对象 | 不做的事 |
 |---|---|---|---|
-| F23 | 1 状态在行 | 既有 latch + `v13_latch_fire` | 不新表；不重开 A19 |
+| F23 | 3+5 事件+投影 | `worktree/released`（首次转移幂等；写者只在 complete succeeded 与 resolve confirmed 两点）+ `v13_worktree_state` 折叠；latch 行只存 binding/prepared | 不再 fire released；不新表；不重开 A19（R5 §2） |
 | F17 | 1+3 | 谓词读 `parent_session_id`；拒绝时零事件 | 不加列；不建 link |
 | F8 F18 L5 L6 L21 L26 L38 | 5 投影 | STABLE 函数，零写入 | 不建 waiter / ack / 紧凑 index 表 |
 | F29 L32 L27 | 3 事件 + 5 策略行 | `control/handoff`、`goal/stopped\|resumed`；`handoff_policy` | 不产 XML；不扩 status |
@@ -192,24 +192,24 @@ L6 的**表和事件族仍永不建**；计入补齐的只是窗口资格投影�
 
 ### Phase A · 修地基
 
-不新增动词。闭合 L1/L2 承重缝。验收读法：**续传不再被已答 cap 卡死；release 词表有写入者；第四务有驱动合同；`children_terminal` 能走完 advance；parse 能看见具名 sql 工具。**
+不新增动词。闭合 L1/L2 承重缝。验收读法：**续传不再被已答 cap 卡死；首次成功 release 写 `worktree/released`、latch 仍 `prepared`、`v13_worktree_state` 折叠 `released`；第四务有驱动合同；`children_terminal` 能走完 advance；parse 能看见具名 sql 工具。**
 
 | stage | 目录 | 内容 | gate 要点 |
 |---|---|---|---|
 | 21 | `v13/seam/` | D11、D12 热修 + R5 端到端 | 见下 |
 | 22 | `v13/catalog/` | D14 catalog 换体 + R4 合同 | 见下 |
 
-三条未裁的处置（先裁再写 SQL；D13 无 SQL）：
+三条处置已由 **Oracle R5 终裁**（2026-09-26，`docs/reviews/v13-control-plane-oracle-r5-2026-09-26.md`；施工细节见 `docs/plans/v13-phase-a-seams-plan-2026-09-26.md`）：
 
-1. **repair_cap × tail gap（D11，优先）。** 活体：已答 cap → 新 uuid、index 0，advance 跳过续传臂（`v13_cap_human_answered`，triage）；更老的 progress+signals 若无 index+1，`v13_harness_tail_gap` 仍 RAISE。只能 `closeout(..., cancelled)` 逃生。**倾向：已答 cap 免除被取代链的续传义务**（tail gap 把「该 `logical_turn_id` 已被 cap 新回合取代」视为已还）。不选「先补 index+1」——那与「跳过续传臂」矛盾，把已裁的新回合变成死锁。gate：已答后 advance 不 RAISE、可 `closeout completed`；未答真断链仍 RAISE；1–20 字节不动。
-2. **F23 latch（D12）。** **倾向：`worktree_release` 成功才 `v13_latch_fire(..., state=released)`；失败/unknown 保持 `prepared`。** 不重开 A19。gate：成功翻 `released`；失败仍 `prepared`；prepare 仍写 `prepared`；无 binding 仍拒 claim。
-3. **F4 静默 no-op（D13）。** **倾向：不移植。** C4 RAISE 已冻。台账一行即可，不新开 Oracle，零 SQL。除非产品要「重复 respond 不报错」才重开 C4——本路线图不推荐。
+1. **D11（已裁：修订）。** 豁免进 `v13_harness_tail_gap`（原 EXISTS 一字不放宽，只追加 `AND NOT v13_tail_gap_cap_exempt`）；anchor 复合返回 `(anchor_seq, cap_class)`、按类最早、cap 词表唯一家；候选链/cap human/新 index-0 回合三者同 `origin_user_seq`；新回合盖章即可不必 succeeded；`v13_cap_human_answered` 换体委托 anchor（D11b）；closeout 严格前置③与 tail-gap 共用同一豁免谓词。不选「先补 index+1」。gate：已答后 advance 不 RAISE、可 `closeout completed`；未答真断链仍 RAISE；1–20 字节不动。
+2. **D12（已裁：取 (a)）。** latch 行永久 `prepared`（INSERT-once 不动）；首次成功 release 写开放事件 `worktree/released`（首次转移幂等；写者 `v13_record_worktree_released` 只有两个调用点：complete succeeded 分支 + resolve confirmed 分支）；STABLE `v13_worktree_state` 折叠 released；失败/unknown 零事件保持 prepared。~~release 成功才 `v13_latch_fire(..., released)`~~ 在活体是静默空操作（adopt 分支 + V3008），R5 明文不予执行。不重开 A19。无 binding 仍拒 claim；released 本期不被 claim 消费。
+3. **D13（已裁：接受）。** 静默 no-op 不移植；C4 RAISE 已冻；零 SQL，台账 F23 一行（deviation ledger 编号，≠ parity F23）。除非产品要「重复 respond 不报错」才重开 C4。
 
-**R4 真 worker 第四务。** 谓词 `v13_cancel_pending` 已在（fanout），生产循环没有。库内无常驻 worker。落点=驱动器（事务外）在每次 `v13_renew_lease` 成功后读该谓词：`best_effort` 或 required+llm → `complete(cancelled)`；tool+required → `complete(unknown)`；`unsupported` → 不 cancelled。无 LISTEN、无新队列、无 `pg_terminate_backend`（R3c §8.7；残留 R8）。stage 22 gate 用假 worker 锁死顺序。`demo_v13/` 在 gitignore，驱动器补丁不进里程碑 commit，但 Phase A 验收必须实跑该循环一次、退出码 0。否则 R4 只是纸面。
+**R4 真 worker 第四务（R5 已裁机制）。** 谓词 `v13_cancel_pending` 已在（fanout），生产循环没有。库内无常驻 worker。落点=驱动器（事务外）在每次 `v13_renew_lease` 成功后读该谓词，分派键 = `v13_interruptible(tool_name)`（不是 kind=llm；空 tool_name 的 routed llm 是 unsupported）：`best_effort`（含 tool）或 required+llm → `complete(cancelled)`；tool+required → `complete(unknown)`；required+judge/human/context_refresh 与 unsupported → 不动（粘性归 advance；禁「保险性 unknown」）。无 LISTEN、无新队列、无 `pg_terminate_backend`、无新 SQL 判定动词（R3c §8.7；残留 R8；R5 §5）。stage 22 gate 用假 worker 锁死顺序。`demo_v13/` 在 gitignore，驱动器补丁不进里程碑 commit；Phase A 验收实跑该循环一次、退出码 0——但 gitignored 实跑最高记 🟡，只有进仓库可部署复现的 worker 接线通过实跑才可 ✅ 关闭 R4。
 
 **R5 `children_terminal` 生产者。** 求值器在 stage 18 已激活；缺口是没有一条 advance 路径被端到端证明。**生产者只有驱动器**（把 `wake.kind=children_terminal` 放进 harness 结果，事务外）。SQL 不合成 harness 结果——合成=第二个真相，advance 会变成编排器。stage 21：若活体 advance 未调用求值器则换体接上；gate 用假结果证明停泊 → 子齐 → 恰一条 `wake/satisfied` → 续传 index+1；非直接子仍 RAISE。
 
-**R6 catalog 缝（台账 F22，不是 parity F22）。** `v13_tools_catalog_frozen` 仍拒 VOLATILE，故 `spawn_subsession` 保持 `enabled=false`，扇出走 `tool/call` 不走目录。**倾向（D14）：换体该函数，具名写者闭集（`v13_named_sql_writer` 非 NULL）对 parse 可见；闭集外仍拒。** 不改 stage 2 字节。gate：enabled=true 时 parse 不因 VOLATILE 失败；名单外仍红。
+**R6 catalog 缝（台账 F22，不是 parity F22；R5 已裁 = D14）。** 活体 `v13_tools_catalog_frozen`（stage 2，从未换体）仍拒 VOLATILE 且无具名例外；stage 18 目录行 `spawn_subsession` 为 enabled=true（`v13_spawn.sql:1757`），parse 走到即被拒（F22 探针的 parse 路径「未到 catalog 即被 GUC 拦」，未终验），demo 夹具维持 enabled=false 规避。**已裁（R5 §4）：换体该函数，豁免绑定 catalog 已解析的同一 OID——`v13_named_sql_writer(handler)` 非 NULL 且 `v13_spawn_writer_ok(同一 OID)` 为真才跳过这一条 VOLATILE RAISE；名单外仍拒（子串 `is VOLATILE` 不变）。** RED 基线（直调 + 真实到达 catalog 的 parse 路径）是硬前置。不改 stage 2 字节、不 `UPDATE tools`、不建 `v13_volatile_sql_exception(oid)`。
 
 ### Phase B · L1 工作流动词
 
@@ -246,10 +246,10 @@ L6 的**表和事件族仍永不建**；计入补齐的只是窗口资格投影�
 | D8 | goal registry 用 sessions+policies 够不够 | **R4 已裁：倾向成立。** `goal_id=session_id`（PK 即拒重复，只覆盖身份唯一性，不替代资格判断）。资格=策略行（`spawn_budget` / `triage` / 新 `quota_window`）。账本=events。不建 registry 表。per-goal 差异化挂载（agents/self_repair/execution_profile/coordination）仍属永不建；真出现则停，第一候选是策略表上的作用域键，不是 registry 表。`requires_parent_approval` 折进 D7，不另开列 | L1 永不建得以成立；L6/L26 的策略行有住所 | 否（默认按此开工；要表则停） |
 | D9 | 窗口资格，且不写 `quota/spent\|voided` | **R4 已裁：倾向成立。** STABLE 重算：策略行 `{window_hours, slot_minutes, allowed}` × 窗内 `turn/material_spent` 条数。过期=滑出窗口，不撤回事件。窗内冲销不做（那才需要 void 事件，仍禁）。无负债：不够则 L26 返回假，不记负。账本表与事件族是两道独立禁令（迁移 §0/§3 × R3c §8.7），俱在。窗口时钟只用事件行已有时间列；没有可用时钟就停工报事实，不借机建表 | stage 27。不改 `turn_no`（R1.11 / R3b 禁 closeout 赋值） | 是 |
 | D10 | should-run / attention 是投影还是策略行 | 函数 STABLE 只读；**优先序住策略行**（版本化，改序不改函数，同 R2 §3.4 改种子）。序用迁移 §2.6 已写的硬门：human > unknown > cancel > `duty_cycle=0`，其后接 D9 窗口与 L38 能力，不搬 LoopX 七态名字。`attention_rank` 只是 `v13_attention` 的输出列。advance 读函数，函数不授权 | stage 26/28。不扩 `sessions.status` | 是 |
-| D11 | repair_cap × tail gap | 已答 cap 免除被取代链的续传义务。不选先补 index+1 | stage 21 换体 `v13_harness_tail_gap`（或它的豁免谓词） | 是 |
-| D12 | F23 谁把 latch 写成 `released` | release 成功才 `v13_latch_fire`；失败保持 `prepared` | stage 21。不重开 A19 | 是 |
-| D13 | F4 静默 no-op | 不移植。台账一行。零 SQL | 无 stage。不重开 C4 | 否（文档即可） |
-| D14 | R6 catalog 缝 | 具名 sql 写者对 parse 可见；其余 VOLATILE 仍拒。不把 `enabled=false` 当架构 | stage 22 换体 `v13_tools_catalog_frozen`。台账 F22 ≠ parity F22 | 是 |
+| D11 | repair_cap × tail gap | **R5 已裁**：豁免进 tail_gap（anchor 复合返回 + 同 origin_user_seq + 盖章即可 + closeout ③ 同源）。不选先补 index+1 | stage 21（Phase A 计划 §3.3–3.4） | 已裁 |
+| D12 | F23 谁把 latch 写成 `released` | **R5 已裁**：latch 永远 `prepared`；首次成功 release 写 `worktree/released`（首次转移幂等）；`v13_worktree_state` 折叠 released；resolve confirmed 同调 | stage 21（Phase A 计划 §3.5）。不重开 A19 | 已裁 |
+| D13 | F4 静默 no-op | **R5 已裁**：不移植。台账 F23 一行。零 SQL | 无 stage。不重开 C4 | 已裁 |
+| D14 | R6 catalog 缝 | **R5 已裁**：具名 sql 写者对 parse 可见，豁免绑定同一已解析 OID；其余 VOLATILE 仍拒。RED 基线硬前置 | stage 22 换体 `v13_tools_catalog_frozen`。台账 F22 ≠ parity F22 | 已裁 |
 | D15 | L32 停/复放哪。不加列 | 开放事件 `goal/stopped\|resumed`，指纹=已有 `v13_state_hash`。不符则 RAISE 零写。stop 不扫 claimed、不 closeout、不删行。resume 只追加事件。与 `duty_cycle=0` 并列，不等同。「最后一条事件赢」的折叠只有一个函数体（`v13_goal_lifecycle`）；advance、recover_idle、`v13_should_run` 调用它，不散落多份查询。允许 events 上的部分索引。不建状态表，不扩 `sessions.status`，不因此调整 stage 序 | stage 29。recover_idle 与 advance 入队前读最后一条 | 是 |
 | D16 | F29 信封键集 | 迁移 §2.2 字面：`{schema_version:1, delivery_id, transcript_hash, up_to_seq}`。不采 XML（R1.4）。不含水合文件。不升成第二 transcript | stage 25。文件字节归姊妹篇 | 是 |
 
