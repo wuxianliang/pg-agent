@@ -243,6 +243,19 @@ active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consoli
     产物=远程层首批实现:检索对象是节点 content_hash,只经 semantic
     桶遍历可达,不作候选锚(F9)。
 
+## stannum 生产索引 verify 覆盖
+
+每个生产 stannum 索引恰由一个 verify wrapper 所有，无重复、无遗漏。`ix_v13_canary` 不进生产映射。
+
+| 索引 | 唯一生产 wrapper |
+|---|---|
+| `ix_chunks_stannum` | `v13_verify_chunks` |
+| `ix_transcript_stannum` | `v13_verify_memory` |
+| `ix_decisions_question_stannum` | `v13_verify_memory` |
+| `ix_memory_nodes_stannum` | `v13_verify_mgraph` |
+
+`ix_memory_nodes_stannum` 已入 `v13_verify_mgraph`：owner 手动调用。`p_raise` 只控制检查未全绿时是否 RAISE（V3009，前缀 `v13: verify_mgraph failed:`）；`verify_index` 第二参写死 true，不随 `p_raise` 翻转。`REVOKE EXECUTE FROM PUBLIC`，不授 `v13_recall` / `v13_resolve` / `v13_route`，不挂 cron。DP9 `:66` 写「两索引」但只点名 `ix_memory_nodes_stannum`；未点名的第二个 stannum 对象记「不发明」。关系检查（自证 / 悬空边 / 策略行 / `cypher(`）不在本函数。
+
 ## 运维纪律(README 必记)
 
 - **① 部署暗,翻开才走判断**:`write_enabled=false`+`read_enabled=false`

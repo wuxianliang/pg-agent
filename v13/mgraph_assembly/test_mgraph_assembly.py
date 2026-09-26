@@ -87,7 +87,7 @@ PREFIX_FREEZE = {
     "v13_economy.sql": "494091769d27a93a",
     "v13_summary.sql": "6486017b51e3cba3",
     "v13_periphery.sql": "dbfa6ab032045933",
-    "v13_mgraph.sql": "981baf83bfcd4896",
+    "v13_mgraph.sql": "7a22acce2f3ed1f2",
 }
 
 

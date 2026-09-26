@@ -3322,4 +3322,32 @@ GRANT EXECUTE ON FUNCTION
   v13_mgraph_anchor_guard(text)
 TO v13_resolve, v13_recall, v13_route;
 
+-- === 图索引校验器(v13_verify_memory 同族接口;仅 ix_memory_nodes_stannum;
+--     手动可调+gate;不挂 cron;ShareLock 同步执行,取消或回滚即释放;
+--     不授 recall/resolve/route) ===
+CREATE FUNCTION v13_verify_mgraph(p_raise boolean DEFAULT true)
+RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY INVOKER AS $$
+DECLARE
+  v_mn_bad bigint;
+  v_checks jsonb;
+  v_all_ok boolean;
+BEGIN
+  SELECT count(*) INTO v_mn_bad
+    FROM stannum.verify_index('ix_memory_nodes_stannum'::regclass, true)
+   WHERE severity IN ('error','warning');
+  v_checks := jsonb_build_array(
+    jsonb_build_object('name','memory_nodes_verify_index','ok', v_mn_bad = 0,
+      'detail', jsonb_build_object('findings', v_mn_bad)));
+  v_all_ok := NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_checks) c
+                           WHERE NOT (c->>'ok')::boolean);
+  IF p_raise AND NOT v_all_ok THEN
+    RAISE EXCEPTION 'v13: verify_mgraph failed: %', v_checks
+      USING ERRCODE = 'V3009';
+  END IF;
+  RETURN jsonb_build_object('version', 1, 'checks', v_checks,
+                            'all_ok', v_all_ok);
+END $$;
+
+REVOKE EXECUTE ON FUNCTION v13_verify_mgraph(boolean) FROM PUBLIC;
+
 COMMIT;

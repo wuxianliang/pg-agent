@@ -887,14 +887,27 @@ def runtime_checks(conn, cur, sqls, sid_tr, sid_other, sid_mg):
         if "ix_decisions_question_stannum" in body
         and name != "v13_verify_memory"
     ]
-    has_verify_mgraph = any(name == "v13_verify_mgraph" for name, _body in defs)
     verify_has_index = any(
         name == "v13_verify_memory" and "ix_decisions_question_stannum" in body
         for name, body in defs)
+    verify_owners = {
+        "ix_chunks_stannum": "v13_verify_chunks",
+        "ix_transcript_stannum": "v13_verify_memory",
+        "ix_decisions_question_stannum": "v13_verify_memory",
+        "ix_memory_nodes_stannum": "v13_verify_mgraph",
+    }
+    call_re = re.compile(r"stannum\.verify_index\s*\(\s*'([^']+)'")
+    call_sites = {idx: [] for idx in verify_owners}
+    for name, body in defs:
+        for idx in call_re.findall(body):
+            if idx in call_sites:
+                call_sites[idx].append(name)
+    mapping_ok = all(
+        call_sites[idx] == [owner] for idx, owner in verify_owners.items())
     check("P9",
-          not bad_question and not bad_index and not has_verify_mgraph
-          and verify_has_index,
-          (bad_question, bad_index, has_verify_mgraph, verify_has_index))
+          not bad_question and not bad_index and verify_has_index
+          and mapping_ok,
+          (bad_question, bad_index, verify_has_index, call_sites))
     n_dec = one_text(
         cur,
         "SELECT count(*) FROM stannum.verify_index("
@@ -906,7 +919,47 @@ def runtime_checks(conn, cur, sqls, sid_tr, sid_other, sid_mg):
         "SELECT count(*) FROM stannum.verify_index("
         "'ix_memory_nodes_stannum', true) "
         "WHERE severity IN ('error','warning')")
-    check("P11", n_mn == 0 and not has_verify_mgraph, (n_mn, has_verify_mgraph))
+    check("P11", n_mn == 0, n_mn)
+    mgraph_def = next(
+        body for name, body in defs if name == "v13_verify_mgraph")
+    covered = call_re.findall(mgraph_def)
+    cur.execute("SELECT v13_verify_mgraph(false)")
+    v_mg = as_obj(cur.fetchone()[0])
+    v_checks = v_mg["checks"]
+    check(
+        "P14",
+        v_mg.get("all_ok") is True
+        and v_mg.get("version") == 1
+        and set(v_mg) == {"version", "checks", "all_ok"}
+        and len(v_checks) == 1
+        and set(v_checks[0]) == {"name", "ok", "detail"}
+        and v_checks[0]["name"] == "memory_nodes_verify_index"
+        and v_checks[0]["ok"] is True
+        and set(v_checks[0]["detail"]) == {"findings"}
+        and int(v_checks[0]["detail"]["findings"]) == 0
+        and covered == ["ix_memory_nodes_stannum"],
+        (v_mg, covered))
+    cur.execute(
+        "SELECT count(*) FROM pg_extension WHERE extname = 'pg_cron'")
+    if cur.fetchone()[0] == 1:
+        cur.execute("SELECT jobname, command FROM cron.job")
+        cron_hits = [
+            (name, cmd) for name, cmd in cur.fetchall()
+            if "v13_verify_mgraph" in (name or "")
+            or "v13_verify_mgraph" in (cmd or "")
+        ]
+        check("P15", not cron_hits, cron_hits)
+    else:
+        print("[note] P15: pg_cron not loadable in this database "
+              "(cron.database_name guard) — v13_verify_mgraph stays "
+              "manually callable")
+    check(
+        "P16",
+        mgraph_def.count("stannum.verify_index") == 1
+        and covered == ["ix_memory_nodes_stannum"]
+        and "==>" not in mgraph_def
+        and "ix_decisions_question_stannum" not in mgraph_def,
+        (mgraph_def.count("stannum.verify_index"), covered))
     cur.execute(
         """
         SELECT c.relname, i.indnatts, c.reloptions
@@ -1142,6 +1195,9 @@ def privilege_checks(conn, cur, ctx):
     role_fails(
         cur, "v13_recall", "SELECT v13_verify_memory(false)", (),
         "permission denied", "R9: verify_memory")
+    role_fails(
+        cur, "v13_recall", "SELECT v13_verify_mgraph(false)", (),
+        "v13_verify_mgraph", "R9c", pgcode="42501")
     n10 = role_count(
         cur, "v13_recall",
         "SELECT count(*) FROM stannum.verify_index('ix_chunks_stannum', true) "
