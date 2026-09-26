@@ -1,5 +1,7 @@
 # v13 控制面 Oracle R9 微裁：D14 断言 B 绑定式复裁（裸名同域）（2026-09-27）
 
+> **R10 后续（2026-09-27）**：本文 §2 P8a（「无固定 search_path → 停工」）与 §3 第③层「真行仍豁免」预期已由 R10 修订（同域二选一；活体继承形态 H；投毒预期 RAISE；谓词身份限定）——见 `docs/reviews/v13-control-plane-oracle-r10-2026-09-27.md`。其余条款不变。
+
 - 触发：stage 22 RED 基线 P1–P7 全过后，断言 B 触发 R5 预授权停工——活体 `v13_spawn_writer_ok` 是「`split_part(handler,'.',2)` 式剥 schema 取裸名 + 闭集等值」（guard 调用点 spawn:1636 同传裸 handler）；`v_qual`（限定名+身份参数）代入两谓词均 false；无参数限定名为 true 只是剥 schema 后裸名巧合。
 - 通道：三车道（grokBuild / codex / claude-fable-5）**一致选定候选①（修订后）**。全文：`prompt-exports/oracle-review-2026-09-27-014907-new-chat-c8d917-ccb8.md`（gitignored）。
 - 编号注：**R8 已被并行 Phase B 线占用**（`v13-control-plane-oracle-r8-2026-09-27.md`：D7/D16 + Phase B 计划审核）；本文 D14 复裁记 R9。

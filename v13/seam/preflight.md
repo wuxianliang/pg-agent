@@ -252,3 +252,9 @@ AND type NOT IN ('session/completed', 'session/failed', 'session/cancelled')
 ## 12. R9 后续状态（2026-09-27，追加不改写；编号注：R8 被并行 Phase B 线占用）
 
 §9–§11 不受影响。stage 22 RED 基线 P1–P7 全过后，R5 断言 B（v_qual 限定名代入 writer_ok）触发预授权停工：活体 writer_ok 是「split_part 剥 schema 取裸名 + 闭集等值」，限定名+身份参数代入 false。Oracle R9（`docs/reviews/v13-control-plane-oracle-r9-2026-09-27.md`）三通道一致选①裸名同域绑定：两谓词入参改回行内裸 v_handler（与 guard 同参），防 shadow 改由断言 B′（to_regprocedure(裸名‖v_oid 参数表) NULL-safe 比对 v_oid，catalog 自身固定 search_path 域内）承担；裸名形状检查先于谓词；断言 A 保留为 frozen 自洽；P8a–P8d 为新硬前置。零函数改动。本文 GO 与 R6/R7/R7b 裁定不改写。
+
+---
+
+## 13. R10 后续状态（2026-09-27，追加不改写；编号：R8=并行 Phase B，R9=D14 绑定式，R10=本篇）
+
+§9–§12 不受影响。stage 22 硬前置 P8a 实测：活体 `v13_tools_catalog_frozen`/`v13_named_sql_writer`/`v13_spawn_writer_ok` 三者 proconfig **全 NULL**（无固定 search_path，stage 2 以来如此）。Oracle R10（`docs/reviews/v13-control-plane-oracle-r10-2026-09-27.md`）双车道裁定：P8a 改「同域二选一」——三函数全 NULL = 继承形态 H，单次调用内 v_oid/B′/两谓词恒同域（R9 要防的分叉结构性不存在）；换体保持 NULL、禁新增 SET；投毒会话下正确行为 = RAISE `is VOLATILE`（fail-closed，防墙 = 深检，非 B′）；并新增谓词身份限定（catalog 体内对两谓词 schema 限定调用，防投毒 schema 同名谓词劫持）。P8b 实测：规范式参数表 `(uuid,jsonb)` 可回解，identity-args 短式被拒。本文 GO 与 R6/R7/R7b/R9 裁定不改写。
