@@ -242,7 +242,7 @@ L6 的**表和事件族仍永不建**；计入补齐的只是窗口资格投影�
 
 | D | 题 | 倾向 | 影响面 | 不开工就停 |
 |---|---|---|---|---|
-| D7 | F17 谁能控谁。不加 sessions 列放哪 | 谓词 + 已有 `parent_session_id`。actor 只来自调用方会话 id（服务器传入），不读工具参数。`current_user` 为控制角色则可控任意非终态会话（同 D4 带层）。agent actor 只能控直接子且非自身。拒绝文案一律不可区分（与源合同同形）。自答 human 同一谓词拒绝 | stage 23 接入 cancel / human complete / observe / handoff。不建 link 表（F30 仍永不建） | 是 |
+| D7 | F17 谁能控谁。不加 sessions 列放哪 | **R8 已裁：甲 overload。** 2 参 cancel / 6 参 complete 唯一正文自身授权，旧签名薄 wrapper（actor=NULL）；谓词状态中立（C15：非终态=动词有效控制面，终态 cancel 仍 replay）；operator 带 = rolsuper ∨ route-USAGE；agent 只控直接子非自身；拒绝 `v13: session not found`（operator+空 actor+缺会话保留活体 needle，例外成立；非 operator 空 actor 同样统一文案）；读面零行；终态日志/交接读取合法；不建 `v13.control_actor` GUC（会话级泄漏语义不接受） | stage 23 接入 cancel / human complete / observe / handoff。不建 link 表（F30 仍永不建） | 已裁（R8） |
 | D8 | goal registry 用 sessions+policies 够不够 | **R4 已裁：倾向成立。** `goal_id=session_id`（PK 即拒重复，只覆盖身份唯一性，不替代资格判断）。资格=策略行（`spawn_budget` / `triage` / 新 `quota_window`）。账本=events。不建 registry 表。per-goal 差异化挂载（agents/self_repair/execution_profile/coordination）仍属永不建；真出现则停，第一候选是策略表上的作用域键，不是 registry 表。`requires_parent_approval` 折进 D7，不另开列 | L1 永不建得以成立；L6/L26 的策略行有住所 | 否（默认按此开工；要表则停） |
 | D9 | 窗口资格，且不写 `quota/spent\|voided` | **R4 已裁：倾向成立。** STABLE 重算：策略行 `{window_hours, slot_minutes, allowed}` × 窗内 `turn/material_spent` 条数。过期=滑出窗口，不撤回事件。窗内冲销不做（那才需要 void 事件，仍禁）。无负债：不够则 L26 返回假，不记负。账本表与事件族是两道独立禁令（迁移 §0/§3 × R3c §8.7），俱在。窗口时钟只用事件行已有时间列；没有可用时钟就停工报事实，不借机建表 | stage 27。不改 `turn_no`（R1.11 / R3b 禁 closeout 赋值） | 是 |
 | D10 | should-run / attention 是投影还是策略行 | 函数 STABLE 只读；**优先序住策略行**（版本化，改序不改函数，同 R2 §3.4 改种子）。序用迁移 §2.6 已写的硬门：human > unknown > cancel > `duty_cycle=0`，其后接 D9 窗口与 L38 能力，不搬 LoopX 七态名字。`attention_rank` 只是 `v13_attention` 的输出列。advance 读函数，函数不授权 | stage 26/28。不扩 `sessions.status` | 是 |
@@ -251,7 +251,7 @@ L6 的**表和事件族仍永不建**；计入补齐的只是窗口资格投影�
 | D13 | F4 静默 no-op | **R5 已裁**：不移植。台账 F23 一行。零 SQL | 无 stage。不重开 C4 | 已裁 |
 | D14 | R6 catalog 缝 | **R5 已裁**：具名 sql 写者对 parse 可见，豁免绑定同一已解析 OID；其余 VOLATILE 仍拒。RED 基线硬前置 | stage 22 换体 `v13_tools_catalog_frozen`。台账 F22 ≠ parity F22 | 已裁 |
 | D15 | L32 停/复放哪。不加列 | 开放事件 `goal/stopped\|resumed`，指纹=已有 `v13_state_hash`。不符则 RAISE 零写。stop 不扫 claimed、不 closeout、不删行。resume 只追加事件。与 `duty_cycle=0` 并列，不等同。「最后一条事件赢」的折叠只有一个函数体（`v13_goal_lifecycle`）；advance、recover_idle、`v13_should_run` 调用它，不散落多份查询。允许 events 上的部分索引。不建状态表，不扩 `sessions.status`，不因此调整 stage 序 | stage 29。recover_idle 与 advance 入队前读最后一条 | 是 |
-| D16 | F29 信封键集 | 迁移 §2.2 字面：`{schema_version:1, delivery_id, transcript_hash, up_to_seq}`。不采 XML（R1.4）。不含水合文件。不升成第二 transcript | stage 25。文件字节归姊妹篇 | 是 |
+| D16 | F29 信封键集 | **R8 已裁。** 四键；`up_to_seq` ≥ 0 且=存在非 handoff seq（无 −1；空会话 NULL→`handoff empty` 零写）；transcript_hash=最小四元组 v1（收据自身排除防自激，规范字节式见 Phase B 计划 §1.2）；幂等=身份 (sid,up_to_seq,hash) 去重（用户拍板）；policy=极简 {schema_version,enabled}；写口=DEFINER 单写者（emit 体内策略门禁；route→emit 直调=受信 helper）；不采 XML（R1.4）；不含水合文件；不升第二 transcript；R4:23 澄清=非生命周期收据（C16） | stage 25。文件字节归姊妹篇 | 已裁（R8） |
 
 D8 若被改成「要 registry 表」，L1 从永不建改为 §4 例外，Phase C 不得先开工。其余倾向被否时，只停对应 stage。
 
