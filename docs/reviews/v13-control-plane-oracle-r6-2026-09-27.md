@@ -1,5 +1,7 @@
 # v13 控制面 Oracle R6 终裁：D11 无事件盖章分支复裁（2026-09-27）
 
+> **R7 后续（2026-09-27）**：D12 锁协议经 R7 复裁（守卫无锁）——见 `docs/reviews/v13-control-plane-oracle-r7-2026-09-27.md`。本文 D11 裁决与 §4 GRANT 修正不受影响。
+
 - 触发：Phase A 前置核查（`v13/seam/preflight.md`）触发 STOP-D11——R5 四/五轮要求的 turn/route payload 指向字段在两个 harness 入队臂都不存在，且 new 臂物理不可能（ltid L406 才生成、effect_id 由 enqueue 派生，均晚于 L343 事件写入），与 R3a §7.1 裁定的 payload 闭集 `{action,reason,tool,params}` 互斥。两份已裁条文冲突，复裁。
 - 通道：三车道（grokBuild grok-4.7-build-fast-xhigh / codex gpt-5.6-sol@xhigh / claude-fable-5@xhigh）**一致选定候选①**。全文：`prompt-exports/oracle-review-2026-09-27-001721-new-chat-4d2d1b-dc8e.md`（gitignored）。
 - 地位：与 R5 同级。**只替换** R5 §1 条件 4 的 no-event 分支、其后的指向性探针勘误、以及 Phase A 计划中依赖该分支的条文（§3.1.7②、§3.3 条件 4 无事件支、§3.7 无事件夹具）。以下不重开：D11 条件 1/2/3/5、D11b、anchor 按类最早/类内并列零行、session+origin 双收窄、wait/material 恒不豁免、D12/D13/D14/第四务、R3a §7.1 payload 闭集与盖章模式、R3b 注册表其余、零新表零新列、stage 1–20 字节冻结。
