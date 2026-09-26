@@ -1,6 +1,6 @@
-# v13 Phase B 开发计划：工作流动词闭合（stage 23 acl + stage 24 observe + stage 25 handoff）— R8 终裁版 r9（九轮审核，终轮三通道 APPROVE；可开工）
+# v13 Phase B 开发计划：工作流动词闭合（stage 23 acl + stage 24 observe + stage 25 handoff）— R8 终裁版 r11（最终版：九轮审核 + §8 复核对齐 + 终审）
 
-> 状态：**R8 已裁（2026-09-27）：D7=甲 overload、D16=DEFINER 单写者/无 −1/最小 hash 集/回读先于策略；计划 r9 经九轮审核，终轮三通道 APPROVE——可开工**。开工硬门 = §8：**stage 21/22 均已提交（末笔 f59058d），但「已提交 ≠ Phase A 绿」——开工前实跑 stage 1→22 全部 gate 全绿 + 活体复核（含语句级重定位义务）**。裁决记录：`docs/reviews/v13-control-plane-oracle-r8-2026-09-27.md`；审核轮导出：`prompt-exports/oracle-review-2026-09-27-*.md`（九轮）。批判稿：`docs/reviews/v13-phase-b-plan-critique-2026-09-27.md`（顶部有处置注）。stage 24 无独立 D，但硬依赖 stage 23；stage 23 另一硬前置 = **Phase A 绿**（见 §8）。
+> 状态：**R8 已裁；九轮审核三通道 APPROVE + §8 复核 GO-with-edits（22/22 绿）+ 第十轮对齐终审；r11 = 最终版，可开工 stage 23**。复核实绩与报告：`docs/reviews/v13-phase-b-phase-a-recheck-2026-09-27.md`（语句锚表——`:320` 系 fanout 行号已换 dump 活体锚 L16/L17/L18/L19-21/L45/L52/L176）。裁决记录：`docs/reviews/v13-control-plane-oracle-r8-2026-09-27.md`；审核轮导出：`prompt-exports/oracle-review-2026-09-27-*.md`（十轮）。批判稿：`docs/reviews/v13-phase-b-plan-critique-2026-09-27.md`（顶部有处置注）。stage 24 无独立 D，但硬依赖 stage 23。
 > 母计划：`docs/plans/v13-layered-control-roadmap-2026-09-26.md` §2.2/§2.3/§2.4/§3 Phase B（L214–L222）/§4 D7·D16/§5 红线。
 > 前序：Phase A 计划现行版（`docs/plans/v13-phase-a-seams-plan-2026-09-26.md`，已经 R6–R12 七轮裁决链演进）；**stage 21 seam 与 stage 22 catalog 均已提交推送（末笔 f59058d）——「Phase A 绿」门在 §8 复核时以实跑确认**；本计划一切「今日锄点」均为写作时点快照，开工前按 §8 重取；R4–R12 裁决记录。
 > 硬边界（不重开）：零新表零新列（含物化视图/投影表/概念缓存表，R4）；stage 1–20 SQL 文件字节冻结；events 唯一干预通道；唯一推进函数；R3 链已冻失败模式（终态 `replay`、C4 RAISE、`v13_interruptible` 闭集）；外部 IO 不进事务；gate = 独立可跑脚本退出码 0。索引、只 RAISE 的守卫触发器、开放事件、STABLE/VOLATILE 函数不是新表。
@@ -39,7 +39,7 @@
 
 | 通道 | 形态 | 代价/风险 |
 |---|---|---|
-| **overload（R8 选定）** | 新 `v13_cancel(p_actor uuid, p_sid uuid)`（唯一正文，活体底稿）+ 旧 `v13_cancel(p_sid)` 换体为薄 wrapper 委托 `actor=NULL`；complete 同理 6 参（actor 前置，`p_result jsonb DEFAULT NULL` 默认参数保持）+ 5 参 wrapper | 六动词 actor 全是参数，无连接状态；正文自身授权（不得只在 wrapper）；6 参正文镜像旧 5 参活体 proacl |
+| **overload（R8 选定）** | 新 `v13_cancel(p_actor uuid, p_sid uuid)`（唯一正文，活体底稿）+ 旧 `v13_cancel(p_sid)` 换体为薄 wrapper 委托 `actor=NULL`；complete 同理 6 参（actor 前置，`p_result jsonb DEFAULT NULL::jsonb` 默认参数保持）+ 5 参 wrapper | 六动词 actor 全是参数，无连接状态；正文自身授权（不得只在 wrapper）；6 参正文镜像旧 5 参活体 proacl |
 | GUC（已拒存档） | 见 §3.2b（历史方案，不进施工路径） | 乙默认 fail-open（漏设→行政）；会话级泄漏=跨请求冒充——R8 不接受此语义 |
 
 两通道共同规则（不随裁决变）：`p_actor` 非空时**即使当前 principal 是 operator 也只走亲缘**，不自动升行政——operator 要任意目标必须显式 `NULL`；工具 JSON / human result / 事件 payload 里的 `actor` 字段一律不读（gate 用诱饵键证伪）；新函数（observe/log/extract）只吃参数不吃 GUC。
@@ -47,8 +47,8 @@
 **驱动器合同（写进 stage 23 README；driver 补丁 gitignored 不进里程碑；R8 已拒 GUC——README 不得出现 `v13.control_actor`）**：agent cancel = `v13_cancel(父会话, 子会话)`；agent human complete = 六参且 actor 前置；行政/UI = 旧签名（不传 actor）。
 
 **接入点与锁序**：
-- `v13_cancel`（2 参正文）：授权①在 temp 表递归/锁段/`cancel/requested` 发射**之前**；取得树锁并完成 tree-changed 检查后**锁后复验**一次谓词（关 parent_session_id 在检查与锁之间被改的 TOCTOU 窗）；之后树递归/环深度/终态 `replay`/未消费 cancel 幂等/`ready→cancelled` 清扫逐字节保留。授权只对**调用目标**判亲缘：父取消子时孙的 ready effect 沿既有扇出取消（树语义）；actor 直接把孙当 `p_sid` → 谓词假。
-- `v13_complete`（6 参正文）：**锁前定位/准入**——dump 在 `:320` 无锁读出 effect 行（**扩列同时取 `session_id, kind`**，列入允许差集）后立即分支：actor 非 NULL 且（无行或 kind≠human）→ 统一文案零写（**不走** dump 的 `unknown effect` 原句）；actor NULL 且无行 → **按带分岔**：operator 真 → dump 原句 `v13: unknown effect %`（旧签名冻结 needle）；operator 假 → 统一文案零写（R8-③：例外只覆盖 operator，无行时无 kind 可判，非 operator 持 EXECUTE 者不得见原句）；actor NULL 且 kind=human → 行政带失败 → 统一文案零写；actor NULL 且 kind≠human → 不调谓词不读通道，字节=dump。该判断在 session/effect 锁（`:321-322`）**之前**，因此也在 stale/replay 返回、cancelled 分支 UPDATE、human 围栏全部之前。**锁后复验**：锁取得后、下一条 plpgsql 语句处重读锁定行的 kind/session_id 重走同一分支表（不得并进 `FOR UPDATE` 同一条 SQL——谓词 STABLE 可能被折叠成锁前结果）。之后 stale/replay、C4 `interaction_ref` fence、one-of 逐字保留。错 ref 仍原 C4 文案（授权在 payload 校验之前）。防 actor API 变通用结算口：actor 非 NULL 且 kind≠human → 统一文案拒绝。
+- `v13_cancel`（2 参正文）：授权①在 temp 表递归/锁段/`cancel/requested` 发射**之前**；取得树锁并完成 tree-changed 检查后**锁后复验**一次谓词（关 parent_session_id 在检查与锁之间被改的 TOCTOU 窗）。**活体序禁止重排（§8 复核实证）**：存在性/`unknown session`（dump L10–12）→ temp 递归（L13–31）→ 环（L32–39）→ 深度（L40–49）→ 树锁（L50–57）→ tree-changed（L58–65）→ **锁后复验插在此处** → 终态 `replay`（L66–69）→ 未消费 cancel 幂等与 `ready→cancelled`（L83–97）。树递归/环/深度在锁前，不后移，不在复验后再贴一份。授权只对**调用目标**判亲缘：父取消子时孙的 ready effect 沿既有扇出取消（树语义）；actor 直接把孙当 `p_sid` → 谓词假。
+- `v13_complete`（6 参正文）：**锁前定位/准入**——活体 dump L16 无锁读出（今日单列 `SELECT session_id INTO v_sid FROM effects`，不含 kind；**扩列同时取 `session_id, kind`**，列入允许差集）后立即分支：actor 非 NULL 且（无行或 kind≠human）→ 统一文案零写（**不走** dump 的 `unknown effect` 原句）；actor NULL 且无行 → **按带分岔**：operator 真 → dump 原句 `v13: unknown effect %`（旧签名冻结 needle）；operator 假 → 统一文案零写（R8-③：例外只覆盖 operator，无行时无 kind 可判，非 operator 持 EXECUTE 者不得见原句）；actor NULL 且 kind=human → 行政带失败 → 统一文案零写；actor NULL 且 kind≠human → 不调谓词不读通道，字节=dump。该判断在 session 锁（dump L17）与 effect 锁（L18）**之前**，因此也在 stale（L23/L29）/replay（L26）返回、cancelled UPDATE（L45–47）、human 围栏（L52）全部之前。**今日 `unknown effect` RAISE 在锁后 L19–21，不是无锁读出的一部分；锁前「无行」分支是新增，不得把 L20 当锁前锚，也不得删除 L19–21**；锁后复验插在 L18 与 L22 之间（今日就是 L19–21 那段），在该段做 actor/带分支（不改原句），重读锁定行的 kind/session_id 重走同一分支表（不得并进 `FOR UPDATE` 同一条 SQL——谓词 STABLE 可能被折叠成锁前结果）。之后 stale/replay、C4 `interaction_ref` fence、one-of 逐字保留。错 ref 仍原 C4 文案（授权在 payload 校验之前）。防 actor API 变通用结算口：actor 非 NULL 且 kind≠human → 统一文案拒绝。
 - 现存既有泄漏保持不动（**仅 actor NULL 路径**）：dump 的 `v13: unknown effect` 原句仍在——旧签名冻结 needle；actor 非 NULL 路径不泄（统一文案）。
 
 **拒绝文案（草案）**：agent 路径与「非 operator 且 actor 空」一律 `RAISE 'v13: session not found'`（不插值 uuid、不设自定义 SQLSTATE、谓词自身不 RAISE）；operator 且 actor 空且会话不存在：**保留活体原句 `v13: unknown session %`**（从 dump 原样抄，冻结测试 needle 仍中）；新动词（observe/log/extract）无历史包袱：mutating 面（extract）授权失败统一 `v13: session not found`；读面（observe/log）授权失败**零行不 RAISE**（避免用异常区分「不存在」与「无亲缘」）。
@@ -126,16 +126,16 @@ encode(digest(
 
 ### 1.4 裁决纪律（R8 已裁，2026-09-27）
 
-六题全部落裁（记录：`docs/reviews/v13-control-plane-oracle-r8-2026-09-27.md`）：①通道=**甲 overload**（乙 GUC 拒，会话级泄漏语义不被接受）；②C15 采纳状态中立（否决 D7-alt-status）；③例外成立（operator+空 actor+缺会话保留活体 needle，含 complete 的 `unknown effect` 孪生例外）；④写口=**DEFINER 单写者**（codex 带案拒；route→emit 直调=受信内部 helper，行为已定义）；⑤空前缀=**无 −1**（空会话 NULL → `v13: handoff empty` 零写）；⑥hash 字段集=**最小四元组 v1**（codex 增折 event_id/turn_no 否，改须另裁升 v2）。裁决与计划冲突处以裁决为准；不一致处已按 r2–r9 逐轮折入（九轮审核，终轮三通道 APPROVE）。裁决合并前 `v13/acl|observe|handoff` 目录不应出现。
+六题全部落裁（记录：`docs/reviews/v13-control-plane-oracle-r8-2026-09-27.md`）：①通道=**甲 overload**（乙 GUC 拒，会话级泄漏语义不被接受）；②C15 采纳状态中立（否决 D7-alt-status）；③例外成立（operator+空 actor+缺会话保留活体 needle，含 complete 的 `unknown effect` 孪生例外）；④写口=**DEFINER 单写者**（codex 带案拒；route→emit 直调=受信内部 helper，行为已定义）；⑤空前缀=**无 −1**（空会话 NULL → `v13: handoff empty` 零写）；⑥hash 字段集=**最小四元组 v1**（codex 增折 event_id/turn_no 否，改须另裁升 v2）。裁决与计划冲突处以裁决为准；不一致处已按 r2–r10 逐轮折入（十轮审核 + §8 复核对齐）。裁决合并前 `v13/acl|observe|handoff` 目录不应出现。
 
 ## 2. 探针证据底座（开工当天重取，不从本文件回贴函数体）
 
-底稿 = **当时** `files_through` 最后一 stage（预期 22）全量加载库的 `pg_get_functiondef`。今日锚（stage 20 活体，preflight 已存档）仅供理解：
+底稿 = **当时** `files_through` 最后一 stage（预期 22）全量加载库的 `pg_get_functiondef`（**§8 复核已执行（2026-09-27，GO-with-edits）：dump 存 /tmp/v13-pb-recheck/，报告 `docs/reviews/v13-phase-b-phase-a-recheck-2026-09-27.md` 含完整语句锚表与元数据附录——下表「历史源锚」仅供理解，实施一律以当日 dump 为底稿，禁止从 `v13_fanout.sql` 回贴（回贴会丢掉 D12）**）：
 
-| 对象 | 今日锚 | 实施时要确认的性质 |
+| 对象 | 历史源锚（仅供理解） | 实施时要确认的性质 |
 |---|---|---|
-| `v13_cancel(uuid)` | fanout:153（temp 树/环深度 64/终态 `replay`/`cancel/requested`/`ready→cancelled`） | 标记串仍在（`v13: goal tree cycle/depth`、`v13: cancel tree changed`、`RETURN 'replay'`）；identity 仍单 uuid；INVOKER |
-| `v13_complete(uuid,int,bigint,text,jsonb)` | fanout:305（stale/replay 前置→cancelled 阶梯→human C4 fence/one-of→写） | 标记串仍在（`v13: unknown effect`、`v13: human channel one-of`、`v13: human interaction_ref mismatch`、`v13: cancel not pending`）；**无会把异常收成 unknown/replay/stale 的 EXCEPTION**；INVOKER；proacl = {postgres, v13_route, v13_spawn_owner}（preflight §7.2） |
+| `v13_cancel(uuid)` | fanout:153 | 活体底稿 = stage 22 dump（与 fanout 体规范化相等，复核实证）；标记串仍在（`v13: goal tree cycle/depth`、`v13: cancel tree changed`、`RETURN 'replay'`）；identity 仍单 uuid；INVOKER；无 EXCEPTION |
+| `v13_complete(uuid,int,bigint,text,jsonb)` | fanout:305 | 活体底稿 = stage 22 dump；相对 fanout 体**只多尾部一次 D12（dump L176）**；标记串仍在（`v13: unknown effect`、`v13: human channel one-of`、`v13: human interaction_ref mismatch`、`v13: cancel not pending`）；**无会把异常收成 unknown/replay/stale 的 EXCEPTION**；INVOKER；proacl = {postgres, v13_route, v13_spawn_owner}（复核实证） |
 | `v13_append_event(uuid,uuid,text,jsonb,uuid)` | schema:62-91 | 签名不变；本期不换体 |
 | `v13_state_hash(uuid)` | control:362 起（排除名单 :376-390） | 仍是排除名单（名单仅三 `session/*`）；本期不换体 |
 | `sessions.parent_session_id` | schema | 列仍在、类型 uuid |
@@ -193,10 +193,10 @@ encode(digest(
 1. DO 安装前断言：证伪清单的安装期子集（列在、旧签名各恰一个、新名/overload 不存在、worker USAGE 为假、cancel/complete 标记串还在）。失败 RAISE `v13: acl baseline`。
 2. `CREATE FUNCTION v13_control_operator() RETURNS boolean LANGUAGE plpgsql STABLE SET search_path=pg_catalog,public`——体只查 `pg_roles`/`pg_has_role`。
 3. `CREATE FUNCTION v13_control_authorized(p_actor uuid, p_target uuid) RETURNS boolean` 同规格——真值表唯一家；一次查询取 target 的 `parent_session_id`（无行即假），actor 非空再查 actor 行存在；不读 status、不 `current_setting`、不锁行。
-4. `CREATE FUNCTION v13_cancel(p_actor uuid, p_sid uuid) RETURNS text`——**唯一取消正文**，底稿 = dump；文本差只有：DECLARE 增 `v_actor`；函数最前加准入段（actor 非空 → 谓词假 RAISE 统一文案；actor 空 → operator 假 RAISE 统一文案、target 缺失保留 dump 的 `unknown session` 原句）；树锁 + tree-changed 检查后**锁后复验**谓词（actor 非空才需要）；其后字节 = dump。
+4. `CREATE FUNCTION v13_cancel(p_actor uuid, p_sid uuid) RETURNS text`——**唯一取消正文**，底稿 = dump；文本差只有：DECLARE 增 `v_actor`；函数最前加准入段（actor 非空 → 谓词假 RAISE 统一文案；actor 空 → operator 假 RAISE 统一文案、target 缺失保留 dump 的 `unknown session` 原句）；锁后复验插在树锁（dump L50–57）+ tree-changed（L58–65）之后、终态 replay（L66）之前（actor 非空才需要）；复验之后的字节 = dump 自 L66 起，递归/环/深度保持 L13–49。
 5. `CREATE OR REPLACE v13_cancel(p_sid uuid) RETURNS text`——薄 wrapper：`RETURN v13_cancel(NULL::uuid, p_sid)`。不保留第二份递归实现。
-6. `CREATE FUNCTION v13_complete(p_actor uuid, p_effect uuid, p_attempt int, p_fence bigint, p_status text, p_result jsonb DEFAULT NULL) RETURNS text`——**唯一结算正文**，底稿 = dump；文本差只有四段：①**锁前定位查询扩列**——dump 初始无锁 SELECT 从单列 `session_id` 扩为同时取 `session_id, kind`（否则锁前分支无法判 kind；列入允许差集）；②锁前定位/准入分支（dump 无锁读出后立即，按 §1.1 分支表：actor 非 NULL 无行或 kind≠human → 统一文案；**actor NULL 无行 → operator 真 → dump 原句、operator 假 → 统一文案**；actor NULL kind=human 带败 → 统一文案；actor NULL kind≠human 字节=dump）；③`unknown effect` 段的 actor/带分支（不改原句本身）；④锁取得后下一条语句的锁后复验（重读锁定行的 kind/session_id 重走分支表；不得并进 `FOR UPDATE` 同一条 SQL）。全部位于 stale/replay 之前、任何写之前。D12 调用（若 dump 有）保持位置与异常语义；其余字节 = dump。
-7. `CREATE OR REPLACE v13_complete(p_effect uuid, p_attempt int, p_fence bigint, p_status text, p_result jsonb DEFAULT NULL)` 五参 wrapper：委托 `actor=NULL`；**默认参数逐字保持**（`p_result jsonb DEFAULT NULL`——identity arguments 不含默认值，漏写则既有四实参调用变函数不存在=API 回归）；wrapper 体为纯委托（只含 `RETURN v13_complete(NULL::uuid, ...)`）。比对而不仅 identity：`pg_get_function_arguments`（含默认）、`pronargdefaults`、provolatile/prosecdef/proconfig/parallel/strict 逐项与活体相同。
+6. `CREATE FUNCTION v13_complete(p_actor uuid, p_effect uuid, p_attempt int, p_fence bigint, p_status text, p_result jsonb DEFAULT NULL::jsonb) RETURNS text`——**唯一结算正文**，底稿 = dump；文本差只有四段：①**锁前定位查询扩列**——dump L16 无锁 SELECT 从单列 `session_id` 扩为同时取 `session_id, kind`（否则锁前分支无法判 kind；列入允许差集）；②锁前定位/准入分支（dump 无锁读出后立即，按 §1.1 分支表：actor 非 NULL 无行或 kind≠human → 统一文案；**actor NULL 无行 → operator 真 → dump 原句、operator 假 → 统一文案**；actor NULL kind=human 带败 → 统一文案；actor NULL kind≠human 字节=dump）；③`unknown effect` 段（L19–21，锁后）的 actor/带分支（不改原句本身）；④锁后复验插在 L18 与 L22 之间（即 ③ 同段），重读锁定行的 kind/session_id 重走分支表（不得并进 `FOR UPDATE` 同一条 SQL）。**② 的锚是 L16 与 L17 之间（无锁读出之后、session 锁之前）；③④ 的锚是 L18 与 L22 之间（今日 L19–21）**。全部位于 stale/replay 之前、任何写之前。D12 调用（dump L176，函数尾部）保持位置与异常语义（在 replay/stale 之后、最终 RETURN 之前，不前移）；其余字节 = dump。
+7. `CREATE OR REPLACE v13_complete(p_effect uuid, p_attempt int, p_fence bigint, p_status text, p_result jsonb DEFAULT NULL::jsonb)` 五参 wrapper：委托 `actor=NULL`；**默认参数与活体 `pg_get_function_arguments` 逐字相同：`p_result jsonb DEFAULT NULL::jsonb`**（identity arguments 不含默认值，漏写则既有四实参调用变函数不存在=API 回作；探针实证活体是 `NULL::jsonb` 非裸 `NULL`）；wrapper 体为纯委托（只含 `RETURN v13_complete(NULL::uuid, ...)`）。比对而不仅 identity：`pg_get_function_arguments`（含默认）、`pronargdefaults`、provolatile/prosecdef/proconfig/parallel/strict 逐项与活体相同。
 8. `REVOKE EXECUTE ... FROM PUBLIC` 只对新函数（operator/authorized/2 参 cancel/6 参 complete）。**禁对换体函数 `REVOKE ALL`**（OR REPLACE 保留原 ACL）。
 9. GRANT：operator/authorized/2 参 cancel/6 参 complete → `v13_route` + **旧签名活体 proacl 的其他真实调用方**（预期 `v13_spawn_owner`，以当日 proacl 为准——缺它则其调用 wrapper 时 42501 而非统一拒绝，且 stage 17–20 冻结正例会红）；不授 worker/resolve/recall/PUBLIC。
 10. `COMMENT ON FUNCTION` 各一行。无表/视图/触发器/GUC 数据库级定义。
@@ -230,7 +230,7 @@ encode(digest(
 
 **cancel 接入**：直接父 2 参调用 accepted、`cancel/requested` 恰一条、孙 ready effect 沿扇出 cancelled（授权只判调用目标）；`SET ROLE v13_route` 旧 1 参调用保持 stage 22 正例（行政）；终态直接子仍 `replay`；同一未消费 cancel 不写第二条；工具参数伪 actor 不改变绑定参数。
 
-**human complete 接入**：父 actor 成功应答子的 human；self/祖/无关/未知 actor 同一文案、effect 仍 claimed、零 `effect_done`/`human/responded`；actor-aware overload 对非 human 拒绝且零写（**负例加严：actor 路径对 tool effect 调 complete(cancelled) → 统一文案零写，不得先写 effect_done**——钉准入在 :348 写之前非 :355 围栏处）；operator 经旧 5 参仍能完成 human；错 `interaction_ref` 仍原 C4 文案且零写（授权通过后）；stale/replay/fence 行为不变（但**未授权者看不到 stale/replay**——负例：未授权 + 已终态 effect → 统一文案非 replay）；Phase A 写者（若在）经旧 5 参非 human complete 仍触发既有事件（证 6 参正文未回滚 D12）。
+**human complete 接入**：父 actor 成功应答子的 human；self/祖/无关/未知 actor 同一文案、effect 仍 claimed、零 `effect_done`/`human/responded`；actor-aware overload 对非 human 拒绝且零写（**负例加严：actor 路径对 tool effect 调 complete(cancelled) → 统一文案零写，不得先写 effect_done——钉准入在活体 cancelled UPDATE（dump L45 `SET status = 'cancelled'`）之前，不是 human 围栏（dump L52）处；`v13_fanout.sql:348` 是该 UPDATE 前一行的 `END IF`、`:355` 是 cancelled 分支的 `END IF`（human IF 在 fanout:356/dump L52），禁止按这些行号从 `v13_fanout.sql` 回贴**）；operator 经旧 5 参仍能完成 human；错 `interaction_ref` 仍原 C4 文案且零写（授权通过后）；stale/replay/fence 行为不变（但**未授权者看不到 stale/replay**——负例：未授权 + 已终态 effect → 统一文案非 replay）；Phase A 写者经旧 5 参非 human complete 仍触发既有事件（证 6 参正文未回滚 D12）。
 
 **负例（消息逐字全等，跨用例不含被测 uuid；`fails_with`+SAVEPOINT）**：self/孙/U/不存在 uuid/不存在 actor/空 actor 非 operator 六类文案全等；**6 参、actor=已存在父会话、effect id 不存在 → 统一文案，SQLERRM 不含 `unknown effect` 不含该 uuid，零写**（钉锁前分支不走原句）；**`SET ROLE v13_spawn_owner` + 旧 5 参 + 不存在 effect → 统一文案零写**（非 operator 持 EXECUTE 者不得见原句；spawn_owner 不存在时换任一当日 proacl 内非 operator 角色，均无则改源码断言）；超户无 actor 未知 sid → needle 仍是活体 `unknown session`（不是 session not found）；human 自答（actor=该 effect 会话）+ payload 另放伪造 `actor` 键 → 同为统一文案（授权在键集检查前）；未授权对已终态 human 再 complete → 统一文案（不是 replay/stale）；父直接调孙 → G 零写；`SET ROLE v13_worker` → 对 operator/authorized 两函数 `has_function_privilege(...) = 假`、直调 42501（worker 是 NOINHERIT 成员不带来 EXECUTE——「worker 不进行政带」的否定证据以 `pg_has_role('v13_worker','v13_route','USAGE') = 假` 为准，§2 证伪 3 同源）；cancel/complete 同 42501；recall 仍不能 SELECT effects。
 
@@ -374,7 +374,7 @@ encode(digest(
 
 ## 8. Phase A 落地后复核指导（stage 23 硬前置；Phase A 收尾后、写 stage 23 SQL 前执行）
 
-> 写作时基线：**stage 21（e925ebe，R7/R7b）与 stage 22（7200317 起，R9–R12 D14 断言链）均已提交——complete 活体已含 D12 写者调用、catalog 已换体；Phase A 余下的是验收收尾**。本节不是一次性快照而是每次开工前的强制刷新（实跑 stage 1→22 全部 gate）。本节结果写成台账一段，不改 F17 四动词合同。
+> 写作时基线：**stage 21（e925ebe，R7/R7b）与 stage 22（7200317 起，R9–R12 D14 断言链）均已提交；§8 复核已于 2026-09-27 执行完毕 = GO-with-edits（22/22 gate 绿、A1–A8 全成立、无 STOP；报告 `docs/reviews/v13-phase-b-phase-a-recheck-2026-09-27.md`，其 §10 六条已折入 r10）**。后续若再有漂移，本节仍是开工前强制刷新（实跑 stage 1→22 全部 gate）。本节结果写成台账一段，不改 F17 四动词合同。
 
 ### 8.1 绑定假设表
 
@@ -382,18 +382,18 @@ encode(digest(
 |---|---|---|---|
 | A1 | 加载序可末尾出现 seam=21、catalog=22，Phase B 从 23 追加 | load.py 末两项 = seam=21、catalog=22，均已提交（末笔 f59058d） | 末尾不是已绿 catalog 又无台账弃权 → 不追加 acl（§2 证伪 9；「已提交」以实跑绿为准） |
 | A2 | `v13_cancel` 不被 Phase A 换体 | Phase A 换体名单无 cancel | 以 dump 为准；标记串缺失 → 停 |
-| A3 | `v13_complete` 已含一次 D12 写者调用（R7 两语句形）；签名/INVOKER/无吞异常 EXCEPTION 不变 | stage 21 e925ebe + R7/R7b | 出现 DEFINER 或吞异常处理器 → 停工请裁；D12 调用按当日 dump 保留恰一次（两语句形不重排） |
+| A3 | `v13_complete` 已含一次 D12 写者调用；签名/INVOKER/无吞异常 EXCEPTION 不变 | 复核实证（2026-09-27）：complete dump L176 恰一次 PERFORM（尾部，replay/stale 之后）；R7 两语句形在被调函数 `v13_record_worktree_released` dump L26–28/L36–39，**不在 complete 体内**；INVOKER；无 EXCEPTION 处理器；proacl={postgres, v13_route, v13_spawn_owner} | 出现 DEFINER 或吞异常处理器 → 停工请裁；D12 调用按当日 dump 保留恰一次不前移 |
 | A4 | state_hash 仍是排除名单 | preflight §7.1 | 变白名单且不含 handoff → stage 25 停工报事实 |
 | A5 | 亲缘列仍是 `parent_session_id` | schema | 列没了 → 停，不另找 link |
 | A6 | 事件守卫可并列，无需改 stage 17 WHEN 列表 | control 守卫按 type 过滤；seam 守卫今日 WHEN type='worktree/released' 不误伤 | `control/handoff` 被 stage 17 **或 seam（或未来任一）守卫**误伤 → 停，报 WHEN 列表，不改既有文件 |
 | A7 | Phase A 范围收缩（若再停工）只改底稿形状不改四动词合同 | R6 §5；Phase A §7 | 不把「Phase A 绿」改写成「stage 17–20 绿」；书面弃权须点名「stage 23 底稿 = stage N dump」 |
-| A8 | R6 的 GRANT 闭包修正已落（record_worktree_released→route+spawn_owner；禁 worker/resolve/PUBLIC） | R6 §4；seam 已提交（f59058d），`v13_seam.sql:687` 的 GRANT（route+spawn_owner）已在库；以当日活体 ACL 为准 | 不符 → 停，对账 R6 |
+| A8 | R6 的 GRANT 闭包修正已落（record_worktree_released→route+spawn_owner；禁 worker/resolve/PUBLIC） | 复核实证：`v13/seam/v13_seam.sql:677-678` 的 GRANT（route+spawn_owner）已在库（**文件止于 682，无 687 行**）；活体 acl = postgres/v13_route/v13_spawn_owner 各 EXECUTE；`v13_worktree_state` 只授 route | 不符 → 停，对账 R6 |
 
 ### 8.2 复核步骤
 
 1. 读 `load.py` 的 `SQL_LOAD_ORDER`/`STAGE_THROUGH`，记长度与末两项。
 2. 实跑 stage 1→22 全部 gate（seam/catalog 测试文件不存在 = Phase A 未绿 = 停在这一步）。
-3. stage 22 全量库上 dump：`v13_cancel`/`v13_complete`/`v13_append_event`/`v13_state_hash`/`v13_policy` + Phase A 新函数（`v13_record_worktree_released`/`v13_worktree_state`）+ events 上全部 guard trigger；逐函数记 owner/prosecdef/provolatile/proconfig/identity/ACL；**dump 与元数据存仓库外临时核查目录（不进仓库）**。形状检查含：**replay/stale 仍在一切新写者之前**。**语句级重定位**：本计划所引 `:320`/`:321`/`:326`/`:348`/`:355` 是 fanout 快照行号，不是活体插入点——在 dump 上按**语句**重定位（无锁读出 effect 行、session 锁、effect 锁、`unknown effect` RAISE、stale/replay 返回、cancelled 的 UPDATE、human 围栏、D12 调用位置）后写 SQL；禁按 fanout 行号或 `v13_fanout.sql` 回贴。
+3. stage 22 全量库上 dump：`v13_cancel`/`v13_complete`/`v13_append_event`/`v13_state_hash`/`v13_policy` + Phase A 新函数（`v13_record_worktree_released`/`v13_worktree_state`）+ events 上全部 guard trigger；逐函数记 owner/prosecdef/provolatile/proconfig/identity/ACL；**dump 与元数据存仓库外临时核查目录（不进仓库）**。形状检查含：**replay/stale 仍在一切新写者之前**。**语句级重定位**：计划旧锚（`:320`/`:321`/`:326`/`:348`/`:355` 等）是 fanout 快照行号（`:348` 是 END IF 非写、`:355` 是 cancelled 的 END IF 非围栏），不是活体插入点——在 dump 上按**语句**重定位（无锁读出、session 锁、effect 锁、`unknown effect` RAISE、stale/replay 返回、cancelled 的 UPDATE、human 围栏、D12 调用位置）后写 SQL；禁按 fanout 行号或 `v13_fanout.sql` 回贴（回贴丢 D12）。
 4. 全仓检索 `v13_cancel(`/`v13_complete(` 调用点，分四类：生产/gate/历代死体/demo（gitignored）——spawn_owner 依赖 grep 在此出结论。
 5. stage 1–20 文件哈希比对，证字节冻结未被破坏。
 6. 填 §8.1 对照表；只有「D12 调用在/不在」按分支继续，其余不符走 §8.3。
