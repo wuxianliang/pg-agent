@@ -67,6 +67,9 @@ stannum AM 索引）。**三面分工**（互补，勿混用）：
 
 ### 示例（2026-09-25 实测于 `agent_v13_characterize`，stannum 0.4.0；数值为 fixture 示例形态，库重建后以新读数为准）
 
+示例保持 **owner 视角**。全库视图谁来跑、三角色为何失败，见下文「index_health 执行者」
+（R14/R15）。下列 `documents` / `total_pages` 是当时 fixture 读数，不是运营基线；本节不另写会过期的数字。
+
 单索引全景（13 列建议 `\x` 展开）：
 
 ```sql
@@ -130,11 +133,80 @@ ORDER BY dead_ratio DESC;
 - `index_health` 带 `security_invoker=true`：以**调用方**身份执行——调用方
   须对库内**每一个** stannum 索引满足上述权限，一个不可读即整体报错
   （all-or-nothing fail-closed，防 superuser owner 视图绕权）。
+- 全库视图的推荐执行者、与单索引 `index_stats` 的分界，见下节。不要把上面两条读成
+  「只要对某一张表有 SELECT 就能跑全库视图」。
+
+### index_health 执行者
+
+推荐执行者是**数据库 owner**（全库视图）。也可以由诊断角色执行，但该角色必须对
+**所有** stannum 底表持有不受 RLS 限制的表级 SELECT。列授权不够；表启用 RLS 时诊断拒绝
+（引擎报 `index diagnostics require ownership or SELECT without row security`），
+不能靠行级策略放行。
+
+视图**不是**硬编码 owner-only。`security_invoker=true`，按调用方身份逐索引调
+`index_stats`：一个底表不可读，整条查询失败。三角色（`v13_recall` / `v13_resolve` /
+`v13_route`）失败，是因为没有 canary 表 `v13_canary_docs` 的 SELECT，不是因为视图只允许
+owner。指向 `v13/mgraph/test_stannum_usage.py` 的 **R14** / **R15**：R14 是
+`v13_recall` 查 `stannum.index_health` 得到 permission denied；R15 是 owner 看到全部索引行。
+canary 表对三角色无 SELECT 由 characterize 的 R3 钉死（`test_characterize.py`）；R14 只
+实证 recall，另外两角色同样过不了 canary 那一行。上文示例保持 owner 视角；本节不写会
+过期的 `documents` / `total_pages` 数字。
+
+不要和单索引 `index_stats` 混为一谈。角色对该表有表级 SELECT 时，
+`index_stats('ix_chunks_stannum')` 仍可能成功（R12：`v13_recall` 可读 chunks 上的单索引
+统计）。同一角色查 canary 索引则失败（R13）。单索引成功不等于全库视图可跑。
+
+## autovacuum（**生产化参考**，夹具库不执行）
+
+标题即边界：本节只是**生产化参考**。v13 夹具库不执行这些 `ALTER TABLE`，
+也不 `SET stannum.*`。F13（`v13/mgraph/test_stannum_usage.py`）继续锁 6 个 GUC 默认值
+（`write_buffer_docs` / `write_buffer_bytes` / `max_merge_docs` /
+`build_segment_docs` / `max_segments` / `merge_tier_factor`）。不要把下面的表级参数写进
+夹具 DDL，也不要在会话里改这 6 个 GUC。
+
+组合照抄 stannum pin `ad4d3b7` 的
+`docs/architecture/segmented-storage.md:211-219`（本仓库没有该文件；同 pin 的
+`docs/compatibility.md` 不含这组参数）。插入为主或混合负载上，可预测维护节奏用
+`vacuum_index_cleanup = auto` 加上插入阈值（并把普通 vacuum 阈值一并钉死）。示例表名
+`documents` 是上游写法，不是 v13 关系：
+
+```sql
+ALTER TABLE documents SET (
+  vacuum_index_cleanup = auto,
+  autovacuum_vacuum_insert_threshold = 1000,
+  autovacuum_vacuum_insert_scale_factor = 0,
+  autovacuum_vacuum_threshold = 1000,
+  autovacuum_vacuum_scale_factor = 0
+);
+```
+
+PG 17/18 在 `vacuum_index_cleanup = auto` 跳过 bulk deletion 时仍会调用
+`amvacuumcleanup`，插入触发的 autovacuum 因此能排空 deferred merge，不必等表有更新。
+阈值按负载调整；服务器须保持 `autovacuum` 与 `track_counts` 开启。这是上游对生产表的
+建议，不是本仓库夹具的执行步骤。
 
 ## tokenizer canary
 
 专用表 `v13_canary_docs` + `WITH (long_tokens='split', max_token_bytes=64)`。
 64B 精确块：bound 命中 / 默认回退漏召。**绝不与生产索引同列共存**。
+
+## tinql 调试入口（tokenize / ql_parse / maybe_quote）
+
+`stannum.tokenize` / `stannum.ql_parse` / `stannum.maybe_quote` 是排查 tinql 的正规
+入口。三者在 `ZERO_FUNCS`（`v13/mgraph/test_stannum_usage.py`）；F14 只锁生产路径
+零调用，**不做**这三个函数的输出 gate。切分或查询重写对不上索引时直接调它们，不要
+从召回结果反推 tokenizer。
+
+- `tokenize`：文本切成哪些 term。
+- `ql_parse`：查询串如何解析、短语如何重写。tinql 对不上索引时先看这里。
+- `maybe_quote`：一段文本是否需要加引号。生产建查询走 `v13_build_tinql` 的全段引号，
+  不调用本函数；调试仍用它，不要另写引号规则。
+
+诊断**非默认**索引时，必须传入与目标索引一致的 tokenizer 与 options
+（`tokenizer` / `long_tokens` / `max_token_bytes` 等）。函数默认是 `tokenizer='unicode'`、
+`max_token_bytes=256`。**不要把默认 unicode 输出当成 jieba 索引行为。** 生产索引今天是
+默认 unicode；canary（`long_tokens='split'`，`max_token_bytes=64`）已经和函数默认不一致
+——查哪张索引，就传哪张索引的 reloption。
 
 ## 同列双索引禁令
 
