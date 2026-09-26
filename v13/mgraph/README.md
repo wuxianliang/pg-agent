@@ -52,10 +52,13 @@ analyzer）；索引 analyzer 偏离默认（tokenizer/`max_token_bytes`/
    PK `(session_id,consolidation_key)` 同 key 至多一行——重试语义由
    effect attempt 承载;status∈queued|generating|adopted|rejected;
    「rejected 可审计」的载体;M4 消费)。
-4. **策略行 `mgraph` v2**(§3.2 种子逐键 **41 键**;V1 就地升版(1→2):
-   +`anchor_ngram_n=3`/`anchor_max_terms=48`,`candidate_top_k` 10→5
-   (OQ15/OQ18;读取器键集全等串与类型域数组同批——**v1/v2 键集不兼容**,
-   旧读取器读 v2 JSON 即 V3009;回退=恢复 v1 SQL+重建 stage,不能只翻
+4. **策略行 `mgraph` v3**(§3.2 种子逐键 **43 键**;U3b 2026-09-26 就地升版
+   (2→3):+`routing_intent_causal`/`routing_intent_temporal` 两词表键
+   (supersedes DP9-OQ3,设计 B;空数组=回退 superset,维护=策略翻版)。
+   历史:V1 就地升版(1→2)+`anchor_ngram_n=3`/`anchor_max_terms=48`,
+   `candidate_top_k` 10→5
+   (OQ15/OQ18;读取器键集全等串与类型域数组同批——**版本间键集不兼容**,
+   旧读取器读新 JSON 即 V3009;回退=恢复旧 SQL+重建 stage,不能只翻
    active 标记);含 `write_max_asks=64`;
    `consolidate_max_body_bytes=32768` 为 v13 本地护栏非上游默认)。
    读取器 `v13_mgraph_policy()` fail-closed:键集漂移/类型域违例/权重
@@ -183,13 +186,16 @@ analyzer）；索引 analyzer 偏离默认（tokenizer/`max_token_bytes`/
     `pg_advisory_xact_lock(v13_lock_key(sid,'mgraph-build'))`,与 build
     的会话级同 key 锁互斥。零 effect、零 `resolve/failed`、不
     `FOR UPDATE sessions`。
-16. **路由 `v13_mgraph_route(query)→{mode,weights}`(OQ3)**。确定性:
-    主意图互斥 why>when>大写实体>semantic,被点名桶权重 =
-    `deterministic_floor+1`,其余六桶保持 floor;`multi_hop`/`recency`
-    仅查询点名(`multi_hop`/`multi-hop`/`recency`)时升到同一高度。
-    CJK 段(与 `v13_query_segments` 同一码点区间)→ mode=superset,
-    六桶都停在 floor,routing asked=0。`routing_mode='jev'` 才把六问
-    放进 walk(signal `mem_route::<qhash>::<桶>@<generation>`,偏差 #15);
+16. **路由 `v13_mgraph_route(query)→{mode,weights}`(OQ3;U3b 2026-09-26
+    supersedes DP9-OQ3 routing branch)**。检测序:①`routing_mode='jev'`→
+    mode=jev;②意图锚链对全查询执行,互斥序 **why(策略词表
+    `routing_intent_causal` ∪ latin 'why')>when(`routing_intent_temporal`
+    ∪ 'when')>大写实体>semantic**,被点名桶权重=`deterministic_floor+1`,
+    其余六桶 floor;`multi_hop`/`recency` 仅查询点名时升到同一高度;
+    ③未命中 ∧ 含 CJK(`v13_mgraph_script_cjk`,P1-8 只读 helper,五区间
+    与 segments/route 同一权威表,G11 钉边界)→ mode=superset,六桶都停
+    floor,routing asked=0;④未命中纯 ASCII→semantic(现状)。词表是
+    策略不是代码(空数组=回退 superset;维护=策略翻版,函数体零词面)。
     低于 `graph_activation_threshold` 的 Noul 归零,全 0 走 allocate
     的 superset。shadow 在 walk 已 stopped 且 spend 有余量时另发一封,
     不改 frontier、不计入 `calls_used`。

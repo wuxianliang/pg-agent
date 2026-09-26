@@ -143,17 +143,19 @@ CREATE TABLE memory_consolidations (
   PRIMARY KEY (session_id, consolidation_key)
 );
 
--- === §3.2 mgraph 策略行 v2 种子(V1 候选发现唤醒:candidate_top_k 10→5
---     (OQ18)+anchor_ngram_n/anchor_max_terms 两键(OQ15;39→41 键,就地
---     升版+读取器同批——v1/v2 键集不兼容,旧读取器读 v2 JSON 即 V3009,
---     回退=恢复 v1 SQL 重建 stage,不能只翻 active 标记);OQ9 裁决后逐键;
+-- === §3.2 mgraph 策略行 v3 种子(V2 后 U3b 2026-09-26 就地升版(2→3):
+--     +routing_intent_causal/routing_intent_temporal 两词表键
+--     (supersedes DP9-OQ3;41→43 键,读取器同批;词表=策略非代码,空数组
+--     =回退 superset;v2 键集仍不兼容旧读取器,回退=恢复 v2 SQL+重建
+--     stage。历史:V1 候选发现唤醒 candidate_top_k 10→5(OQ18)
+--     +anchor_ngram_n/anchor_max_terms 两键(OQ15;39→41);OQ9 裁决后逐键;
 --     consolidate_max_body_bytes
 --     来源=v13 本地护栏(对齐 summary_accept.checks.max_body_bytes 量级),
 --     非 Jev-Mem 默认值;三帽单位同为 ask 批数:maximum_jev_calls(一次
 --     read walk)/write_max_batches(每 tick)/write_max_asks(每次 build),
 --     共同下游=judge_spend;write/read 默认双 false=部署暗) ===
 INSERT INTO v13_policies (name, version, value, active) VALUES
-('mgraph', 2, '{
+('mgraph', 3, '{
   "relation_threshold": 0.60, "candidate_top_k": 5,
   "anchor_ngram_n": 3, "anchor_max_terms": 48,
   "total_graph_budget": 20, "probability_exponent": 1.5,
@@ -170,7 +172,9 @@ INSERT INTO v13_policies (name, version, value, active) VALUES
   "candidate_recency_coef": 0.25, "candidate_recency_halflife_s": 86400,
   "keyword_cap": 15, "write_enabled": false, "read_enabled": false,
   "admission_enabled": false, "routing_mode": "deterministic",
-  "routing_shadow": false, "write_max_batches": 8,
+    "routing_shadow": false, "write_max_batches": 8,
+  "routing_intent_causal": ["为什么","为何","缘何","何以","原因","缘故","成因","怎么回事","怎么会"],
+  "routing_intent_temporal": ["何时","什么时候","啥时候","几点","哪天","哪一年","多久"],
   "consolidate_mode": "manual", "consolidation_interval": 0,
   "deterministic_floor": 1, "inject_top_k": 5,
   "entity_stopwords": [],
@@ -216,7 +220,7 @@ BEGIN
   SELECT string_agg(ok, ',' ORDER BY ok) INTO v_keys
     FROM jsonb_object_keys(v) ok;
   IF v_keys IS DISTINCT FROM
-     'admission_enabled,anchor_max_terms,anchor_ngram_n,beam_width,candidate_recency_coef,candidate_recency_halflife_s,candidate_top_k,consolidate_max_body_bytes,consolidate_mode,consolidation_choice_min,consolidation_interval,consolidation_priority,consolidation_threshold,continue_min,contradiction_stop_hi,deterministic_floor,entity_coef,entity_stopwords,evidence_sufficient_min,graph_activation_threshold,inject_top_k,keyword_cap,keyword_coef,lexical_coef,max_latency_ms,maximum_depth,maximum_edges,maximum_jev_calls,maximum_nodes,missing_stop_hi,probability_exponent,read_enabled,relation_threshold,routing_mode,routing_shadow,total_graph_budget,transition_recency_coef,transition_weights,write_enabled,write_max_asks,write_max_batches' THEN
+     'admission_enabled,anchor_max_terms,anchor_ngram_n,beam_width,candidate_recency_coef,candidate_recency_halflife_s,candidate_top_k,consolidate_max_body_bytes,consolidate_mode,consolidation_choice_min,consolidation_interval,consolidation_priority,consolidation_threshold,continue_min,contradiction_stop_hi,deterministic_floor,entity_coef,entity_stopwords,evidence_sufficient_min,graph_activation_threshold,inject_top_k,keyword_cap,keyword_coef,lexical_coef,max_latency_ms,maximum_depth,maximum_edges,maximum_jev_calls,maximum_nodes,missing_stop_hi,probability_exponent,read_enabled,relation_threshold,routing_intent_causal,routing_intent_temporal,routing_mode,routing_shadow,total_graph_budget,transition_recency_coef,transition_weights,write_enabled,write_max_asks,write_max_batches' THEN
     RAISE EXCEPTION 'v13: mgraph policy key set mismatch (%)', v_keys
       USING ERRCODE = 'V3009';
   END IF;
@@ -278,6 +282,21 @@ BEGIN
     RAISE EXCEPTION 'v13: mgraph policy entity_stopwords must be string array'
       USING ERRCODE = 'V3009';
   END IF;
+  -- U3b 路由词表(设计 B;entity_stopwords 先例——字符串数组进策略行,
+  -- 函数体零词面;空数组=回退 superset 现状。域界:元素 1..256B、每桶
+  -- ≤16 词——域界常数非动作阈)
+  FOREACH k IN ARRAY ARRAY['routing_intent_causal','routing_intent_temporal'] LOOP
+    IF jsonb_typeof(v->k) IS DISTINCT FROM 'array'
+       OR (SELECT count(*) FROM jsonb_array_elements(v->k)) > 16
+       OR EXISTS (SELECT 1 FROM jsonb_array_elements(v->k) e
+                   WHERE jsonb_typeof(e) IS DISTINCT FROM 'string'
+                      OR octet_length(e#>>'{}') = 0
+                      OR octet_length(e#>>'{}') > 256) THEN
+      RAISE EXCEPTION
+        'v13: mgraph policy % must be a string array (<=16 entries, 1..256B each)', k
+        USING ERRCODE = 'V3009';
+    END IF;
+  END LOOP;
   IF jsonb_typeof(v->'transition_weights') IS DISTINCT FROM 'array'
      OR (SELECT count(*) FROM jsonb_array_elements(v->'transition_weights')) <> 5
      OR EXISTS (SELECT 1 FROM jsonb_array_elements(v->'transition_weights') e
@@ -1474,12 +1493,26 @@ $$;
 -- multi_hop/recency 仅查询点名时升到同一高度。CJK 段 → superset,
 -- 六桶都停在 floor(零 ask,ask 发生在 run_round 之外的本函数也不发问)。
 -- routing_mode=jev 时 mode=jev,权重不作为分配输入(run_round 改读 Noul)。
+-- === P1-8 只读 script 判定 helper(U3b;v2 计划 :354 接口注记):码点
+--     五区间与 v13_query_segments(:34-44)/route 原内联扫描同一权威表;
+--     STABLE 零 IO 零动念;G11 钉边界一致;不改冻结 recall 函数 ===
+CREATE FUNCTION v13_mgraph_script_cjk(p_body text)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM unnest(regexp_split_to_array(coalesce(p_body, ''), '')) AS ch
+     WHERE ascii(ch) BETWEEN 12352 AND 12543
+        OR ascii(ch) BETWEEN 13312 AND 19903
+        OR ascii(ch) BETWEEN 19968 AND 40959
+        OR ascii(ch) BETWEEN 44032 AND 55215
+        OR ascii(ch) BETWEEN 63744 AND 64255)
+$$;
+
 CREATE FUNCTION v13_mgraph_route(p_query text)
 RETURNS jsonb LANGUAGE plpgsql STABLE AS $$
 DECLARE
   v_pol jsonb; v_floor numeric; v_raised numeric; v_q text;
-  v_mode text; v_primary text := NULL; v_cjk boolean := false;
-  v_ch text; v_cp int; v_i int;
+  v_mode text; v_primary text := NULL;
+  v_word text; v_i int;
   v_names text[] := ARRAY['causal','entity','multi_hop','recency',
                           'semantic','temporal'];
   v_w numeric[] := ARRAY[0,0,0,0,0,0]::numeric[];
@@ -1489,32 +1522,48 @@ BEGIN
   v_floor := (v_pol->>'deterministic_floor')::numeric;
   v_raised := v_floor + 1;
   v_q := coalesce(p_query, '');
-  FOR v_ch IN SELECT x FROM unnest(regexp_split_to_array(v_q, '')) AS t(x)
-  LOOP
-    IF v_ch IS NULL OR v_ch = '' THEN CONTINUE; END IF;
-    v_cp := ascii(v_ch);
-    IF (v_cp BETWEEN 12352 AND 12543)
-       OR (v_cp BETWEEN 13312 AND 19903)
-       OR (v_cp BETWEEN 19968 AND 40959)
-       OR (v_cp BETWEEN 44032 AND 55215)
-       OR (v_cp BETWEEN 63744 AND 64255) THEN
-      v_cjk := true; EXIT;
+  -- U3b supersedes DP9-OQ3 routing branch:CJK 从短路改为兑底。意图锚链
+  -- 对全查询执行(latin 子串 why/when ∪ 策略词表 routing_intent_*;
+  -- substring 语义沿 OQ3 英文先例);未命中且含 CJK(v13_mgraph_
+  -- script_cjk,单一真相)才 superset;未命中纯 ASCII 仍 semantic。
+  IF position('why' IN lower(v_q)) > 0 THEN
+    v_primary := 'causal';
+  ELSE
+    FOREACH v_word IN ARRAY ARRAY(
+      SELECT jsonb_array_elements_text(v_pol->'routing_intent_causal')) LOOP
+      IF position(v_word IN v_q) > 0 THEN
+        v_primary := 'causal'; EXIT;
+      END IF;
+    END LOOP;
+  END IF;
+  IF v_primary IS NULL THEN
+    IF position('when' IN lower(v_q)) > 0 THEN
+      v_primary := 'temporal';
+    ELSE
+      FOREACH v_word IN ARRAY ARRAY(
+        SELECT jsonb_array_elements_text(v_pol->'routing_intent_temporal')) LOOP
+        IF position(v_word IN v_q) > 0 THEN
+          v_primary := 'temporal'; EXIT;
+        END IF;
+      END LOOP;
     END IF;
-  END LOOP;
+  END IF;
+  IF v_primary IS NULL
+     AND cardinality(v13_mgraph_entities(v_q)) > 0 THEN
+    v_primary := 'entity';
+  END IF;
   IF v_pol->>'routing_mode' = 'jev' THEN
     v_mode := 'jev';
-  ELSIF v_cjk THEN
+  ELSIF v_primary IS NOT NULL THEN
+    v_mode := 'deterministic';
+  ELSIF v13_mgraph_script_cjk(v_q) THEN
     v_mode := 'superset';
   ELSE
     v_mode := 'deterministic';
+    v_primary := 'semantic';
   END IF;
   FOR v_i IN 1..6 LOOP v_w[v_i] := v_floor; END LOOP;
   IF v_mode = 'deterministic' THEN
-    IF position('why' IN lower(v_q)) > 0 THEN v_primary := 'causal';
-    ELSIF position('when' IN lower(v_q)) > 0 THEN v_primary := 'temporal';
-    ELSIF cardinality(v13_mgraph_entities(v_q)) > 0 THEN v_primary := 'entity';
-    ELSE v_primary := 'semantic';
-    END IF;
     FOR v_i IN 1..6 LOOP
       IF v_names[v_i] = v_primary THEN v_w[v_i] := v_raised; END IF;
     END LOOP;

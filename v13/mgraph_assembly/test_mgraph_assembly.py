@@ -87,7 +87,7 @@ PREFIX_FREEZE = {
     "v13_economy.sql": "494091769d27a93a",
     "v13_summary.sql": "6486017b51e3cba3",
     "v13_periphery.sql": "dbfa6ab032045933",
-    "v13_mgraph.sql": "7071d2397108fb2e",
+    "v13_mgraph.sql": "cb1ac2dc722f2ec9",
 }
 
 
@@ -1124,7 +1124,7 @@ def main() -> int:
     cur.execute("SELECT version, (value->>'read_enabled')::boolean"
                 " FROM v13_policies WHERE name='mgraph' AND active")
     ver_end, read_end = cur.fetchone()
-    check("J: mgraph policy restored to seed (v2, read off)",
+    check("J: mgraph policy restored to seed (read off)",
           ver_end == mgraph_seed_ver and read_end is False,
           (ver_end, read_end))
 

@@ -10,7 +10,7 @@ mgraph_consolidate + cap v3 + narrow requeue, enqueue/settle, fidelity
 gate, consolidation nodes as the first remote-plane artifacts.
 V2 V1 group G (candidate-discovery wake-up): mgraph-local anchor compiler
 (terms/tinql/guard, STABLE), guard swap at the candidates entry, anchor
-source swap at build/anchors/transition_score, policy v2 (41 keys,
+source swap at build/anchors/transition_score, policy v3 (43 keys,
 candidate_top_k 10->5, anchor_ngram_n/anchor_max_terms).
 V2 V2 group H (contradiction path): snapshot-frozen mem_rel_contradicts
 slot (29th template, canonical (lo,hi) signal endpoints), apply_relations
@@ -71,6 +71,10 @@ EXPECTED_POLICY = {
     "consolidate_mode": "manual", "consolidation_interval": 0,
     "deterministic_floor": 1, "inject_top_k": 5,
     "entity_stopwords": [],
+    "routing_intent_causal": ["为什么", "为何", "缘何", "何以", "原因",
+                              "缘故", "成因", "怎么回事", "怎么会"],
+    "routing_intent_temporal": ["何时", "什么时候", "啥时候", "几点",
+                                "哪天", "哪一年", "多久"],
     "consolidate_max_body_bytes": 32768,
     "write_max_asks": 64,
 }
@@ -361,7 +365,7 @@ def main() -> int:
     cur.execute(
         "SELECT version, value FROM v13_policies WHERE name='mgraph' AND active")
     ver, val = cur.fetchone()
-    check("A2: mgraph v2 active", ver == 2, ver)
+    check("A2: mgraph v3 active", ver == 3, ver)
     check("A2: mgraph seed equals §3.2 JSON key-for-key",
           val == EXPECTED_POLICY,
           {k: (val.get(k), EXPECTED_POLICY.get(k))
@@ -1420,7 +1424,7 @@ def main() -> int:
     # =====================================================================
     C.ensure()
     cur = C.cur
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
 
     BUCKETS = ("causal", "entity", "multi_hop", "recency", "semantic",
                "temporal")
@@ -1590,7 +1594,7 @@ def main() -> int:
                         "recency": 1, "semantic": 1, "temporal": 1})
     check("E1: borrow funds every active bucket",
           got_b == {b: 1 for b in BUCKETS} and sum(got_b.values()) == 6, got_b)
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
 
     # ---------------- E2 route + E4/E9 on one read policy -----------------
     open_read()
@@ -1605,13 +1609,28 @@ def main() -> int:
     cur.execute("SELECT v13_mgraph_route(%s)", ("为什么部署失败",))
     r_cjk = cur.fetchone()[0]
     cjk_w = {k: float(v) for k, v in r_cjk["weights"].items()}
+    check("E2: CJK why-query routes deterministic with causal strictly"
+          " heaviest (U3b supersedes DP9-OQ3)",
+          r_cjk["mode"] == "deterministic"
+          and cjk_w["causal"] > max(cjk_w[b] for b in BUCKETS if b != "causal"),
+          r_cjk)
+    cur.execute("SELECT v13_mgraph_route(%s)", ("数据库备份策略",))
+    r_cjk0 = cur.fetchone()[0]
+    cjk0_w = {k: float(v) for k, v in r_cjk0["weights"].items()}
     floor = float(EXPECTED_POLICY["deterministic_floor"])
-    al_cjk = alloc(cur, r_cjk["weights"])
-    check("E2: CJK query is a superset at or above the floor",
-          r_cjk["mode"] == "superset"
-          and all(cjk_w[b] >= floor for b in BUCKETS)
-          and all(al_cjk[b] >= 1 for b in BUCKETS),
-          (r_cjk, al_cjk))
+    al_cjk0 = alloc(cur, r_cjk0["weights"])
+    check("E2: anchor-free CJK query is a superset at or above the floor",
+          r_cjk0["mode"] == "superset"
+          and all(cjk0_w[b] >= floor for b in BUCKETS)
+          and all(al_cjk0[b] >= 1 for b in BUCKETS),
+          (r_cjk0, al_cjk0))
+    cur.execute("SELECT v13_mgraph_route(%s)", ("why Zephyr 无法登录",))
+    r_mix = cur.fetchone()[0]
+    mix_w = {k: float(v) for k, v in r_mix["weights"].items()}
+    check("E2: mixed-language why-query routes deterministic causal (U3b)",
+          r_mix["mode"] == "deterministic"
+          and mix_w["causal"] > max(mix_w[b] for b in BUCKETS if b != "causal"),
+          r_mix)
 
     sid_cjk = u()
     cur.execute("INSERT INTO sessions (session_id) VALUES (%s)", (sid_cjk,))
@@ -1935,7 +1954,7 @@ def main() -> int:
           eff2 == eff0 and rf2 == rf0, (eff2, rf2))
 
     # ---------------- E8 read off / degraded --------------------------------
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     sid_off = u()
     cur.execute("INSERT INTO sessions (session_id) VALUES (%s)", (sid_off,))
     C.commit()
@@ -1986,7 +2005,7 @@ def main() -> int:
     # any other effect kind — mgraph_consolidate rides the generic CAS
     # branch (effect_done only; no llm/message, no turn/end).
     # =====================================================================
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.ensure()
     cur = C.cur
 
@@ -2395,7 +2414,7 @@ def main() -> int:
     check("F9: consolidation node reached via traversal (not an anchor)",
           new_hash_f2 in (visited_f9 | frontier_f9),
           {"visited": sorted(visited_f9), "frontier": sorted(frontier_f9)})
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
 
     # ---------------- F10 ACL negative face ----------------
     cur.execute(
@@ -2544,7 +2563,7 @@ def main() -> int:
     # =====================================================================
 
     # ---------------- G1 compiler determinism + policy sensitivity ------
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
 
     def anchor_terms_of(c, body):
@@ -2574,21 +2593,21 @@ def main() -> int:
     t_n2 = anchor_terms_of(cur, CJK_G1)
     check("G1: word set invariant under n>0 (anchor_ngram_n retired by U3c)",
           t_n2 == t_cjk_full, (t_n2, t_cjk_full))
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
     bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_ngram_n=0))
     C.commit()
     t_n0_cjk = anchor_terms_of(cur, CJK_G1)
     check("G1: policy flip (anchor_ngram_n 3->0) changes terms for the same body",
           t_n0_cjk != t_cjk_full and t_n0_cjk == [CJK_G1], t_n0_cjk)
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
     bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_max_terms=3))
     C.commit()
     t_cap3 = anchor_terms_of(cur, MIX_G1)
     check("G1: truncation keeps the first N terms in order (anchor_max_terms=3)",
           len(t_mix_full) > 3 and t_cap3 == t_mix_full[:3], (t_mix_full, t_cap3))
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
     bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_ngram_n=0))
     C.commit()
@@ -2599,7 +2618,7 @@ def main() -> int:
     check("G1: n=0 degrades to whole-segment OR semantics (== segments, OR-joined)",
           t_n0 == segs_g1 and q_n0 == " OR ".join(f'"{s}"' for s in segs_g1)
           and " AND " not in q_n0, (t_n0, q_n0))
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
 
     # ---------------- G2 word-level segmentation + mixed + bytes --------
@@ -2716,7 +2735,7 @@ def main() -> int:
           pool_g4n == {hA}, pool_g4n)
 
     # ---------------- G5 read-side anchor on a CJK graph ---------------
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
     sid_g5, _ = put_nodes(cur, ["用户无法登录系统因为密码过期"])
     C.commit()
@@ -2801,52 +2820,117 @@ def main() -> int:
               if s.startswith("mem_rel::") and s.endswith("::entity")]
     check("G8: disjoint-entity pair gets its entity question (deviation #12"
           " postscript: gate awake post-V1)", len(ent_g8) >= 1, sorted(sigs_g8))
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
 
-    # ---------------- G9 policy v2 shape -------------------------------
+    # ---------------- G9 policy v3 shape -------------------------------
     cur.execute("SELECT v13_mgraph_policy()")
     pol_g9 = cur.fetchone()[0]
-    check("G9: v2 keyset 41 keys, anchor keys in, routing intent keys out",
-          len(pol_g9) == 41 and pol_g9["anchor_ngram_n"] == 3
+    check("G9: v3 keyset 43 keys, anchor keys in, routing intent vocab in (U3b)",
+          len(pol_g9) == 43 and pol_g9["anchor_ngram_n"] == 3
           and pol_g9["anchor_max_terms"] == 48 and pol_g9["candidate_top_k"] == 5
-          and "routing_intent_causal" not in pol_g9
-          and "routing_intent_temporal" not in pol_g9, sorted(pol_g9))
+          and pol_g9["routing_intent_causal"]
+          == EXPECTED_POLICY["routing_intent_causal"]
+          and pol_g9["routing_intent_temporal"]
+          == EXPECTED_POLICY["routing_intent_temporal"], sorted(pol_g9))
     bump_policy(cur, "mgraph",
                 {k: v for k, v in EXPECTED_POLICY.items() if k != "anchor_ngram_n"})
     C.commit()
     fails_with(cur, "SELECT v13_mgraph_policy()", (), "key set mismatch",
                "G9: missing anchor key -> V3009 (closed keyset)", pgcode="V3009")
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
     bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_ngram_n=2.5))
     C.commit()
     fails_with(cur, "SELECT v13_mgraph_policy()", (), "must be an integer",
                "G9: fractional anchor_ngram_n -> V3009 (integer domain)",
                pgcode="V3009")
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
     bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_ngram_n=-1))
     C.commit()
     fails_with(cur, "SELECT v13_mgraph_policy()", (), "must be an integer",
                "G9: negative anchor_ngram_n -> V3009 (fail-closed domain)",
                pgcode="V3009")
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
     bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_max_terms=0))
     C.commit()
     fails_with(cur, "SELECT v13_mgraph_policy()", (), ">= 1",
                "G9: zero anchor_max_terms -> V3009 (positive domain)",
                pgcode="V3009")
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
     bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, routing_intent_causal=0.8))
     C.commit()
-    fails_with(cur, "SELECT v13_mgraph_policy()", (), "key set mismatch",
-               "G9: routing_intent key refused by the closed keyset (OQ13=D)",
+    fails_with(cur, "SELECT v13_mgraph_policy()", (), "string array",
+               "G9: routing_intent_causal non-array -> V3009 (type domain, U3b)",
                pgcode="V3009")
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
+    bump_policy(cur, "mgraph", dict(
+        EXPECTED_POLICY,
+        routing_intent_causal=[f"词{i}" for i in range(17)]))
+    C.commit()
+    fails_with(cur, "SELECT v13_mgraph_policy()", (), "string array",
+               "G9: routing vocab over 16 entries -> V3009 (cap domain)",
+               pgcode="V3009")
+    set_active("mgraph", 3)
+    C.commit()
+
+    # ---------------- G10 routing vocabulary behavior (U3b) ------------
+    def route_of(c, q):
+        c.execute("SELECT v13_mgraph_route(%s)", (q,))
+        return c.fetchone()[0]
+
+    r10a = route_of(cur, "为什么部署失败")
+    check("G10: CJK causal vocab -> deterministic causal",
+          r10a["mode"] == "deterministic"
+          and float(r10a["weights"]["causal"]) > float(r10a["weights"]["semantic"]),
+          r10a)
+    r10b = route_of(cur, "何时发布新版本")
+    check("G10: CJK temporal vocab -> deterministic temporal",
+          r10b["mode"] == "deterministic"
+          and float(r10b["weights"]["temporal"]) > float(r10b["weights"]["semantic"]),
+          r10b)
+    r10c = route_of(cur, "怎么用这个工具")
+    check("G10: anchor-free pure CJK (怎么 single not collected) -> superset",
+          r10c["mode"] == "superset", r10c)
+    r10d = route_of(cur, "为什么何时两者都有")
+    check("G10: mutual-exclusion order causal > temporal",
+          r10d["mode"] == "deterministic"
+          and float(r10d["weights"]["causal"]) > float(r10d["weights"]["temporal"]),
+          r10d)
+    bump_policy(cur, "mgraph", dict(
+        EXPECTED_POLICY, routing_intent_causal=[], routing_intent_temporal=[]))
+    C.commit()
+    r10e = route_of(cur, "为什么部署失败")
+    check("G10: empty vocab rows fall back to superset (rollback semantics)",
+          r10e["mode"] == "superset", r10e)
+    set_active("mgraph", 3)
+    C.commit()
+
+    # ---------------- G11 script helper boundaries (P1-8) --------------
+    cur.execute("SELECT v13_mgraph_script_cjk(%s)", ("为什么",))
+    check("G11: helper true on CJK", cur.fetchone()[0] is True)
+    cur.execute("SELECT v13_mgraph_script_cjk(%s)", ("abc",))
+    check("G11: helper false on latin", cur.fetchone()[0] is False)
+    cur.execute("SELECT v13_mgraph_script_cjk('')")
+    check("G11: helper false on empty", cur.fetchone()[0] is False)
+    ranges_g11 = [(12352, 12543), (13312, 19903), (19968, 40959),
+                  (44032, 55215), (63744, 64255)]
+    for lo, hi in ranges_g11:
+        for cp in (lo - 1, lo, (lo + hi) // 2, hi, hi + 1):
+            inside = lo <= cp <= hi
+            cur.execute("SELECT v13_mgraph_script_cjk(chr(%s))", (cp,))
+            helper_val = cur.fetchone()[0]
+            cur.execute("SELECT v13_query_segments(chr(%s))", (cp,))
+            segs_val = cur.fetchone()[0]
+            seg_nonlatin = bool(
+                segs_val and not re.match(r"^[A-Za-z0-9]+$", segs_val[0]))
+            check(f"G11: cp {cp} helper==range({inside}) and segments parity",
+                  helper_val is inside and helper_val is seg_nonlatin,
+                  (cp, helper_val, segs_val))
 
     # =====================================================================
     # mgraph v2 V2 group H: contradiction path (G-mg/H1-H7).
@@ -3059,7 +3143,7 @@ def main() -> int:
     check("H7: final cursor=last node, watermark=its seq",
           prog_h7["rel_cursor"] == h7[3] and prog_h7["watermark"] == fs_h7[h7[3]],
           prog_h7)
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     C.commit()
 
     # ---------------- H8 relation-envelope passthrough (rerun P0) -------
@@ -3200,14 +3284,14 @@ def main() -> int:
               "typesafe_ask", "v13_append_event", "FOR UPDATE",
               "mock_response", "cypher(")))
     check("M4: no set_config in mgraph SQL", "set_config" not in sql_m4)
-    set_active("mgraph", 2)
+    set_active("mgraph", 3)
     cur.execute(
         "SELECT version, (value->>'write_enabled')::boolean,"
         " (value->>'read_enabled')::boolean FROM v13_policies"
         " WHERE name='mgraph' AND active")
     v_fin, w_fin, r_fin = cur.fetchone()
-    check("M4: policy restored to v2 with write/read back off",
-          v_fin == 2 and w_fin is False and r_fin is False, (v_fin, w_fin, r_fin))
+    check("M4: policy restored to v3 with write/read back off",
+          v_fin == 3 and w_fin is False and r_fin is False, (v_fin, w_fin, r_fin))
     C.conn.rollback()
     C.conn.close()
 
