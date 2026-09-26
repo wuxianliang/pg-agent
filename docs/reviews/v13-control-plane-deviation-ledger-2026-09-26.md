@@ -99,3 +99,16 @@
 | F22 | parse 侧潜在缝：活体 `v13_tools_catalog_frozen`（resolve 定义，未被 stage 18+ 换体）仍拒 VOLATILE sql 工具，无 H7 具名例外——spawn_subsession 目录行 enabled=true 时 `v13_parse` 会被拒（探针：needed_judgments 可过、parse 未到 catalog 即被 GUC 拦，未终验）。demo 夹具维持 enabled=false；扇出臂不查目录（advance 直读 tool/call 事件），L3 场景不受影响 | 记录不改。若产品要让 spawn 经 parse 目录可选，需另裁 catalog_frozen 的具名例外（涉 stage 2 契约，须走裁决；不得热修） |
 
 （F21 预留未用：探针实测 route_login 可直接做 freshen 的 UPDATE sessions，demo 包装走 v13_route_login 属主，无需 postgres 属主捷径。）
+
+## P5 判定（非实现差）：「无信号 progress 无自然停点」= 伪缺口（2026-09-26）
+
+e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封印的自然停点，若产品要多轮 harness 而不调 llm 需要新停点」。核对活体与 R3 链后判**伪缺口**，不改 SQL：
+
+1. 停点已存在且已实现：活体 advance（v13_triage.sql 约 706–711）对未满足 evidence/quota wait 置 `waiting` 并返 `waiting`——零写入、不落 route、不 closeout；approval 同理（约 716–743，入队 human 后停）。
+2. 规格明文：R3 §6.2 判定深度——未满足零写入置 waiting，活性靠驱动重调（P2 recover_idle 合同）。
+3. 「多轮 harness 不调 llm」是规格内正规形态：wake 满足/审批应答后同函数沿用同一 logical_turn_id、index+1 续传（约 762–791），不轻 llm。
+4. max_cycles 逃逸封印（budget_exhausted closeout）是 R3c §8.1 定义的故意出口，不是漏停点。
+5. 无信号 progress 无限循环结构上不存在：同 logical_turn_id 第二个不同 source 的 material 收据 RAISE `v13: material ledger`（约 678–693）；每个新逻辑回合计一次 material。
+6. waiting 是一等可恢复态：recover_idle（v13_triage.sql:1181 起）的候选/three-reason 谓词不会命中纯 wake-pending 会话（无活跃 effect 且无 children/repair/replan 事件 → 零 nudge），隐式排除与 R3c §8.4 一致。
+
+唯一未被规格覆盖的是「harness 无 wake、无 human 的无条件让出」——现成近似是 `{kind:'event', event_type:'<永不出现的 type>'}`（§6.2 变体一，开放词表精确匹配）。若产品坚持语义化让出，属 R3 修订（新 wake 变体或新返回词，均碰已裁闭集），另开裁决，不随热修。
