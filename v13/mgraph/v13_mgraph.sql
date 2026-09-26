@@ -43,10 +43,11 @@ CREATE TABLE memory_nodes (
            OR (cardinality(source_hashes) >= 2
                AND consolidation_key IS NOT NULL))
 );
--- 记忆语料索引(OQ7=A:候选发现走 stannum TINQL;stannum 默认配置单索引纪律,
--- memory 先例同款;本文件 `==>` 源码计数=恰 1——M2 候选函数 EXECUTE 串;
--- 注释出现不计入,门 A7/组 D 按去注释源码断言)
-CREATE INDEX ix_memory_nodes_stannum ON memory_nodes USING stannum (body);
+-- 记忆语料索引(OQ7=A:候选发现走 stannum TINQL;jieba 词级单索引纪律,
+-- U3c 计划 2026-09-26 重开 OQ15 后切换;本文件 `==>` 源码计数=恰 1
+-- ——M2 候选函数 EXECUTE 串;注释出现不计入,门 A7/组 D 按去注释源码断言)
+CREATE INDEX ix_memory_nodes_stannum ON memory_nodes USING stannum (body)
+  WITH (tokenizer=jieba);
 -- 合并节点 consolidation_key 唯一(§3.1:同 key 至多一个合并产物)
 CREATE UNIQUE INDEX ux_memory_nodes_consolidation_key
   ON memory_nodes (session_id, consolidation_key)
@@ -3188,23 +3189,26 @@ BEGIN;
 -- OR/n-gram 文法留在 mgraph 自有文件(新树只追加纪律;R2 修订 OQ7 的
 -- 守卫面与锚源正式切换)。三函数均 STABLE:经 v13_mgraph_policy() 读
 -- 活动策略,禁 IMMUTABLE(P1-1——策略翻版必须能改变锚形态,IMMUTABLE
--- 声明可能让 planner/预编译计划缓存旧策略结果);零 IO、不访问图、
+-- 声明可能让 planner/预编译计划缓存旧策略结果);零表 IO、不访问图、
 -- 零 `==>`、零第二动态绑定点(G6 执法)。错误码 V3005(文法域,沿
--- recall 守卫族)。机制:latin 段整项+CJK 段按字符切 n-gram
--- (anchor_ngram_n;0=关=全段 OR 语义退化,P2-2);边界钉死(P1-2):
--- 段字符长=n 恰一项、<n 零项、>n 滑窗 L−n+1 项;去重保序;超
+-- recall 守卫族)。机制:latin 段整项+CJK 段经 stannum.tokenize(seg,
+-- 'jieba') 词级(U3c 计划 2026-09-26 重开 OQ15:字符 3-gram 滑窗→
+-- 词级;tokenizer 字面量与 ix_memory_nodes_stannum 的 tokenizer=jieba
+-- 同文件耦合,G6 耦合锁执法;匹配侧 ql_parse 用索引分析器对查询重切,
+-- 词项粒度漂移不改命中集);anchor_ngram_n 语义降格两档:0=全段 OR
+-- 退化保留(G1),>0=词级且具体正值不再改变词形(键/值域/策略行 v2
+-- 字节不动,A2 不翻;退役记载在 U3c 计划正文);去重保序;超
 -- anchor_max_terms 保序截断;空 body→空项→空 tinql→candidates 空集
 -- 零 ask。确定性口径:同一 body+同一活动策略快照→相同 terms→相同
 -- tinql→相同谓词输入(非跨策略版本全局不可变)。
 -- =========================================================================
 
--- === 亚子句锚项:latin 段整项 + CJK 段按字符 n-gram;返回去重保序项集 ===
+-- === 亚子句锚项:latin 段整项 + CJK 段 jieba 词级;返回去重保序项集 ===
 CREATE FUNCTION v13_mgraph_anchor_terms(p_body text) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
   v_pol  jsonb; v_n int; v_max int;
-  v_segs text[]; v_seg text;
-  v_len  int; v_i int; v_gram text;
+  v_segs text[]; v_seg text; v_w text;
   v_terms text[] := '{}';
 BEGIN
   IF p_body IS NULL OR p_body = '' THEN RETURN '[]'::jsonb; END IF;
@@ -3214,23 +3218,25 @@ BEGIN
   v_segs := ARRAY(SELECT jsonb_array_elements_text(v13_query_segments(p_body)));
   FOREACH v_seg IN ARRAY v_segs LOOP
     EXIT WHEN cardinality(v_terms) >= v_max;
-    IF v_n = 0 OR v_seg ~ '^[A-Za-z0-9]+$' THEN
-      -- latin 段整项(n-gram 不切);n=0 时 CJK 段也整项(A2 全段 OR 退化)
+    IF v_seg ~ '^[A-Za-z0-9]+$' THEN
+      -- latin 段整项(不切;与 n 无关)
+      IF NOT (v_seg = ANY(v_terms)) THEN
+        v_terms := v_terms || v_seg;
+      END IF;
+    ELSIF v_n = 0 THEN
+      -- n=0 退化:CJK 段整项(全段 OR;G1 语义保留)
       IF NOT (v_seg = ANY(v_terms)) THEN
         v_terms := v_terms || v_seg;
       END IF;
     ELSE
-      -- CJK 段按字符切 n-gram:长度=n 恰一项(P1-2 边界钉死),<n 零项
-      v_len := char_length(v_seg);
-      IF v_len >= v_n THEN
-        FOR v_i IN 1 .. v_len - v_n + 1 LOOP
-          EXIT WHEN cardinality(v_terms) >= v_max;
-          v_gram := substring(v_seg FROM v_i FOR v_n);
-          IF NOT (v_gram = ANY(v_terms)) THEN
-            v_terms := v_terms || v_gram;
-          END IF;
-        END LOOP;
-      END IF;
+      -- CJK 段 jieba 词级:tokenize 纯 C 函数零表 IO;词=段内子串,
+      -- 天然落在守卫字符域内;去重保序,超 v_max 保序截断
+      FOR v_w IN SELECT t FROM stannum.tokenize(v_seg, 'jieba') t LOOP
+        EXIT WHEN cardinality(v_terms) >= v_max;
+        IF NOT (v_w = ANY(v_terms)) THEN
+          v_terms := v_terms || v_w;
+        END IF;
+      END LOOP;
     END IF;
   END LOOP;
   RETURN (SELECT coalesce(jsonb_agg(t ORDER BY ord), '[]'::jsonb)

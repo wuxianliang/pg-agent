@@ -73,10 +73,18 @@ PROD_INDEXES = (
     "ix_memory_nodes_stannum",
 )
 FIVE_INDEXES = PROD_INDEXES + ("ix_v13_canary",)
+# U3c: the three CJK-bearing production indexes run tokenizer=jieba;
+# decisions stays on default unicode (ASCII column, closeout :30) and the
+# canary keeps its diagnostic long_tokens/max_token_bytes shape.
+JIEBA_INDEXES = (
+    "ix_chunks_stannum",
+    "ix_transcript_stannum",
+    "ix_memory_nodes_stannum",
+)
 
 SCORE_FUNCS = ("score_bound", "score_bound_indexed", "stannum_text_cmpfunc")
 ZERO_FUNCS = (
-    "tokenize", "ql_parse", "maybe_quote", "builtin_stop_words",
+    "ql_parse", "maybe_quote", "builtin_stop_words",
     "score", "max_score", "score_inspect", "highlight_ansi",
 )
 ZERO_QUALIFIED = tuple(f"stannum.{name}" for name in ZERO_FUNCS)
@@ -777,7 +785,10 @@ def runtime_checks(conn, cur, sqls, sid_tr, sid_other, sid_mg):
           (p3_plan_ok, n_count, n_k))
     n_cjk = one_text(cur, "SELECT count(*) FROM v13_recall(%s, 8)", (tinql_cjk,))
     n_ka = one_text(cur, "SELECT count(*) FROM v13_recall(%s, 8)", (tinql_ka,))
-    check("P4", n_cjk >= 1 and n_ka == 0, (n_cjk, n_ka))
+    # U3c/jieba: single Katakana now HITS (over-recall, not a quality win —
+    # jieba splits katakana runs into chars so "タ" matches "タワー" docs).
+    # No OR-compat with the old miss expectation (closeout :32 no-loosening).
+    check("P4", n_cjk >= 1 and n_ka >= 1, (n_cjk, n_ka))
     ch = rows[0][0]
     row_spans = rows[0][2]
     if isinstance(row_spans, str):
@@ -804,17 +815,15 @@ def runtime_checks(conn, cur, sqls, sid_tr, sid_other, sid_mg):
     check("P5", no_sent and nonempty and derived_eq and row_eq,
           (no_sent, nonempty, derived_eq, row_eq, row_spans))
 
-    # P5b (U2b): spans <-> production index binding. P5 locks the sentinel
-    # parity of the 4-arg TEXT highlight (default tokenizer) against
-    # v13_extract_spans; this one binds the same CJK row's tinql to
-    # ix_chunks_stannum via stannum.bind_query and drives the 4-arg
-    # indexed_query highlight overload. The two interval sequences must be
-    # equal, ordered, and non-empty. Equal today because the production
-    # index runs the default unicode analyzer; it turns red the day the
-    # index analyzer forks (tokenizer/max_token_bytes/long_tokens) while
-    # extract_spans stays on the default — that red is the point, not a
-    # false alarm. Fixture must stay CJK: a latin term can tokenize
-    # identically under jieba and unicode and lock nothing.
+    # P5b (U2b, extended by U3c): spans <-> production index binding, jieba
+    # form. extract_spans itself binds ix_chunks_stannum (tokenizer=jieba
+    # since U3c); the derived side drives the same 4-arg indexed_query
+    # highlight. Two fixtures: (a) the phrase — interval sequences equal;
+    # (b) single "タ" — extract_spans NON-EMPTY and equal. (b) is what
+    # distinguishes jieba from default unicode: on a unicode revert the row
+    # does not match at all, spans come back empty, and this goes red.
+    # Fixture must stay CJK: latin terms tokenize identically under jieba
+    # and unicode and lock nothing.
     cur.execute(
         """
         SELECT (SELECT bool_and(position(chr(i) IN c.body) = 0)
@@ -831,13 +840,34 @@ def runtime_checks(conn, cur, sqls, sid_tr, sid_other, sid_mg):
         spans_b = json.loads(spans_b)
     if isinstance(derived_b, str):
         derived_b = json.loads(derived_b)
-    print(f"[info] P5b extract={spans_b} indexed_bound={derived_b}")
+    cur.execute(
+        """
+        SELECT (SELECT bool_and(position(chr(i) IN c.body) = 0)
+                  FROM generate_series(1, 8) i),
+               v13_extract_spans(c.body, jsonb_build_object('tinql', %s)),
+               pg_temp.v13_usage_highlight_spans(
+                 stannum.highlight(c.body, chr(1), chr(2),
+                   stannum.bind_query(%s, 'ix_chunks_stannum'::regclass)))
+        FROM chunks c WHERE c.body = %s
+        """,
+        (tinql_ka, tinql_ka, BODY_CJK))
+    no_sent_k, spans_k, derived_k = cur.fetchone()
+    if isinstance(spans_k, str):
+        spans_k = json.loads(spans_k)
+    if isinstance(derived_k, str):
+        derived_k = json.loads(derived_k)
+    print(f"[info] P5b phrase={spans_b} indexed_bound={derived_b} "
+          f"kata={spans_k} indexed_bound_kata={derived_k}")
     check("P5b",
           no_sent_b is True
           and isinstance(spans_b, list) and len(spans_b) > 0
           and isinstance(derived_b, list) and len(derived_b) > 0
-          and spans_b == derived_b,
-          (no_sent_b, spans_b, derived_b))
+          and spans_b == derived_b
+          and no_sent_k is True
+          and isinstance(spans_k, list) and len(spans_k) > 0
+          and isinstance(derived_k, list) and len(derived_k) > 0
+          and spans_k == derived_k,
+          (no_sent_b, spans_b, derived_b, no_sent_k, spans_k, derived_k))
 
     cur.execute("SET enable_seqscan = off")
     plan_p6 = explain_sql(
@@ -1007,15 +1037,21 @@ def runtime_checks(conn, cur, sqls, sid_tr, sid_other, sid_mg):
         """,
         (list(FIVE_INDEXES),))
     rels = {name: (natts, opts) for name, natts, opts in cur.fetchall()}
-    prod_ok = all(
+    jieba_exact = all(
         rels.get(name, (None, "missing"))[0] == 1
-        and (
-            rels[name][1] is None
-            or not any(tok in " ".join(rels[name][1])
-                       for tok in ("tokenizer", "field_weights", "jieba"))
-        )
-        for name in PROD_INDEXES
+        and set(rels[name][1] or []) == {"tokenizer=jieba"}
+        for name in JIEBA_INDEXES
     )
+    dec_clean = (
+        rels.get("ix_decisions_question_stannum", (None, "missing"))[0] == 1
+        and (
+            rels["ix_decisions_question_stannum"][1] is None
+            or not any(
+                tok in " ".join(rels["ix_decisions_question_stannum"][1])
+                for tok in ("tokenizer", "field_weights", "jieba"))
+        )
+    )
+    prod_ok = jieba_exact and dec_clean
     canary_opts = rels.get("ix_v13_canary", (None, None))[1] or []
     canary_ok = (
         rels.get("ix_v13_canary", (None, None))[0] == 1
@@ -1039,10 +1075,20 @@ def runtime_checks(conn, cur, sqls, sid_tr, sid_other, sid_mg):
         "plans": {"P2": plan_p1, "P6": plan_p6, "P8": plan_p8},
         "zero_deltas": {name: deltas[name] for name in ZERO_FUNCS},
         "zero_missing": [name for name in ZERO_FUNCS if name in missing],
-        "prod_null": all(rels[name][1] is None for name in PROD_INDEXES),
-        "no_jieba": all(
-            "jieba" not in " ".join(rels[name][1] or [])
-            for name in FIVE_INDEXES
+        "prod_jieba_exact": all(
+            set(rels[name][1] or []) == {"tokenizer=jieba"}
+            for name in JIEBA_INDEXES
+        ) and not any(
+            "jieba" in " ".join(
+                rels.get("ix_decisions_question_stannum", (None, None))[1] or [])
+            for _ in (0,)),
+        "jieba_scope": all(
+            "jieba" in " ".join(rels.get(name, (None, None))[1] or [])
+            for name in JIEBA_INDEXES
+        ) and not any(
+            "jieba" in " ".join(
+                rels.get(name, (None, None))[1] or [])
+            for name in ("ix_decisions_question_stannum", "ix_v13_canary")
         ),
     }
 
@@ -1105,10 +1151,10 @@ def feature_checks(cur, ctx):
         (), "multi-column", "F5", pgcode="XX000")
     cur.execute("DROP TABLE v13_usage_probe_single")
     check("F6",
-          ctx["no_jieba"]
+          ctx["jieba_scope"]
           and one_text(cur, "SELECT current_setting('stannum.strict_analysis')")
           == "off")
-    check("F7", ctx["prod_null"], ctx["prod_null"])
+    check("F7", ctx["prod_jieba_exact"], ctx["prod_jieba_exact"])
     norm_src = "\n".join(
         strip_sql_comments(path.read_text()) for path in files_through("mgraph"))
     plan_search = any(search_function_scan(plan) for plan in ctx["plans"].values())
@@ -1120,9 +1166,13 @@ def feature_checks(cur, ctx):
         FROM stannum.index_stats('ix_chunks_stannum')
         """)
     stats = cur.fetchall()
+    # U3c: the chunks index runs jieba — analysis stamp is now populated
+    # (probe §7): matches=true + 'jieba ... / matches' detail. This doubles
+    # as a dictionary-drift lock: jieba_add_word flips matches -> red.
     check("F9",
           len(stats) == 1 and stats[0][0] >= 1 and float(stats[0][1]) == 0
-          and stats[0][2] is None and stats[0][3] is None,
+          and stats[0][2] is True and "jieba" in (stats[0][3] or "")
+          and "matches" in (stats[0][3] or ""),
           stats)
     cur.execute("SELECT index::text FROM stannum.index_health")
     health = {row[0] for row in cur.fetchall()}
@@ -1170,6 +1220,11 @@ def feature_checks(cur, ctx):
     check("F14",
           zero_calls and not ctx["zero_missing"] and not qualified_hit,
           (ctx["zero_deltas"], ctx["zero_missing"], qualified_hit))
+    # U3c: tokenize graduated from never-called to the anchor compiler's
+    # only entry — scoped lock: exactly one qualified occurrence across all
+    # 15 files (the v13_mgraph_anchor_terms call site).
+    tok_count = norm_src.count("stannum.tokenize")
+    check("F14b", tok_count == 1, tok_count)
     return norm_src
 
 

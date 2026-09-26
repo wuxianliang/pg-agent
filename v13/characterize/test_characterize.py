@@ -500,7 +500,22 @@ def main() -> int:
     check("L3: CJK phrase hits canary doc 3", 3 in [r[0] for r in cur.fetchall()])
     tinql_ta = tinql_of(cur, "タ")
     rec_ta = recall_rows(cur, tinql_ta, 8)
-    check("L3: single Katakana miss", rec_ta == [], rec_ta)
+    # U3c/jieba: single Katakana now HITS the docs containing it (jieba
+    # splits katakana runs into chars — over-recall, not a quality win; the
+    # old unicode miss is superseded behavior, no OR-compat). Spans must be
+    # non-empty on every hit — the extract_spans bind (U3c) is what keeps
+    # spans aligned with the jieba index.
+    cur.execute(
+        "SELECT count(*) FROM chunks WHERE content_hash = ANY(%s) "
+        "AND position('タ' IN body) > 0",
+        ([r[0] for r in rec_ta],))
+    n_ta_bodies = cur.fetchone()[0]
+    spans_ok = all(
+        (json.loads(r[2]) if isinstance(r[2], str) else r[2]) != []
+        for r in rec_ta)
+    check("L3: single Katakana hits (jieba over-recall, spans aligned)",
+          len(rec_ta) >= 1 and n_ta_bodies == len(rec_ta) and spans_ok,
+          (len(rec_ta), n_ta_bodies, rec_ta))
 
     # ----- M fold -----
     def seg_rows():
@@ -724,7 +739,14 @@ def main() -> int:
 
     rec_cjk2 = recall_rows(cur, tinql_tower, 8)
     check("P4: CJK phrase hits v2", len(rec_cjk2) >= 1, rec_cjk2)
-    check("P4: Katakana miss v2", recall_rows(cur, tinql_ta, 8) == [])
+    rec_ta2 = recall_rows(cur, tinql_ta, 8)
+    # U3c/jieba: same over-recall reversal as L3 — single Katakana hits the
+    # docs containing it; spans stay aligned via the extract_spans bind.
+    check("P4: Katakana hits v2 (jieba over-recall, spans aligned)",
+          len(rec_ta2) >= 1
+          and all((json.loads(r[2]) if isinstance(r[2], str) else r[2]) != []
+                  for r in rec_ta2),
+          rec_ta2)
     cur.execute("SELECT v13_recall_count(%s)", (tinql_tower,))
     cnt_cjk = cur.fetchone()[0]
     check("P4: count v2 CJK > 0", cnt_cjk > 0, cnt_cjk)
@@ -851,10 +873,10 @@ def main() -> int:
             check(f"R2: {path.name} stannum. 0", n_qn == 0, n_qn)
         else:
             check(f"R2: {path.name} ==> 2", n_op == 2, n_op)
-            check(f"R2: {path.name} stannum. 3", n_qn == 3, n_qn)
+            check(f"R2: {path.name} stannum. 4", n_qn == 4, n_qn)
     raw9 = (V13 / "characterize" / "v13_characterize.sql").read_text()
     check("R2: file9 raw ==> 2", raw9.count("==>") == 2, raw9.count("==>"))
-    check("R2: file9 raw stannum. 3", raw9.count("stannum.") == 3, raw9.count("stannum."))
+    check("R2: file9 raw stannum. 4", raw9.count("stannum.") == 4, raw9.count("stannum."))
     raw8 = (V13 / "recall" / "v13_recall.sql").read_text()
     check("R2: file8 raw ==> 0", raw8.count("==>") == 0)
     check("R2: file8 raw stannum. 0", raw8.count("stannum.") == 0)

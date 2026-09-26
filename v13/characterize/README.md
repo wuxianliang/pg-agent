@@ -62,7 +62,7 @@ stannum AM 索引）。**三面分工**（互补，勿混用）：
 | `dictionary_pages` | 与字典 extent 相交的页数，**全量口径**：统计所有 immutable 段字典 extent 覆盖页（无论本 backend 是否读过）；与 EXPLAIN `Dictionary Pages Read`（实际 pin 的页）定义不同、设计如此，仅全索引扫描下二者一致（0.4.0 扩展内列注释） |
 | `total_length` | 文档总长度（引擎字节计量；均值换算用 `total_length / documents`） |
 | `average_length` | **实测恒 0.0**（0.3.0/0.4.0 两库不同语料均然，保留列，勿依赖） |
-| `analysis_matches` | jieba 词典分析命中位；仅 jieba tokenizer 索引且带分析 stamp 时非 NULL——v13 现役 unicode 索引恒 NULL（M2 jieba 评估落地后才有观测面） |
+| `analysis_matches` | jieba 词典分析命中位；仅 jieba tokenizer 索引且带分析 stamp 时非 NULL——U3c 后 `ix_chunks_stannum`/`ix_transcript_stannum`/`ix_memory_nodes_stannum` 三张 jieba 索引非 NULL；decisions（unicode）与 canary 恒 NULL |
 | `analysis_detail` | 同上条件的分析详情（jieba 版本/词典指纹/漂移）；本函数恒不 WARNING、不读 strict_analysis |
 
 ### 示例（2026-09-25 实测于 `agent_v13_characterize`，stannum 0.4.0；数值为 fixture 示例形态，库重建后以新读数为准）
@@ -193,9 +193,12 @@ PG 17/18 在 `vacuum_index_cleanup = auto` 跳过 bulk deletion 时仍会调用
 ## tinql 调试入口（tokenize / ql_parse / maybe_quote）
 
 `stannum.tokenize` / `stannum.ql_parse` / `stannum.maybe_quote` 是排查 tinql 的正规
-入口。三者在 `ZERO_FUNCS`（`v13/mgraph/test_stannum_usage.py`）；F14 只锁生产路径
-零调用，**不做**这三个函数的输出 gate。切分或查询重写对不上索引时直接调它们，不要
-从召回结果反推 tokenizer。
+入口。U3c 起 `tokenize` 已进生产路径（mgraph 锚编译器 `v13_mgraph_anchor_terms`
+的唯一分词入口；usage gate F14b 限定全 15 文件去注释源码 `stannum.tokenize`
+恰 1 次=锚调用点）；`ql_parse` / `maybe_quote` 仍在 `ZERO_FUNCS`
+（`v13/mgraph/test_stannum_usage.py`）——F14 只锁生产路径零调用，**不做**这两个
+函数的输出 gate。切分或查询重写对不上索引时直接调它们，不要从召回结果反推
+tokenizer。
 
 - `tokenize`：文本切成哪些 term。
 - `ql_parse`：查询串如何解析、短语如何重写。tinql 对不上索引时先看这里。
@@ -204,9 +207,30 @@ PG 17/18 在 `vacuum_index_cleanup = auto` 跳过 bulk deletion 时仍会调用
 
 诊断**非默认**索引时，必须传入与目标索引一致的 tokenizer 与 options
 （`tokenizer` / `long_tokens` / `max_token_bytes` 等）。函数默认是 `tokenizer='unicode'`、
-`max_token_bytes=256`。**不要把默认 unicode 输出当成 jieba 索引行为。** 生产索引今天是
-默认 unicode；canary（`long_tokens='split'`，`max_token_bytes=64`）已经和函数默认不一致
-——查哪张索引，就传哪张索引的 reloption。
+`max_token_bytes=256`。**不要把默认 unicode 输出当成 jieba 索引行为。** 生产索引 U3c 起
+为 jieba（见下节）；canary（`long_tokens='split'`，`max_token_bytes=64`）仍与函数默认
+不一致——查哪张索引，就传哪张索引的 reloption。
+
+## jieba 生产索引（U3c，2026-09-26）
+
+`ix_chunks_stannum` / `ix_transcript_stannum` / `ix_memory_nodes_stannum` 三张生产
+索引 `WITH (tokenizer=jieba)`；`ix_decisions_question_stannum`（ASCII 列零收益）与
+`ix_v13_canary`（诊断夹具）保持不动。锚编译器词级同切（mgraph 文件内同文件耦合，
+G6 耦合锁执法）；`v13_extract_spans` 换体为经 `stannum.bind_query(v_tinql,
+'ix_chunks_stannum'::regclass)` 的 4 参 `indexed_query` highlight——spans 跟随索引
+analyzer，消「召回有、spans 空」。chunk 期原定义（stage 7，无扩展无索引）不绑，
+stage 8 及以前行为不变。运维三条：
+
+- **预热**：每 backend 首次 jieba 使用约 200 ms 词典解析 + 约 95 MB RSS
+  （探针实测，不按底稿「数 MB」写）；第二查中位 0.6 ms。长连接池预热即免。
+- **漂移看诊断列不看 `\d`**：`index_stats.analysis_detail` /
+  `index_analysis` 才有 jieba 版本/词典指纹；reloptions 无版本戳。
+  `jieba_add_word` 改指纹后须 REINDEX。
+- **`strict_analysis` 只在 Custom Scan 执行路径 fail-closed**：小表被规划成
+  Seq Scan 时漂移索引仍出结果、无 WARNING/ERROR——巡检不要依赖
+  「strict=on 则任何语句都拦」。
+
+生产部署语义 = 改 SQL + REINDEX；stage 夹具库每次 DROP/CREATE 重建无此动作。
 
 ## 同列双索引禁令
 

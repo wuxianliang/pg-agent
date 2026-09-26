@@ -54,8 +54,10 @@ ch13:58-59/64-79/130-135。gate:`uv run python v13/memory/test_memory.py`
   召回面。
 - **④ 策展词表**:user/assistant=llm/message;新增语义事件族时评估
   入列(改词表=新 builder 版本)。
-- **⑤ stannum 双索引**(ix_transcript_stannum/ix_decisions_question_
-  stannum)与 verify_memory 手动命令:`SELECT v13_verify_memory(true);`。
+- **⑤ stannum 双索引**(ix_transcript_stannum=**jieba**(U3c 2026-09-26,
+  `WITH (tokenizer=jieba)`；预热/漂移治理见 characterize README)/
+  ix_decisions_question_stannum=unicode 不动(ASCII 列零收益))
+  与 verify_memory 手动命令:`SELECT v13_verify_memory(true);`。
   引擎 schema 部署授权见 setup_db.py(filter 同款,台账 #7)。
 - **⑥ worker 长连接预热注记**(§4.4 原文:连接预热税):stannum 新连接
   buffer 重建——池预热(连接常驻=worker 契约既有形态,DP5 M 组同族)。

@@ -2572,10 +2572,15 @@ def main() -> int:
     bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_ngram_n=2))
     C.commit()
     t_n2 = anchor_terms_of(cur, CJK_G1)
-    check("G1: policy flip (anchor_ngram_n 3->2) changes terms for the same body",
-          t_n2 != t_cjk_full and t_n2 == ["用户", "户无", "无法", "法登", "登录",
-                                         "录系", "系统", "统因", "因为",
-                                         "为密", "密码", "码过", "过期"], t_n2)
+    check("G1: word set invariant under n>0 (anchor_ngram_n retired by U3c)",
+          t_n2 == t_cjk_full, (t_n2, t_cjk_full))
+    set_active("mgraph", 2)
+    C.commit()
+    bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_ngram_n=0))
+    C.commit()
+    t_n0_cjk = anchor_terms_of(cur, CJK_G1)
+    check("G1: policy flip (anchor_ngram_n 3->0) changes terms for the same body",
+          t_n0_cjk != t_cjk_full and t_n0_cjk == [CJK_G1], t_n0_cjk)
     set_active("mgraph", 2)
     C.commit()
     bump_policy(cur, "mgraph", dict(EXPECTED_POLICY, anchor_max_terms=3))
@@ -2597,25 +2602,28 @@ def main() -> int:
     set_active("mgraph", 2)
     C.commit()
 
-    # ---------------- G2 n-gram boundaries + mixed + bytes vs chars ------
-    check("G2: CJK segment of n-1 chars -> zero items",
-          anchor_terms_of(cur, "一二") == [])
-    check("G2: CJK segment of exactly n chars -> exactly one item",
-          anchor_terms_of(cur, "一二三") == ["一二三"])
-    check("G2: CJK segment of n+1 chars -> two sliding-window items",
-          anchor_terms_of(cur, "一二三四") == ["一二三", "二三四"])
-    check("G2: mixed body keeps latin segments whole (never n-grammed)",
-          anchor_terms_of(cur, "abc一二三") == ["abc", "一二三"])
+    # ---------------- G2 word-level segmentation + mixed + bytes --------
+    check("G2: CJK segment -> jieba word set (U3c; 3-gram superseded)",
+          anchor_terms_of(cur, CJK_G1) == ["用户", "无法", "登录", "系统",
+                                           "因为", "密码", "过期"],
+          anchor_terms_of(cur, CJK_G1))
+    check("G2: repeated jieba word dedup preserving first-seen order",
+          anchor_terms_of(cur, "用户用户无法") == ["用户", "无法"],
+          anchor_terms_of(cur, "用户用户无法"))
+    check("G2: mixed body keeps latin segments whole (never tokenized)",
+          anchor_terms_of(cur, "abc一二三") == ["abc", "一二三"],
+          anchor_terms_of(cur, "abc一二三"))
     check("G2: latin segment shorter than n still whole",
           anchor_terms_of(cur, "ab cd") == ["ab", "cd"])
-    check("G2: 3-char CJK run is 9 UTF-8 bytes but yields exactly one gram"
-          " (chars, not bytes)",
+    check("G2: 3-char CJK run is 9 UTF-8 bytes but stays one jieba word"
+          " (words, not byte grams)",
           len("一二三".encode("utf-8")) == 9
           and anchor_terms_of(cur, "一二三") == ["一二三"])
     # 85 distinct CJK chars = 255 bytes (passes the segmenter's byte cap);
-    # 83 distinct sliding grams -> capped at anchor_max_terms=48.
+    # jieba keeps them near-single (80 distinct tokens incl. a few adjacent
+    # pairs like 一丁/万丈/上下) -> capped at anchor_max_terms=48.
     g2_85 = "".join(chr(0x4E00 + i) for i in range(85))
-    check("G2: 255-byte CJK segment passes the byte cap and truncates at 48 grams",
+    check("G2: 255-byte CJK segment passes the byte cap and truncates at 48",
           len(g2_85.encode("utf-8")) == 255
           and len(anchor_terms_of(cur, g2_85)) == 48)
     fails_with(cur, "SELECT v13_mgraph_anchor_terms(%s)", ("字" * 87,),
@@ -2667,7 +2675,8 @@ def main() -> int:
         check(f"G3: guard(compiler output) == compiler terms ({g3b[:10]})",
               g_rt == t_rt, (q_rt, g_rt, t_rt))
 
-    # ---------------- G4 wake-up: rare-shared-3gram pair asked ----------
+    # ---------------- G4 wake-up: rare-shared-word pair asked (U3c: ----
+    # jieba words replace 3-grams; GA/GB share 受/影响/用户) -------------
     open_write(write_max_batches=1, write_max_asks=1)
     GA = "今天系统里有三万个受影响的用户账号"
     GB = "昨天统计的受影响用户大约只有八千个"
@@ -2677,8 +2686,8 @@ def main() -> int:
     cur = C.cur
     hA, hB = body_hash_of(cur, GA), body_hash_of(cur, GB)
     sigs_g4 = answered_sigs(cur, sid_g4)
-    check("G4: zero-clause-intersection pair sharing rare 3-grams gets its"
-          " base relation envelope",
+    check("G4: zero-clause-intersection pair sharing rare jieba words gets"
+          " its base relation envelope",
           {f"mem_rel::{hA}::{hB}::semantic", f"mem_rel::{hA}::{hB}::causes",
            f"mem_rel::{hA}::{hB}::caused_by"} <= sigs_g4,
           sorted(s for s in sigs_g4 if s.startswith("mem_rel::")))
@@ -2696,7 +2705,7 @@ def main() -> int:
     stepper(sid_g4n)
     cur = C.cur
     sigs_g4n = answered_sigs(cur, sid_g4n)
-    check("G4: zero shared n-gram -> zero relation envelopes (negative clean)",
+    check("G4: zero shared word -> zero relation envelopes (negative clean)",
           not any(s.startswith("mem_rel::") for s in sigs_g4n), sorted(sigs_g4n))
     cur.execute("SELECT v13_mgraph_anchor_tinql(%s)", (GA,))
     tqA2 = cur.fetchone()[0]
@@ -2737,6 +2746,15 @@ def main() -> int:
         " WHERE p.proname LIKE 'v13\\_mgraph\\_anchor%' AND a.grantee = 0")
     check("G6: anchor functions carry no PUBLIC grant (grantee=0)",
           cur.fetchone()[0] == 0)
+    cur.execute("SELECT pg_get_indexdef('ix_memory_nodes_stannum'::regclass)")
+    idxdef_g6 = cur.fetchone()[0]
+    cur.execute(
+        "SELECT pg_get_functiondef(oid) FROM pg_proc"
+        " WHERE proname = 'v13_mgraph_anchor_terms'")
+    adef_g6 = cur.fetchone()[0]
+    check("G6: anchor tokenizer couples to the index tokenizer (U3c)",
+          "tokenizer=jieba" in idxdef_g6 and "'jieba'" in adef_g6,
+          (idxdef_g6, adef_g6[:120]))
     cur.execute("SELECT v13_mgraph_anchor_tinql(%s)", ("为什么用户无法登录",))
     tq_g6 = cur.fetchone()[0]
     cur.execute("SET enable_seqscan = off")

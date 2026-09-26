@@ -23,7 +23,8 @@ GRANTS = """
 GRANT USAGE ON SCHEMA stannum TO v13_recall, v13_resolve, v13_route;
 GRANT EXECUTE ON FUNCTION
   stannum.score_bound(text,text,integer,integer,integer,real,real,real,text[],text[]),
-  stannum.score_bound_indexed(tid,text,integer,integer,integer,real,real,real,text[],text[])
+  stannum.score_bound_indexed(tid,text,integer,integer,integer,real,real,real,text[],text[]),
+  stannum.tokenize(text,text,text,text,text,integer,text,text)
 TO v13_recall, v13_resolve, v13_route;
 """
 

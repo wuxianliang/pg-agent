@@ -29,7 +29,8 @@ CREATE TABLE transcript_chunks (
 
 -- 记忆语料索引(stannum 默认配置,单索引纪律;OQ9:记忆语料 CJK 为主,
 -- 刻画后直接 stannum=§7 既裁路径;tsvector 对 CJK 记忆零召回=玩具)
-CREATE INDEX ix_transcript_stannum ON transcript_chunks USING stannum (body);
+CREATE INDEX ix_transcript_stannum ON transcript_chunks USING stannum (body)
+  WITH (tokenizer=jieba);
 
 CREATE FUNCTION v13_transcript_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$

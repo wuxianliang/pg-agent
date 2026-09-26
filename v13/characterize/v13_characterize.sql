@@ -26,7 +26,8 @@ INSERT INTO v13_canary_docs VALUES
 CREATE INDEX ix_v13_canary ON v13_canary_docs
   USING stannum (body) WITH (long_tokens='split', max_token_bytes=64);
 
-CREATE INDEX ix_chunks_stannum ON chunks USING stannum (body);
+CREATE INDEX ix_chunks_stannum ON chunks USING stannum (body)
+  WITH (tokenizer=jieba);
 
 CREATE OR REPLACE FUNCTION v13_extract_spans(p_body text, p_terms jsonb)
 RETURNS jsonb LANGUAGE plpgsql IMMUTABLE AS $$
@@ -56,7 +57,8 @@ BEGIN
       'v13: body contains all highlight sentinels (spans unavailable)'
       USING ERRCODE = 'V3005';
   END IF;
-  v_tagged := stannum.highlight(p_body, v_open, v_close, v_tinql);
+  v_tagged := stannum.highlight(p_body, v_open, v_close,
+    stannum.bind_query(v_tinql, 'ix_chunks_stannum'::regclass));
   v_from := 1;
   LOOP
     EXIT WHEN v_total >= 256;

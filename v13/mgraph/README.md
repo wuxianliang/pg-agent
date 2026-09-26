@@ -18,7 +18,11 @@ P5b（U2b）把使用核查 B.5 的「spans 与索引切分碰巧一致」上锁
 highlight 哨兵区间必须完整有序相等。今天相等是现状（生产索引=默认 unicode
 analyzer）；索引 analyzer 偏离默认（tokenizer/`max_token_bytes`/
 `long_tokens`）而 extract_spans 未跟随时变红是**预期**——逼同提交改调用形状
-或扩展断言，不写会过期的断言条数。
+或扩展断言，不写会过期的断言条数。U3c 已扩展 P5b 为 jieba 形态：extract_spans
+自身绑 `ix_chunks_stannum`（jieba），另增单字 `タ` case——非空+区间相等，
+索引回退 unicode 时该行不命中→红（即「能区分 jieba 与默认 unicode」）。
+同批：`tokenize` 移出 usage gate 的 ZERO_FUNCS，改为 F14b 限定断言（全 15
+文件去注释源码 `stannum.tokenize` 恰 1 次=锚调用点）。
 
 ## 机制(M1 范围;错误码一律 V3009)
 
@@ -35,7 +39,9 @@ analyzer）；索引 analyzer 偏离默认（tokenizer/`max_token_bytes`/
    不放宽);两端悬空由校验器查(M2 落地)。**零图扩展 DDL**(OQ1:AGE 不进
    运行时;源码 `cypher(` 计数=0)。行不可变:节点/边 UPDATE 触发器拒 V3009;
    DELETE 仅 owner(零授权面,留给 M2 重建)。
-2. **索引**:stannum 单索引 `ix_memory_nodes_stannum`(body;M2 候选函数
+2. **索引**:stannum 单索引 `ix_memory_nodes_stannum`(body,**
+   `tokenizer=jieba`**——U3c 计划 2026-09-26 重开 OQ15 后切换,与锚词级
+   同文件耦合(G6 耦合锁);M2 候选函数
    经它做 TINQL 谓词扫描,去注释源码绑定算符计数=恰 1——EXECUTE 串,
    memory 先例同款确切数)+ 一跳两向 btree `ix_memory_links_src/dst
    (session_id,src/dst_hash,rel)`(邻居函数 M3 落地,索引先行)。
@@ -120,10 +126,13 @@ analyzer）；索引 analyzer 偏离默认（tokenizer/`max_token_bytes`/
     V3005 fail-closed 不降级裸扫;recall 三函数字节不变,v2 计划 R2 修订
     OQ7 守卫面)把用户文本挡在 EXECUTE 串之外;锚编译器 `v13_mgraph_anchor_
     terms/tinql`(均 STABLE,经读取器取 n/max 两键,禁 IMMUTABLE——策略
-    翻版必须能改变锚形态)=latin 段整项+CJK 段按字符 n-gram
-    (`anchor_ngram_n=3`;段长=n 恰一项、<n 零项;0=全段 OR 语义退化),
+    翻版必须能改变锚形态)=latin 段整项+CJK 段 jieba 词级
+    (`stannum.tokenize(seg,'jieba')`,U3c 计划 2026-09-26 重开 OQ15:
+    字符 3-gram 滑窗→词级;tokenizer 字面量与索引 reloption 同文件耦合;
+    `anchor_ngram_n` 语义降格两档:0=全段 OR 退化保留,>0=词级且具体
+    正值不再改变词形——键/值域/策略行 v2 字节不动),
     去重保序,超 `anchor_max_terms=48` 保序截断,空锚→空串→空集零 ask;
-    CJK n-gram 项对 entity/关键词子项天然中性(不匹配 ASCII 字符类)。
+    CJK 词项对 entity/关键词子项天然中性(不匹配 ASCII 字符类)。
     谓词驱动 stannum 索引扫描(禁裸表扫描后算分),池=本会话全部
     episodic(consolidation 不作锚);
     `score = lexical_coef·lexical_norm + entity_coef·entity_jaccard +
