@@ -7,6 +7,8 @@
 - 总原则：**凡换体，底稿必须是 stage 20 全量加载后的 `pg_get_functiondef` 活体**；禁止从 control/fanout 等首写文件回贴（会把 stage 18–20 已换体的 `v13_complete`/`v13_advance` 卷回去）。
 
 > **R6 后续（2026-09-27）**：本文 §1 条件 4 的 no-event 分支（「同一快照可见也算」及其后的指向性探针要求与勘误）已由 R6 删除——见 `docs/reviews/v13-control-plane-oracle-r6-2026-09-27.md`。本文其余条款继续有效。
+>
+> **R9 后续（2026-09-27）**：D14 断言 B 的 v_qual 代入式已由 R9 改为裸名同域绑定（B′）——见 `docs/reviews/v13-control-plane-oracle-r9-2026-09-27.md`。D14 其余条款继续有效。
 
 ## §0 总表
 

@@ -246,3 +246,9 @@ AND type NOT IN ('session/completed', 'session/failed', 'session/cancelled')
 ## 11. R7b 后续状态（2026-09-27，追加不改写）
 
 §9/§10 不受影响。R7 守卫无锁落地后的残余 40P01 来自 R7 日程自身的测试锁序倒置（A 只持 latch → INSERT 的 events.session_id 外键 KEY SHARE 等 B 的 sessions FOR UPDATE，B 又等 A 的 latch）；生产恒 sessions→latch（外键由自持锁即时满足），无此环。Oracle R7b（`docs/reviews/v13-control-plane-oracle-r7b-2026-09-27.md`）三通道一致：日程改 A 按生产序先 sessions 后 latch 再 INSERT，等待观测移至 sessions 行（pg_blocking_pids + B 对 A xid 的 transactionid ShareLock granted=false + wait_event='transactionid' 三项同断，且须在 A 仅持 sessions 锁时采到）。本文 §1–§7 的 GO 与 R7 裁定不改写。
+
+---
+
+## 12. R9 后续状态（2026-09-27，追加不改写；编号注：R8 被并行 Phase B 线占用）
+
+§9–§11 不受影响。stage 22 RED 基线 P1–P7 全过后，R5 断言 B（v_qual 限定名代入 writer_ok）触发预授权停工：活体 writer_ok 是「split_part 剥 schema 取裸名 + 闭集等值」，限定名+身份参数代入 false。Oracle R9（`docs/reviews/v13-control-plane-oracle-r9-2026-09-27.md`）三通道一致选①裸名同域绑定：两谓词入参改回行内裸 v_handler（与 guard 同参），防 shadow 改由断言 B′（to_regprocedure(裸名‖v_oid 参数表) NULL-safe 比对 v_oid，catalog 自身固定 search_path 域内）承担；裸名形状检查先于谓词；断言 A 保留为 frozen 自洽；P8a–P8d 为新硬前置。零函数改动。本文 GO 与 R6/R7/R7b 裁定不改写。

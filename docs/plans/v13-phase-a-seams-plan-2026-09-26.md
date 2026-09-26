@@ -1,6 +1,6 @@
 # v13 Phase A 开发计划：修地基（stage 21 seam + stage 22 catalog）— R5 终裁版 r2
 
-> 状态：**现行版 r7b（2026-09-27，可开工）**：R5 终裁 + 五轮审核 APPROVE + R6（D11 无事件分支窄化）+ R7（D12 锁协议：守卫无锁）+ R7b（并发日程改生产序 sessions→latch，观察点移至 sessions 行）。裁决记录：`...oracle-r5-2026-09-26.md`、`...r6-2026-09-27.md`、`...r7-2026-09-27.md`、`...r7b-2026-09-27.md`；前置核查：`v13/seam/preflight.md`。审核导出：`prompt-exports/oracle-review-2026-09-2*.md` 与 `oracle-review-2026-09-27-*.md`（R6/R7/R7b）。。
+> 状态：**现行版 r9（2026-09-27，可开工）**：R5 + 五轮 APPROVE + R6（D11 窄化）+ R7/R7b（D12 锁协议）+ R9（D14 断言 B 裸名同域绑定；R8 号被并行 Phase B 线占用）。裁决记录：`...oracle-r5-2026-09-26.md`、`...r6/r7/r7b/r9-2026-09-27.md`；前置核查：`v13/seam/preflight.md`。
 > 母计划：`docs/plans/v13-layered-control-roadmap-2026-09-26.md` §3 Phase A、§4 D11–D14、§5 红线。
 > 本文件替换 2026-09-26 骨架；R5 与路线图倾向文字冲突处以 R5 为准（路线图已同日同步，含 §2.3）。
 > 硬边界（不重开）：零新表零新列（R4 扩写含物化视图/投影表）、stage 1–20 SQL 文件字节冻结、唯一推进函数、events 唯一干预通道、R3 链已冻失败模式（C4 RAISE、终态 `replay`、`v13_interruptible` 闭集）。索引、只 RAISE 的守卫触发器、开放事件、STABLE/VOLATILE 函数不是新表。
@@ -236,35 +236,36 @@ wait 链恒不豁免，tail_gap 会先于 wake 臂 RAISE，e2e 会红在错误�
 | P5 | `v13_named_sql_writer` IMMUTABLE；`v13_spawn_writer_ok` 无写副作用可被 STABLE 调用 | 是 | 否 → 停工 |
 | P6 | tools 行 `spawn_subsession` 活体 enabled 状态（stage 前缀库） | =true（stage 18 INSERT `v13_spawn.sql:1757-1760` 照 R3c H7；「enabled=false」是 demo 夹具行为，F22 已记） | =false → 先与台账 F22 对账，禁 `UPDATE tools` |
 | P7 | 记录两谓词活体 identity arguments 与返回类型（`pg_get_function_identity_arguments`；现均为 `(text)`，spawn:1751-1752 GRANT 行佐证） | 记录在案 | 签名非预期/无法记录 → 停工（不改签名、禁 overload） |
+| P8 | （R9 硬前置）P8a catalog proconfig 含固定 search_path 且换体前后逐字节同；P8b B′ 往返对活体行为真；P8c 两谓词 proconfig 与 catalog 同域（或继承）且 writer_ok 实检 OID=v_oid；P8d public CREATE 权限记录 | 全部成立 | P8a–P8c 任一不符 → 停工（禁自行加 SET 凑） |
 
 ### 4.2 D14 换体公式
 
 `CREATE OR REPLACE v13_tools_catalog_frozen`（活体底稿，仅 VOLATILE 分支改动）：
 
 ```
-kind='sql' AND enabled AND provolatile='v' 的行：
-  1. 按 catalog 既有规则把 handler 解析到唯一 OID/regprocedure（歧义 fail-closed）
-  2. v13_named_sql_writer(handler) 非 NULL
-  3. v13_spawn_writer_ok(同一已解析 OID 及元数据) 为真
-  → 三者同时成立才跳过这一条通用 VOLATILE RAISE（子串 is VOLATILE 逐字节不变）
-豁免后：schema-qualify、签名、handler_digest、frozen 一致性、ACL/search_path 照旧全跑
-数据流约束（按活体 (text) 签名落成可执行式，禁改签名/禁 overload/禁在 catalog_frozen 写函数名字面量）：
-  v_handler := 该 catalog 行 handler 文本；
-  v_oid := catalog 既有规则唯一解析（歧义 fail-closed）；
-  v_qual := 只由该 OID 现拼：quote_ident(nspname)||'.'||quote_ident(proname)||'('||
-            pg_get_function_identity_arguments(v_oid)||')'（反查 pg_proc/pg_namespace；
-            示例签名不是源码，禁止把函数名/参数类型字面量写进 v13_tools_catalog_frozen）；
-  断言 A（跳过 RAISE 之前）：to_regprocedure(v_qual) = v_oid 且 v13_named_sql_writer(v_handler)
-            非 NULL——闭集判定只有这一次 named_sql_writer 调用，无 proname 比对；
-  断言 B（同前）：读活体 v13_spawn_writer_ok，写出它对入参文本做的解析表达式；
-            入参为 v_qual 时该表达式的结果必须是 v_oid。函数体做不到（剥 schema、
-            只比裸名、再按 search_path 解析）→ 停工（禁改 writer_ok 解析、禁剥限定名、
-            禁在 catalog 里另写一份校验）；
-  两断言都在「跳过这条 VOLATILE RAISE」的判定之前求值，任一失败 fail-closed；
-  shadow 反例（§4.4）必须在这条绑定链上失败；豁免被劫持 = §5.6「OID 绑定无法闭合」
-  停工，不是调 search_path。
-禁止：文本名先行放行再二次 search-path 解析；仅 named_sql_writer 非 NULL 即放行；
-      捕获 writer_ok 异常当可继续；名单外任何新字面量
+kind='sql' AND enabled AND provolatile='v' 的行（VOLATILE 分支，R9 绑定式）：
+  0. 【裸名形状，先于一切】strpos(v_handler,'.') = 0 且 v_handler = proname(oid=v_oid)
+     逐字节相等（结构相等非闭集，函数体零名字面量）；不满足 → 不调两谓词直接落原 RAISE
+     （限定名/带签名文本/非 canonical 拼写全部在此挡下）。
+  1. v_oid := catalog 既有规则唯一解析（歧义 fail-closed）。
+  2. 断言 A（frozen 形态自洽，R9 保留）：to_regprocedure(v_qual) IS NOT DISTINCT FROM v_oid
+     且 v13_named_sql_writer(v_handler) IS NOT NULL（闭集判定仅此一次）；
+     v_qual 只由 v_oid 现拼，仅用于 A，永不传入谓词。
+  3. 断言 B′（裸名同域绑定，R9 替换 R5-B）：to_regprocedure(v_bind) IS NOT DISTINCT FROM
+     v_oid，v_bind := v_handler || v_arglist，v_arglist := substring(v_oid::regprocedure::text
+     FROM '\(.*\)$')（identity-args 拼法经 P8b 证实可回解则可用为短式；两式都非 NULL
+     且不等或都对不上 → 停工；禁手写类型串）。
+  4. v13_spawn_writer_ok(v_handler) IS TRUE。
+  豁免 = 0∧1∧2∧3∧4 同时成立才跳过这条 VOLATILE RAISE（子串逐字节不变）；
+  谓词异常不得捕获当可继续。
+  **P0（fable）：所有 to_regprocedure 比对一律 NULL-safe（IS [NOT] DISTINCT FROM / 显式
+  IS NULL）；裸 = 在 NULL 时 fail-open，源码断言见红即判。**
+  同域：v_oid/A/B′ 都在本函数 proconfig search_path 域内（P8 钉住）；shadow 在域内更前
+  则 B′ 与 writer_ok 一致看到、深检不放行 fail-closed；catalog 解析与 B′ 分叉 → fail-closed。
+豁免后：schema-qualify、签名、handler_digest、frozen 一致性、ACL/search_path 照旧全跑。
+禁：改 writer_ok 解析；剥限定名后放行；把 v_qual/合成限定名喂任一谓词；复制 writer_ok 深检
+   （R5「另写一份校验」收窄为此）；函数体出现名字面量/split_part；换体省略原有 SET
+   search_path（proconfig 逐字节保持）；仅 named_sql_writer 非 NULL 即放行；捕获异常当可继续
 ```
 
 GRANT：`v13_named_sql_writer`/`v13_spawn_writer_ok` 幂等 `REVOKE PUBLIC` → GRANT `v13_recall`/`v13_resolve`/`v13_route`；不授 `v13_worker`（除非调用链证明）。不建 `v13_volatile_sql_exception(oid)`；不换 guard；不动 tools 行。
@@ -285,7 +286,7 @@ GRANT：`v13_named_sql_writer`/`v13_spawn_writer_ok` 幂等 `REVOKE PUBLIC` → 
 
 ### 4.4 Stage 22 gate（`uv run python v13/catalog/test_catalog.py`，退出码 0）
 
-*D14 组*：base 库 P1–P7 全部符合预期（预期 RED 断言为「RAISE 且含子串」，不是退出失败）；换体后 enabled 的 `spawn_subsession` 不再因 VOLATILE 失败；临时插名单外 VOLATILE sql 工具行仍因同一子串 RED（测后清理）；`v13_needed_judgments` 工具集仍不含 `spawn_subsession`；sql 快路臂命中该名仍 RAISE `batch-dispatched` 零子；扇出臂仍是唯一产子路径；`SET ROLE v13_route` 与 `v13_resolve` 各跑真实 catalog/parse 绿（超级用户绿不算数）；**`has_function_privilege` 断言**：两谓词对 route/resolve/recall 为真、对 PUBLIC 与 `v13_worker` 为假；**同名不同 schema / search_path shadow 函数反例**（豁免不得被 shadow 劫持）；源码 grep 断言具名名单只住在两谓词函数体。
+*D14 组*：base 库 P1–P8 全部符合预期（预期 RED 断言为「RAISE 且含子串」，不是退出失败）；换体后 enabled 的 `spawn_subsession` 不再因 VOLATILE 失败；临时插名单外 VOLATILE sql 工具行仍因同一子串 RED（测后清理）；`v13_needed_judgments` 工具集仍不含 `spawn_subsession`；sql 快路臂命中该名仍 RAISE `batch-dispatched` 零子；扇出臂仍是唯一产子路径；`SET ROLE v13_route` 与 `v13_resolve` 各跑真实 catalog/parse 绿（超级用户绿不算数）；**`has_function_privilege` 断言**：两谓词对 route/resolve/recall 为真、对 PUBLIC 与 `v13_worker` 为假；**三层 shadow 矩阵（R9）**：①直调层（SET search_path=zshadow,public 下直调 writer_ok 裸名 → 假，记录拒绝层）；②绑定层（建 zshadow 同名同参 VOLATILE 函数后，catalog 域下 B′ 对 shadow 必假、对真行必真）；③端到端层（临时插 handler=zshadow 名 enabled sql 行 → catalog 仍 RAISE `is VOLATILE`，记名命中层；会话投毒 search_path 后 route 调 catalog：真行仍豁免、返回无 zshadow；同会话裸 to_regprocedure 能见 shadow 证明投毒生效）；测后清理；源码断言：两谓词实参=v_handler、v_qual 只在断言 A、豁免分支在形状检查后、to_regprocedure 全 NULL-safe（裸 = 判红）、无名字面量/split_part/深检副本、两谓词各恰一次；具名名单只住两谓词函数体。
 
 *第四务组*：renew 失败零 cancel 结算且不读谓词；renew 成功 + pending=false → 正常 succeeded；cancel 在本次 renew 前可见 → 结算为表中 cancelled/unknown 而非 succeeded 且**其后零 provider IO**；cancel 在读后才出现 → 已发生 succeeded 不追溯；best_effort → cancelled（tool 的 best_effort 也是 cancelled 不是 unknown）；required+llm → cancelled；required+tool → `complete(unknown)` 且既有抬墙生效；required+judge/human/context_refresh → 正常结算不 unknown；unsupported + pending → 仍可 succeeded；空 tool_name llm 上 `complete(cancelled)` → 既有 RAISE（负例，假 worker 正路径不得这么调）；第四务 complete 后无第二次正常 complete；**fence 场景**：第四务用 renew 后新 fence，旧 fence 只得 `stale` 且不得随后再结算；**第四务 `complete` 返 `replay` 与 `stale` 各一场景**：立即退出、零第二次 complete；谓词查询失败 fail-closed；两次 renew 场景每次都复查；`v13/catalog/*.sql` 无 LISTEN/NOTIFY、无 `pg_terminate_backend`、无 `v13_worker_fourth_duty` 类判定函数、无永久跟踪关系（源码断言）。
 
@@ -306,7 +307,7 @@ GRANT：`v13_named_sql_writer`/`v13_spawn_writer_ok` 幂等 `REVOKE PUBLIC` → 
 
 ### 4.6 Stage 22 收尾工件
 
-`SQL_LOAD_ORDER` 追加 catalog；覆盖矩阵 Phase A 段（stage 22 行，第四务按上表如实标）；台账 Phase A 段关闭 **F22**（catalog 缝：D14 交付后具名写者对 parse 可见）；`v13/catalog/README.md`（换体公式 + 第四务合同 + 验收两格）。
+`SQL_LOAD_ORDER` 追加 catalog；覆盖矩阵 Phase A 段（stage 22 行，第四务按上表如实标）；台账 Phase A 段关闭 **F22**（catalog 缝：D14 交付后具名写者对 parse 可见；关闭行加指针「绑定式按 R9/F26：裸名同域 B′，非 v_qual 代入」）+ 新增 **F26**（R9：D14 断言 B 复裁——活体裸名解析触发停工/①落地/残留 R-1 接受，≠ parity F26）；`v13/catalog/README.md`（换体公式 + 第四务合同 + 验收两格）。
 
 ## 5. 全局红线（每 stage 收尾检查）
 
@@ -315,7 +316,7 @@ GRANT：`v13_named_sql_writer`/`v13_spawn_writer_ok` 幂等 `REVOKE PUBLIC` → 
 3. 外部 IO 不进事务；第四务/harness 结果/worktree FS 全在驱动器；SQL 不杀进程。
 4. gate 全绿才 commit：该 stage `uv run python v13/<stage>/test_*.py` 退出码 0 + 回归此前全部 stage。按路径 `git add`；禁 `git add -A`；禁 force-push；禁 `--no-verify`。
 5. 每期收尾架构审计（R4）：无概念性控制表/物化投影/影子状态源；新增读面必须是函数；新增写面归入既有事件/策略/具名函数路径。
-6. 停工条款汇总（任一触发即停，按 R5–R7b 报事实不自行改裁）：§3.1.2 证伪清单命中（preflight 已核 GO）；§3.2.1 安装前断言 RAISE；§3.5 resolve 无法直线加调用（preflight 已核可行）；**R7 已解除守卫锁序停工——再给守卫加 latch 锁或咨询锁 = 越界停工；并发日程与生产取锁序恒 sessions→latch，倒置（先 latch 后 sessions/FK）= 越界停工；按 R7b 序仍 40P01 或 A 一锁 latch 即 40P01 → 附 pg_locks+CONTEXT 复裁**；**resolve_unknown 若在调写者前不持本会话 sessions 行锁 → 报事实复裁，禁自行补锁**；G3 活体 failed 结局无自身事件；§4.1 P1–P7 任一不符；§4.2 OID 绑定后置断言无法闭合。§3.1.7 的原停工点已由 R6 解除。
+6. 停工条款汇总（任一触发即停，按 R5–R7b 报事实不自行改裁）：§3.1.2 证伪清单命中（preflight 已核 GO）；§3.2.1 安装前断言 RAISE；§3.5 resolve 无法直线加调用（preflight 已核可行）；**R7 已解除守卫锁序停工——再给守卫加 latch 锁或咨询锁 = 越界停工；并发日程与生产取锁序恒 sessions→latch，倒置（先 latch 后 sessions/FK）= 越界停工；按 R7b 序仍 40P01 或 A 一锁 latch 即 40P01 → 附 pg_locks+CONTEXT 复裁**；**resolve_unknown 若在调写者前不持本会话 sessions 行锁 → 报事实复裁，禁自行补锁**；G3 活体 failed 结局无自身事件；§4.1 P1–P8 任一不符；R9 停工追加（P8a–P8c 不符、断言无法落成 NULL-safe、shadow 在 B′ 上意外为真、限定名临时行被豁免）。§3.1.7 的原停工点已由 R6 解除。
 
 ## 6. R5 假绿风险对照（实施时逐条自检）
 
