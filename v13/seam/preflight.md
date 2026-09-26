@@ -264,3 +264,9 @@ AND type NOT IN ('session/completed', 'session/failed', 'session/cancelled')
 ## 14. R11 后续状态（2026-09-27，追加不改写；编号：R8=并行 Phase B，R9=D14 绑定式，R10=P8a 同域，R11=本篇）
 
 §9–§13 不受影响。R10 §2 落地实测（probe 库回滚）：投毒前置成立，但 catalog 先抛活体既有解析层 `ambiguous across schemas (2)`——**活体唯一解析按 proname 计全库 pg_proc，不看 search_path**；同名 shadow 工具存在（投毒与否）即在 VOLATILE 分支前 fail-closed。Oracle R11（`docs/reviews/v13-control-plane-oracle-r11-2026-09-27.md`）裁定案 A 修订版：矩阵重排为对照 G + 夹具 1（shadow 存在→base 锁死的 S 子串）+ 夹具 2（+投毒同 S）+ 夹具 3 双臂（否决型影子谓词证真行仍豁免=谓词限定生效；放行型影子谓词打名单外行→`is VOLATILE`）+ 夹具 4（限定名行死在形状检查，proname 不撞名）；B/C（改解析为 search_path 域）拒绝；(H) 收窄为 B′ 与谓词内部共用会话域、v_oid 全库计数不在域内。本文 GO 与 R6/R7/R7b/R9/R10 裁定不改写。
+
+---
+
+## 15. R12 后续状态（2026-09-27，追加不改写；编号：…R10=P8a 同域，R11=解析层矩阵，R12=本篇）
+
+§9–§14 不受影响。R11 臂 D 落地实测：投毒下按 namespace 限定直调真实 `v13_spawn_writer_ok` 也为 false——活体 writer_ok 体内裸调 `v13_named_sql_writer`（未限定），继承投毒路径命中影子 NULL。Oracle R12（`docs/reviews/v13-control-plane-oracle-r12-2026-09-27.md`）双车道裁定：臂 D 改真行 `is VOLATILE`（点名 spawn_subsession）的 fail-closed 回归；P8a′ 限定证明移交源码/OID 硬断言 + 臂 E（影子 named 对任意入参返常量 C、前置=限定直调真实 writer_ok 对真行 IS TRUE）；冻结谓词体不修。本文 GO 与 R6/R7/R7b/R9/R10/R11 裁定不改写。

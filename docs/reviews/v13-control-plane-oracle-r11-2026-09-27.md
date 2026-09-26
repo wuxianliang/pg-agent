@@ -1,5 +1,7 @@
 # v13 控制面 Oracle R11 微裁：投毒矩阵按活体解析层重排（2026-09-27）
 
+> **R12 后续（2026-09-27）**：本文 §1 夹具 3 臂 D「catalog 成功、真行仍按对照 G 豁免」及「双臂证明谓词限定」以 R12 为准（臂 D 改真行 `is VOLATILE` fail-closed 回归；限定证明移交源码硬断言 + 臂 E）。见 `docs/reviews/v13-control-plane-oracle-r12-2026-09-27.md`。
+
 - 触发：R10 §2 落地实测（probe 库回滚验证，未写换体）——投毒前置成立（裸 `to_regprocedure` 命中 shadow），但 catalog 先抛活体既有解析层 `ambiguous across schemas (2)`：**活体唯一解析按 proname 计全库 `pg_proc`，不看 search_path，在 VOLATILE 分支之前退出**。同名 shadow 工具只要存在（投毒与否相同）即 fail-closed；R10「v_oid 与 B′ 同落 shadow → 限定 writer_ok 打出 `is VOLATILE`」在「只改 VOLATILE 分支、保持既有解析」下不可达。
 - 通道：grokBuild 完整裁定 + codex 部分完成（不活跃看门狗截断）且其 P1 与 grokBuild 收紧一致（夹具 3 须反值影子谓词；v_oid 非会话域）。**案 A 修订版选定**；B（解析改 search_path 域内）/C（VOLATILE 分支单独 path-scoped）拒绝——都是改既有解析语义。全文：`prompt-exports/oracle-review-2026-09-27-021548-new-chat-2517c8-e13e.md`（gitignored）。编号：R8=并行 Phase B，R9=D14 绑定式，R10=P8a 同域，R11=本篇。
 - 地位：只替换 R10 §2（投毒矩阵）与计划 §4.2 同域句/§4.4 投毒层/§5.6 停工红线。不重开：P8a 形态选择（本活体 (H) 三函数 proconfig NULL 保持）、P8b 规范式、裸名形状检查、NULL-safe、断言 A、谓词函数体、tools 行、**谓词身份限定义务**、第四务、D11/D12 各裁、零新表、stage 1–21 冻结。
