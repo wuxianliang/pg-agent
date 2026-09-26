@@ -1,5 +1,7 @@
 # v13 控制面 Oracle R10 微裁：R9 探针 P8a 同域重定义（继承形态 H）（2026-09-27）
 
+> **R11 后续（2026-09-27）**：本文 §2 投毒矩阵的通过条件（投毒下 `is VOLATILE`、v_oid 与 B′ 同落 shadow、writer_ok 为该次拒绝层）与 §3「v_oid 在会话域」句已由 R11 修订——活体解析层更早以全库 proname 计数的 ambiguity 退出。见 `docs/reviews/v13-control-plane-oracle-r11-2026-09-27.md`。其余（P8a 形态选择、保持 NULL、谓词身份限定义务）不变。
+
 - 触发：stage 22 硬前置 P8a 不符——活体 `v13_tools_catalog_frozen`/`v13_named_sql_writer`/`v13_spawn_writer_ok` 三者 `proconfig` **全 NULL**（无固定 search_path，stage 2 以来如此）；R9「无固定 → 停工」触发，A2 按纪律停工。P8b 已实测：规范式 `substring(v_oid::regprocedure::text FROM '\(.*\)$')` 得 `(uuid,jsonb)` 可回解 ✓；identity-args 短式带参数名被拒（`invalid type name`）✗——取规范式，不二式任选。
 - 通道：双车道（grokBuild / codex），**①修订版一致**；codex P1 第三条（谓词身份限定）为承重补充，控制器并入。全文：`prompt-exports/oracle-review-2026-09-27-020246-new-chat-2517c8-07f7.md`（gitignored）。编号：R8=并行 Phase B，R9=D14 绑定式，本篇=R10。
 - 地位：只替换 R9 P8a 的域要求、投毒 gate 预期、并新增谓词身份限定。不重开：B′ 规范式、裸名形状检查先行、NULL-safe、断言 A、两谓词函数体、tools 行、第四务、D11(R6)/D12(R7/R7b)、零新表零新列、stage 1–21 冻结。

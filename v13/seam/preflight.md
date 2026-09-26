@@ -258,3 +258,9 @@ AND type NOT IN ('session/completed', 'session/failed', 'session/cancelled')
 ## 13. R10 后续状态（2026-09-27，追加不改写；编号：R8=并行 Phase B，R9=D14 绑定式，R10=本篇）
 
 §9–§12 不受影响。stage 22 硬前置 P8a 实测：活体 `v13_tools_catalog_frozen`/`v13_named_sql_writer`/`v13_spawn_writer_ok` 三者 proconfig **全 NULL**（无固定 search_path，stage 2 以来如此）。Oracle R10（`docs/reviews/v13-control-plane-oracle-r10-2026-09-27.md`）双车道裁定：P8a 改「同域二选一」——三函数全 NULL = 继承形态 H，单次调用内 v_oid/B′/两谓词恒同域（R9 要防的分叉结构性不存在）；换体保持 NULL、禁新增 SET；投毒会话下正确行为 = RAISE `is VOLATILE`（fail-closed，防墙 = 深检，非 B′）；并新增谓词身份限定（catalog 体内对两谓词 schema 限定调用，防投毒 schema 同名谓词劫持）。P8b 实测：规范式参数表 `(uuid,jsonb)` 可回解，identity-args 短式被拒。本文 GO 与 R6/R7/R7b/R9 裁定不改写。
+
+---
+
+## 14. R11 后续状态（2026-09-27，追加不改写；编号：R8=并行 Phase B，R9=D14 绑定式，R10=P8a 同域，R11=本篇）
+
+§9–§13 不受影响。R10 §2 落地实测（probe 库回滚）：投毒前置成立，但 catalog 先抛活体既有解析层 `ambiguous across schemas (2)`——**活体唯一解析按 proname 计全库 pg_proc，不看 search_path**；同名 shadow 工具存在（投毒与否）即在 VOLATILE 分支前 fail-closed。Oracle R11（`docs/reviews/v13-control-plane-oracle-r11-2026-09-27.md`）裁定案 A 修订版：矩阵重排为对照 G + 夹具 1（shadow 存在→base 锁死的 S 子串）+ 夹具 2（+投毒同 S）+ 夹具 3 双臂（否决型影子谓词证真行仍豁免=谓词限定生效；放行型影子谓词打名单外行→`is VOLATILE`）+ 夹具 4（限定名行死在形状检查，proname 不撞名）；B/C（改解析为 search_path 域）拒绝；(H) 收窄为 B′ 与谓词内部共用会话域、v_oid 全库计数不在域内。本文 GO 与 R6/R7/R7b/R9/R10 裁定不改写。
