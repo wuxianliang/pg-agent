@@ -170,7 +170,7 @@ V 号：L8=V5+V19，L9=V1+V14，L10/L11=V8，L12=V10，L14/L15=V5，L18=V1+V2，
 | # | 观察 | 套件 | 状态 |
 |---|---|---|---|
 | 1 | `demo_open_session` 总是新 id，无幂等续跑 | `g_steer.py:34` | **已裁。** R3 §1 附；迁移 §2.1 |
-| 2 | 错 `interaction_ref` RAISE 且含 `current=`，不是静默 no-op | `g_approval.py:57` | **未裁偏差候选（F4）。** R3 C4 只冻 v13 human 通道必须 RAISE（fanout `:370`）。迁移 §2.1 把原语落到「不匹配则拒」，引的是 ViewModel（F11），不是 Controller `:495` 的 `removeValue` else `return`。没有一句写「否决静默 no-op」 |
+| 2 | 错 `interaction_ref` RAISE 且含 `current=`，不是静默 no-op | `g_approval.py:57` | **R5 已裁：不移植。** 台账 F23（= parity F4 / R3 C4，≠ parity F23） |
 | 3 | routed llm（`tool_name` 空）`complete(cancelled)` → `interruptible unsupported` | `g_cancel.py:81` | **已裁，不是未裁。** R3c-full:179-180：未点名 → `unsupported`；`complete(cancelled)` RAISE。活体 `v13_interruptible` 只点名 `fanout_required` / `fanout_best_effort`（fanout `:37-44`），空名走 ELSE |
 | 4 | mutating `fanout_required` 工具不能 `complete(cancelled)`，须 `complete(unknown)` | `g_cancel.py:110` | **已裁。** R2 A18；R3c-full:182；fanout `:337` |
 | 5 | 已终态根 cancel 返回 `replay`，不抛含 status 的错 | `g_cancel.py:54` | **已裁，不是未裁。** R3 §1；R3b 终化；fanout `:217-218`。源侧抛错在 `AgentRunMCPToolService.swift:1186-1188` |
@@ -246,6 +246,6 @@ R1–R13 是 D3 已记录的未做项。它们造成的对照缺口如下。不�
 
 1. **repair_cap × tail gap（优先）。** 会把一个已答的 fold 卡死，只能 cancel 逃生。需要一句排序：cap 已答是否免除续传义务，还是必须先补 index+1。这是 Oracle 或台账级，不是注释能收的。
 2. **F23 latch。** 词表有 `released`，没有写入者。需要一句：`worktree_release` 成功是否 `v13_latch_fire(..., state=released)`，以及失败的 release 是否保持 `prepared`。适合短裁决，不必重开 A19。
-3. **F4 静默 no-op。** C4 已经冻了 RAISE。缺的只是一句对照记录：native `removeValue` 静默返回不移植。适合台账一行，不必新 Oracle，除非产品要保住「重复 respond 不报错」。
+3. **F4 静默 no-op。** **R5 已裁：不移植**（台账 F23）。C4 已经冻了 RAISE。native `removeValue` 静默返回不移植。
 
 F9 的 `replay` 与 routed llm 的 `unsupported` 不要记成未裁。它们和源合同不同，但条文已经选择了 v13 侧的失败模式。

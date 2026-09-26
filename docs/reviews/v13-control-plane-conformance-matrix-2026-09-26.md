@@ -52,3 +52,10 @@
 | 46 | stage 1–19 回归 | ✅ | schema…fanout 全部 `test_*.py` 退出码 0。同轮 stage 20 退出码 0 | 无 |
 | 47 | F19 角色通道 EXECUTE 闭包：四函数 × 三角色 has_function_privilege + PUBLIC 负例 + resolve_login/route_login 直连行为烟（is_spawn_tool/occupancy/json_keys/triage_project/needed_judgments）+ recall SET ROLE 烟 + recall 仍拒 SELECT effects + emit 提交期双射（owner 自举） | ✅ | 2026-09-26 `uv run python v13/triage/test_triage.py` 退出码 0（86 PASS） | 无。台账 F19/F20/F22 |
 | 48 | 授权热修后 stage 1–20 全量回归 | ✅ | 2026-09-26 schema…triage 全部 `test_*.py` 退出码 0 | 无 |
+
+## Phase A
+
+| # | 条文 | 状态 | 测试落点 | 缺口 |
+|---|---|---|---|---|
+| 49 | stage 21 D11 cap×tail-gap 豁免（R6 has-event only）+ D12 `worktree/released` 投影（R7 守卫无锁，R7b 并发日程 sessions→latch） | ✅ | 2026-09-27 `uv run python v13/seam/test_seam.py` 退出码 0 | 无。G10 重泵实测 (b) 返回 `waiting`、零写。并发日程不动态验证两条语句规则（只由源码断言钉住）。`repair_cap`/`replan_cap` 仍在冻结的 `v13_triage_fold_reason`，不是第二份谓词 |
+| 50 | stage 17–20 回归 | ✅ | 2026-09-27 control / spawn / fanout / triage 四脚本退出码均 0 | 无 |

@@ -112,3 +112,12 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 6. waiting 是一等可恢复态：recover_idle（v13_triage.sql:1181 起）的候选/three-reason 谓词不会命中纯 wake-pending 会话（无活跃 effect 且无 children/repair/replan 事件 → 零 nudge），隐式排除与 R3c §8.4 一致。
 
 唯一未被规格覆盖的是「harness 无 wake、无 human 的无条件让出」——现成近似是 `{kind:'event', event_type:'<永不出现的 type>'}`（§6.2 变体一，开放词表精确匹配）。若产品坚持语义化让出，属 R3 修订（新 wake 变体或新返回词，均碰已裁闭集），另开裁决，不随热修。
+
+## Phase A
+
+| # | 事实 | 处置 |
+|---|---|---|
+| F23 | D13（= parity F4 / R3 C4，与 parity F23 无关）。RP-CE 对未知/已答 interaction id 静默 no-op；v13 按 R3 C4 fail-loud，ref 不等 RAISE 含 submitted=/current= 零写 | R5 裁：不移植。关闭 parity §4 #2 |
+| F24 | D11 无事件窗口（R6，≠ parity F24）。条件 4 只认自身事件 `source_effect_id=effect_id` 且 `seq>` 匹配类 anchor；ready/claimed 无自身事件行永不盖章。窗口内 closeout 形状 (C) 仍 RAISE `continuation owed`。重泵实测 **(b) 返回 `waiting`、零新 effect/零新 event/session 仍 waiting**。worker claim 不经 tail_gap 照常推进；行落合格自身事件后自愈 | 接受残留。不改 R3a §7.1、不补指向键、不改 closeout、不搬 PERFORM。(b) 不加幂等守卫、不重排 advance |
+| F25 | D12 锁协议（R7，≠ parity F25）。PG tuple lock 无同事务重入豁免：持有者再次 FOR UPDATE 排到等待者之后，与写者已持的 latch 行锁成环（40P01）。守卫改无锁 MVCC 校验；写者保持 latch FOR UPDATE + 两条独立语句。残留仅「无锁旁路直插在写者窗口内先提交→写者 23505 整笔回滚」，生产两调用点同经行锁彼此不可达 | 接受残留。不加咨询锁、不开 R3c 类号、不捕获 23505、不加暂停点。R7b：日程改生产序取锁（sessions→latch），观察点移至 sessions 行等待；pg_locks 断言为 B 对 A xid 的 transactionid ShareLock；禁只锁 latch（FK 倒置成环 40P01）。本日程不动态验证两条语句规则 |
+| D12 | 成功 release 后 latch 行仍 `prepared` 是 R5 预期；`released` 不被 claim 消费。投影由 `v13_worktree_state` 折叠 `worktree/released` 事件 | 预期行为，不是实现差 |
