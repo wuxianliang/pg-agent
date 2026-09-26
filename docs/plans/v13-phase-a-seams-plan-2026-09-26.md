@@ -1,6 +1,6 @@
 # v13 Phase A 开发计划：修地基（stage 21 seam + stage 22 catalog）— R5 终裁版 r2
 
-> 状态：**已按 Oracle R5 终裁成文，五轮审核后双通道 APPROVE（r5，2026-09-26；可开工）**。裁决记录：`docs/reviews/v13-control-plane-oracle-r5-2026-09-26.md`（下称 R5，含审核轮勘误）；审核轮导出：`prompt-exports/oracle-review-2026-09-26-23*.md`（五轮，末轮双通道 APPROVE；条目已全部并入）。
+> 状态：**R5 终裁成文、五轮审核双通道 APPROVE；R6 复裁 D11 无事件分支后为现行版（r6，2026-09-27，可开工）**。裁决记录：`docs/reviews/v13-control-plane-oracle-r5-2026-09-26.md`（R5，含勘误）、`docs/reviews/v13-control-plane-oracle-r6-2026-09-27.md`（R6，只替换 D11 条件 4 无事件分支及其关联条文）；前置核查已执行：`v13/seam/preflight.md`。审核轮导出：`prompt-exports/oracle-review-2026-09-26-23*.md`（五轮）与 `oracle-review-2026-09-27-001721-*.md`（R6）。。
 > 母计划：`docs/plans/v13-layered-control-roadmap-2026-09-26.md` §3 Phase A、§4 D11–D14、§5 红线。
 > 本文件替换 2026-09-26 骨架；R5 与路线图倾向文字冲突处以 R5 为准（路线图已同日同步，含 §2.3）。
 > 硬边界（不重开）：零新表零新列（R4 扩写含物化视图/投影表）、stage 1–20 SQL 文件字节冻结、唯一推进函数、events 唯一干预通道、R3 链已冻失败模式（C4 RAISE、终态 `replay`、`v13_interruptible` 闭集）。索引、只 RAISE 的守卫触发器、开放事件、STABLE/VOLATILE 函数不是新表。
@@ -38,7 +38,7 @@
 
 ## 3. Stage 21 `v13/seam/`
 
-### 3.1 实施前置（写 SQL 之前的义务，全部以活体为准）
+### 3.1 实施前置（**已执行，见 `v13/seam/preflight.md`**；下列为义务清单与实测结果）
 
 1. `pg_get_functiondef` 取 stage 20 全量加载后的唯一活体：`v13_harness_tail_gap`、`v13_cap_human_answered`、`v13_closeout`、`v13_advance`、`v13_complete`、`v13_resolve_unknown`（每函数只有一份活体）。
 2. **证伪停工清单（仅限动摇裁决的不符；下列之外的差异走各节授权分支，不叫证伪）**：`tail_gap` 或 cap 谓词两臂不存在/形状不符；`latch_fire` adopt 分支 + V3008 不再使 released fire 成为静默空操作；catalog 不是这条 VOLATILE 拒绝；`v13_interruptible` 闭集已变。
@@ -46,7 +46,7 @@
 4. 核查活体 advance 的 tail_gap `PERFORM` 位置 vs cap 决定/入队插入的先后（R5 §1 调用顺序义务）：若铸新格在盖章行插入前把被取代链算进 gap，本次换体把**那一次** `PERFORM` 移到 cap 决定之后、入队插入之后、返回之前。墙分支/ready-claimed 提前返回/cancel 相/step 0 的 R3b 顺序禁止重排。
 5. **D12 开工前置（R5 风险 11）**：换体 `v13_complete` 之前，stage 17–20 全部 gate 先实跑全绿。
 6. 安装前历史断言（见 §3.2 第 1 步 DO 块规格）。
-7. **D11 括号证据探针（两问，go/no-go）**：①验证活体 advance 的 harness 入队臂在 enqueue 前同锁段写 `turn/route`（R3a §7.1 已裁：new 经 route、continue 有 reason='harness_continuation' 的 turn/route，均先于 enqueue）；②**记下该 turn/route 的 payload（以 `pg_get_functiondef` 为准）里能唯一指向被入队那一行的活体字段（`effect_id` 或 `logical_turn_id`）**，且 new 与 continue 两种 route 能靠该字段分开。任一不成立 → 停工；停工后禁改用「无事件 index-0 行数=1」、禁用未在探针证得的 payload 过滤、禁时间戳/UUID/xmin/快照可见性替代。
+7. **D11 括号证据探针（已执行）**：实测两臂 `turn/route` payload 键集均恰 `{action,reason,tool,params}`，new 臂 ltid 在 L406 才生成——指向字段不存在且物理不可能。触发 R6；**R6 裁定删除无事件盖章分支，不停工、不补键、不改语句序**。三禁（行数计数/未证得 payload 过滤/时间戳·UUID·xmin·快照可见性）继续有效，对象改为「不得用它们复活无事件分支」。
 
 ### 3.2 文件与 SQL 语句序
 
@@ -67,8 +67,8 @@ v13/seam/v13_seam.sql（单文件，loader 事务内执行，按序）:
  3. CREATE OR REPLACE v13_cap_human_answered（委托 anchor；签名/波动性/ACL 不变）
  4. CREATE FUNCTION v13_tail_gap_cap_exempt(p_sid uuid, p_effect uuid) RETURNS boolean STABLE
  5. CREATE OR REPLACE v13_harness_tail_gap（活体底稿；原 EXISTS 逐字节保留 + AND NOT 豁免）
- 6. （按 §3.1.3 核查结果）CREATE OR REPLACE v13_closeout（若③独立 → 委托同一豁免谓词）
- 7. （按 §3.1.4 / §3.6 核查结果）CREATE OR REPLACE v13_advance（搬那一次 PERFORM；接 wake 求值器；一次换体合并）
+ 6. ~~closeout 换体~~：preflight 判 (C)（只查 predecessor、不调 tail_gap）→ **零改动**
+ 7. ~~advance 换体~~：preflight 证 `p_keep` 已排除被取代链（PERFORM 搬移不需要）且 wake 求值器已接 → **零改动**（仅当施工中发现其他核查项不符才回到本步）
  8. CREATE FUNCTION v13_record_worktree_released(p_sid uuid, p_effect uuid)  -- VOLATILE
  9. CREATE UNIQUE INDEX ux_events_worktree_released ON events(session_id,
     (payload->>'binding_artifact_id')) WHERE type='worktree/released'
@@ -80,8 +80,7 @@ v13/seam/v13_seam.sql（单文件，loader 事务内执行，按序）:
     写者调用置于会把异常收成 unknown/replay/stale 的 EXCEPTION 处理器之外，或处理器内原样再抛）
 13. （直线可加则）CREATE OR REPLACE v13_resolve_unknown（confirmed 分支调用写者，同一异常块义务；
     否则停工条款见 §3.5）
-13b.（条件）若活体 v13_state_hash 是事件类型白名单：以活体定义为底 CREATE OR REPLACE，
-    把 worktree/released 放进既有事件段且不设排除
+13b.~~条件换体~~：preflight 证 `v13_state_hash` 是排除名单（`worktree/released` 自动折入）→ **不触发**
 14. GRANT 闭包（见 §3.7 末）
 ```
 
@@ -100,10 +99,7 @@ v13/seam/v13_seam.sql（单文件，loader 事务内执行，按序）:
 1. 候选 `result_kind='progress'`；wait 链恒不豁免（写进谓词体，不进注释）。
 2. anchor 有行且 cap_class 与候选信号对应：`repair`↔`repair/required`、`replan`↔`replan/required`（双信号匹配其一即豁免整条 index+1 义务）；`material` 恒不豁免。
 3. 相邻性：`session_id=p_sid` 且同 `origin_user_seq` 内，不存在另一条 succeeded harness 的 `effect_done.seq` 严格落在 `(候选.effect_done, 该 anchor_seq)` 开区间。
-4. 新回合已盖章（不必 succeeded），相对同一行匹配类 anchor：同 session、同 `origin_user_seq` 存在 harness effect `continuation_index=0`、`logical_turn_id` ≠ 候选，且满足其一：
-   - **有事件**：该行自己的事件 `seq > 该 anchor_seq`（failed/cancelled/unknown/ready/claimed/succeeded 行的事件全算）；
-   - **无事件（status ∈ ready/claimed）**：存在 ev：`type='turn/route'`、`ev.seq > 该 anchor_seq`、ev 落在同 session 同 `origin_user_seq`，且 **ev 的探针字段（§3.1.7②）等于该行的 `effect_id` 或 `logical_turn_id`**（指向性关联；存在性 + 行数计数不算）。同一 ev 的探针字段同时等于两行 → 该 ev 不计，其余指向性 ev 仍算；没有指向自己的 route 的旧行不算盖章、也不抵消新行的 route。
-   至少一行满足即盖章（不是「恰一行」）。与 R5 §1 条件 4 括号冲突时以本条收紧为准；不得改回「必须 succeeded」。
+4. 新回合已盖章（不必 succeeded），相对同一行匹配类 anchor（R6 条文）：同 session、同 `origin_user_seq` 存在 harness effect `n`（判定与 `v13_harness_tail_gap` 相同），`continuation_index=0`、`logical_turn_id` ≠ 候选，且存在事件 `ev`：`ev.session_id = n.session_id AND ev.source_effect_id = n.effect_id AND ev.seq > 该 anchor_seq`。`n.status` 不过滤（ready/claimed/succeeded/failed/cancelled/unknown 一视同仁，但 ready/claimed 行通常无自身事件）。**无自身事件的行永不充当盖章证明**——单凭行可见、插入晚于 anchor、行数、`created_at`、UUID、xmin、route `reason` 或无归属的 `turn/route` 均不计（现有 turn/route 的 `source_effect_id IS NULL`，不属于任何行的自身事件）。至少一行满足即盖章（不是恰一行）。事件类型不设白名单。禁止行数计数、payload 过滤、reason 区分、时间戳/UUID/xmin/快照可见性（对象=不得复活无事件分支）。不得改回「必须 succeeded」。
 5. 原 tail-gap 条件仍证明旧链无 index+1 后继（调用点语义，不重复）。
 
 **所有候选/anchor/盖章扫描一律 `session_id=p_sid AND origin_user_seq=...` 双下界**（防跨 session 同序号干扰）。
@@ -114,7 +110,7 @@ v13/seam/v13_seam.sql（单文件，loader 事务内执行，按序）:
 
 ### 3.4 D11 — closeout ③ 同源
 
-按 §3.1.3 核查结果三选一，**豁免逻辑全树至多一个函数体**（`v13_tail_gap_cap_exempt`）。换体 closeout 时只改「续传未还」判定的委托点；计数前置、保险带、④ 逃生前置、state_hash 算法一字不动。若③只查最新 harness 且最新已是新回合 finish/reject → 不改 closeout。
+按 §3.1.3 核查结果三选一，**豁免逻辑全树至多一个函数体**（`v13_tail_gap_cap_exempt`）。**preflight 实测判 (C)**：只查 predecessor 一行（`v13_harness_predecessor` LIMIT 1）、不调 tail_gap → **closeout 零改动**；窗口内 `continuation owed` 照报是 R6 接受的 fail-loud（见 §3.7 G10）。计数前置、保险带、④ 逃生前置、state_hash 算法一字不动。
 
 ### 3.5 D12 — `worktree/released` 事件
 
@@ -148,7 +144,7 @@ payload 闭集恰 `{schema_version:1, binding_artifact_id}`；`source_effect_id`
 
 ### 3.6 路线图 R5 条目 — children_terminal 端到端（gate 主导，SQL 仅在核查不过时换体）
 
-只读全量加载后**那一份**活体 `pg_get_functiondef(v13_advance)`（wake 臂「四处行号」是历代文件；活体只有一份）。求值器已接 → children_terminal 这一项不另写 SQL，**但不因此跳过 §3.1.4 的 PERFORM 搬移核查**（铸新格仍在盖章插入前 `PERFORM tail_gap` 时，第 7 步照走）；未接 → 只在 §3.2 第 7 步这一次换体里接上（与 PERFORM 搬移合并为同一份换体）。**禁止改四个源文件、禁止把四代函数体并成一份。**
+只读全量加载后**那一份**活体 `pg_get_functiondef(v13_advance)`（wake 臂「四处行号」是历代文件；活体只有一份）。**preflight 实测：求值器已接（wait/evidence|quota 臂调 `v13_wake_is_satisfied_v1`）且 PERFORM 搬移不需要（`p_keep` 已排除被取代链）→ 本项零 SQL**；触发 §3.2 第 7 步的条件是「被取代链实际被算进 gap」（§3.1.4 原文），不是「调用物理在插入前」。**禁止改四个源文件、禁止把四代函数体并成一份。**
 
 ```
 场景（fake，不调真实 provider；夹具不得遗留未还的 progress+signals 断链——
@@ -168,7 +164,7 @@ wait 链恒不豁免，tail_gap 会先于 wake 臂 RAISE，e2e 会红在错误�
 **GRANT 闭包**：
 - `v13_cap_answer_anchor` / `v13_tail_gap_cap_exempt`：与活体 tail_gap 同 security/search_path；`REVOKE PUBLIC` 后只 GRANT `v13_route`。
 - `v13_cap_human_answered` 是换体：保持原 ACL，禁 `REVOKE ALL`。
-- `v13_record_worktree_released`：按活体 `v13_complete` 与 `v13_resolve_unknown` 的 prosecdef/proacl 授给真正调用方（二者若 SECURITY INVOKER，结算侧 `v13_worker`、resolve 侧 `v13_resolve`/`v13_route` 以活体 ACL 为准须有 EXECUTE——缺了 release 成功路径 42501）。
+- `v13_record_worktree_released`：以 preflight §7.2 活体 ACL 为准——`v13_complete`/`v13_resolve_unknown` 均 INVOKER，EXECUTE 只在 `{postgres, v13_route, v13_spawn_owner}`（`v13_worker`/`v13_resolve` 为假，rolinherit=false）→ 新写者授给 `v13_route`（+`v13_spawn_owner` 若其调用链到达）；**禁授 `v13_worker`/`v13_resolve`/PUBLIC（那是对活体闭包的放宽）**；gate 加 `has_function_privilege` 断言（写者对 route 真、对 worker/resolve/public 假）。
 - `v13_worktree_state`：只 GRANT `v13_route`；本 stage 不授 `v13_worker`（claim 路径不读它）。
 
 **gate**（`uv run python v13/seam/test_seam.py`，退出码 0）：
@@ -181,10 +177,22 @@ wait 链恒不豁免，tail_gap 会先于 wake 臂 RAISE，e2e 会红在错误�
 - **臂 (a)（human/responded）与臂 (b)（legacy {reason}）各一正例**。
 - **同类最早 anchor 并列** → 该类零行、无豁免、仍 RAISE。
 - 双信号+其一 cap 作答不 RAISE；新回合 failed 后走既有重试非 tail gap。
-- cap 已答但新回合未铸成（铸新前崩溃）不豁免仍 RAISE；**同 origin、cap 已答，但 anchor 之前已存在另一 logical_turn_id 的无事件 ready/claimed index-0 且本次未铸新行 → 仍 RAISE**。
+- cap 已答但新回合未铸成（铸新前崩溃）：**两层断言**——谓词级 `v13_tail_gap_cap_exempt = false`；advance 层记名实测（被取代链此时是 predecessor/`p_keep`，tail_gap 不报，fail-loud 落在 closeout `v13: closeout continuation owed`；若夹具坚持断 tail_gap 文案，须另造非 predecessor 候选=「更早独立断链」既有夹具）；再 advance 恰铸一条 index-0；**同 origin、cap 已答，但 anchor 之前已存在另一 logical_turn_id 的无事件 ready/claimed index-0 且本次未铸新行 → 仍 RAISE**。
 - 新 index-0 属后续 user turn 不豁免；**跨 user turn legacy human（seq 更晚但 origin_user_seq 不同）→ 不跳过、不豁免、写 index+1**（与乱序例并列双断言）。
 - 新 harness 是同 logical turn index+1 走原后继规则；两条独立 gap 只豁免被取代那条。
-- **无事件盖章五夹具**（全部用 §3.3 条件 4 的指向性判定式）：①anchor 前的无事件 index-0，无任何指向它的 post-anchor route → 仍 RAISE；②anchor 后新行有指向该行的 route 且尚无事件 → 豁免；③旧无事件 index-0 仍在，另有一条 post-anchor turn/route（含 harness_continuation）但探针字段不指向该旧行 → 仍 RAISE；④旧行仍在且新行有指向自己的 route → 豁免（不得因「两行」失败）；⑤同一 ev 字段同时匹配两行且无别的指向性 route → 仍 RAISE。
+- **R6 盖章/窗口组**（替换原「无事件盖章五夹具」，全部相对匹配类 anchor）：
+  - **W1 主路径自愈**：cap 已答→advance 铸新 index-0（新 uuid/idx 0）→生产 claim/complete 落自身 effect_done（`seq>anchor`）→再 advance 不 RAISE + 谓词直调 true + `closeout completed` 成功。
+  - **G2**：finish 的 effect_done 与 failed 结局各一正例（豁免真、advance 不 RAISE）。
+  - **G3 failed 重试边界**：failed index-0 有自身事件 `seq>anchor`、旧链无 index+1 → 豁免真，下一次 advance 走既有失败重试臂不 RAISE tail gap；**活体若对 failed 结局不写自身事件 → 本条停工记台账，禁为盖章改 complete 写集**。
+  - **G4**：anchor 前无事件 index-0（无 post-anchor 自身事件）→ 谓词 false；p_keep≠该链时 RAISE 原文案。
+  - **G5**：anchor 后有正常 turn/route（source NULL，含 `harness_continuation`/`side_effect_tool` 两 reason）但行无自身事件 → false。
+  - **G6**：旧无事件行仍在 + 新行有自身事件 `seq>anchor` → 豁免（不得因两行失败）。
+  - **G7**：两条 post-anchor index-0 都无自身事件 → false 仍 RAISE。
+  - **G8**：自身事件 `seq <= anchor` → false；他行事件、source NULL 事件不计。
+  - **G9 未铸成**：无任何 index-0 → 谓词 false；`tail_gap(p_keep=断链)` 不因本链 RAISE、`tail_gap(p_keep=旁观者)` RAISE 原文案；再 advance 恰铸一条 index-0。
+  - **G10 残留窗口硬断言**：cap 已答 + 新 index-0 ready/claimed 零自身事件 → 谓词 false；`tail_gap(p_keep=旧链)` 不因本链 RAISE、旁观者 RAISE；非逃逸 closeout RAISE `v13: closeout continuation owed`；重泵 advance 实测分支**记名写死**（(a) RAISE 零新行 / (b) 返回零新行 / (c) 再铸 index-0，三支据实固定，禁写成永久宽松断言；均附零写断言：零新 effect/零新 event/status·fence·request/session 不变；(c) 记台账，不加幂等守卫不重排）。
+  - **G11 自愈**：G10 库上 complete 该 index-0 为 finish → 豁免真、advance 不 RAISE、`closeout completed` 成功。
+  - **G12 worker 推进独立性**：窗口 RAISE/返回后，ready/claimed 行仍可被 worker 正常 claim/complete，不依赖新的 advance 成功。
 - **跨会话诱饵**：会话 A 留未偿 gap；会话 B 同 `origin_user_seq` 具备合法 cap anchor 与 anchor 后 index-0 盖章 → A 的 `v13_cap_human_answered` 为假、tail-gap 仍按原文案 RAISE，B 的事实不影响 A（同时覆盖 anchor 与盖章两扫描面）。
 - 源码断言：cap 字面量全树只出现在 `v13_cap_answer_anchor`（`pg_get_functiondef` 抓取，不只查旧函数）。
 
@@ -202,13 +210,13 @@ wait 链恒不豁免，tail_gap 会先于 wake 臂 RAISE，e2e 会红在错误�
 - **迁移 gate**（stage 20 基库加载 seam）：历史 released latch 无合法事件 → 安装失败报 session/binding；历史 malformed 同型事件 → 安装失败；已有合法匹配事件 → 安装成功且投影仍 released。
 - **state_hash 运行时断言（方向必须正确）**：固定其余账本，记 `h_before` → 写入唯一合法 `worktree/released` → 断言 `h_after <> h_before`（类型被折进 hash 才对；写成「前后一致」会把排除名单测绿）；同一账本快照重复调用 `v13_state_hash` 稳定且与 closeout 存储值一致；重算不因未知类型 RAISE。
 
-*源码断言组*：`v13/seam/*.sql` 无 UPDATE latches、无第二行 INSERT、无生产路径读 latch state 作判断。
+**源码断言组**：`v13/seam/*.sql` 无 UPDATE latches、无第二行 INSERT、无生产路径读 latch state 作判断；**`v13_tail_gap_cap_exempt` 盖章扫描只查 `source_effect_id = n.effect_id` 与 `ev.seq > anchor_seq`，函数体不出现 payload 取键（`->>'effect_id'`/`->>'logical_turn_id'`/`harness_effect_id`）、无事件行计数、reason 区分**（R6）。
 
 *回归*：stage 1–20 全部 gate 重跑全绿（含 §3.1.5 的开工前置绿）。
 
 ### 3.8 Stage 21 收尾工件（缺一不可，然后才 commit）
 
-`SQL_LOAD_ORDER` 追加 seam；覆盖矩阵加 Phase A 段（stage 21 行）；偏差台账 Phase A 段：**F23**（D13：「RP-CE 对未知/已答 interaction id 静默 no-op；v13 按 R3 C4 fail-loud，ref 不等 RAISE 含 submitted=/current= 零写。R5 裁：不移植。关闭 parity §4 #2」，事实列注明= parity F4/R3 C4、与 parity F23 无关）+ D12 预期行为行（「成功 release 后 latch 行仍 prepared 是 R5 预期；released 不被 claim 消费」）+ 若触发 §3.5 停工条款的 confirmed-release 台账行 + §3.6 缺失/重复 id 的事实行（如活体不 RAISE）；`v13/seam/README.md`（机制映射 + gate 清单）；parity 裁决文档 §4 #2 行状态改「R5 已裁：不移植」、§6 建议第 3 项标注已裁。
+`SQL_LOAD_ORDER` 追加 seam；覆盖矩阵加 Phase A 段（stage 21 行）；偏差台账 Phase A 段：**F23**（D13：「RP-CE 对未知/已答 interaction id 静默 no-op；v13 按 R3 C4 fail-loud，ref 不等 RAISE 含 submitted=/current= 零写。R5 裁：不移植。关闭 parity §4 #2」，事实列注明= parity F4/R3 C4、与 parity F23 无关）+ **F24**（R6：D11 无事件窗口窄化——has-event only、窗口行为实测记录、自愈路径；≠ parity F24）+ D12 预期行为行（「成功 release 后 latch 行仍 prepared 是 R5 预期；released 不被 claim 消费」）+ 若触发 §3.5 停工条款的 confirmed-release 台账行 + §3.6 缺失/重复 id 的事实行（如活体不 RAISE）+ G10(c) 分支若发生的记录行；`v13/seam/README.md`（机制映射 + gate 清单）；parity 裁决文档 §4 #2 行状态改「R5 已裁：不移植」、§6 建议第 3 项标注已裁。
 
 ## 4. Stage 22 `v13/catalog/`
 
@@ -304,7 +312,7 @@ GRANT：`v13_named_sql_writer`/`v13_spawn_writer_ok` 幂等 `REVOKE PUBLIC` → 
 3. 外部 IO 不进事务；第四务/harness 结果/worktree FS 全在驱动器；SQL 不杀进程。
 4. gate 全绿才 commit：该 stage `uv run python v13/<stage>/test_*.py` 退出码 0 + 回归此前全部 stage。按路径 `git add`；禁 `git add -A`；禁 force-push；禁 `--no-verify`。
 5. 每期收尾架构审计（R4）：无概念性控制表/物化投影/影子状态源；新增读面必须是函数；新增写面归入既有事件/策略/具名函数路径。
-6. 停工条款汇总（任一触发即停，按 R5 §8 报事实不自行改裁）：§3.1.2 证伪清单命中；§3.1.7 无可证插入序证据；§3.2.1 安装前断言 RAISE；§3.5 resolve 无法直线加调用、或守卫 latch 锁序与活体不容；§4.1 P1–P7 任一不符；§4.2 OID 绑定后置断言无法闭合。
+6. 停工条款汇总（任一触发即停，按 R5/R6 报事实不自行改裁）：§3.1.2 证伪清单命中（preflight 已核 GO）；§3.2.1 安装前断言 RAISE；§3.5 resolve 无法直线加调用（preflight 已核可行）、或守卫 latch 锁序与活体不容；G3 活体 failed 结局无自身事件；§4.1 P1–P7 任一不符；§4.2 OID 绑定后置断言无法闭合。§3.1.7 的原停工点已由 R6 解除。
 
 ## 6. R5 假绿风险对照（实施时逐条自检）
 

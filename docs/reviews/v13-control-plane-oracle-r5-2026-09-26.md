@@ -6,6 +6,8 @@
 - 地位：与 R3/R4 同级。**与路线图 §2.1 F23、§3 Phase A、§4 D11–D14 的倾向文字冲突处，以本文为准**；不重开：零新表零新列、stage 1–20 文件字节冻结、唯一推进函数、events 唯一干预通道、R3 链已冻失败模式（C4 RAISE、终态 `replay`、`v13_interruptible` 闭集）、R4 表达形式。索引、只 RAISE 的守卫触发器、开放事件、STABLE/VOLATILE 函数不是新表。
 - 总原则：**凡换体，底稿必须是 stage 20 全量加载后的 `pg_get_functiondef` 活体**；禁止从 control/fanout 等首写文件回贴（会把 stage 18–20 已换体的 `v13_complete`/`v13_advance` 卷回去）。
 
+> **R6 后续（2026-09-27）**：本文 §1 条件 4 的 no-event 分支（「同一快照可见也算」及其后的指向性探针要求与勘误）已由 R6 删除——见 `docs/reviews/v13-control-plane-oracle-r6-2026-09-27.md`。本文其余条款继续有效。
+
 ## §0 总表
 
 | 题 | Verdict | 一句理由 |
