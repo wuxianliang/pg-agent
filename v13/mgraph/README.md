@@ -11,6 +11,7 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
 0=通过;write/read 默认关——D/E/G/H 写路径 gate 以「INSERT 新策略版本+翻
 active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consolidate_mode=
 'manual'` 响亮键执法;G 组锚面纯函数/直调可在默认关下测)。
+本 stage 还有 `test_stannum_usage.py`，核查 stannum 使用，不改图语义。
 
 ## 机制(M1 范围;错误码一律 V3009)
 
