@@ -25,10 +25,12 @@
 | 格 | 状态 |
 |---|---|
 | fake gate `uv run python v13/catalog/test_catalog.py` | ✅ 退出码 0 |
-| 真实 worker 接线 | 🟡 未进仓库，不是 R4 关闭。gitignored driver 补丁已打；本机 `--real-provider-smoke` 退出码 1（envelope 栈没有 `v13_open_session`，未进入续租循环），不记成环境级 🟡 通过 |
+| 真实 worker 接线 | 🟡 环境级验证（gitignored 实跑通过，非 R4 关闭） |
 
 Phase A 不声明「R4 真 worker 第四务已完成」。
 
 ## sql 快路
 
 活体 `v13_advance` 仍有两处 `RAISE 'v13: spawn batch-dispatched'`。stage 20 `v13_triage_after_route` 在 direct 分类下先把 `sql/spawn_subsession` 改写成 `human/triage_direct`，所以该 RAISE 在这条可达路径上不触发；advance 不产子。扇出臂仍是产子路径。
+
+2026-09-27：`demo_v13/test_demo_smoke.py --real-provider-smoke` 退出码 0。冒烟库装到 catalog，`demo_create_session` 走 `v13_open_session`；direct override 避开无带 triage，parse 后 freshen 再 advance。补丁在 gitignored `demo_v13/`，不进本 commit 的代码面。
