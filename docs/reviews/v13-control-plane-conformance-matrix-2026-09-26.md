@@ -59,3 +59,4 @@
 |---|---|---|---|---|
 | 49 | stage 21 D11 cap×tail-gap 豁免（R6 has-event only）+ D12 `worktree/released` 投影（R7 守卫无锁，R7b 并发日程 sessions→latch） | ✅ | 2026-09-27 `uv run python v13/seam/test_seam.py` 退出码 0 | 无。G10 重泵实测 (b) 返回 `waiting`、零写。并发日程不动态验证两条语句规则（只由源码断言钉住）。`repair_cap`/`replan_cap` 仍在冻结的 `v13_triage_fold_reason`，不是第二份谓词 |
 | 50 | stage 17–20 回归 | ✅ | 2026-09-27 control / spawn / fanout / triage 四脚本退出码均 0 | 无 |
+| 51 | stage 22 D14 catalog 换体（R9 裸名 B′，R10 形态 H，R11 解析层 S，R12 臂 D fail-closed + 臂 E）+ 第四务假 worker | ✅ | 2026-09-27 `uv run python v13/catalog/test_catalog.py` 退出码 0。回归 control/spawn/fanout/triage/seam 退出码均 0 | 真实接线 🟡，不是 R4 关闭。sql 快路 RAISE 仍在函数体；direct 分类先被 `v13_triage_after_route` 改写成 human，动态路径零子、不触发该 RAISE |
