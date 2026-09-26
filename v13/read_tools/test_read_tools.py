@@ -1,7 +1,9 @@
-"""M1 contract gate for native read tools.
+"""Native read-tool gates.
 
-Run: uv run python v13/read_tools/test_read_tools.py --contract  (exit 0 = pass)
-Missing swift or node: prints [SKIP] not_run/toolchain_absent and exits 2.
+--contract: A-C, exit 0 = pass.
+No flag: A-E, exit 0 = pass.
+Missing swift or node: prints [SKIP] not_run/toolchain_absent and exits 2
+before setup_db and before any green assertion.
 """
 
 from __future__ import annotations
@@ -428,6 +430,722 @@ def run_c() -> None:
     check("C9", pi_crlf.ok and pi_crlf.result != HEADLESS_CRLF and pi_crlf.result == by_lf, pi_crlf.result)
 
 
+TOOL_ROWS = (
+    ("read_pi", "Read a text file with Pi line slicing and truncation.", "worker:read_pi"),
+    ("read_file_swift", "Read a text file with the headless line contract (swift).", "worker:read_file_swift"),
+    ("read_file_py", "Read a text file with the headless line contract (python).", "worker:read_file_py"),
+)
+PARAM_SPEC = {
+    "path": {
+        "question": "Which fixture file should be read?",
+        "stated": "Does the user name a fixture file to read?",
+        "options": {"hello.txt": "LF fixture", "crlf.txt": "CRLF fixture"},
+    }
+}
+NEW_BANDS = (
+    "param::read_pi::path",
+    "stated::read_pi::path",
+    "param::read_file_swift::path",
+    "stated::read_file_swift::path",
+    "param::read_file_py::path",
+    "stated::read_file_py::path",
+)
+HANDLERS = {
+    "worker:read_pi": "read_pi",
+    "worker:read_file_swift": "read_file_swift",
+    "worker:read_file_py": "read_file_py",
+}
+LLM_RESULT = {
+    "text": "three reads recorded",
+    "model": "fake",
+    "usage": {"input_tokens": 1, "output_tokens": 1},
+}
+BASELINE_TOOLS = (
+    "session_stats",
+    "send_summary_email",
+    "harness_turn",
+    "spawn_subsession",
+    "worktree_prepare",
+    "worktree_merge",
+    "worktree_release",
+)
+
+
+def as_obj(value):
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def choice_answer(name: str, conf: float = 0.9) -> dict:
+    return {
+        "type": "choice",
+        "choice": name,
+        "probabilities": {name: conf},
+        "confidence": conf,
+    }
+
+
+def dispatch_handler(handler: str, params: dict, root: str) -> str:
+    if handler == "worker:read_file_py":
+        return read_text(root, params["path"])
+    if handler == "worker:read_file_swift":
+        reply = run_line_json(
+            ["swift", SWIFT_SRC],
+            {"root": root, "path": params["path"], "start_line": None, "limit": None},
+        )
+        if not reply.ok:
+            raise ReadError(reply.error or "read_failed", reply.message or "swift read failed")
+        return reply.result or ""
+    if handler == "worker:read_pi":
+        reply = run_line_json(["node", PI_SRC], {"root": root, "path": params["path"]})
+        if not reply.ok:
+            raise ReadError(reply.error or "read_failed", reply.message or "pi read failed")
+        return reply.result or ""
+    raise ReadError("protocol_error", f"unknown handler {handler}")
+
+
+def pi_plain(text: str) -> str:
+    return "\n".join(text.split("\n"))
+
+
+def run_ring() -> None:
+    import inspect
+    import uuid
+
+    import psycopg2
+
+    from server import get_server
+    from v13.read_tools.setup_db import DB, main as setup_db
+
+    setup_db()
+    server = get_server()
+    conn = psycopg2.connect(server.get_uri(DB))
+    conn.autocommit = False
+    fixture_root = os.path.realpath(FIXTURES)
+    ticks = {"n": 0}
+    saved = {}
+
+    def begin():
+        if conn.get_transaction_status() != psycopg2.extensions.TRANSACTION_STATUS_IDLE:
+            conn.rollback()
+        return conn.cursor()
+
+    def parse_fresh(sid, mode, phase):
+        pc = psycopg2.connect(server.get_uri(DB))
+        pc.autocommit = False
+        pcur = pc.cursor()
+        pcur.execute("SELECT set_config('typesafe.provider', 'mock', false)")
+        pcur.fetchone()
+        pcur.execute("SELECT set_config('typesafe.model', 'fake-judge', false)")
+        pcur.fetchone()
+        mock = mock_from_needed(pcur, sid, **overrides_for(pcur, sid, mode, phase))
+        pcur.execute("SELECT set_config('typesafe.mock_response', %s, true)", (mock,))
+        pcur.fetchone()
+        try:
+            snap = as_obj(q1(pcur, "SELECT v13_parse(%s)", (sid,)))
+        except psycopg2.Error as exc:
+            pc.rollback()
+            pc.close()
+            raise AssertionError(
+                f"parse {mode}: {exc.pgcode} {exc.diag.message_primary if exc.diag else exc}"
+            ) from exc
+        pc.commit()
+        pc.close()
+        return snap
+
+    def q1(cur, sql, params=None):
+        cur.execute(sql, params)
+        return cur.fetchone()[0]
+
+    def event_count(cur, sid, etype) -> int:
+        cur.execute(
+            "SELECT count(*) FROM events WHERE session_id=%s AND type=%s",
+            (sid, etype),
+        )
+        return cur.fetchone()[0]
+
+    def mock_from_needed(cur, sid, **over) -> str:
+        cur.execute("SELECT signal, kind, criteria FROM v13_needed_judgments(%s)", (sid,))
+        answers = {}
+        for signal, kind, criteria in cur.fetchall():
+            criteria = as_obj(criteria)
+            if signal in over:
+                answers[signal] = over[signal]
+                continue
+            if kind == "choice":
+                keys = list(criteria.keys()) if isinstance(criteria, dict) else ["none"]
+                ch = keys[0]
+                answers[signal] = choice_answer(ch)
+            elif kind == "score":
+                answers[signal] = {"type": "score", "score": 0.5, "confidence": 0.9}
+            else:
+                answers[signal] = {"type": "noul", "noul": 0.1}
+        answers.update(over)
+        return json.dumps({
+            "model": "jev-mock",
+            "answers": answers,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        })
+
+    def overrides_for(cur, sid, mode: str, phase: str | None = None) -> dict:
+        base = {
+            "gate_action": {"type": "noul", "noul": 0.9},
+            "gate_off_topic": {"type": "noul", "noul": 0.1},
+            "risk": {"type": "score", "score": 0, "confidence": 0.9},
+        }
+        n_tools = event_count(cur, sid, "tool/result")
+        has_llm = event_count(cur, sid, "llm/message") > 0
+        if phase is None:
+            if mode == "literal":
+                phase = "tool"
+            elif has_llm:
+                phase = "finish"
+            elif n_tools >= 3:
+                phase = "llm"
+            else:
+                phase = "tool"
+        if phase == "tool":
+            tool = "read_file_py" if mode in ("fail", "literal") else (
+                "read_pi", "read_file_swift", "read_file_py")[n_tools]
+            base["intent"] = choice_answer("tool_action")
+            base["tool"] = choice_answer(tool)
+            base[f"stated::{tool}::path"] = {"type": "noul", "noul": 0.9}
+            base[f"param::{tool}::path"] = choice_answer("hello.txt")
+        else:
+            base["intent"] = choice_answer("llm_generate")
+            base["tool"] = choice_answer("none")
+        return base
+
+    def open_session(cur, text="Read hello.txt") -> str:
+        sid = str(q1(
+            cur,
+            "SELECT v13_open_session(%s::jsonb)",
+            (json.dumps({"route_policy_name": "default", "version": 2}),),
+        ))
+        cur.execute(
+            "SELECT v13_append_event(%s, %s, 'user/message', %s::jsonb)",
+            (sid, str(uuid.uuid4()), json.dumps({"text": text})),
+        )
+        cur.execute(
+            "SELECT v13_submit_override(%s, %s::jsonb)",
+            (sid, json.dumps({
+                "schema_version": 1,
+                "intent": "direct",
+                "source_principal": "user",
+                "reason": "read-tools gate",
+            })),
+        )
+        return sid
+
+    def complete(cur, claim, status, result):
+        cur.execute(
+            "SELECT v13_complete(%s, %s, %s, %s, %s::jsonb)",
+            (
+                claim["effect_id"],
+                claim["attempt_no"],
+                claim["fence"],
+                status,
+                json.dumps(result),
+            ),
+        )
+        return cur.fetchone()[0]
+
+    def abort_claim(claim) -> None:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        try:
+            cur = begin()
+            complete(cur, claim, "failed", {
+                "error": "protocol_error",
+                "message": "hub aborted",
+            })
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    def beat(sid, mode, swap=None, expect_terminal=False, phase=None):
+        ticks["n"] += 1
+        check("ticks", ticks["n"] <= 16, ticks["n"])
+        snap = parse_fresh(sid, mode, phase)
+        remaining = int(snap["remaining"])
+        check(mode, remaining == 0, remaining)
+
+        cur = begin()
+        cur.execute("SET LOCAL lock_timeout='250ms'")
+        cur.execute("SET LOCAL statement_timeout='5s'")
+        cur.execute(
+            "UPDATE sessions SET context_active_revision = v13_context_required(session_id) "
+            "WHERE session_id=%s",
+            (sid,),
+        )
+        try:
+            status = q1(cur, "SELECT v13_advance(%s, %s::jsonb)", (sid, json.dumps(snap)))
+        except psycopg2.Error as exc:
+            conn.rollback()
+            raise AssertionError(
+                f"advance {mode}: {exc.pgcode} {exc.diag.message_primary if exc.diag else exc}"
+            ) from exc
+        conn.commit()
+        if status == "terminal":
+            check(mode, expect_terminal, status)
+            return {"advance": status}
+        check(mode, status == "waiting", status)
+
+        cur = begin()
+        cur.execute(
+            "SELECT effect_id::text, session_id::text FROM effects WHERE status='ready'"
+        )
+        ready = cur.fetchall()
+        check(mode, len(ready) == 1 and ready[0][1] == sid, ready)
+        claim = as_obj(q1(cur, "SELECT v13_claim(%s, %s)", ("read-tools-hub", 60000)))
+        check(mode, claim and str(claim["effect_id"]) == ready[0][0], claim)
+        conn.commit()
+        req = claim.get("request") or {}
+        print(f"[beat] {mode} {claim['kind']} {req.get('handler') or req.get('reason')}")
+
+        completed = False
+        flag = None
+        try:
+            kind = claim["kind"]
+            request = claim["request"]
+            if kind == "human":
+                payload, st, flag = {"reason": request["reason"]}, "succeeded", None
+            elif kind == "llm":
+                payload, st, flag = LLM_RESULT, "succeeded", None
+            elif kind == "judge":
+                raise AssertionError(f"judge effect: {claim}")
+            elif kind != "tool":
+                payload = {"error": "protocol_error", "message": f"unknown kind {kind}"}
+                st, flag = "failed", "unknown"
+            else:
+                handler = request.get("handler")
+                if handler not in HANDLERS:
+                    payload = {"error": "protocol_error", "message": f"unknown handler {handler}"}
+                    st, flag = "failed", "unknown"
+                else:
+                    params = dict(request.get("params") or {})
+                    root = fixture_root
+                    if swap:
+                        if "path" in swap:
+                            params["path"] = swap["path"]
+                        if "root" in swap:
+                            root = swap["root"]
+                    try:
+                        payload = dispatch_handler(handler, params, root)
+                        st, flag = "succeeded", None
+                    except ReadError as exc:
+                        payload = {"error": exc.code, "message": exc.message}
+                        st, flag = "failed", None
+            cur = begin()
+            cur.execute("SET LOCAL lock_timeout='250ms'")
+            cur.execute("SET LOCAL statement_timeout='5s'")
+            got = complete(cur, claim, st, payload)
+            conn.commit()
+            completed = True
+            check(mode, got == "accepted", got)
+            if flag == "unknown":
+                raise AssertionError(f"unknown handler settled: {claim}")
+            return {"advance": status, "claim": claim, "payload": payload, "status": st}
+        finally:
+            if not completed:
+                abort_claim(claim)
+
+    def routes_of(sid):
+        cur = begin()
+        cur.execute(
+            "SELECT payload FROM events WHERE session_id=%s AND type='turn/route' ORDER BY seq",
+            (sid,),
+        )
+        rows = [as_obj(r[0]) for r in cur.fetchall()]
+        conn.rollback()
+        return rows
+
+    def end_of(sid):
+        cur = begin()
+        cur.execute(
+            "SELECT payload FROM events WHERE session_id=%s AND type='turn/end' ORDER BY seq",
+            (sid,),
+        )
+        rows = [as_obj(r[0]) for r in cur.fetchall()]
+        status = q1(cur, "SELECT status FROM sessions WHERE session_id=%s", (sid,))
+        conn.rollback()
+        return status, rows
+
+    def residual(cur):
+        cur.execute(
+            "SELECT count(*) FROM effects WHERE status IN ('ready', 'claimed', 'unknown')"
+        )
+        return cur.fetchone()[0]
+
+    src = inspect.getsource(dispatch_handler)
+    check("D14", "FROM tools" not in src, src)
+
+    cur = begin()
+    cur.execute("SELECT set_config('typesafe.provider', 'mock', false)")
+    cur.fetchone()
+    cur.execute("SELECT set_config('typesafe.model', 'fake-judge', false)")
+    cur.fetchone()
+    cur.execute(
+        "UPDATE tools SET enabled=false WHERE name='spawn_subsession' AND enabled"
+    )
+    conn.commit()
+
+    cur = begin()
+    check("D1", q1(cur, "SELECT v13_policy('turn_budget')->>'max_cycles'") == "3")
+    complete_def = q1(
+        cur,
+        "SELECT pg_get_functiondef('v13_complete(uuid,integer,bigint,text,jsonb)'::regprocedure)",
+    )
+    advance_def = q1(
+        cur,
+        "SELECT pg_get_functiondef('v13_advance(uuid,jsonb)'::regprocedure)",
+    )
+    check("D3b", "v13_record_worktree_released" in complete_def)
+    check("D3b", "WHEN 'finish'" in advance_def and "v13_triage_prework" in advance_def)
+
+    cur.execute(
+        "INSERT INTO v13_route_policies (policy_name, policy_version) VALUES ('default', 2)"
+    )
+    cur.execute(
+        "INSERT INTO thresholds (policy_name, policy_version, signal, band_no, lo, hi, action) "
+        "SELECT 'default', 2, signal, band_no, lo, hi, action "
+        "FROM thresholds WHERE policy_name='default' AND policy_version=1"
+    )
+    for signal in NEW_BANDS:
+        cur.execute(
+            "INSERT INTO thresholds (policy_name, policy_version, signal, band_no, lo, hi, action) "
+            "VALUES ('default', 2, %s, 1, 0.60, 'Infinity', 'pass')",
+            (signal,),
+        )
+    cur.execute(
+        "UPDATE v13_route_policies SET state='frozen' "
+        "WHERE policy_name='default' AND policy_version=2"
+    )
+    v1_bands = q1(
+        cur,
+        "SELECT count(*) FROM thresholds WHERE policy_name='default' AND policy_version=1",
+    )
+    v2_bands = q1(
+        cur,
+        "SELECT count(*) FROM thresholds WHERE policy_name='default' AND policy_version=2",
+    )
+    cur.execute(
+        "SELECT signal FROM thresholds WHERE policy_name='default' AND policy_version=2 "
+        "AND signal = ANY(%s)",
+        (list(NEW_BANDS),),
+    )
+    found_bands = {row[0] for row in cur.fetchall()}
+    state = q1(
+        cur,
+        "SELECT state FROM v13_route_policies WHERE policy_name='default' AND policy_version=2",
+    )
+    check("D2", v2_bands == v1_bands + 6, (v1_bands, v2_bands))
+    check("D2", found_bands == set(NEW_BANDS), found_bands)
+    check("D2", state == "frozen", state)
+    conn.commit()
+
+    cur = begin()
+    base_count = q1(cur, "SELECT count(*) FROM tools")
+    cur.execute("SELECT name FROM tools ORDER BY name")
+    base_names = tuple(row[0] for row in cur.fetchall())
+    base_rev = q1(cur, "SELECT revision FROM v13_tools_meta WHERE singleton")
+    measure = str(q1(cur, "SELECT v13_open_session('{}'::jsonb)"))
+    needed_before = q1(cur, "SELECT count(*) FROM v13_needed_judgments(%s)", (measure,))
+    cur.execute("SELECT signal FROM v13_needed_judgments(%s) ORDER BY signal", (measure,))
+    signals_before = [row[0] for row in cur.fetchall()]
+    batch = int(q1(cur, "SELECT v13_policy('resolve_fast_path')->>'batch_questions'"))
+    check("D3", base_count == 7 and set(base_names) == set(BASELINE_TOOLS), base_names)
+    print(f"[anchor] tools={base_count} needed_before={needed_before} signals={signals_before}")
+    for name, desc, handler in TOOL_ROWS:
+        cur.execute(
+            "INSERT INTO tools (name, description, kind, handler, param_spec, enabled) "
+            "VALUES (%s, %s, 'tool', %s, %s::jsonb, true)",
+            (name, desc, handler, json.dumps(PARAM_SPEC)),
+        )
+    after_count = q1(cur, "SELECT count(*) FROM tools")
+    after_rev = q1(cur, "SELECT revision FROM v13_tools_meta WHERE singleton")
+    needed_after = q1(cur, "SELECT count(*) FROM v13_needed_judgments(%s)", (measure,))
+    check("D3", after_count == base_count + 3, (base_count, after_count))
+    check("D3", after_rev == base_rev + 3, (base_rev, after_rev))
+    check("D3", needed_after == needed_before + 6, (needed_before, needed_after, signals_before))
+    check("D3", needed_after <= batch, (needed_after, batch))
+    conn.commit()
+    saved["needed_before"] = needed_before
+    saved["base_count"] = base_count
+    saved["base_rev"] = base_rev
+
+    cur = begin()
+    neg = open_session(cur, "Read hello.txt")
+    pointed = q1(
+        cur,
+        "SELECT route_policy_version FROM sessions WHERE session_id=%s",
+        (neg,),
+    )
+    check("D2", pointed == 2, pointed)
+    conn.commit()
+    neg_reads = []
+    for _ in range(3):
+        step = beat(neg, "neg")
+        neg_reads.append(step)
+    budget = beat(neg, "neg")
+    check(
+        "D4",
+        budget["claim"]["kind"] == "human"
+        and budget["claim"]["request"].get("reason") == "budget_exhausted",
+        budget.get("claim"),
+    )
+    terminal = beat(neg, "neg", expect_terminal=True)
+    check("D4", terminal["advance"] == "terminal", terminal)
+    neg_routes = routes_of(neg)
+    check("D4", len(neg_routes) == 3, neg_routes)
+    check("D4", [r.get("action") for r in neg_routes] == ["tool", "tool", "tool"], neg_routes)
+    check(
+        "D4",
+        [r.get("tool") for r in neg_routes] == ["read_pi", "read_file_swift", "read_file_py"],
+        neg_routes,
+    )
+    neg_status, neg_ends = end_of(neg)
+    check("D4", neg_status == "failed", neg_status)
+    check(
+        "D4",
+        len(neg_ends) == 1
+        and neg_ends[0].get("delivered") is False
+        and neg_ends[0].get("reason") == "budget_exhausted",
+        neg_ends,
+    )
+    cur = begin()
+    check("D4", residual(cur) == 0, residual(cur))
+    conn.rollback()
+    check("D4", [step["claim"]["request"]["handler"] for step in neg_reads] == [
+        "worker:read_pi", "worker:read_file_swift", "worker:read_file_py",
+    ])
+
+    cur = begin()
+    cur.execute("UPDATE v13_policies SET active=false WHERE name='turn_budget' AND active")
+    cur.execute(
+        "INSERT INTO v13_policies (name, version, value, active) "
+        "VALUES ('turn_budget', 2, %s::jsonb, true)",
+        (json.dumps({"max_cycles": 5}),),
+    )
+    check("D5", q1(cur, "SELECT v13_policy('turn_budget')->>'max_cycles'") == "5")
+    conn.commit()
+
+    cur = begin()
+    fail_sid = open_session(cur, "Read missing fixture")
+    conn.commit()
+    failed = beat(fail_sid, "fail", swap={"path": "missing.txt"}, phase="tool")
+    check(
+        "D15",
+        failed["claim"]["request"].get("handler") == "worker:read_file_py",
+        failed.get("claim"),
+    )
+    check("D15", failed["status"] == "failed" and failed["payload"]["error"] == "read_failed", failed)
+    cur = begin()
+    fail_effect = q1(
+        cur,
+        "SELECT status FROM effects WHERE effect_id=%s::uuid",
+        (failed["claim"]["effect_id"],),
+    )
+    fail_type = q1(
+        cur,
+        "SELECT jsonb_typeof(result) FROM effects WHERE effect_id=%s::uuid",
+        (failed["claim"]["effect_id"],),
+    )
+    fail_err = q1(
+        cur,
+        "SELECT result->>'error' FROM effects WHERE effect_id=%s::uuid",
+        (failed["claim"]["effect_id"],),
+    )
+    tool_results = q1(
+        cur,
+        "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+        (fail_sid,),
+    )
+    sess_status = q1(cur, "SELECT status FROM sessions WHERE session_id=%s", (fail_sid,))
+    conn.rollback()
+    check("D15", fail_effect == "failed" and fail_type == "object" and fail_err == "read_failed")
+    check("D15", tool_results == 0, tool_results)
+    check("D15", sess_status not in ("completed", "failed", "cancelled"), sess_status)
+    cur = begin()
+    cur.execute(
+        "SELECT v13_append_event(%s, %s, 'user/message', %s::jsonb)",
+        (fail_sid, str(uuid.uuid4()), json.dumps({"text": "Now write a short note"})),
+    )
+    conn.commit()
+    llm = beat(fail_sid, "fail", phase="llm")
+    check("D15", llm["advance"] == "waiting" and llm["claim"]["kind"] == "llm", llm.get("claim"))
+    fin = beat(fail_sid, "fail", expect_terminal=True, phase="finish")
+    check("D15", fin["advance"] == "terminal")
+    fail_status, fail_ends = end_of(fail_sid)
+    check("D15", fail_status == "completed", fail_status)
+    check(
+        "D15",
+        len(fail_ends) == 1 and fail_ends[0].get("delivered") is True,
+        fail_ends,
+    )
+    cur = begin()
+    check("D15", residual(cur) == 0)
+    conn.rollback()
+
+    cur = begin()
+    happy = open_session(cur, "Read hello.txt")
+    user_seq = q1(
+        cur,
+        "SELECT max(seq) FROM events WHERE session_id=%s AND type='user/message'",
+        (happy,),
+    )
+    conn.commit()
+    happy_steps = [beat(happy, "happy") for _ in range(4)]
+    happy_end = beat(happy, "happy", expect_terminal=True)
+    check("D6", happy_end["advance"] == "terminal")
+    happy_routes = routes_of(happy)
+    check("D6", len(happy_routes) == 5, happy_routes)
+    check("D6", [r.get("action") for r in happy_routes] == ["tool", "tool", "tool", "llm", "finish"], happy_routes)
+    check(
+        "D6",
+        [r.get("tool") for r in happy_routes[:3]] == ["read_pi", "read_file_swift", "read_file_py"],
+        happy_routes,
+    )
+    for step, handler in zip(happy_steps[:3], (
+        "worker:read_pi", "worker:read_file_swift", "worker:read_file_py",
+    )):
+        req = step["claim"]["request"]
+        check("D7", req.get("handler") == handler and req.get("params") == {"path": "hello.txt"}, req)
+    cur = begin()
+    cur.execute(
+        "SELECT effect_id::text, tool_name, request_hash, idempotency_key, origin_user_seq, "
+        "request->>'tools_revision', request->>'handler', request->'params', status, "
+        "jsonb_typeof(result), result #>> '{}' "
+        "FROM effects WHERE session_id=%s AND kind='tool' ORDER BY created_at",
+        (happy,),
+    )
+    effects = cur.fetchall()
+    cur.execute(
+        "SELECT seq, payload->>'tool', payload->>'result' FROM events "
+        "WHERE session_id=%s AND type='tool/result' ORDER BY seq",
+        (happy,),
+    )
+    result_events = cur.fetchall()
+    cur.execute(
+        "SELECT payload->>'text', (payload->>'origin_user_seq')::bigint "
+        "FROM events WHERE session_id=%s AND type='llm/message'",
+        (happy,),
+    )
+    llm_rows = cur.fetchall()
+    conn.rollback()
+    check("D9", len(effects) == 3 and all(row[8] == "succeeded" for row in effects), effects)
+    check("D9", len({row[5] for row in effects}) == 1, [row[5] for row in effects])
+    check("D9", len({row[4] for row in effects}) == 1 and effects[0][4] == user_seq, effects)
+    check("D10", len({row[0] for row in effects}) == 3)
+    check("D10", len({row[2] for row in effects}) == 3)
+    check("D10", len({row[3] for row in effects}) == 3)
+    check("D10", [row[1] for row in effects] == ["read_pi", "read_file_swift", "read_file_py"])
+    check("D10", len(result_events) == 3 and len({row[0] for row in result_events}) == 3)
+    headless = HELLO.decode("utf-8")
+    by_tool = {row[1]: row[2] for row in result_events}
+    check("D8", by_tool["read_file_swift"] == by_tool["read_file_py"] == headless, by_tool)
+    check("D8", by_tool["read_pi"] == pi_plain(headless), by_tool["read_pi"])
+    check("D9", all(row[9] == "string" for row in effects), [row[9] for row in effects])
+    happy_status, happy_ends = end_of(happy)
+    check("D6", happy_status == "completed", happy_status)
+    check("D6", len(happy_ends) == 1 and happy_ends[0].get("delivered") is True, happy_ends)
+    check("D6", len(llm_rows) == 1 and llm_rows[0][0] and llm_rows[0][1] == user_seq, llm_rows)
+    cur = begin()
+    check("D11", residual(cur) == 0)
+    conn.rollback()
+
+    replay_claim = happy_steps[0]["claim"]
+    replay_text = happy_steps[0]["payload"]
+    cur = begin()
+    before_results = q1(
+        cur,
+        "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+        (happy,),
+    )
+    replay = complete(cur, replay_claim, "succeeded", replay_text)
+    after_results = q1(
+        cur,
+        "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+        (happy,),
+    )
+    conn.rollback()
+    check("D13", replay == "replay", replay)
+    check("D13", before_results == after_results == 3, (before_results, after_results))
+
+    with tempfile.TemporaryDirectory(prefix="v13read-d16-") as raw:
+        body = Path(raw) / "body.txt"
+        body.write_bytes(b"true")
+        cur = begin()
+        literal = open_session(cur, "Read a four-letter token")
+        conn.commit()
+        step = beat(literal, "literal", swap={"root": raw, "path": "body.txt"}, phase="tool")
+        cur = begin()
+        cur.execute(
+            "SELECT jsonb_typeof(result), result #>> '{}' FROM effects WHERE effect_id=%s::uuid",
+            (step["claim"]["effect_id"],),
+        )
+        rtype, decoded = cur.fetchone()
+        conn.rollback()
+        check("D16", rtype == "string" and decoded == "true", (rtype, decoded, step.get("payload")))
+
+    cur = begin()
+    check("D12", q1(cur, "SELECT current_setting('typesafe.provider', true)") == "mock")
+    conn.rollback()
+    conn2 = psycopg2.connect(server.get_uri(DB))
+    conn2.autocommit = False
+    cur2 = conn2.cursor()
+    try:
+        cur2.execute("SELECT v13_parse(%s)", (happy,))
+        check("D12", False, "parse succeeded without provider")
+    except psycopg2.Error as exc:
+        check("D12", exc.pgcode == "V3002", exc.pgcode)
+        conn2.rollback()
+    finally:
+        conn2.close()
+    cur = begin()
+    check("D12", q1(cur, "SELECT current_setting('typesafe.provider', true)") == "mock")
+    conn.rollback()
+
+    cur = begin()
+    cur.execute(
+        "DELETE FROM tools WHERE name IN ('read_pi', 'read_file_swift', 'read_file_py')"
+    )
+    end_count = q1(cur, "SELECT count(*) FROM tools")
+    end_rev = q1(cur, "SELECT revision FROM v13_tools_meta WHERE singleton")
+    check("E1", end_count == saved["base_count"], (end_count, saved["base_count"]))
+    check("E1", end_rev > after_rev, (after_rev, end_rev))
+    conn.commit()
+    conn.close()
+
+    readme = (ROOT / "README.md").read_text()
+    for needle in (
+        "uv run python v13/read_tools/test_read_tools.py --contract",
+        "uv run python v13/read_tools/test_read_tools.py",
+        "[SKIP] not_run/toolchain_absent",
+        "swift",
+        "node",
+        "splitlines",
+        "start_line=-1",
+        "image_unsupported",
+        "单 root",
+        "零 SQL",
+        "agent_v13_read_tools",
+        "P1",
+        "P2",
+        "E4",
+    ):
+        check("E3", needle in readme, needle)
+
+
 def main(argv: list[str]) -> int:
     if not toolchain_present():
         print("[SKIP] not_run/toolchain_absent")
@@ -436,12 +1154,18 @@ def main(argv: list[str]) -> int:
         run_a()
         run_b()
         run_c()
-    except AssertionError:
+        if "--contract" in argv:
+            return 0
+        run_ring()
+    except AssertionError as exc:
+        print(exc)
         return 1
-    if "--contract" in argv:
-        return 0
-    print("TODO: M2 groups D-E are not implemented in this milestone")
-    return 1
+    except Exception as exc:
+        if exc.__class__.__name__ == "OperationalError":
+            print(exc)
+            return 1
+        raise
+    return 0
 
 
 if __name__ == "__main__":
