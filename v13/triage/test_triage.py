@@ -344,6 +344,71 @@ def main() -> int:
     cur.execute("SELECT count(*) FROM v13_needed_judgments(%s) WHERE signal='triage'", (sid,))
     check("override skips jev signal", cur.fetchone()[0] == 0)
 
+    # === P5/F19 角色通道（授权缝回归；超级用户 gate 看不见 42501） ===
+    lane_fns = [
+        "v13_is_spawn_tool(text, text)",
+        "v13_spawn_occupancy(uuid)",
+        "v13_triage_project(uuid)",
+        "v13_json_keys(jsonb)",
+    ]
+    for f in lane_fns:
+        short = f.split("(")[0]
+        for role in ("v13_recall", "v13_resolve", "v13_route"):
+            cur.execute("SELECT has_function_privilege(%s, %s, 'EXECUTE')", (role, f))
+            check(f"F19 lane grant {short} -> {role}", cur.fetchone()[0] is True)
+        cur.execute("SELECT has_function_privilege('public', %s, 'EXECUTE')", (f,))
+        check(f"F19 public denied {short}", cur.fetchone()[0] is False)
+
+    lane_sid = open_session(cur)
+    prefix(cur, lane_sid, "lane smoke")
+    conn.commit()  # 登录角色连接只看得见已提交数据
+    # v13_resolve_login / v13_route_login 直连；v13_recall 是 NOLOGIN 组角色，
+    # 用 postgres 连接 SET ROLE 模拟其通道（与生产继承链同权限面）。
+    for role in ("v13_resolve_login", "v13_route_login"):
+        lconn = connect_as(server, role)
+        lc = lconn.cursor()
+        lc.execute("SELECT v13_is_spawn_tool('spawn_subsession', 'sql')")
+        check(f"F19 lane {role} is_spawn_tool", lc.fetchone()[0] is True)
+        lc.execute("SELECT v13_spawn_occupancy(%s)", (lane_sid,))
+        check(f"F19 lane {role} occupancy", lc.fetchone()[0] == 0)
+        lc.execute("SELECT v13_json_keys(%s::jsonb)", (json.dumps({"max_depth": 1}),))
+        lc.fetchall()
+        check(f"F19 lane {role} json_keys", True)
+        lc.execute("SELECT v13_triage_project(%s)", (lane_sid,))
+        check(f"F19 lane {role} triage_project",
+              "remaining_turns" in lc.fetchone()[0])
+        lc.execute("SELECT count(*) FROM v13_needed_judgments(%s)", (lane_sid,))
+        lc.fetchall()
+        check(f"F19 lane {role} needed_judgments", True)
+        lconn.close()
+
+    nconn = connect(server)
+    nc = nconn.cursor()
+    nc.execute("SET ROLE v13_recall")
+    nc.execute("SELECT count(*) FROM v13_needed_judgments(%s)", (lane_sid,))
+    nc.fetchall()
+    check("F19 lane v13_recall(set role) needed_judgments", True)
+    nc.execute("SELECT v13_triage_project(%s)", (lane_sid,))
+    check("F19 lane v13_recall(set role) triage_project",
+          "remaining_turns" in nc.fetchone()[0])
+    fails_with(nc, "SELECT count(*) FROM effects", (),
+               "permission denied", "F19 recall still cannot SELECT effects")
+    nc.execute("RESET ROLE")
+    nconn.close()
+
+    emit_sid = open_session(cur)
+    conn.commit()  # 同上：route_login 连接只看得见已提交数据
+    econn = connect_as(server, "v13_route_login")
+    ec = econn.cursor()
+    ec.execute(
+        "SELECT v13_triage_emit(%s, 'goal/override', %s::jsonb)",
+        (emit_sid, json.dumps({"schema_version": 1, "intent": "direct",
+                               "source_principal": "operator", "reason": "lane"})))
+    ec.fetchall()
+    econn.commit()  # 双射约束触发器是 DEFERRED:必须真提交才走到 owner 自举路径
+    check("F19 emit under owner bootstrap (deferred bijection at commit)", True)
+    econn.close()
+
     conn.rollback()
     conn.close()
     print("[done] triage")

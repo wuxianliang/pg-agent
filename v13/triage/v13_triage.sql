@@ -36,6 +36,11 @@ GRANT INSERT ON events TO v13_triage_owner;
 GRANT EXECUTE ON FUNCTION v13_append_event(uuid, uuid, text, jsonb, uuid) TO v13_triage_owner;
 GRANT EXECUTE ON FUNCTION v13_json_keys(jsonb), v13_json_int_ok(jsonb, numeric) TO v13_triage_owner;
 GRANT EXECUTE ON FUNCTION digest(text, text) TO v13_triage_owner;
+-- P5/F19: emit 属主自举——v13_append_event 更新 sessions 时双射约束触发器
+-- v13_unknown_wall_bijection 以 invoker(=本属主)身份调 v13_assert_unknown_wall
+-- 并读 effects。此前只在 demo 夹具运行时补授,现搬进 SQL。
+GRANT EXECUTE ON FUNCTION v13_assert_unknown_wall(uuid) TO v13_triage_owner;
+GRANT SELECT ON effects TO v13_triage_owner;
 
 CREATE FUNCTION public.v13_triage_duty() RETURNS int
 LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public AS $fn$
@@ -1285,5 +1290,14 @@ GRANT EXECUTE ON FUNCTION
   v13_cap_human_answered(uuid, uuid),
   v13_triage_hold_blocks_recover(uuid)
 TO v13_route;
+
+-- P5/F19: 活体 v13_needed_judgments(本文件)在工具目录过滤与 root triage 分支
+-- 调用 v13_is_spawn_tool/v13_triage_project;resolve/recall 经 v13_parse /
+-- v13_judgment_envelope 进入该链。补两角只读闭包(v13_json_keys 定义在
+-- stage 17,此处只追加 GRANT,不改 stage 17 字节)。
+GRANT EXECUTE ON FUNCTION
+  v13_triage_project(uuid),
+  v13_json_keys(jsonb)
+TO v13_resolve, v13_recall;
 
 COMMIT;

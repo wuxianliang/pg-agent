@@ -50,3 +50,5 @@
 | 44 | override 打穿预算 → 零 child + human；已探索仍 review → human；fold cap `{reason}` | ✅ | 同上 | 无。`triage_reject` 不进 closeout 逃生名单 |
 | 45 | stage 20 `test_triage.py` | ✅ | 2026-09-26 `uv run python v13/triage/test_triage.py` 退出码 0 | 无 |
 | 46 | stage 1–19 回归 | ✅ | schema…fanout 全部 `test_*.py` 退出码 0。同轮 stage 20 退出码 0 | 无 |
+| 47 | F19 角色通道 EXECUTE 闭包：四函数 × 三角色 has_function_privilege + PUBLIC 负例 + resolve_login/route_login 直连行为烟（is_spawn_tool/occupancy/json_keys/triage_project/needed_judgments）+ recall SET ROLE 烟 + recall 仍拒 SELECT effects + emit 提交期双射（owner 自举） | ✅ | 2026-09-26 `uv run python v13/triage/test_triage.py` 退出码 0（86 PASS） | 无。台账 F19/F20/F22 |
+| 48 | 授权热修后 stage 1–20 全量回归 | ✅ | 2026-09-26 schema…triage 全部 `test_*.py` 退出码 0 | 无 |

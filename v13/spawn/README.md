@@ -13,3 +13,7 @@ uv run python v13/spawn/test_spawn.py
 ## 不做
 
 cancel 扇出、worktree、triage、fold cap、`quota/spent`。这些归 stage 19–20。
+
+## 授权面（P5/F19）
+
+`v13_is_spawn_tool(text,text)` 与 `v13_spawn_occupancy(uuid)` 的 EXECUTE 含三角色（resolve/recall 经 `v13_needed_judgments`/`v13_judgment_envelope` 进入，route 经 `v13_triage_project`）；occupancy 在热修前无任何角色持有。这不是多余授权，勿删（gate：test_triage.py F19 组）。

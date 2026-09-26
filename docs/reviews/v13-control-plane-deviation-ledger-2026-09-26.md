@@ -87,3 +87,15 @@
 | C12 | ch04 / R2 §3.4 再次 review 种子含子 direct | 已探索的 review 格走 human（R2 §3.3 + §8.7 一次 explore）。子会话无 override 仍是规则 6 direct，不进该格 |
 | C13 | ch01：证据本体是 artifact，`explore/completed` 可选 | §8.7：事件是标记。本期不新增 artifact kind |
 | C14 | R2 §1.3 带满 → human 或 reject | §8.7：human request，不 session reject，不写 `interaction_kind` |
+
+## P5 热修（E2E 遗留授权缝；2026-09-26）
+
+超级用户 gate 看不见 42501：stage 18/20 换体让 resolve/recall 通道（`v13_parse`/`v13_judgment_envelope` → `v13_needed_judgments`）与 route 通道（advance → `v13_triage_project`）调到新 helper，但 GRANT 停在旧调用者上。demo E2E 用超户直调绕开（e2e_report §问题与绕法）。
+
+| # | 事实 | 处置 |
+|---|---|---|
+| F19 | 授权闭包缺口（探针实跑确认）：`v13_is_spawn_tool` 只授 route（resolve/recall 42501）；`v13_spawn_occupancy` 无任何角色持有（route 的 triage_project 也被拖死）；`v13_triage_project`/`v13_json_keys` 缺 resolve/recall；`v13_triage_owner` 跑 emit 提交期双射触发器缺 `v13_assert_unknown_wall` EXECUTE 与 `effects` SELECT（此前仅 demo 夹具运行时补授）。`v13_policy` recall 已有（envelope:963-996），不动 stage 1 | 只补 GRANT 不改函数体：spawn 文件追授 `v13_is_spawn_tool`+`v13_spawn_occupancy` → 三角色；triage 文件追授 `v13_triage_project`+`v13_json_keys` → resolve/recall；owner 自举两条搬进 triage SQL。gate：test_triage.py 新增 F19 角色通道组（矩阵×三角色+PUBLIC 负例+resolve_login/route_login 直连行为烟+recall SET ROLE 烟+recall 仍拒 SELECT effects+emit 提交期双射路径）。不授任何写函数 |
+| F20 | stage 18 死体 `v13_needed_judgments` 仍写歧义谓词（F18 在案） | 本热修不动函数体，维持 F18。死体只在前缀加载可见 |
+| F22 | parse 侧潜在缝：活体 `v13_tools_catalog_frozen`（resolve 定义，未被 stage 18+ 换体）仍拒 VOLATILE sql 工具，无 H7 具名例外——spawn_subsession 目录行 enabled=true 时 `v13_parse` 会被拒（探针：needed_judgments 可过、parse 未到 catalog 即被 GUC 拦，未终验）。demo 夹具维持 enabled=false；扇出臂不查目录（advance 直读 tool/call 事件），L3 场景不受影响 | 记录不改。若产品要让 spawn 经 parse 目录可选，需另裁 catalog_frozen 的具名例外（涉 stage 2 契约，须走裁决；不得热修） |
+
+（F21 预留未用：探针实测 route_login 可直接做 freshen 的 UPDATE sessions，demo 包装走 v13_route_login 属主，无需 postgres 属主捷径。）

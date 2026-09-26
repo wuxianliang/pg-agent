@@ -1720,6 +1720,15 @@ GRANT EXECUTE ON FUNCTION
 TO v13_route;
 GRANT EXECUTE ON FUNCTION v_goal_tree(uuid) TO v13_recall, v13_resolve;
 
+-- P5/F19: stage 18-20 换体让 resolve/recall 通道经 v13_needed_judgments /
+-- v13_judgment_envelope 调到本文件两个只读 helper;route 侧 advance→
+-- v13_triage_project 也依赖 occupancy(此前无任何角色持有)。补齐三角色
+-- 只读闭包(重复授权为幂等 no-op;不授任何写函数)。
+GRANT EXECUTE ON FUNCTION
+  v13_is_spawn_tool(text, text),
+  v13_spawn_occupancy(uuid)
+TO v13_recall, v13_resolve, v13_route;
+
 GRANT USAGE ON SCHEMA public TO v13_spawn_owner;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO v13_spawn_owner;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO v13_spawn_owner;
