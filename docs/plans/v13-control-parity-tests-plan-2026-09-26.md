@@ -26,7 +26,7 @@ pg-agent v13 已交付控制面（stage 17–20，`v13/{control,spawn,fanout,tri
 - [x] **W3（explore）** v13 现状盘点 — 完成 2026-09-26，产出 V1–V47 + 残留 R1–R13 → `prompt-exports/parity-v13-2026-09-26.md`。：stage 17–20 的 SQL/函数/事件全集 + demo_v13 接线（e2e_control.py/e2e_spawn.py/control_smoke.py/approval_contract.py）+ 既有 gate 覆盖了什么 + 哪些是 fake/真实 + 已知残留（closeout/inbox_residual、quota spent·voided 事件族、material_cap human、真 worker 第四务线、children_terminal P3 未用等）。
 - [x] **W4（pair）** 测试套件 — 完成 2026-09-26：`demo_v13/parity/`（9 组 + README + parity_all），StepFun step-3.7-flash，两连绿 + 编排器独立复跑绿（9/9）。注意：demo_v13/ 整体在 .gitignore（:33），套件为未跟踪工作资产（与既有真实 API 脚本先例一致）。：读 D1–D3 + 本计划。对 v13 已实现的每个控制功能写 1:1 对应测试（StepFun 真实 API 走 demo_v13 Settings.load 换端点）；v13 未实现的功能不写测试（进 D5 的「完全没实现」）。产出独立可跑脚本（`uv run python ...` 退出码 0=通过），两次复现全绿；跑 stage 17–20 gate 防回归。
 - [x] **W5（design→pair）** 对照清单 D5 — 完成 2026-09-26（design 通道 ACP 故障，pair 通道一次成稿）：`docs/reviews/v13-control-plane-parity-rpce-loopx-2026-09-26.md`。RP-CE 30 条：改变 17 / 没实现 13；LoopX 41 条：改变 13 / 没实现 28；一模一样 0（严格含失败模式标准）。未裁 3 条已对照 R3 链确认。：三分栏（一模一样/改变/完全没实现），每条带两侧锚点 + 证明测试 + 「改变」须引裁决依据（R1/R2/R3 链或迁移报告「明确不做」节）。
-- [ ] **W6（orchestrator）** 收尾进行中：抽查已验证（F23 latch 无写入者、repair_cap 跳续传臂）；提交 docs/plans + docs/reviews 两件（parity 套件在 gitignored demo_v13/，按先例不跟踪）。
+- [x] **W6（orchestrator）** 收尾完成 2026-09-26：抽查验证（F23 latch 无写入者 fanout:85、repair_cap 跳续传臂 triage:750）；parity 套件三连绿（W4×2 + 编排器×1，stage 17–20 gate W4 跑绿且无 tracked 文件变更）；commit `0ce970e` 已推 origin/main（两件 docs；套件在 gitignored demo_v13/ 按先例不跟踪）。
 
 ## 硬约束
 
