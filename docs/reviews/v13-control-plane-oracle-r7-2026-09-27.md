@@ -1,5 +1,7 @@
 # v13 控制面 Oracle R7 终裁：D12 守卫/写者锁协议死锁复裁（2026-09-27）
 
+> **R7b 后续（2026-09-27）**：本文 §5 并发日程经 R7b 修订（A 按生产序 sessions→latch 取锁，观察点移至 sessions 行）——见 `docs/reviews/v13-control-plane-oracle-r7b-2026-09-27.md`。§5 原文保留为历史，以 R7b 为准；其余条款不变。
+
 - 触发：stage 21 施工实测——R5 二/三轮「守卫按同一锁序重锁 `latches(session,'worktree')`」在 PG18 稳定死锁（`40P01`）。R5 已预授权该停工（「若活体锁序不允许，则停工报告，不能临时发明另一套顺序」）。本裁决解除该停工点。
 - 通道：三车道（grokBuild grok-4.7-build-fast-xhigh / codex gpt-5.6-sol@xhigh / claude-fable-5@xhigh）。**2:1 选定①（守卫无锁）**：grokBuild、fable 选①；codex 选②（咨询锁），异议全文存档 §7。全文：`prompt-exports/oracle-review-2026-09-27-011302-new-chat-6c10c7-73d7.md`（gitignored）。
 - 地位：与 R5/R6 同级。**只替换**守卫与写者的锁协议形状及相关计划句（§3.2 步 10、§3.5 守卫段与 23505 句、§3.7 并发日程与源码断言、§5.6 锁序停工条、§3.8 台账 F25）。不重开：D12 事件权威/首次转移幂等/两个调用点/写者真值表结局/部分唯一索引/守卫校验集与 `v13: worktree released` 文案、D11(R6)/D13/D14/第四务、R5 其余、零新表零新列、stage 1–20 字节冻结、**R3c 类号闭集（不新增类号、不换体 `v13_advisory_class`）**。

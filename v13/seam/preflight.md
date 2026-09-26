@@ -240,3 +240,9 @@ AND type NOT IN ('session/completed', 'session/failed', 'session/cancelled')
 ## 10. R7 后续状态（2026-09-27，追加不改写）
 
 §9 的 R6 解除不受影响。stage 21 施工期实测发现 R5 二/三轮的守卫锁协议（守卫与写者同锁 latch 行、守卫在持锁事务内重锁）在 PG18 稳定死锁：tuple lock 无同事务重入豁免，持有者重入请求排到等待者之后成环（40P01；NOWAIT/SKIP LOCKED/FOR SHARE 均不解除）。Oracle R7（`docs/reviews/v13-control-plane-oracle-r7-2026-09-27.md`）2:1 裁定候选①：**守卫改全程无锁 MVCC 校验**（latch INSERT-once 使 binding 不可变，无锁读无陈旧），写者保持 latch `FOR UPDATE` 并遵守「两条独立语句」规则（锁与事件重查分句，防 READ COMMITTED 语句快照打出 23505）。残留=无锁旁路直插在写者窗口先提交→写者 23505 整笔回滚：生产不可达，接受（F25）。本文 §1–§7 的 GO 不改写。
+
+---
+
+## 11. R7b 后续状态（2026-09-27，追加不改写）
+
+§9/§10 不受影响。R7 守卫无锁落地后的残余 40P01 来自 R7 日程自身的测试锁序倒置（A 只持 latch → INSERT 的 events.session_id 外键 KEY SHARE 等 B 的 sessions FOR UPDATE，B 又等 A 的 latch）；生产恒 sessions→latch（外键由自持锁即时满足），无此环。Oracle R7b（`docs/reviews/v13-control-plane-oracle-r7b-2026-09-27.md`）三通道一致：日程改 A 按生产序先 sessions 后 latch 再 INSERT，等待观测移至 sessions 行（pg_blocking_pids + B 对 A xid 的 transactionid ShareLock granted=false + wait_event='transactionid' 三项同断，且须在 A 仅持 sessions 锁时采到）。本文 §1–§7 的 GO 与 R7 裁定不改写。

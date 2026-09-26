@@ -1,6 +1,6 @@
 # v13 Phase A 开发计划：修地基（stage 21 seam + stage 22 catalog）— R5 终裁版 r2
 
-> 状态：**现行版 r7（2026-09-27，可开工）**：R5 终裁 + 五轮审核 APPROVE + R6（D11 无事件分支窄化）+ R7（D12 锁协议死锁复裁：守卫无锁）。裁决记录：`docs/reviews/v13-control-plane-oracle-r5-2026-09-26.md`、`...r6-2026-09-27.md`、`...r7-2026-09-27.md`；前置核查：`v13/seam/preflight.md`。审核导出：`prompt-exports/oracle-review-2026-09-2*.md`（五轮）与 `oracle-review-2026-09-27-*.md`（R6/R7）。。
+> 状态：**现行版 r7b（2026-09-27，可开工）**：R5 终裁 + 五轮审核 APPROVE + R6（D11 无事件分支窄化）+ R7（D12 锁协议：守卫无锁）+ R7b（并发日程改生产序 sessions→latch，观察点移至 sessions 行）。裁决记录：`...oracle-r5-2026-09-26.md`、`...r6-2026-09-27.md`、`...r7-2026-09-27.md`、`...r7b-2026-09-27.md`；前置核查：`v13/seam/preflight.md`。审核导出：`prompt-exports/oracle-review-2026-09-2*.md` 与 `oracle-review-2026-09-27-*.md`（R6/R7/R7b）。。
 > 母计划：`docs/plans/v13-layered-control-roadmap-2026-09-26.md` §3 Phase A、§4 D11–D14、§5 红线。
 > 本文件替换 2026-09-26 骨架；R5 与路线图倾向文字冲突处以 R5 为准（路线图已同日同步，含 §2.3）。
 > 硬边界（不重开）：零新表零新列（R4 扩写含物化视图/投影表）、stage 1–20 SQL 文件字节冻结、唯一推进函数、events 唯一干预通道、R3 链已冻失败模式（C4 RAISE、终态 `replay`、`v13_interruptible` 闭集）。索引、只 RAISE 的守卫触发器、开放事件、STABLE/VOLATILE 函数不是新表。
@@ -202,7 +202,8 @@ wait 链恒不豁免，tail_gap 会先于 wake 臂 RAISE，e2e 会红在错误�
 - 第二次 complete 为 `replay`、事件数仍 1。
 - **「第二个 source 直接 INSERT」（绕过写者）** → RAISE 含 `v13: worktree released`、事件数仍 1。
 - **「第二次独立成功 release」**（新 effect 走 `v13_complete`）→ 返回 succeeded、事件数仍 1、投影保持 `released`。
-- **并发 gate（R7 日程）**：连接 A `BEGIN` 后**只**对 `latches(session,'worktree')` 执行 `FOR UPDATE` 并持有（**不锁 sessions 行**，否则 B 停在会话锁上）；连接 B 对另一条合格 `worktree_release` 调 `v13_complete`——A 提交前 B 必须停在该 tuple 锁上（`pg_locks` 对 A 的 transactionid ShareLock granted=false），不得先返回；A 在已持行锁内直接 INSERT 一条符合守卫全部不变量的 `worktree/released`（source=另一条已成功 effect；守卫无锁校验不重锁，**此 INSERT 必须成功不得 40P01**）；A `COMMIT`；B 获锁后以**新语句**重查、见事件、空操作、返 `succeeded`；事件仍 1 行、零 `v13: worktree released`、零 23505、零 40P01；第三条合格 effect 再调一次 complete 仍 succeeded 事件仍 1。`lock_timeout` 只判等待失败；禁「锁外先查无事件再让对方插入」当通过条件、禁生产函数暂停点。
+- **并发 gate（R7b 日程，取代 R7 版）**：两连接默认 READ COMMITTED。连接 A `BEGIN` 后按**生产取锁序**：① `SELECT 1 FROM sessions WHERE session_id=<sid> FOR UPDATE`（仅持此锁时先做等待观测）；② 观测到 B 等待后，再 `SELECT 1 FROM latches WHERE session_id=<sid> AND name='worktree' FOR UPDATE`；③ 在已持两锁内直接 INSERT 一条符合守卫全部不变量的 `worktree/released`（source=另一条已成功 effect；守卫无锁；A 自持 sessions FOR UPDATE 使外键 KEY SHARE 即时满足，**INSERT 必须成功不得 40P01**）。连接 B 对另一条合格 `worktree_release` 调 `v13_complete`，A 提交前必须停在 A 持有的 sessions 行上、不得先返回。A `COMMIT` → B 获 sessions 锁 → 写者取 latch → **新语句**重查见事件 → 空操作返 `succeeded`；事件仍 1 行、零 `v13: worktree released`/23505/40P01；第三条合格 effect 再 complete 仍 succeeded 事件仍 1。`lock_timeout` 只判「等待不出现」；禁只锁 latch、禁先 latch 后 sessions（FK 倒置成环=越界）；禁把 INSERT 移到确认等待之前。
+- **等待证据断言（三项同时，观察连接采；须在 A 仅持 sessions 锁、未锁 latch、未 INSERT 时采到）**：① `pg_blocking_pids(B_pid)` 含 `A_pid`；② B 对 **A 的 xid**（`pg_current_xact_id()` 记录）存在 `locktype='transactionid'`、`mode='ShareLock'`、`granted=false`；③ B `wait_event_type='Lock'` 且 `wait_event='transactionid'`。不得写成「对 sessions tuple granted=false」（行锁等待落在 xid 不落在 tuple，两行等待同形）；tuple lock 仅诊断。
 - **异常块结构断言**（两函数都查；resolve 若已走 §3.5 停工则跳过该函数）：`pg_get_functiondef` 里 `v13_record_worktree_released` 的调用不在把 `23505` 或消息 `v13: worktree released` 收成 `unknown`/`replay`/`stale` 的 `EXCEPTION` 分支中；语法上必须留在块内时，该分支须有对该子串的 `RAISE` 再抛。直接 INSERT 负例不代替本条。
 - **源码断言（R7 锁协议）**：守卫函数体不出现 `FOR UPDATE`/`FOR SHARE`/`FOR NO KEY UPDATE`/`FOR KEY SHARE`/`LOCK TABLE`/`pg_advisory_`/`NOWAIT`/`SKIP LOCKED`；写者函数体出现对 `latches` 的 `FOR UPDATE`，不出现 `pg_advisory_`/`ON CONFLICT`，且事件重查不在含 `FOR UPDATE` 的同一条语句内。
 - **守卫负例组**（直接 INSERT 逐项，每例稳定 RAISE 且事件数不变）：缺键/多键；`schema_version` 为字符串 `"1"`；非 canonical uuid；source 空/跨 session/非 succeeded/非 tool/非 `worktree_release`；payload binding ≠ source 冻结 request；request binding ≠ latch binding。
@@ -218,7 +219,7 @@ wait 链恒不豁免，tail_gap 会先于 wake 臂 RAISE，e2e 会红在错误�
 
 ### 3.8 Stage 21 收尾工件（缺一不可，然后才 commit）
 
-`SQL_LOAD_ORDER` 追加 seam；覆盖矩阵加 Phase A 段（stage 21 行）；偏差台账 Phase A 段：**F23**（D13）+ **F24**（R6：D11 无事件窗口窄化，≠ parity F24）+ **F25**（R7：D12 锁协议死锁复裁——守卫无锁、写者两条语句规则、23505 残留接受，≠ parity F25）+ D12 预期行为行（「成功 release 后 latch 行仍 prepared 是 R5 预期；released 不被 claim 消费」）+ 若触发 §3.5 停工条款的 confirmed-release 台账行 + §3.6 缺失/重复 id 的事实行（如活体不 RAISE）+ G10(c) 分支若发生的记录行；`v13/seam/README.md`（机制映射 + gate 清单）；parity 裁决文档 §4 #2 行状态改「R5 已裁：不移植」、§6 建议第 3 项标注已裁。
+`SQL_LOAD_ORDER` 追加 seam；覆盖矩阵加 Phase A 段（stage 21 行）；偏差台账 Phase A 段：**F23**（D13）+ **F24**（R6：D11 无事件窗口窄化，≠ parity F24）+ **F25**（R7/R7b：D12 锁协议死锁复裁——守卫无锁、写者两条语句规则、23505 残留接受、R7b 日程改生产序取锁，≠ parity F25）+ D12 预期行为行（「成功 release 后 latch 行仍 prepared 是 R5 预期；released 不被 claim 消费」）+ 若触发 §3.5 停工条款的 confirmed-release 台账行 + §3.6 缺失/重复 id 的事实行（如活体不 RAISE）+ G10(c) 分支若发生的记录行；`v13/seam/README.md`（机制映射 + gate 清单）；parity 裁决文档 §4 #2 行状态改「R5 已裁：不移植」、§6 建议第 3 项标注已裁。
 
 ## 4. Stage 22 `v13/catalog/`
 
@@ -314,7 +315,7 @@ GRANT：`v13_named_sql_writer`/`v13_spawn_writer_ok` 幂等 `REVOKE PUBLIC` → 
 3. 外部 IO 不进事务；第四务/harness 结果/worktree FS 全在驱动器；SQL 不杀进程。
 4. gate 全绿才 commit：该 stage `uv run python v13/<stage>/test_*.py` 退出码 0 + 回归此前全部 stage。按路径 `git add`；禁 `git add -A`；禁 force-push；禁 `--no-verify`。
 5. 每期收尾架构审计（R4）：无概念性控制表/物化投影/影子状态源；新增读面必须是函数；新增写面归入既有事件/策略/具名函数路径。
-6. 停工条款汇总（任一触发即停，按 R5–R7 报事实不自行改裁）：§3.1.2 证伪清单命中（preflight 已核 GO）；§3.2.1 安装前断言 RAISE；§3.5 resolve 无法直线加调用（preflight 已核可行）；**R7 已解除守卫锁序停工——再给守卫加 latch 锁或咨询锁 = 越界停工；若残余死锁仍现，附 pg_locks+CONTEXT 复裁**；G3 活体 failed 结局无自身事件；§4.1 P1–P7 任一不符；§4.2 OID 绑定后置断言无法闭合。§3.1.7 的原停工点已由 R6 解除。
+6. 停工条款汇总（任一触发即停，按 R5–R7b 报事实不自行改裁）：§3.1.2 证伪清单命中（preflight 已核 GO）；§3.2.1 安装前断言 RAISE；§3.5 resolve 无法直线加调用（preflight 已核可行）；**R7 已解除守卫锁序停工——再给守卫加 latch 锁或咨询锁 = 越界停工；并发日程与生产取锁序恒 sessions→latch，倒置（先 latch 后 sessions/FK）= 越界停工；按 R7b 序仍 40P01 或 A 一锁 latch 即 40P01 → 附 pg_locks+CONTEXT 复裁**；**resolve_unknown 若在调写者前不持本会话 sessions 行锁 → 报事实复裁，禁自行补锁**；G3 活体 failed 结局无自身事件；§4.1 P1–P7 任一不符；§4.2 OID 绑定后置断言无法闭合。§3.1.7 的原停工点已由 R6 解除。
 
 ## 6. R5 假绿风险对照（实施时逐条自检）
 
