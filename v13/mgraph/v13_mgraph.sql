@@ -1208,8 +1208,9 @@ GRANT EXECUTE ON FUNCTION
   v13_mgraph_pair_questions(text,text,text,text),
   v13_mgraph_apply_relations(uuid), v13_mgraph_build(uuid,int)
 TO v13_resolve;                              -- 写路径驱动面(resolve_login)
-GRANT EXECUTE ON FUNCTION v13_mgraph_candidates(uuid,text,int)
-TO v13_recall;                               -- M3 读环锚复用(同写路径函数)
+-- 读环调用方缺位：anchors 与 transition_score 只授 v13_resolve。candidates 对 v13_recall 的预授已撤；将来以该角色执行的调用方出现时，与整条 INVOKER 授权闭包同一提交再授。
+REVOKE EXECUTE ON FUNCTION v13_mgraph_candidates(uuid,text,int)
+FROM v13_recall;
 -- v13_mgraph_rebuild:owner only(§3.5 owner 平面)
 GRANT INSERT, UPDATE ON v13_mgraph_meta TO v13_resolve;  -- build 终态 upsert 面
 

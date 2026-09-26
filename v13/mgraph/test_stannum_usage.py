@@ -1126,9 +1126,16 @@ def privilege_checks(conn, cur, ctx):
     cand_sql = "SELECT * FROM v13_mgraph_candidates(%s, %s, 10)"
     role_fails(
         cur, "v13_recall", cand_sql, (sid_mg, anchor),
-        "v13_mgraph_entities_of", "R8a", pgcode="42501")
+        "v13_mgraph_candidates", "R8a", pgcode="42501")
     rows8b = role_query(cur, "v13_resolve", cand_sql, (sid_mg, anchor))
     check("R8b", len(rows8b) >= 1, len(rows8b))
+    cur.execute(
+        "SELECT has_function_privilege('v13_recall',"
+        " 'v13_mgraph_candidates(uuid,text,int)','EXECUTE'),"
+        " has_function_privilege('v13_resolve',"
+        " 'v13_mgraph_candidates(uuid,text,int)','EXECUTE')")
+    hp_r8c = cur.fetchone()
+    check("R8c", hp_r8c == (False, True), hp_r8c)
     role_fails(
         cur, "v13_recall", "SELECT v13_verify_chunks(false)", (),
         "permission denied", "R9: verify_chunks")

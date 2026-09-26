@@ -532,6 +532,11 @@ active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consoli
     purge(v13_guc_required 对 NULL/空串同等 fail-closed,真实 purge=
     库加载在 gate 内不可达);build 内 wmb≥2 的连续两封未走功能路径
     直测,由结构断言+5 参构造语义合围。
+44. **B12 乙：candidates 对 v13_recall 的预授已撤(U1b)**:不存在以
+    `v13_recall` 执行的读环调用方。`anchors` 与 `transition_score` 只授
+    `v13_resolve`；`v13_mgraph_candidates` 对 `v13_recall` 的预授已显式
+    REVOKE（乙）。将来以该角色执行的调用方出现时，必须与整条 INVOKER
+    授权闭包同一提交再授。
 
 ## 回退
 
