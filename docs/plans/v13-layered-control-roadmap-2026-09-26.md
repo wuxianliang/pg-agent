@@ -28,7 +28,16 @@ L0 循环（秒–分）   stage 1–16 冻结；17–20 已落子集    唯一�
 - **语义缺口要补**（13）：L1 = F8 多目标观察、F17 授权、F18 授权后读日志、F23 release 写入者、F29 handoff 信封。L2 = L5 注意力投影、L6 窗口资格（禁 `quota/spent|voided`）、L21 调度提示、L26 should-run、L27 handoff 政策门、L29 委托可见性、L32 停/复、L38 能力门。
 - **永远不建**：迁移 §0 点名的新表/新列/`v13_agent_run`/`quota_spends`/`command_receipts`/`outbox`/`leases`、把 `decisions.epoch` 当 run generation；加上进程生命周期（F5/F16/F24–F26）、墓碑删除（F19）、grant 经纪人（F20/F21）、oversight link（F30）、LoopX 文件面与相位机（L1–L4/L7/L13/L16/L17/L19/L20/L22–L25/L28/L30/L36/L39–L41）。
 
-重点条目里，F16/F24/F25 **不补函数**：崩溃不丢运行已由墙 + `v13_resolve_unknown` + 租约 + 新 `effect_id` 持有（F28/L33 保持改变）。再造冷恢复或 session claim = 第二套活性。
+重点条目的处置（不是「列出的都要补」）：
+
+| 重点 | 判 | 为什么 |
+|---|---|---|
+| F17 F8 F29 | 补齐 | 工作流动词：谁能控谁、多目标先授权再读、交接信封。stage 17–20 未做，迁移只说不进第一期 |
+| F23 | 补齐 | 词表有 `released`，活体无写入者。热修，不重开 A19 |
+| F16 F24 F25 | 永不建 | 崩溃不丢运行已由墙 + `v13_resolve_unknown` + 租约 + 新 `effect_id` 持有（F28/L33）。再造 TTL / 冷恢复 / session claim = 第二套活性 |
+| L26 L21 L5 | 补齐 | 落点未写或只写了输出列。投影，不建节拍器 |
+| L32 | 补齐 | parity 拒绝把 `duty_cycle=0` 当成停/复；另立事件门，不加列 |
+| L38 L6 | 补齐 | 能力门与窗口重算。`quota/spent\|voided` 与 reward 生产者仍不建 |
 
 ## 1. 分层模型
 
