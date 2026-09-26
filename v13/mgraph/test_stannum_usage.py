@@ -804,6 +804,41 @@ def runtime_checks(conn, cur, sqls, sid_tr, sid_other, sid_mg):
     check("P5", no_sent and nonempty and derived_eq and row_eq,
           (no_sent, nonempty, derived_eq, row_eq, row_spans))
 
+    # P5b (U2b): spans <-> production index binding. P5 locks the sentinel
+    # parity of the 4-arg TEXT highlight (default tokenizer) against
+    # v13_extract_spans; this one binds the same CJK row's tinql to
+    # ix_chunks_stannum via stannum.bind_query and drives the 4-arg
+    # indexed_query highlight overload. The two interval sequences must be
+    # equal, ordered, and non-empty. Equal today because the production
+    # index runs the default unicode analyzer; it turns red the day the
+    # index analyzer forks (tokenizer/max_token_bytes/long_tokens) while
+    # extract_spans stays on the default — that red is the point, not a
+    # false alarm. Fixture must stay CJK: a latin term can tokenize
+    # identically under jieba and unicode and lock nothing.
+    cur.execute(
+        """
+        SELECT (SELECT bool_and(position(chr(i) IN c.body) = 0)
+                  FROM generate_series(1, 8) i),
+               v13_extract_spans(c.body, jsonb_build_object('tinql', %s)),
+               pg_temp.v13_usage_highlight_spans(
+                 stannum.highlight(c.body, chr(1), chr(2),
+                   stannum.bind_query(%s, 'ix_chunks_stannum'::regclass)))
+        FROM chunks c WHERE c.body = %s
+        """,
+        (tinql_cjk, tinql_cjk, BODY_CJK))
+    no_sent_b, spans_b, derived_b = cur.fetchone()
+    if isinstance(spans_b, str):
+        spans_b = json.loads(spans_b)
+    if isinstance(derived_b, str):
+        derived_b = json.loads(derived_b)
+    print(f"[info] P5b extract={spans_b} indexed_bound={derived_b}")
+    check("P5b",
+          no_sent_b is True
+          and isinstance(spans_b, list) and len(spans_b) > 0
+          and isinstance(derived_b, list) and len(derived_b) > 0
+          and spans_b == derived_b,
+          (no_sent_b, spans_b, derived_b))
+
     cur.execute("SET enable_seqscan = off")
     plan_p6 = explain_sql(
         cur, sqls["v13_transcript_recall(uuid,text,int)"],

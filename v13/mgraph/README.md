@@ -11,7 +11,14 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
 0=通过;write/read 默认关——D/E/G/H 写路径 gate 以「INSERT 新策略版本+翻
 active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consolidate_mode=
 'manual'` 响亮键执法;G 组锚面纯函数/直调可在默认关下测)。
-本 stage 还有 `test_stannum_usage.py`，核查 stannum 使用，不改图语义。
+本 stage 还有 `test_stannum_usage.py`，核查 stannum 使用，不改图语义。其中
+P5b（U2b）把使用核查 B.5 的「spans 与索引切分碰巧一致」上锁：CJK 夹具上
+`v13_extract_spans`（4 参 text highlight，默认 unicode）与经
+`stannum.bind_query(..., 'ix_chunks_stannum')` 的 4 参 `indexed_query`
+highlight 哨兵区间必须完整有序相等。今天相等是现状（生产索引=默认 unicode
+analyzer）；索引 analyzer 偏离默认（tokenizer/`max_token_bytes`/
+`long_tokens`）而 extract_spans 未跟随时变红是**预期**——逼同提交改调用形状
+或扩展断言，不写会过期的断言条数。
 
 ## 机制(M1 范围;错误码一律 V3009)
 
