@@ -1,6 +1,6 @@
 # v13 pi_ports
 
-> 权威：口岸合同 `docs/designs/v13-tool-ports.md`（`v13/tool-port-contract-1`）。本轮只交付 JS 口岸与脚手架。Go / Swift 与三语言差异报告不在本轮。
+> 权威：口岸合同 `docs/designs/v13-tool-ports.md`（`v13/tool-port-contract-1`）。已交付 JS 与 Go 口岸。Swift 与三语言差异报告不在本轮。
 
 独立库 `agent_v13_pi_ports`。`setup_db.py` 用 `load_stage(..., 'seam')`。工具行只在该库运行时 INSERT/DELETE。不改 `v13/**/*.sql`，不改 `v13/load.py`。
 
@@ -10,7 +10,7 @@
 UV_FROZEN=1 uv run python v13/pi_ports/test_pi_ports.py
 ```
 
-node、本地 pi checkout、或 `v13/pi_ports/node_modules` 缺席则打印 `[SKIP] not_run/toolchain_absent` 并退出 2，不算通过。断言失败退出 1。全绿退出 0。
+node、本地 pi checkout、或 `v13/pi_ports/node_modules` 缺席，或 `go` / 本地 PiG checkout 缺席，则打印 `[SKIP] not_run/toolchain_absent` 并退出 2，不算通过。能跑的组先跑。断言失败退出 1。全绿退出 0。
 
 首次装运行时依赖（只写本目录，不改 `/Users/wxl/Projects/pi`）：
 
@@ -54,4 +54,18 @@ npm install --prefix v13/pi_ports
 
 ## 环（本轮只到目录行）
 
-`test_pi_ports.py` 的 R0/R1：`setup_db` 建库并加载到 seam，然后 INSERT `read_pi_ext` / `worker:read_pi_ext`，再 DELETE。不跑完整 turn。完整接环留到三语言齐了之后。
+`test_pi_ports.py` 的 R0/R1：`setup_db` 建库并加载到 seam，然后 INSERT `read_pi_ext` / `worker:read_pi_ext`，再 DELETE。Go 组同样 INSERT/DELETE `read_pig` / `worker:read_pig`。不跑完整 turn。完整接环留到三语言齐了之后。
+
+## Go 口岸证据
+
+模块：`v13/pi_ports/pig_port`。`go.mod` 用 replace 指向只读 checkout `/Users/wxl/Projects/PiG`，不改 PiG。本机 bootstrap `go` 可以低于 1.26；`toolchain go1.27.1` 由 `GOTOOLCHAIN=auto` 拉起，有效工具链须 ≥1.26。`go` 或 PiG checkout 缺席则 skip，退出 2。
+
+公开面（外部 module 不能 import `internal/`）：
+
+- `coding.NewSession`（`github.com/MichaelKinsy/PiG/coding`）构造会话时调用框架内建 read 工具
+- `(*coding.Session).Tools` 取出名为 `read` 的 `agent.AgentTool`
+- `agent.AgentTool.Execute` 收到的 `path` 是围栏规范化后的绝对路径
+
+版本证据来自 `coding/pigversion.Version`（`0.2.0+0.87.1`）和 `debug.ReadBuildInfo` 的 module 版本（`go_list=v0.2.0`）。stderr 一行 `pi_ports evidence:`。
+
+合同适配与 JS 口岸同一闭集：`~/` 不展开；负 `limit` 先归一为 0；图像扩展名在调用框架前返回 `image_unsupported`，不把字节放进帧。PiG 的 read 工具本身会把 jpg/png/gif/webp/bmp 做成 image attachment（`internal/codingagent/tools/read.go` 的 `readImage`）；口岸不走那条路径，因为行协议是文本帧。差异报告留到三语言齐了之后。
