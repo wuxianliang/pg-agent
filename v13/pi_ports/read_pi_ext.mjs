@@ -108,7 +108,21 @@ function isImagePath(absPath) {
   return IMAGE_EXTS.has(ext);
 }
 
+function assertRegularFile(absolutePath) {
+  let info;
+  try {
+    info = fs.lstatSync(absolutePath);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new ToolError("read_failed", message);
+  }
+  if (!info.isFile()) {
+    throw new ToolError("read_failed", "not a regular file");
+  }
+}
+
 function validateTextBytes(absolutePath) {
+  assertRegularFile(absolutePath);
   let buffer;
   try {
     buffer = fs.readFileSync(absolutePath);

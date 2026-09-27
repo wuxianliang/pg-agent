@@ -44,6 +44,7 @@ npm install --prefix v13/pi_ports
 - 不变量：`tool.execute` 收到的 `path` 是围栏规范化后的绝对路径，框架 `resolvePath` 对绝对路径不再做 `~` 展开，解析结果等于围栏验证过的路径。不把原始 `req.path` 交给框架
 - 首行超限的 bash 提示里，框架会嵌入它收到的绝对路径。口岸只改写该提示中的路径为调用方原始 `path`，正文不改
 - 围栏成功后，扩展名属于 `{jpg,jpeg,png,gif,webp,bmp}` 即 `image_unsupported`，不把字节放进结果，也不调用框架的 image 路径
+- 围栏之后、读盘之前用 `fs.lstatSync` 拒绝非 regular 文件（fifo、设备），`read_failed` / `not a regular file`。不调用框架
 - 读盘后做 fatal UTF-8 与 NUL 检查，再调用 `createReadTool`
 - 负整数 `limit` 在调用框架前归一为 0
 - `offset_out_of_range` 的识别正则钉在 checkout 0.87.1 `read.ts` 的措辞 `Offset .+ is beyond end of file`。升级 checkout 必须跟着改这处匹配
@@ -54,7 +55,7 @@ npm install --prefix v13/pi_ports
 
 ## 环
 
-R0/R1 仍是目录行 INSERT/DELETE roundtrip：每个在场平面各自 `setup_db`，INSERT `worker:<name>`，再 DELETE。另外 `run_ring` 再 `setup_db` 一次，把在场平面放进同一个会话：每行先 `v13_submit_override`（`intent=direct`），然后 `v13_parse` → `v13_advance` → `v13_claim('pi-ports-hub', 120000)` → `dispatch_handler`（只看冻结的 `request.handler`，不查 `tools`）→ `v13_complete`。三平面齐时路由是 `tool, tool, tool, llm, finish`，运行时把 `turn_budget.max_cycles` 提到 `n+2`（三平面为 5）。落库的 `tool/result` 与 `effects.result` 必须等于同 argv 对 `hello.txt` 的直跑结果。工具行仍只在 `agent_v13_pi_ports` 运行时 INSERT/DELETE。
+R0/R1 仍是目录行 INSERT/DELETE roundtrip：每个在场平面各自 `setup_db`，INSERT `worker:<name>`，再 DELETE。另外 `run_ring` 再 `setup_db` 一次，把在场平面放进同一个会话：`v13_submit_override`（`intent=direct`）的返回 seq 必须对上落库的 `goal/override`，然后 `v13_parse` → `v13_advance` → `v13_claim('pi-ports-hub', 120000)` → 测试内 `dispatch_handler`（`WORKERS` 字典，不查 `tools`，不是生产 worker 注册）→ `v13_complete`。三平面齐时路由是 `tool, tool, tool, llm, finish`，运行时把 `turn_budget.max_cycles` 提到 `n+2`（三平面为 5）。落库的 `tool/result` 与 `effects.result` 必须等于同 argv 对 `hello.txt` 的直跑结果。工具行仍只在 `agent_v13_pi_ports` 运行时 INSERT/DELETE。
 
 ## Go 口岸证据
 

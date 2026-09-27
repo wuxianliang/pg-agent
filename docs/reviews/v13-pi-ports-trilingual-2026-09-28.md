@@ -8,9 +8,9 @@
 
 | 命令 | 退出码 | 计数 | 墙钟 |
 |---|---|---|---|
-| `uv run python v13/pi_ports/test_pi_ports.py` | 0 | 292 PASS，0 FAIL，0 SKIP | 19:42:31–19:43:15（44s） |
-| `uv run python v13/read_tools/test_read_tools.py --contract` | 0 | 237 PASS，0 FAIL，0 SKIP | 19:43:15–19:43:33（18s） |
-| `uv run python v13/read_tools/test_read_tools.py` | 0 | 末行 `[PASS] E4`；子进程 `[E4] v13/pi_ports/test_pi_ports.py → 0` | 19:43:33–19:49:12（339s） |
+| `uv run python v13/pi_ports/test_pi_ports.py` | 0 | 302 PASS，0 FAIL，0 SKIP | 20:17:22–20:18:03（41s） |
+| `uv run python v13/read_tools/test_read_tools.py --contract` | 0 | 237 PASS，0 FAIL，0 SKIP | 20:18:03–20:18:22（19s） |
+| `uv run python v13/read_tools/test_read_tools.py` | 0 | 末行 `[PASS] E4`；子进程 `[E4] v13/pi_ports/test_pi_ports.py → 0` | 20:18:22–20:23:59（337s） |
 
 环日志（同一次 pi_ports 运行）：
 
@@ -24,7 +24,7 @@
 [beat] llm None
 ```
 
-`direct_len=29` 与 fixture `hello.txt` 的字节数一致（`line one\nline two\nline three\n`）。H3/H4 要求落库 `tool/result` 与 `effects.result #>> '{}'` 等于这次直跑，不是写死字符串。三平面都过了。R0/R1 目录行 roundtrip 仍在，没有拿环替换掉。
+`direct_len=29` 与 fixture `hello.txt` 的字节数一致（`line one\nline two\nline three\n`）。H3/H4 要求落库 `tool/result` 与 `effects.result #>> '{}'` 等于这次直跑，按 `tool_name` 对齐，不按 `created_at` 排序。三平面都过了。同一次运行还过了 JS-F2、JS-TAKE、JS-BODY、GO-BODY、SW-NUL、Hoverride。R0/R1 目录行 roundtrip 仍在，没有拿环替换掉。
 
 无旗标全量的 PASS 行数含 E4 子进程，不能当成 read_tools 自身断言数。合同面仍是 237 PASS，与接环前台账一致。
 
@@ -68,7 +68,7 @@ ASCII 上三者对齐。非 ASCII 时测量面都是 UTF-8 字节，不是 UTF-1
 
 ### offset / limit 与越界
 
-合同闭集相同：负 `limit` 在进框架前归一为 0（JS `read_pi_ext.mjs:212`，Swift `main.swift:409`；Go 同闭集，GO-P2 PASS）。越界措辞都来自框架 `Offset … is beyond end of file`，口岸映射成 `offset_out_of_range`，其余框架错误收成 `read_failed`。
+合同闭集相同：负 `limit` 在进框架前归一为 0，由 C3e / GO-C3e / SW-C3e 锁住（JS `read_pi_ext.mjs:226`，Swift `main.swift:409`）。GO-P2 留给 `offset=1e20` → `invalid_params`，不是负 limit。越界措辞都来自框架 `Offset … is beyond end of file`，口岸映射成 `offset_out_of_range`，其余框架错误收成 `read_failed`。
 
 差异在参数面和正则锚：
 
@@ -82,10 +82,9 @@ ASCII 上三者对齐。非 ASCII 时测量面都是 UTF-8 字节，不是 UTF-1
 
 框架自己会把图像做成附件（pi `read.ts` 的 image 路径；PiG `read.go` 的 image 结果；PiSwift `ReadTool.swift:100-110` 的 `.image` block）。行协议是文本帧，口岸不走那条路径。
 
-- 三口岸都在调用框架前按扩展名 `{jpg,jpeg,png,gif,webp,bmp}` 返回 `image_unsupported`（JS `read_pi_ext.mjs:8,216`；Go `main.go:336`；Swift `main.swift:414`）。
-- JS 没有 regular-file 预检，也没有结果侧图像闸。
-- Go 在读正文前把非 regular 拒为 `read_failed` / `not a regular file`（`main.go:181`），并用 `len(result.Images)>0` 做结果闸（`main.go:273`）。
-- Swift 用 `lstat` + `S_IFREG`（`main.swift:201`），再用 `hasImageAttachment` 做结果闸（`main.swift:365`、`:277`）。
+- 三口岸都在调用框架前按扩展名 `{jpg,jpeg,png,gif,webp,bmp}` 返回 `image_unsupported`（JS `read_pi_ext.mjs`；Go `main.go:336`；Swift `main.swift:414`）。
+- 三口岸都在读盘前拒绝非 regular：JS `fs.lstatSync` / `not a regular file`（`read_pi_ext.mjs:111`，JS-F2 锁 fifo 与 `/dev/zero`）；Go `os.Stat` + `IsRegular`（`main.go:181`，GO-F2）；Swift `lstat` + `S_IFREG`（`main.swift:201`，SW-F2）。
+- JS 仍没有结果侧图像闸。Go 用 `len(result.Images)>0`（`main.go:273`）。Swift 用 `hasImageAttachment`（`main.swift:277`、`:365`）。
 
 ## 口岸工程差
 
@@ -120,15 +119,15 @@ ASCII 上三者对齐。非 ASCII 时测量面都是 UTF-8 字节，不是 UTF-1
 
 ## 接环
 
-`run_ring`（`test_pi_ports.py:623`）在 `agent_v13_pi_ports` 上再 `setup_db` 一次。在场平面各 INSERT 一行，`param_spec.options` 仍只有 `hello.txt`。`v13_submit_override` 的 `intent=direct`。然后 `v13_parse` → `v13_advance` → `v13_claim('pi-ports-hub', 120000)` → `dispatch_handler` → `v13_complete`。`dispatch_handler` 只查进程内 `WORKERS`，源码断言不含 `FROM tools`（H7）。`accepted` 检查、`conn.commit()`、`completed = True` 的顺序被 H8 锁住。三平面齐时 `turn_budget.max_cycles` 运行时提到 5（`n+2`）。工具行结束时 DELETE，revision 增量等于行数（H6）。零 SQL 文件改动，不改 `v13/load.py`。
+`run_ring` 在 `agent_v13_pi_ports` 上再 `setup_db` 一次。在场平面各 INSERT 一行，`param_spec.options` 仍只有 `hello.txt`。`v13_submit_override` 的返回 seq 必须对上落库的一条 `goal/override`（`intent=direct`，Hoverride）。然后 `v13_parse` → `v13_advance` → `v13_claim('pi-ports-hub', 120000)` → 测试内 `dispatch_handler`。这个函数查的是进程内 `WORKERS` 字典，源码断言不含 `FROM tools`（H7）。它证明的是状态机与口岸适配器的 harness 集成，不是生产 worker 的注册或分发接线。`accepted` 检查、`conn.commit()`、`completed = True` 的顺序被 H8 锁住。effects 按 `tool_name` 对齐直跑结果，不依赖 `created_at` 顺序（H4）。三平面齐时 `turn_budget.max_cycles` 运行时提到 5（`n+2`）。工具行结束时 DELETE，revision 增量等于行数（H6）。零 SQL 文件改动，不改 `v13/load.py`。
 
 ## 结论
 
 多语言 harness 论题成立，边界就是上面的差异清单。
 
-成立的证据：三个口岸都经各自框架的原生工具入口（`createReadTool` / `coding.NewSession`+`Tools` / `createReadTool(cwd:)`）过同一契约矩阵，并且同一个 seam turn 依次 claim 了 `worker:read_pi_ext`、`worker:read_pig`、`worker:read_piswift`，落库结果等于口岸直跑。既有 read_tools 合同面与 E4（含本 gate 子进程）为零回归。
+成立的证据：三个口岸都经各自框架的原生工具入口（`createReadTool` / `coding.NewSession`+`Tools` / `createReadTool(cwd:)`）过同一契约矩阵。seam turn 里的 `dispatch_handler` 是测试内的 `WORKERS` 字典：它按冻结的 `request.handler` 把活叫到对应口岸子进程，证明的是状态机与适配器的 harness 集成，不是生产 worker 的注册或分发接线。落库 `tool/result` 等于同 argv 直跑。既有 read_tools 合同面与 E4（含本 gate 子进程）为零回归。
 
-边界：CRLF 切行、Swift trailer 句号、51200 的测量 API、offset 正则锚与整数域、图像/非 regular 的预检位置、三套围栏、`~` 的字面语义、evidence 的副本标签。这些是口岸适配，不是框架行为已经相同。
+边界：CRLF 切行、Swift trailer 句号、51200 的测量 API、offset 正则锚与整数域、JS 没有结果侧图像闸、三套围栏、`~` 的字面语义、evidence 的副本标签。非 regular 预检三语言都已有（JS-F2 / GO-F2 / SW-F2）。这些是口岸适配，不是框架行为已经相同。
 
 接受残留，本里程碑不改：
 

@@ -70,6 +70,7 @@ def protected_dirty(paths: list[str]) -> list[str]:
 def run_guard() -> None:
     src = Path(PI_SRC).read_text()
     check("G0", "createReadTool" in src and "AgentTool.execute" in src, "framework call")
+    check("G0", "lstatSync" in src and "not a regular file" in src, "regular-file precheck")
     check("G0", "function truncateHead" not in src and "truncateHead(" not in src, "no copied truncate")
     check("G0", "writeSync" in src and "process.stdout.write" not in src, "emit source")
     check("G0", "path: absolutePath" in src, "fenced path is what execute sees")
@@ -377,8 +378,57 @@ SW_EVIDENCE = [
 PISWIFT_ROOT = Path("/Users/wxl/Projects/PiSwift")
 
 
+def run_js_extra() -> None:
+    hello = HELLO.decode("utf-8")
+    full = pi_read(str(FIXTURES), "hello.txt")
+    check("JS-TAKE", full.ok and full.result == hello, full.payload)
+    for dropped in (1.5, "10"):
+        reply = pi_read(str(FIXTURES), "hello.txt", offset=dropped)
+        check("JS-TAKE", reply.ok and reply.exit_code == 0 and reply.result == hello, (dropped, reply.payload))
+
+    def once(root, path, timeout=30):
+        proc = subprocess.run(
+            NODE,
+            input=json.dumps({"root": root, "path": path}).encode(),
+            capture_output=True,
+            timeout=timeout,
+        )
+        line = proc.stdout.split(b"\n", 1)[0]
+        payload = json.loads(line.decode()) if line.strip() else {}
+        return proc.returncode, payload
+
+    with tempfile.TemporaryDirectory(prefix="v13js-fence-") as raw:
+        parent = Path(raw)
+        fifo = parent / "pipe"
+        os.mkfifo(fifo)
+        code, payload = once(str(parent), "pipe", timeout=5)
+        check(
+            "JS-F2",
+            code == 3
+            and payload.get("error") == "read_failed"
+            and payload.get("message") == "not a regular file"
+            and "result" not in payload,
+            payload,
+        )
+        if Path("/dev/zero").exists():
+            code, payload = once("/dev", "zero", timeout=5)
+            check(
+                "JS-F2",
+                code == 3
+                and payload.get("error") == "read_failed"
+                and payload.get("message") == "not a regular file"
+                and "result" not in payload,
+                payload,
+            )
+        quoted = "Offset 3 is beyond end of file (1 lines total)\n"
+        (parent / "quoted.txt").write_bytes(quoted.encode())
+        code, payload = once(str(parent), "quoted.txt")
+        check("JS-BODY", code == 0 and payload.get("result") == quoted, payload)
+
+
 def run_c() -> None:
     run_plane(pi_read, NODE, "", JS_EVIDENCE)
+    run_js_extra()
 
 
 def pig_read(argv, root: str, path: str, **fields):
@@ -453,6 +503,11 @@ def run_go_fence(argv) -> None:
     check("GO-P2", bad_lim.error == "invalid_params" and bad_lim.exit_code == 3, bad_lim.payload)
     huge = pig_read(argv, str(FIXTURES), "hello.txt", offset=1e20)
     check("GO-P2", huge.error == "invalid_params" and huge.exit_code == 3, huge.payload)
+    with tempfile.TemporaryDirectory(prefix="v13pig-body-") as raw:
+        quoted = "Offset 3 is beyond end of file (1 lines total)\n"
+        (Path(raw) / "quoted.txt").write_bytes(quoted.encode())
+        got = pig_read(argv, raw, "quoted.txt")
+        check("GO-BODY", got.ok and got.exit_code == 0 and got.result == quoted, got.payload)
 
 
 class ToolchainMissing(Exception):
@@ -977,7 +1032,8 @@ def run_ring(planes: list[tuple[str, str, str, list[str], int]]) -> None:
             "SELECT v13_append_event(%s, %s, 'user/message', %s::jsonb)",
             (sid, str(uuid.uuid4()), json.dumps({"text": "Read hello.txt via pi ports"})),
         )
-        cur.execute(
+        override_seq = q1(
+            cur,
             "SELECT v13_submit_override(%s, %s::jsonb)",
             (sid, json.dumps({
                 "schema_version": 1,
@@ -985,6 +1041,26 @@ def run_ring(planes: list[tuple[str, str, str, list[str], int]]) -> None:
                 "source_principal": "user",
                 "reason": "pi-ports gate",
             })),
+        )
+        stored_override = as_obj(q1(
+            cur,
+            "SELECT payload FROM events WHERE session_id=%s AND type='goal/override' AND seq=%s",
+            (sid, override_seq),
+        ))
+        override_count = q1(
+            cur,
+            "SELECT count(*) FROM events WHERE session_id=%s AND type='goal/override'",
+            (sid,),
+        )
+        check(
+            "Hoverride",
+            override_seq > 0
+            and override_count == 1
+            and stored_override["intent"] == "direct"
+            and stored_override["source_principal"] == "user"
+            and stored_override["reason"] == "pi-ports gate"
+            and stored_override["schema_version"] == 1,
+            (override_seq, override_count, stored_override),
         )
         pointed = q1(cur, "SELECT route_policy_version FROM sessions WHERE session_id=%s", (sid,))
         user_seq = q1(
@@ -1019,10 +1095,11 @@ def run_ring(planes: list[tuple[str, str, str, list[str], int]]) -> None:
         result_events = cur.fetchall()
         cur.execute(
             "SELECT tool_name, status, jsonb_typeof(result), result #>> '{}', origin_user_seq "
-            "FROM effects WHERE session_id=%s AND kind='tool' ORDER BY created_at",
+            "FROM effects WHERE session_id=%s AND kind='tool'",
             (sid,),
         )
         effects = cur.fetchall()
+        by_effect = {row[0]: row for row in effects}
         cur.execute(
             "SELECT payload->>'text', (payload->>'origin_user_seq')::bigint "
             "FROM events WHERE session_id=%s AND type='llm/message'",
@@ -1033,9 +1110,10 @@ def run_ring(planes: list[tuple[str, str, str, list[str], int]]) -> None:
         check("H3", [row[0] for row in result_events] == names, result_events)
         for tool, result in result_events:
             check("H3", result == direct[tool], (tool, result, direct.get(tool)))
-        check("H4", len(effects) == n and [row[0] for row in effects] == names, effects)
+        check("H4", set(by_effect) == set(names), effects)
         check("H4", all(row[1] == "succeeded" and row[2] == "string" for row in effects), effects)
-        for tool_name, _status, _kind, decoded, origin in effects:
+        for name in names:
+            tool_name, _status, _kind, decoded, origin = by_effect[name]
             check("H4", decoded == direct[tool_name] and origin == user_seq, (tool_name, decoded, origin, user_seq))
         sess_status, ends = end_of(sid)
         check("H5", sess_status == "completed", sess_status)
@@ -1206,6 +1284,19 @@ def run_swift_fence(argv) -> None:
         (root / "mixed.txt").write_bytes(mixed.encode())
         got = piswift_read(argv, str(root), "mixed.txt")
         check("SW-E000", got.ok and got.result == mixed and "\uE000" in (got.result or ""), got.payload)
+
+        (root / "nulcrlf.txt").write_bytes(b"a\x00b\r\n")
+        got = piswift_read(argv, str(root), "nulcrlf.txt")
+        check(
+            "SW-NUL",
+            (not got.ok)
+            and got.exit_code == 3
+            and got.error == "read_failed"
+            and got.message == "contains NUL"
+            and got.result != "a\rb\r\n"
+            and "result" not in got.payload,
+            got.payload,
+        )
 
         under = b"a" * 51198 + b"\r\n"
         (root / "cap.txt").write_bytes(under)
