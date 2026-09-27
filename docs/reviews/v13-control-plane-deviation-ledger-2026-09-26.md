@@ -123,3 +123,14 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | D12 | 成功 release 后 latch 行仍 `prepared` 是 R5 预期；`released` 不被 claim 消费。投影由 `v13_worktree_state` 折叠 `worktree/released` 事件 | 预期行为，不是实现差 |
 | F22 | catalog 缝（D14）。换体前 `v13_parse` 在 catalog 被 `is VOLATILE` 拒绝 | 关闭。stage 22 后具名写者对 parse 可见。指针：绑定式按 R9/F26，裸名同域 B′，非 v_qual 代入 |
 | F26 | D14 断言 B 复裁（R9，≠ parity F26）。活体 writer_ok 是裸名解析，限定 `v_qual` 代入为 false，触发停工后落地裸名同域 B′。R10：同域二选一，活体形态 H（三函数 proconfig NULL），换体保持 NULL；投毒预期改为解析层先拦。R11：全库 proname 计数是更早防墙，S 锁死为 `ambiguous across schemas (2)`；夹具 3 双臂。R12：臂 D 改真行 RAISE 且点名 spawn_subsession（writer_ok 体内裸调 named，限定直调真实 writer_ok 在否决型影子下为 false，接受的 fail-closed，不修谓词）；P8a′ 证明分工是源码/OID 硬断言 + 臂 E；前置不成立停工，禁降级记通过。残留 R-1：同名第二函数到不了深检；无第二份工具函数时影子谓词由 schema 限定调用挡住 | 接受残留。不改 writer_ok，不加 SET，不改既有解析 |
+
+## Phase B
+
+| # | 事实 | 处置 |
+|---|---|---|
+| F27 | actor 通道与信任边界（R8-① overload，≠ parity F27）。2 参 `v13_cancel` / 6 参 `v13_complete` 是唯一正文，旧签名纯委托 `actor=NULL`。DB 只验带与亲缘，不证 actor 的网络来源；来源由服务端绑定 | 接受。不读工具 JSON、human result、事件 payload、会话参数。不建 link 表、不加列 |
+| F28 | 生产绑定两格（≠ parity F28）。谓词+换体+`test_acl.py` 绿 = 合同已证明；仓库内驱动器在 agent 路径传 actor = 未交付（`demo_v13/` gitignored） | 不得写成「F17 已在生产路径生效」。driver 补丁不进本里程碑 |
+
+| # | 冲突 | 采用 |
+|---|---|---|
+| C15 | D7「可控任意非终态会话」若读进谓词，会把 R3 已冻终态 cancel `replay` 改成 `session not found`。parity F17 字面「失败一律 session not found」与 operator 空 actor 缺目标时的活体 needle 冲突 | 状态中立：谓词不读 status，终态 `replay` 保持。③ 例外：operator 且 actor 空且目标无行保留活体 `v13: unknown session %`（cancel）/`v13: unknown effect %`（complete）；agent 路径与非 operator 空 actor 一律 `v13: session not found` |

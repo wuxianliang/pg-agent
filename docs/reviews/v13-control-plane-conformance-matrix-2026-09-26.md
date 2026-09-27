@@ -60,3 +60,11 @@
 | 49 | stage 21 D11 cap×tail-gap 豁免（R6 has-event only）+ D12 `worktree/released` 投影（R7 守卫无锁，R7b 并发日程 sessions→latch） | ✅ | 2026-09-27 `uv run python v13/seam/test_seam.py` 退出码 0 | 无。G10 重泵实测 (b) 返回 `waiting`、零写。并发日程不动态验证两条语句规则（只由源码断言钉住）。`repair_cap`/`replan_cap` 仍在冻结的 `v13_triage_fold_reason`，不是第二份谓词 |
 | 50 | stage 17–20 回归 | ✅ | 2026-09-27 control / spawn / fanout / triage 四脚本退出码均 0 | 无 |
 | 51 | stage 22 D14 catalog 换体（R9 裸名 B′，R10 形态 H，R11 解析层 S，R12 臂 D fail-closed + 臂 E）+ 第四务假 worker | ✅ | 2026-09-27 `uv run python v13/catalog/test_catalog.py` 退出码 0。回归 control/spawn/fanout/triage/seam 退出码均 0 | 真实接线 🟡，不是 R4 关闭。sql 快路 RAISE 仍在函数体；direct 分类先被 `v13_triage_after_route` 改写成 human，动态路径零子、不触发该 RAISE |
+
+## Phase B
+
+| # | 条文 | 状态 | 测试落点 | 缺口 |
+|---|---|---|---|---|
+| 52 | stage 23 D7 正例：谓词真值表（route/超户空 actor、直接父、终态子仍真）；2 参 cancel 扇出孙 ready effect；6 参与 route 5 参 human 应答；旧 1 参 cancel；4 实参默认 `NULL::jsonb`；非 human 旧 5 参 spawn_owner 与超户同词同 `effect_done`；旧 5 参 release 仍写 `worktree/released` | ✅ | 2026-09-27 `uv run python v13/acl/test_acl.py` 退出码 0（197 checks） | 驱动器未交付。不得写成「F17 已在生产路径生效」 |
+| 53 | stage 23 D7 负例：六类文案全等且不含 uuid；6 参缺 effect / spawn_owner 缺 effect 不走 `unknown effect`；human 自答加伪造 actor 键；未授权终态不是 replay；父调孙零写；worker 42501；operator 传 actor 不升行政；COMMIT 并发日程（2 参 cancel + 6 参 human）锁后复验 | ✅ | 同上 | 无。operator 空 actor 缺目标仍是活体 needle（台账 C15） |
+| 54 | stage 1–23 回归 | ✅ | 2026-09-27 schema…catalog 全部 `test_*.py` 加 `v13/acl/test_acl.py` 串行退出码均 0（24 脚本，含 mgraph 两脚本） | 无 |

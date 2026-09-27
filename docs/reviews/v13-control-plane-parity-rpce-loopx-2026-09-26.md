@@ -249,3 +249,9 @@ R1–R13 是 D3 已记录的未做项。它们造成的对照缺口如下。不�
 3. **F4 静默 no-op。** **R5 已裁：不移植**（台账 F23）。C4 已经冻了 RAISE。native `removeValue` 静默返回不移植。
 
 F9 的 `replay` 与 routed llm 的 `unsupported` 不要记成未裁。它们和源合同不同，但条文已经选择了 v13 侧的失败模式。
+
+## Phase B 状态
+
+不改上文 2026-09-26 计数表。F17 仍留在 §2.3「完全没实现」。
+
+stage 23（2026-09-27）补了 F17 的 SQL 合同：`v13_control_authorized`，以及 `v13_cancel` / `v13_complete` 的 actor overload。`uv run python v13/acl/test_acl.py` 退出码 0。合同已证明。仓库内驱动器未在 agent 路径传 actor，未交付。不得写成「F17 已在生产路径生效」。③ 例外与 parity F17「失败一律 session not found」的字面冲突记台账 C15：operator 且空 actor 且目标无行保留活体 needle。
