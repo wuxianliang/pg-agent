@@ -130,6 +130,7 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 |---|---|---|
 | F27 | actor 通道与信任边界（R8-① overload，≠ parity F27）。2 参 `v13_cancel` / 6 参 `v13_complete` 是唯一正文，旧签名纯委托 `actor=NULL`。DB 只验带与亲缘，不证 actor 的网络来源；来源由服务端绑定 | 接受。不读工具 JSON、human result、事件 payload、会话参数。不建 link 表、不加列 |
 | F28 | 生产绑定两格（≠ parity F28）。谓词+换体+`test_acl.py` 绿 = 合同已证明；仓库内驱动器在 agent 路径传 actor = 未交付（`demo_v13/` gitignored） | 不得写成「F17 已在生产路径生效」。driver 补丁不进本里程碑 |
+| F29 | 读面拒绝=零行不 RAISE（≠ parity F29）。`v13_observe` / `v13_session_log` 授权失败零行，不把「不存在」与「无亲缘」分成两种异常。参数合同错误（重复、NULL 元素、游标 `< -1`）仍 RAISE，且发生在授权前。旧动词 cancel/complete 仍 RAISE，operator 空 actor 缺目标保留活体 needle（C15） | 接受。不把读面改成 RAISE，不把旧动词改成零行 |
 
 | # | 冲突 | 采用 |
 |---|---|---|

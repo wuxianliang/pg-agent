@@ -298,7 +298,8 @@ def main() -> int:
     check("readme names both yellow cells",
           "合同已证明" in readme and "未交付" in readme)
     check("load order acl is 23",
-          STAGE_THROUGH.get("acl") == 23 and SQL_LOAD_ORDER[-1].name == "v13_acl.sql"
+          STAGE_THROUGH.get("acl") == 23
+          and SQL_LOAD_ORDER[STAGE_THROUGH["acl"] - 1].name == "v13_acl.sql"
           and STAGE_THROUGH.get("catalog") == 22)
     check("no frozen spawn_owner cancel/complete",
           frozen_spawn_owner_calls() == [], frozen_spawn_owner_calls())

@@ -68,3 +68,7 @@
 | 52 | stage 23 D7 正例：谓词真值表（route/超户空 actor、直接父、终态子仍真）；2 参 cancel 扇出孙 ready effect；6 参与 route 5 参 human 应答；旧 1 参 cancel；4 实参默认 `NULL::jsonb`；非 human 旧 5 参 spawn_owner 与超户同词同 `effect_done`；旧 5 参 release 仍写 `worktree/released` | ✅ | 2026-09-27 `uv run python v13/acl/test_acl.py` 退出码 0（197 checks） | 驱动器未交付。不得写成「F17 已在生产路径生效」 |
 | 53 | stage 23 D7 负例：六类文案全等且不含 uuid；6 参缺 effect / spawn_owner 缺 effect 不走 `unknown effect`；human 自答加伪造 actor 键；未授权终态不是 replay；父调孙零写；worker 42501；operator 传 actor 不升行政；COMMIT 并发日程（2 参 cancel + 6 参 human）锁后复验 | ✅ | 同上 | 无。operator 空 actor 缺目标仍是活体 needle（台账 C15） |
 | 54 | stage 1–23 回归 | ✅ | 2026-09-27 schema…catalog 全部 `test_*.py` 加 `v13/acl/test_acl.py` 串行退出码均 0（24 脚本，含 mgraph 两脚本） | 无 |
+| 55 | stage 24 F8 全有或全无 / 列契约：父观察子一行且列与 sessions/events 一致；无事件 `last_event_seq=-1`；多子序=输入序；行政 NULL 可观察 U 与 P；抗环境噪声；`SET ROLE v13_route` 成功 COMMIT | ✅ | 2026-09-27 `uv run python v13/observe/test_observe.py` 退出码 0（147 checks） | 无 waiter。驱动器未交付 |
+| 56 | stage 24 负例：混合/自身/不存在/空/NULL 数组零行不 RAISE，后续 `[C]` 仍一行；重复 `v13: observe duplicate` 与 NULL 元素 `v13: observe id`；F18 先授权再读：未授权 session_log 零行；游标 `<-1` 在谓词前 RAISE 且与已授权同文案；`p_after_seq=max` 零行；−1/NULL 全文；watermark 前移；两次无写字节等价 | ✅ | 同上 | 不 join effects |
+| 57 | stage 24 权限：route 真（含 `SET ROLE v13_route` 成功 COMMIT）；PUBLIC/recall/worker/resolve/spawn_owner 假（42501） | ✅ | 同上 | 不授 recall。recall 的 events SELECT 不收回 |
+| 58 | stage 1–24 回归 | ✅ | 2026-09-27 schema…observe 全部 `test_*.py` 串行退出码均 0（25 脚本，含 mgraph 两脚本） | 无 |
