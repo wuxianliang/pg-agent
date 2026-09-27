@@ -5,6 +5,9 @@
 // See THIRD_PARTY_NOTICES.md.
 
 import Foundation
+import Darwin
+
+let safeIntMax: Int64 = 9007199254740991
 
 struct ReadFailure: Error {
     let code: String
@@ -22,10 +25,23 @@ func emitAndExit(_ object: [String: Any], _ code: Int32) -> Never {
 }
 
 func optionalInt(_ value: Any?) -> Int? {
-    guard let value, !(value is NSNull), !(value is Bool), !(value is String) else {
+    guard let value, !(value is NSNull), !(value is String) else {
         return nil
     }
+    if let number = value as? NSNumber {
+        if CFGetTypeID(number) == CFBooleanGetTypeID() || CFNumberIsFloatType(number) {
+            return nil
+        }
+        let int64 = number.int64Value
+        if int64 < -safeIntMax || int64 > safeIntMax {
+            return nil
+        }
+        return Int(int64)
+    }
     if let intValue = value as? Int {
+        if intValue < -Int(safeIntMax) || intValue > Int(safeIntMax) {
+            return nil
+        }
         return intValue
     }
     return nil
@@ -41,16 +57,43 @@ func joinPath(_ root: String, _ rel: String) -> String {
     return root + "/" + rel
 }
 
+func canonicalPath(_ path: String) throws -> String {
+    errno = 0
+    let resolved = path.withCString { Darwin.realpath($0, nil) }
+    if let resolved {
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+    if errno == ENOENT {
+        let ns = path as NSString
+        let parent = ns.deletingLastPathComponent
+        if parent.isEmpty || parent == path {
+            throw ReadFailure(code: "read_failed", message: "read failed")
+        }
+        let parentReal = try canonicalPath(parent)
+        let base = ns.lastPathComponent
+        if parentReal == "/" {
+            return "/" + base
+        }
+        return parentReal + "/" + base
+    }
+    throw ReadFailure(code: "read_failed", message: "read failed")
+}
+
 func resolvePath(root: String, raw: String) throws -> String {
+    if root.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        throw ReadFailure(code: "invalid_params", message: "root must be a string")
+    }
     if raw.contains("\0") {
         throw ReadFailure(code: "path_outside_workspace", message: "path contains NUL")
     }
     if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         throw ReadFailure(code: "invalid_params", message: "path must not be empty")
     }
-    let rootReal = URL(fileURLWithPath: root).resolvingSymlinksInPath().path
+    let rootReal = try canonicalPath(root)
     let cand = raw.hasPrefix("/") ? raw : joinPath(rootReal, raw)
-    let checked = URL(fileURLWithPath: cand).standardizedFileURL.resolvingSymlinksInPath().path
+    let normalized = URL(fileURLWithPath: cand).standardizedFileURL.path
+    let checked = try canonicalPath(normalized)
     if checked == rootReal || checked.hasPrefix(rootReal + "/") {
         return checked
     }
@@ -70,6 +113,9 @@ func readUTF8(_ path: String) throws -> String {
     }
     guard let text = String(data: data, encoding: .utf8) else {
         throw ReadFailure(code: "read_failed", message: "not utf-8")
+    }
+    if text.contains("\0") {
+        throw ReadFailure(code: "read_failed", message: "contains NUL")
     }
     return text
 }

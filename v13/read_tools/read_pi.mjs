@@ -22,7 +22,19 @@ class ToolError extends Error {
 }
 
 function emit(obj, code) {
-  process.stdout.write(`${JSON.stringify(obj)}\n`);
+  const frame = Buffer.from(`${JSON.stringify(obj)}\n`);
+  let offset = 0;
+  try {
+    while (offset < frame.length) {
+      const wrote = fs.writeSync(1, frame, offset, frame.length - offset);
+      if (wrote <= 0) {
+        process.exit(1);
+      }
+      offset += wrote;
+    }
+  } catch {
+    process.exit(1);
+  }
   process.exit(code);
 }
 
@@ -60,8 +72,17 @@ function realpathLoose(target) {
 }
 
 function resolveFenced(root, raw) {
+  if (typeof root !== "string" || root.trim() === "") {
+    throw new ToolError("invalid_params", "root must be a string");
+  }
+  if (typeof raw !== "string") {
+    throw new ToolError("invalid_params", "path must be a string");
+  }
   if (raw.includes("\0")) {
     throw new ToolError("path_outside_workspace", "path contains NUL");
+  }
+  if (raw.trim() === "") {
+    throw new ToolError("invalid_params", "path must not be empty");
   }
   let rootReal;
   try {
@@ -185,6 +206,9 @@ function truncateHead(content, options = {}) {
 }
 
 function readText(root, rawPath, offset, limit) {
+  if (typeof limit === "number" && limit < 0) {
+    limit = 0;
+  }
   const absolutePath = resolveFenced(root, rawPath);
   if (isImagePath(absolutePath)) {
     throw new ToolError("image_unsupported", "image files are not supported");
@@ -201,6 +225,9 @@ function readText(root, rawPath, offset, limit) {
     textContent = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
   } catch {
     throw new ToolError("read_failed", "not utf-8");
+  }
+  if (textContent.includes("\0")) {
+    throw new ToolError("read_failed", "contains NUL");
   }
   const allLines = textContent.split("\n");
   const totalFileLines = allLines.length;

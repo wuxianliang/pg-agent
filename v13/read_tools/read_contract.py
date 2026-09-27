@@ -18,6 +18,7 @@ class ReadError(Exception):
 
 
 NEWLINE_RE = re.compile(r"[\n\r\v\f\x85\u2028\u2029]")
+SAFE_INT_MAX = 2**53 - 1
 
 
 def resolve_path(root: str, raw: str) -> str:
@@ -29,9 +30,12 @@ def resolve_path(root: str, raw: str) -> str:
         raise ReadError("invalid_params", "path must not be empty")
     if not isinstance(root, str) or root.strip() == "":
         raise ReadError("invalid_params", "root must be a string")
-    root_real = os.path.realpath(root)
-    cand = raw if raw.startswith("/") else os.path.join(root_real, raw)
-    checked = os.path.realpath(os.path.normpath(cand))
+    try:
+        root_real = os.path.realpath(root)
+        cand = raw if raw.startswith("/") else os.path.join(root_real, raw)
+        checked = os.path.realpath(os.path.normpath(cand))
+    except OSError as exc:
+        raise ReadError("read_failed", str(exc)) from exc
     if checked == root_real or checked.startswith(root_real + os.sep):
         return checked
     raise ReadError("path_outside_workspace", "path outside workspace")
@@ -39,6 +43,8 @@ def resolve_path(root: str, raw: str) -> str:
 
 def _optional_int(value: object) -> int | None:
     if value is None or isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if abs(value) > SAFE_INT_MAX:
         return None
     return value
 
@@ -56,6 +62,8 @@ def read_text(root: str, path: str, start_line: int | None = None, limit: int | 
         full = data.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ReadError("read_failed", "not utf-8") from exc
+    if "\0" in full:
+        raise ReadError("read_failed", "contains NUL")
     lines = NEWLINE_RE.split(full)
     start = _optional_int(start_line)
     take_limit = _optional_int(limit)

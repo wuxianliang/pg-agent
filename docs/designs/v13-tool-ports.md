@@ -121,7 +121,7 @@ headless 禁止 `image_unsupported` / `language_unsupported` / `parse_failed`。
 
 **TP-INT-3** Pi 在使用 limit 之前，必须把负整数 limit 归一为 0，走既有 `limit=0` 路径（空切片 + more-lines 文案）。offset 负数不归一。相对上游 JS `slice` 这是显式偏差，台账必须有「Pi 偏差」句（行为句由里程碑 F 与代码同笔写入）。`limit=-1` 与 `limit=-99` 的 result 都必须等于 `limit=0` 的字符串，且不含 `line one`。检查：gate C3e。
 
-**TP-INT-4** `formatSize` 只许两臂：`< 1024` 为 `{n}B`；`>= 1024` 一律 `{bytes/1024.toFixed(1)}KB`，含 ≥ 1MiB。禁止 MB 臂。证据是上游 `truncate.ts` 的 `formatSize`（`@earendil-works/pi-coding-agent` 0.80.3）。实施核对时若该函数已不是两臂，或超长首行的 sed 提示不再渲染 KB，必须停手按实测重钉，禁止预设。1MiB 无换行文件的首行提示必须含 `1024.0KB`、不含子串 `MB`，`head -c` 长度仍是 51200。检查：gate C5b；source `formatSize`。
+**TP-INT-4** `formatSize` 必须与上游 `@earendil-works/pi-coding-agent` 0.80.3 `truncate.ts:61-68` 的三臂一致：`< 1024` 为 `{n}B`；`< 1024*1024` 为 `{(bytes/1024).toFixed(1)}KB`；否则 `{(bytes/(1024*1024)).toFixed(1)}MB`。2026-09-27 核对本地 `truncate.ts` 仍含 MB 臂（不是两臂），超长首行的 sed 提示对 ≥1MiB 渲染 MB、对 51200 字节帽渲染 KB。禁止删成两臂。1MiB 无换行文件的首行提示必须含 `1.0MB`、含 `head -c 51200`、不含 `1024.0KB`。检查：gate C5b；source `formatSize`。
 
 ## 6. 子进程边界
 
@@ -141,7 +141,7 @@ headless 禁止 `image_unsupported` / `language_unsupported` / `parse_failed`。
 
 **TP-HUB-3** hub 在调用 `v13_complete` 之前必须过 `jsonb_safe_result(status, payload)`。三行表：成功串含 NUL → `failed` 且 payload 为 `{"error":"read_failed","message":"contains NUL"}`；成功串无 NUL → 原样；失败对象的字符串含 NUL → 该字符串换成 `contains NUL`。环上 D17：独立 session，判断面仍选闭合选项，hub 只在这一拍把 path 换成 tmp 的 NUL 文件路径；`effects.status='failed'`，`result->>'error'='read_failed'`，无 `tool/result`，session 不进终态。用户消息必须是未用过的句子（如 `Read the zero byte token file`）。mode 复用 `literal`，swap 手法同 D15/D16。检查：gate G3（`--contract` 也跑）、D17。
 
-**TP-HUB-4** `TICK_CAP=24`，`EXPECTED_TICKS=17`（现 16 拍加 D17 一拍）。守卫 `<= TICK_CAP`，且末尾精确 `== EXPECTED_TICKS`。余量必须 `>= 4`（24 ≥ 17+4）。实跑 `[beat]` 行数不是 17 时，以实跑数为准同笔改常量与本句，禁止放宽成不等式。检查：gate D18。
+**TP-HUB-4** `TICK_CAP=24`，`EXPECTED_TICKS=14`。2026-09-27 实跑 `[beat]` 行数是 14，不是计划假设的 17：`beat()` 只在非终态 claim 之后打印 `[beat]`，三条 terminal advance 不打印，所以含 D17 的 `beat()` 调用次数（17）与 `[beat]` 行数（14）不是同一个数。以 `[beat]` 行数为准。守卫 `<= TICK_CAP`，且末尾精确 `== EXPECTED_TICKS`。余量必须 `>= 4`（24 ≥ 14+4）。禁止放宽成不等式。检查：gate D18。
 
 **TP-HUB-5** `judgment_cache` 按 `request_hash` 全局只写一次，不看本次 mock。场景化用户消息必须互异。负例是 `Read hello.txt`；幸福路径是 `Read hello.txt and fib.py`；失败场景另用新句子。禁止复用已缓存的用户消息去「证明」下一拍问到了模型。检查：gate D；source 各场景消息字面量。
 

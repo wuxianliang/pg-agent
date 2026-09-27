@@ -1,6 +1,6 @@
 # v13 read_tools
 
-> 权威：口岸合同以 `docs/designs/v13-tool-ports.md` 为准（合同版本 `v13/tool-port-contract-1`）。本文件是活台账。与规范冲突时以规范为准。本段不改变下文任何行为描述。
+> 权威：口岸合同以 `docs/designs/v13-tool-ports.md` 为准（合同版本 `v13/tool-port-contract-1`）。本文件是活台账。与规范冲突时以规范为准。条款针：`TP-WIRE-3`、`TP-FS-5`、`TP-DUCK-3`。
 
 M1 离线契约。Python 与 Swift 在 headless 契约上相等；Node 的 Pi 口岸只对照 Pi 文本读矩阵。DuckDB 平面的 `read_duck` 在 `--contract` 的 F 组对照，并作为第四个 `kind='tool'` 行进环（`worker:read_duck`）。单 root。不 spawn `pi`，不 spawn `repoprompt-mcp`。
 
@@ -11,9 +11,9 @@ uv run python v13/read_tools/test_read_tools.py --contract
 uv run python v13/read_tools/test_read_tools.py
 ```
 
-`--contract` 跑 A–C 与 F，退出码 0 为通过。无旗标跑 A–E 与 F，退出码 0 为通过。
+`--contract` 跑 G、A–C 与 F，退出码 0 为通过。无旗标在 ring 之后再跑 E4，退出码 0 为通过。
 
-`swift --version` 或 `node --version` 失败，或 duck bring-up 不在（`.duck-venv` 或 `~/.duckdb/extensions/v1.5.5/osx_arm64/` 下两扩展二进制缺失）：两个入口都在 `setup_db` 之前、在任何绿色断言之前打印 `[SKIP] not_run/toolchain_absent` 并退出 2。环上的 `worker:read_duck` 与 F 组都要这套工具链，不再只在 `--contract` 时检查。先跑绿 Python 再退出 2 不算通过。退出 2 不是通过。断言失败退出 1。
+能跑的组先跑；断言失败退出 1；有跳过才退出 2。G 与 A 无依赖，始终先跑。swift 缺席跳过 B，node 缺席跳过 C，duck `absent` 跳过 F。duck `unpinned` 仍跑 F，由 F1 以 `platform_unpinned` 失败。有跳过则不跑 ring、不跑 E4，打印 `[SKIP] not_run/toolchain_absent`，SKIP 行含 `planes=`，无旗标时还含 `ring`。退出 2 不是通过。原 E2 由 G2 执行。
 
 ## 工具链（R1）
 
@@ -56,6 +56,8 @@ Swift 与 Node 共用一帧一行 JSON，换行结尾。正文在 JSON 字符串
 - 显式 `root` 围栏：`fs.realpathSync` 加前缀检查。不调用 `resolveReadPathAsync`，不展开 `~`。`../` 与根外绝对路径是 `path_outside_workspace`。
 - 围栏成功后，扩展名（大小写不敏感）属于 `{jpg, jpeg, png, gif, webp, bmp}` 即 `image_unsupported`。结果里不放文件字节。不复制 TUI、高亮、`processImage`。
 - 文本只按 `"\n"` 切，所以 `crlf.txt` 全文不得等于 `alpha\n\nbeta\n\n`。
+- 负整数 `limit` 在使用前归一为 0，走既有 `limit=0` 路径（空切片 + more-lines）。这是相对上游 JS `slice` 的显式偏差。`offset` 负数不归一。
+- `formatSize` 保持上游三臂（B / KB / MB）。2026-09-27 核对 `truncate.ts:61-68` 仍含 MB 臂；1MiB 无换行首行提示渲染 `1.0MB`，`head -c` 仍是 51200。
 
 `truncateHead` 控制流照抄 `truncate.ts`。`limit` 键缺失，以及口岸把 `limit: null` 归一成缺失，才走默认帽。不要向 Node 送 JSON `null` 的 `limit`。
 
@@ -63,7 +65,7 @@ Swift 与 Node 共用一帧一行 JSON，换行结尾。正文在 JSON 字符串
 
 第四个读工具 `read_duck` 的离线口岸。目录行只在库 `agent_v13_read_tools` 运行时 INSERT/DELETE，不改 `v13/**/*.sql`，不改 `v13/load.py`，不改仓库根 `pyproject.toml` / `uv.lock`。
 
-双平面（v6.1 D1-A）：口岸由 `v13/read_tools/.duck-venv` 里 pin 的 `duckdb==1.5.5` 运行，与仓库 fork dev 引擎隔离。装载硬化（v13.1）：进程内 `:memory:`，`SET autoinstall_known_extensions=false`，`SET autoload_known_extensions=false`，显式 `LOAD sitting_duck; LOAD duck_block_utils;`（从 `~/.duckdb/extensions/v1.5.5/osx_arm64/` 缓存，无网络面），然后 `SET enable_external_access=false`。不 `INSTALL`。不设 `allow_unsigned_extensions`。
+双平面（v6.1 D1-A）：口岸由 `v13/read_tools/.duck-venv` 里 pin 的 `duckdb==1.5.5` 运行，与仓库 fork dev 引擎隔离。装载：`connect(":memory:", config={"extension_directory": "~/.duckdb/extensions"})`，`SET autoinstall_known_extensions=false`，`SET autoload_known_extensions=false`。`PRAGMA platform` 不在 `PINS_BY_PLATFORM` 则 `platform_unpinned`，退出 1，无成功帧。路径模板是 `~/.duckdb/extensions/v1.5.5/osx_arm64/<name>.duckdb_extension`（目录名带 `v` 前缀）。`LOAD` 用该绝对路径，禁止裸名。seal 之前断言 `duckdb_extensions().install_path` 的 realpath 等于被哈希文件的 realpath。然后 `SET enable_external_access=false`。不 `INSTALL`。不设 `allow_unsigned_extensions`。
 
 ### Bring-up
 
@@ -73,7 +75,13 @@ Swift 与 Node 共用一帧一行 JSON，换行结尾。正文在 JSON 字符串
 uv run python v13/read_tools/duck_bringup.py
 ```
 
-建 `.duck-venv`（gitignore，CPython 3.12），装 `duckdb==1.5.5`，`INSTALL sitting_duck FROM community` 与 `INSTALL duck_block_utils FROM community`。社区渠道失败时脚本会再试官方渠道并在 stderr 打 `WARN`；那不是本机订死的渠道，哈希不符就要重测。
+建 `.duck-venv`（gitignore，CPython 3.12），装 `duckdb==1.5.5`，只 `INSTALL sitting_duck FROM community` 与 `INSTALL duck_block_utils FROM community`。community 失败把错误打到 stderr 并退出 1，不回退官方渠道。装后按当前 `PRAGMA platform` 比对 `PINS_BY_PLATFORM` 的 SHA 与版本。
+
+离线核对（不建 venv、不联网）：
+
+```bash
+uv run python v13/read_tools/duck_bringup.py --verify-only
+```
 
 2026-09-27 作者机实测（`PRAGMA platform` = `osx_arm64`）：
 
@@ -163,42 +171,42 @@ resolve 的 `run_probes`（unreachable、timeout）未跳过。加载 seam 不�
 
 - 预算 v2 是 `max_cycles=6`。负例仍用种子 3。幸福路径六条 route，finish 在 `cycle_no=5` 发出；翻成 5 会在 finish 前撞 `budget_exhausted`。
 - 策略 v2 带数是 v1 带数 + 8。多出来的两条是 `param::read_duck::path` 与 `stated::read_duck::path`。
-- duck 工具链是全量 gate 与 `--contract` 的前置。`.duck-venv` 或 `~/.duckdb/extensions/v1.5.5/osx_arm64/` 下扩展二进制缺失：打印 `[SKIP] not_run/toolchain_absent`，退出 2，不跑 `setup_db`，不算通过。
+- duck `absent`（`.duck-venv` 或该平台扩展文件缺失）只跳过 F 与 ring，打印 `[SKIP] not_run/toolchain_absent`，退出 2，不算通过。G 与 A 仍先跑。`unpinned` 不跳过。
 - 幸福路径 `read_duck` 的解码值抄 F 组实测常量 `FIB_RENDER`，不按源码行重算。outline 不含 `print(fib(6))`。
-- `read_duck` 失败拍是独立 session：判断面仍选闭合选项 `fib.py`，hub 只在这一拍把 path 换成围栏内 `hello.txt`。口岸返回 `language_unsupported`（`read_text` 会成功读这个文件，所以这条断言钉的是 duck 口岸，不是 Python 读者）。`complete failed` 落 `effects.status='failed'`，无 `tool/result`，session 不进终态。续跑到 finish 的证明仍在 D15（`read_file_py` + `missing.txt`）。tick 上限仍是 16。
+- `read_duck` 失败拍是独立 session：判断面仍选闭合选项 `fib.py`，hub 只在这一拍把 path 换成围栏内 `hello.txt`。口岸返回 `language_unsupported`（`read_text` 会成功读这个文件，所以这条断言钉的是 duck 口岸，不是 Python 读者）。`complete failed` 落 `effects.status='failed'`，无 `tool/result`，session 不进终态。续跑到 finish 的证明仍在 D15（`read_file_py` + `missing.txt`）。tick 守卫是 `TICK_CAP=24`；D18 精确等于 `EXPECTED_TICKS=14`（2026-09-27 实跑 `[beat]` 行数，不是 `beat()` 调用次数 17）。
 - 幸福路径的用户消息是 `Read hello.txt and fib.py`，不与负例的 `Read hello.txt` 相同。`judgment_cache` 按上下文哈希全局只写一次：负例在三条 `tool/result` 后的 parse 已经缓存了 `llm_generate`。同一句用户消息会让幸福路径的第四拍复用那条缓存，跳过 `read_duck`。
 
 ### E4
 
-改前基线 `.e4-baseline-2026-09-27.log`（2026-09-27）：23 个路径退出码全部为 0。无既有红，不豁免 envelope / twophase。
+无旗标全量在 ring 全部连接关闭后自动跑 `find v13 -name 'test_*.py' -not -path 'v13/read_tools/*' | sort`，逐个 `uv run python`，不重试不豁免。2026-09-27 里程碑 F 实跑 25 项，退出码全部为 0（含 acl/observe）。旧手工表的 23 项基线不再作为豁免。
 
-改后同一清单（不含 `v13/read_tools`）全部仍为 0。M4 复跑（2026-09-27）同一 23 路径仍全部为 0。零新增失败。
-
-| 路径 | 改前 | 改后 |
-|---|---|---|
-| `v13/catalog/test_catalog.py` | 0 | 0 |
-| `v13/characterize/test_characterize.py` | 0 | 0 |
-| `v13/chunks/test_chunks.py` | 0 | 0 |
-| `v13/control/test_control.py` | 0 | 0 |
-| `v13/economy/test_economy.py` | 0 | 0 |
-| `v13/envelope/test_envelope.py` | 0 | 0 |
-| `v13/fanout/test_fanout.py` | 0 | 0 |
-| `v13/filter/test_filter.py` | 0 | 0 |
-| `v13/loop/test_loop.py` | 0 | 0 |
-| `v13/manifest/test_manifest.py` | 0 | 0 |
-| `v13/memory/test_memory.py` | 0 | 0 |
-| `v13/mgraph_assembly/test_mgraph_assembly.py` | 0 | 0 |
-| `v13/mgraph/test_mgraph.py` | 0 | 0 |
-| `v13/mgraph/test_stannum_usage.py` | 0 | 0 |
-| `v13/periphery/test_periphery.py` | 0 | 0 |
-| `v13/recall/test_recall.py` | 0 | 0 |
-| `v13/resolve/test_resolve.py` | 0 | 0 |
-| `v13/schema/test_schema.py` | 0 | 0 |
-| `v13/seam/test_seam.py` | 0 | 0 |
-| `v13/spawn/test_spawn.py` | 0 | 0 |
-| `v13/summary/test_summary.py` | 0 | 0 |
-| `v13/triage/test_triage.py` | 0 | 0 |
-| `v13/twophase/test_twophase.py` | 0 | 0 |
+| 路径 | 退出码 |
+|---|---|
+| `v13/acl/test_acl.py` | 0 |
+| `v13/catalog/test_catalog.py` | 0 |
+| `v13/characterize/test_characterize.py` | 0 |
+| `v13/chunks/test_chunks.py` | 0 |
+| `v13/control/test_control.py` | 0 |
+| `v13/economy/test_economy.py` | 0 |
+| `v13/envelope/test_envelope.py` | 0 |
+| `v13/fanout/test_fanout.py` | 0 |
+| `v13/filter/test_filter.py` | 0 |
+| `v13/loop/test_loop.py` | 0 |
+| `v13/manifest/test_manifest.py` | 0 |
+| `v13/memory/test_memory.py` | 0 |
+| `v13/mgraph_assembly/test_mgraph_assembly.py` | 0 |
+| `v13/mgraph/test_mgraph.py` | 0 |
+| `v13/mgraph/test_stannum_usage.py` | 0 |
+| `v13/observe/test_observe.py` | 0 |
+| `v13/periphery/test_periphery.py` | 0 |
+| `v13/recall/test_recall.py` | 0 |
+| `v13/resolve/test_resolve.py` | 0 |
+| `v13/schema/test_schema.py` | 0 |
+| `v13/seam/test_seam.py` | 0 |
+| `v13/spawn/test_spawn.py` | 0 |
+| `v13/summary/test_summary.py` | 0 |
+| `v13/triage/test_triage.py` | 0 |
+| `v13/twophase/test_twophase.py` | 0 |
 
 ## CRLF fixture
 

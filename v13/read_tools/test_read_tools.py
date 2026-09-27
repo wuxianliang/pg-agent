@@ -1,10 +1,7 @@
 """Native read-tool gates.
 
---contract: A-C and F, exit 0 = pass.
-No flag: A-E and F, exit 0 = pass.
-Missing swift, node, or duck bring-up:
-prints [SKIP] not_run/toolchain_absent and exits 2
-before setup_db and before any green assertion.
+能跑的组先跑；断言失败退出 1；有跳过才退出 2。
+--contract: G, A-C, and F. No flag: those, then ring, then E4.
 """
 
 from __future__ import annotations
@@ -27,9 +24,8 @@ from v13.read_tools.bridge import ProtocolError, run_line_json
 from v13.read_tools.read_contract import ReadError, read_text, resolve_path
 from v13.read_tools.read_duck_port import (
     EXPECTED_DUCKDB_VERSION,
-    EXPECTED_EXTENSIONS,
-    EXPECTED_PLATFORM,
-    EXTENSION_CACHE,
+    EXTENSION_ROOT,
+    PINS_BY_PLATFORM,
     ToolError,
     resolve_path as duck_resolve,
 )
@@ -58,11 +54,15 @@ FIB_RENDER = (
 )
 JS_BYTES = b"function add(a, b) {\n  return a + b;\n}\nadd(1, 2);\n"
 JS_RENDER = "add(a, b)\n\nfunction add(a, b) {\n  return a + b;\n}"
+_OS_PIN = PINS_BY_PLATFORM["osx_arm64"]
 PIN_LABEL = (
     f"duckdb={EXPECTED_DUCKDB_VERSION}"
-    f" sitting_duck={EXPECTED_EXTENSIONS['sitting_duck']['version']}"
-    f" duck_block_utils={EXPECTED_EXTENSIONS['duck_block_utils']['version']}"
+    f" sitting_duck={_OS_PIN['sitting_duck']['version']}"
+    f" duck_block_utils={_OS_PIN['duck_block_utils']['version']}"
 )
+TICK_CAP = 24
+EXPECTED_TICKS = 14
+E4_DISCOVER = "find v13 -name 'test_*.py' -not -path 'v13/read_tools/*' | sort"
 HELLO = b"line one\nline two\nline three\n"
 CRLF = b"alpha\r\nbeta\r\n"
 HEADLESS_CRLF = "alpha\n\nbeta\n\n"
@@ -76,24 +76,85 @@ def check(label: str, condition: bool, detail: object = "") -> None:
         raise AssertionError(f"{label}: {detail}")
 
 
-def toolchain_present() -> bool:
-    for cmd in (["swift", "--version"], ["node", "--version"]):
-        try:
-            proc = subprocess.run(cmd, capture_output=True)
-        except OSError:
-            return False
-        if proc.returncode != 0:
-            return False
-    return True
+class RingInfrastructureError(Exception):
+    pass
 
 
-def duck_toolchain_present() -> bool:
-    if not DUCK_PY.is_file():
+def command_ok(argv: list[str]) -> bool:
+    try:
+        proc = subprocess.run(argv, capture_output=True)
+    except OSError:
         return False
-    return all(
-        (EXTENSION_CACHE / f"{name}.duckdb_extension").is_file()
-        for name in EXPECTED_EXTENSIONS
+    return proc.returncode == 0
+
+
+def classify_planes(swift_ok: bool, node_ok: bool, duck_status: str) -> list[str]:
+    skipped = []
+    if not swift_ok:
+        skipped.append("swift")
+    if not node_ok:
+        skipped.append("node")
+    if duck_status == "absent":
+        skipped.append("duck")
+    return skipped
+
+
+def exit_for(skipped: list[str], failed: bool) -> int:
+    if failed:
+        return 1
+    if skipped:
+        return 2
+    return 0
+
+
+def duck_probe() -> str:
+    if not DUCK_PY.is_file():
+        return "absent"
+    script = (
+        "import json\n"
+        "import duckdb\n"
+        "con = duckdb.connect(':memory:')\n"
+        "platform = con.execute('PRAGMA platform').fetchone()[0]\n"
+        "print(json.dumps({'version': duckdb.__version__, 'platform': platform}))\n"
+        "con.close()\n"
     )
+    try:
+        proc = subprocess.run([str(DUCK_PY), "-c", script], capture_output=True, text=True)
+    except OSError:
+        return "absent"
+    if proc.returncode != 0:
+        return "absent"
+    try:
+        info = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return "absent"
+    if info.get("version") != EXPECTED_DUCKDB_VERSION:
+        return "ok"
+    platform = info.get("platform")
+    if platform not in PINS_BY_PLATFORM:
+        return "unpinned"
+    cache = EXTENSION_ROOT / f"v{EXPECTED_DUCKDB_VERSION}" / platform
+    pins = PINS_BY_PLATFORM[platform]
+    if not all((cache / f"{name}.duckdb_extension").is_file() for name in pins):
+        return "absent"
+    return "ok"
+
+
+def jsonb_safe_result(status: str, payload):
+    if status == "succeeded" and isinstance(payload, str) and "\0" in payload:
+        return "failed", {"error": "read_failed", "message": "contains NUL"}
+    if isinstance(payload, dict):
+        cleaned = {}
+        changed = False
+        for key, value in payload.items():
+            if isinstance(value, str) and "\0" in value:
+                cleaned[key] = "contains NUL"
+                changed = True
+            else:
+                cleaned[key] = value
+        if changed:
+            return status, cleaned
+    return status, payload
 
 
 def duck_argv() -> list[str]:
@@ -116,30 +177,33 @@ def file_sha256(path: Path) -> str:
 
 
 def duck_inventory() -> dict:
-    script = """
+    script = f"""
 import json
+import sys
+sys.path.insert(0, {str(ROOT)!r})
+from read_duck_port import prepare
 import duckdb
-con = duckdb.connect(":memory:")
-con.execute("SET autoinstall_known_extensions=false")
-con.execute("SET autoload_known_extensions=false")
-con.execute("LOAD sitting_duck")
-con.execute("LOAD duck_block_utils")
-platform = con.execute("PRAGMA platform").fetchone()[0]
-rows = con.execute(
-    "SELECT extension_name, extension_version, loaded FROM duckdb_extensions() "
-    "WHERE extension_name IN ('sitting_duck', 'duck_block_utils')"
-).fetchall()
-langs = con.execute(
-    "SELECT language, extensions FROM ast_supported_languages()"
-).fetchall()
-print(json.dumps({
-    "duckdb": duckdb.__version__,
-    "platform": platform,
-    "rows": rows,
-    "langs": langs,
-}))
+con = prepare()
+try:
+    platform = con.execute("PRAGMA platform").fetchone()[0]
+    rows = con.execute(
+        "SELECT extension_name, extension_version, loaded, install_path "
+        "FROM duckdb_extensions() "
+        "WHERE extension_name IN ('sitting_duck', 'duck_block_utils')"
+    ).fetchall()
+    langs = con.execute(
+        "SELECT language, extensions FROM ast_supported_languages()"
+    ).fetchall()
+    print(json.dumps({{
+        "duckdb": duckdb.__version__,
+        "platform": platform,
+        "rows": rows,
+        "langs": langs,
+    }}))
+finally:
+    con.close()
 """
-    proc = subprocess.run(duck_argv()[:1] + ["-c", script], capture_output=True, text=True)
+    proc = subprocess.run([str(DUCK_PY), "-c", script], capture_output=True, text=True)
     check("F1", proc.returncode == 0, proc.stderr)
     return json.loads(proc.stdout)
 
@@ -283,6 +347,94 @@ def run_a() -> None:
         check("A11", read_text(str(work), "foo/../hello.txt") == HELLO.decode("utf-8"))
         expect_py("A11", str(work), "/etc/hosts", "path_outside_workspace")
 
+        (tmp / "nul.txt").write_bytes(b"a\x00b")
+        try:
+            read_text(str(tmp), "nul.txt")
+        except ReadError as exc:
+            check(
+                "A12",
+                exc.code == "read_failed" and exc.message == "contains NUL" and "\0" not in exc.message,
+                exc.message,
+            )
+        except OSError as exc:
+            check("A12", False, f"bare OSError {exc}")
+        else:
+            check("A12", False, "nul text succeeded")
+        (tmp / "badnul.bin").write_bytes(b"\xff\x00")
+        try:
+            read_text(str(tmp), "badnul.bin")
+        except ReadError as exc:
+            check("A12", exc.code == "read_failed" and exc.message == "not utf-8", exc.message)
+        else:
+            check("A12", False, "bad nul decoded")
+
+        import v13.read_tools.read_contract as contract_mod
+
+        original = contract_mod.os.path.realpath
+
+        def raising(path):
+            raise OSError(13, "Permission denied", path)
+
+        contract_mod.os.path.realpath = raising
+        try:
+            try:
+                resolve_path(str(tmp), "hello.txt")
+            except ReadError as exc:
+                check("A13", exc.code == "read_failed", exc.code)
+            except OSError as exc:
+                check("A13", False, f"bare OSError {exc}")
+            else:
+                check("A13", False, "realpath raise leaked")
+        finally:
+            contract_mod.os.path.realpath = original
+
+        if os.geteuid() == 0:
+            print("[SKIP] A13 euid=0")
+        else:
+            blocked = tmp / "blocked"
+            blocked.mkdir()
+            (blocked / "secret.txt").write_bytes(b"nope\n")
+            hidden = tmp / "hidden.txt"
+            hidden.write_bytes(b"hidden\n")
+            blocked.chmod(0o000)
+            hidden.chmod(0o000)
+            try:
+                try:
+                    read_text(str(blocked), "secret.txt")
+                except ReadError as exc:
+                    check("A13", exc.code == "read_failed", exc.code)
+                except OSError as exc:
+                    check("A13", False, f"bare OSError {exc}")
+                else:
+                    check("A13", False, "blocked dir succeeded")
+                try:
+                    read_text(str(tmp), "hidden.txt")
+                except ReadError as exc:
+                    check("A13", exc.code == "read_failed", exc.code)
+                except OSError as exc:
+                    check("A13", False, f"bare OSError {exc}")
+                else:
+                    check("A13", False, "hidden file succeeded")
+            finally:
+                blocked.chmod(0o755)
+                hidden.chmod(0o644)
+
+        safe = 2**53 - 1
+        full_hello = body.decode("utf-8")
+        check("A14", read_text(fixture_root, "hello.txt", safe, 1) == "")
+        check(
+            "A14",
+            read_text(fixture_root, "hello.txt", safe + 1, 1) == full_hello,
+        )
+        check("A14", read_text(fixture_root, "hello.txt", 1.0, 1) == full_hello)
+        check("A14", read_text(fixture_root, "hello.txt", 1.5) == full_hello)
+        check("A14", read_text(fixture_root, "hello.txt", True) == full_hello)
+        check("A14", read_text(fixture_root, "hello.txt", "2") == full_hello)
+        check(
+            "A14",
+            read_text(fixture_root, "hello.txt", 2, 1.0) == read_text(fixture_root, "hello.txt", 2, None),
+        )
+
 
 def run_b() -> None:
     fixture_root = str(FIXTURES)
@@ -293,7 +445,7 @@ def run_b() -> None:
         full.ok and full.exit_code == 0 and full.result == read_text(fixture_root, "hello.txt") == body,
         full.payload,
     )
-    for start, limit in ((2, 2), (-1, None), (99, None)):
+    for start, limit in ((2, 2), (-1, None), (99, None), (0, None), (1, None), (1, 0), (-2, 1), (2, 0)):
         py = read_text(fixture_root, "hello.txt", start, limit)
         sw = swift_read(fixture_root, "hello.txt", start, limit)
         check("B2", sw.ok and sw.result == py, (start, limit, sw.payload))
@@ -327,6 +479,36 @@ def run_b() -> None:
 
     with tempfile.TemporaryDirectory(prefix="v13read-b-") as raw:
         tmp = Path(raw)
+        (tmp / "empty.txt").write_bytes(b"")
+        empty_sw = swift_read(str(tmp), "empty.txt")
+        check("B2b", empty_sw.ok and empty_sw.result == read_text(str(tmp), "empty.txt") == "", empty_sw.payload)
+        (tmp / "notail.txt").write_bytes(b"one\ntwo")
+        notail = swift_read(str(tmp), "notail.txt")
+        check("B2b", notail.ok and notail.result == read_text(str(tmp), "notail.txt"), notail.payload)
+        safe = 2**53 - 1
+        b2c_cases = (
+            (1.0, 1),
+            (1.5, None),
+            (2, 1.0),
+            (safe, 1),
+            (safe + 1, 1),
+            (True, None),
+            ("2", None),
+        )
+        for start, limit in b2c_cases:
+            py = read_text(fixture_root, "hello.txt", start, limit)
+            sw = swift_read(fixture_root, "hello.txt", start, limit)
+            check("B2c", sw.ok and sw.result == py, (start, limit, sw.payload, py))
+        (tmp / "nul.txt").write_bytes(b"a\x00b")
+        nul_body = swift_read(str(tmp), "nul.txt")
+        check(
+            "B4",
+            nul_body.error == "read_failed"
+            and nul_body.exit_code == 3
+            and nul_body.message == "contains NUL"
+            and "\0" not in json.dumps(nul_body.payload),
+            nul_body.payload,
+        )
         (tmp / "bad.bin").write_bytes(b"\xff\xfe")
         bad = swift_read(str(tmp), "bad.bin")
         try:
@@ -379,6 +561,101 @@ def run_b() -> None:
     timed = swift_read(fixture_root, "hello.txt")
     elapsed = time.monotonic() - started
     check("B6", timed.ok and timed.result == body and elapsed < 10, round(elapsed, 3))
+    ok_proc = subprocess.run(
+        ["swift", SWIFT_SRC],
+        input=json.dumps({"root": fixture_root, "path": "hello.txt"}).encode(),
+        capture_output=True,
+    )
+    ok_frames = [line for line in ok_proc.stdout.split(b"\n") if line.strip()]
+    check("B5", ok_proc.returncode == 0 and len(ok_frames) == 1, (ok_proc.returncode, ok_proc.stdout))
+    err_proc = subprocess.run(
+        ["swift", SWIFT_SRC],
+        input=json.dumps({"root": fixture_root, "path": "../../etc/hosts"}).encode(),
+        capture_output=True,
+    )
+    err_frames = [line for line in err_proc.stdout.split(b"\n") if line.strip()]
+    check("B5", err_proc.returncode == 3 and len(err_frames) == 1, (err_proc.returncode, err_proc.stdout))
+
+    with tempfile.TemporaryDirectory(prefix="v13read-b8-") as raw:
+        tmp = Path(raw)
+        root = tmp / "root"
+        root.mkdir()
+        (root / "hello.txt").write_bytes(HELLO)
+        (root / "foo").mkdir()
+        outside = tmp / "outside.txt"
+        outside.write_bytes(b"secret-outside\n")
+        (root / "escape").symlink_to(outside)
+        home = Path.home() / "hello.txt"
+        home_text = home.read_text(errors="replace") if home.is_file() else None
+        cases = (
+            ("hello.txt", None),
+            ("foo/../hello.txt", None),
+            ("../../etc/hosts", "path_outside_workspace"),
+            ("/etc/hosts", "path_outside_workspace"),
+            ("a\0b", "path_outside_workspace"),
+            ("", "invalid_params"),
+            ("   ", "invalid_params"),
+            ("~/hello.txt", "read_failed"),
+            ("escape", "path_outside_workspace"),
+        )
+        for rel, code in cases:
+            try:
+                py = read_text(str(root), rel)
+                py_code = None
+            except ReadError as exc:
+                py = None
+                py_code = exc.code
+            except OSError as exc:
+                check("B8", False, f"bare OSError {exc}")
+                continue
+            sw = swift_read(str(root), rel)
+            if code is None:
+                check("B8", py_code is None and sw.ok and sw.exit_code == 0 and sw.result == py, (rel, sw.payload, py))
+            else:
+                check(
+                    "B8",
+                    py_code == code and sw.error == code and sw.exit_code == 3,
+                    (rel, py_code, sw.payload),
+                )
+                if rel.startswith("~/") and home_text is not None:
+                    check("B8", sw.result != home_text and py != home_text, rel)
+        for blank_root in ("", "   "):
+            try:
+                read_text(blank_root, "hello.txt")
+            except ReadError as exc:
+                py_code = exc.code
+            except OSError as exc:
+                check("B8", False, f"bare OSError {exc}")
+                continue
+            else:
+                py_code = None
+            sw = swift_read(blank_root, "hello.txt")
+            check(
+                "B8",
+                py_code == "invalid_params" and sw.error == "invalid_params" and sw.exit_code == 3,
+                (blank_root, py_code, sw.payload),
+            )
+        loop = root / "loop"
+        try:
+            loop.symlink_to("loop")
+        except OSError as exc:
+            print(f"[SKIP] B8 symlink loop not created: {exc}")
+        else:
+            try:
+                read_text(str(root), "loop")
+            except ReadError as exc:
+                py_code = exc.code
+            except OSError as exc:
+                check("B8", False, f"bare OSError {exc}")
+                py_code = None
+            else:
+                py_code = "succeeded"
+            sw = swift_read(str(root), "loop")
+            check(
+                "B8",
+                py_code == "read_failed" and sw.error == "read_failed" and sw.exit_code == 3,
+                (py_code, sw.payload),
+            )
 
 
 def pi_lines(text: str) -> list[str]:
@@ -429,6 +706,13 @@ def run_c() -> None:
         c3b_expected = f"\n\n[{len(lines)} more lines in file. Use offset=1 to continue.]"
         check("C3b", c3b.ok and c3b.result == c3b_expected, c3b.result)
         check("C3b", c3b.result is not None and "line one" not in c3b.result)
+        for neg in (-1, -99):
+            c3e = pi_read(fixture_root, "hello.txt", limit=neg)
+            check(
+                "C3e",
+                c3e.ok and c3e.result == c3b.result and c3e.result is not None and "line one" not in c3e.result,
+                (neg, c3e.result),
+            )
 
         wide = "b" * (20 * 1024)
         (tmp / "wide.txt").write_bytes("\n".join([wide] * 5).encode("utf-8"))
@@ -473,6 +757,23 @@ def run_c() -> None:
         )
         check("C5", c5.ok and c5.result == c5_expected, c5.result)
         check("C5", c5.result is not None and "Q" not in c5.result and "head -c 51200" in c5.result)
+        mib_name = "mib.txt"
+        (tmp / mib_name).write_bytes(b"Z" * (1024 * 1024))
+        c5b = pi_read(str(tmp), mib_name)
+        c5b_expected = (
+            "[Line 1 is 1.0MB, exceeds 50.0KB limit. "
+            f"Use bash: sed -n '1p' {mib_name} | head -c 51200]"
+        )
+        check("C5b", c5b.ok and c5b.result == c5b_expected, c5b.result)
+        check(
+            "C5b",
+            c5b.result is not None
+            and "1.0MB" in c5b.result
+            and "1024.0KB" not in c5b.result
+            and "head -c 51200" in c5b.result
+            and "Z" not in c5b.result,
+            c5b.result,
+        )
 
         outside = pi_read(fixture_root, "../hello.txt")
         check("C6", outside.error == "path_outside_workspace" and outside.exit_code == 3)
@@ -480,6 +781,45 @@ def run_c() -> None:
         check("C6", absolute.error == "path_outside_workspace")
         tilde = pi_read(fixture_root, "~/hello.txt")
         check("C6", (not tilde.ok) and tilde.error == "read_failed" and tilde.result != hello, tilde.payload)
+        blank_path = pi_read(fixture_root, "")
+        check("C6", blank_path.error == "invalid_params" and blank_path.exit_code == 3, blank_path.payload)
+        blank_root = pi_read("", "hello.txt")
+        check("C6", blank_root.error == "invalid_params" and blank_root.exit_code == 3, blank_root.payload)
+        spaced_root = pi_read("   ", "hello.txt")
+        check("C6", spaced_root.error == "invalid_params" and spaced_root.exit_code == 3, spaced_root.payload)
+        nul_path = pi_read(fixture_root, "a\0b")
+        check("C6", nul_path.error == "path_outside_workspace" and nul_path.exit_code == 3, nul_path.payload)
+        rel_ok = pi_read(fixture_root, "hello.txt")
+        check("C6", rel_ok.ok and rel_ok.exit_code == 0, rel_ok.payload)
+        dotdot = pi_read(fixture_root, "foo/../hello.txt")
+        check("C6", dotdot.ok and dotdot.exit_code == 0 and dotdot.result == rel_ok.result, dotdot.payload)
+        fenced = tmp / "c6root"
+        fenced.mkdir()
+        outside_link = tmp / "secret-outside.txt"
+        outside_link.write_bytes(b"secret-outside\n")
+        (fenced / "escape").symlink_to(outside_link)
+        escaped = pi_read(str(fenced), "escape")
+        check("C6", escaped.error == "path_outside_workspace" and escaped.exit_code == 3, escaped.payload)
+        loop = fenced / "loop"
+        try:
+            loop.symlink_to("loop")
+        except OSError as exc:
+            print(f"[SKIP] C6 symlink loop not created: {exc}")
+        else:
+            looped = pi_read(str(fenced), "loop")
+            check("C6", looped.error == "read_failed" and looped.exit_code == 3, looped.payload)
+        (tmp / "nul.txt").write_bytes(b"a\x00b")
+        nul_body = pi_read(str(tmp), "nul.txt")
+        encoded = json.dumps(nul_body.payload)
+        check(
+            "C10",
+            nul_body.error == "read_failed"
+            and nul_body.exit_code == 3
+            and nul_body.message == "contains NUL"
+            and "result" not in nul_body.payload
+            and "\0" not in encoded,
+            nul_body.payload,
+        )
 
         marker = b"UNIQUE_IMAGE_BYTES_ZZZ"
         for name in ("x.png", "x.jpg", "x.jpeg", "x.gif", "x.webp", "x.bmp", "x.PNG"):
@@ -516,6 +856,22 @@ def run_c() -> None:
         )
         empty = run_line_json(["node", PI_SRC], {}, stdin=b"")
         check("C8", empty.error == "invalid_params" and empty.exit_code == 3)
+        pi_src = Path(PI_SRC).read_text()
+        check("C8", "writeSync" in pi_src and "process.stdout.write" not in pi_src, "emit source")
+        ok_proc = subprocess.run(
+            ["node", PI_SRC],
+            input=json.dumps({"root": fixture_root, "path": "hello.txt"}).encode(),
+            capture_output=True,
+        )
+        ok_frames = [line for line in ok_proc.stdout.split(b"\n") if line.strip()]
+        check("C8", ok_proc.returncode == 0 and len(ok_frames) == 1, (ok_proc.returncode, ok_proc.stdout))
+        err_proc = subprocess.run(
+            ["node", PI_SRC],
+            input=json.dumps({"root": fixture_root, "path": "../hello.txt"}).encode(),
+            capture_output=True,
+        )
+        err_frames = [line for line in err_proc.stdout.split(b"\n") if line.strip()]
+        check("C8", err_proc.returncode == 3 and len(err_frames) == 1, (err_proc.returncode, err_proc.stdout))
 
     pi_crlf = pi_read(fixture_root, "crlf.txt")
     raw = CRLF.decode("utf-8")
@@ -630,12 +986,16 @@ def run_ring() -> None:
     from server import get_server
     from v13.read_tools.setup_db import DB, main as setup_db
 
-    setup_db()
-    server = get_server()
-    conn = psycopg2.connect(server.get_uri(DB))
+    try:
+        setup_db()
+        server = get_server()
+        conn = psycopg2.connect(server.get_uri(DB))
+    except psycopg2.OperationalError as exc:
+        raise RingInfrastructureError(str(exc)) from exc
     conn.autocommit = False
     fixture_root = os.path.realpath(FIXTURES)
     ticks = {"n": 0}
+    beat_lines = {"n": 0}
     saved = {}
 
     def begin():
@@ -788,7 +1148,7 @@ def run_ring() -> None:
 
     def beat(sid, mode, swap=None, expect_terminal=False, phase=None):
         ticks["n"] += 1
-        check("ticks", ticks["n"] <= 16, ticks["n"])
+        check("ticks", ticks["n"] <= TICK_CAP, ticks["n"])
         snap = parse_fresh(sid, mode, phase)
         remaining = int(snap["remaining"])
         check(mode, remaining == 0, remaining)
@@ -825,6 +1185,7 @@ def run_ring() -> None:
         conn.commit()
         req = claim.get("request") or {}
         print(f"[beat] {mode} {claim['kind']} {req.get('handler') or req.get('reason')}")
+        beat_lines["n"] += 1
 
         completed = False
         flag = None
@@ -859,13 +1220,14 @@ def run_ring() -> None:
                     except ReadError as exc:
                         payload = {"error": exc.code, "message": exc.message}
                         st, flag = "failed", None
+            st, payload = jsonb_safe_result(st, payload)
             cur = begin()
             cur.execute("SET LOCAL lock_timeout='250ms'")
             cur.execute("SET LOCAL statement_timeout='5s'")
             got = complete(cur, claim, st, payload)
+            check(mode, got == "accepted", got)
             conn.commit()
             completed = True
-            check(mode, got == "accepted", got)
             if flag == "unknown":
                 raise AssertionError(f"unknown handler settled: {claim}")
             return {"advance": status, "claim": claim, "payload": payload, "status": st}
@@ -902,6 +1264,11 @@ def run_ring() -> None:
 
     src = inspect.getsource(dispatch_handler)
     check("D14", "FROM tools" not in src, src)
+    beat_src = inspect.getsource(beat)
+    accepted_at = beat_src.index('got == "accepted"')
+    commit_at = beat_src.index("conn.commit()", accepted_at)
+    completed_at = beat_src.index("completed = True")
+    check("D14", accepted_at < commit_at < completed_at, (accepted_at, commit_at, completed_at))
 
     cur = begin()
     cur.execute("SELECT set_config('typesafe.provider', 'mock', false)")
@@ -1271,6 +1638,36 @@ def run_ring() -> None:
         conn.rollback()
         check("D16", rtype == "string" and decoded == "true", (rtype, decoded, step.get("payload")))
 
+    with tempfile.TemporaryDirectory(prefix="v13read-d17-") as raw:
+        nul = Path(raw) / "nul.txt"
+        nul.write_bytes(b"a\x00b")
+        cur = begin()
+        nul_sid = open_session(cur, "Read the zero byte token file")
+        conn.commit()
+        step = beat(nul_sid, "literal", swap={"root": raw, "path": "nul.txt"}, phase="tool")
+        cur = begin()
+        effect = q1(
+            cur,
+            "SELECT status FROM effects WHERE effect_id=%s::uuid",
+            (step["claim"]["effect_id"],),
+        )
+        err = q1(
+            cur,
+            "SELECT result->>'error' FROM effects WHERE effect_id=%s::uuid",
+            (step["claim"]["effect_id"],),
+        )
+        tool_results = q1(
+            cur,
+            "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+            (nul_sid,),
+        )
+        sess = q1(cur, "SELECT status FROM sessions WHERE session_id=%s", (nul_sid,))
+        conn.rollback()
+        check("D17", step["status"] == "failed" and step["payload"]["error"] == "read_failed", step)
+        check("D17", effect == "failed" and err == "read_failed", (effect, err))
+        check("D17", tool_results == 0, tool_results)
+        check("D17", sess not in ("completed", "failed", "cancelled"), sess)
+
     cur = begin()
     check("D12", q1(cur, "SELECT current_setting('typesafe.provider', true)") == "mock")
     conn.rollback()
@@ -1296,8 +1693,15 @@ def run_ring() -> None:
     )
     end_count = q1(cur, "SELECT count(*) FROM tools")
     end_rev = q1(cur, "SELECT revision FROM v13_tools_meta WHERE singleton")
+    cur.execute(
+        "SELECT name FROM tools WHERE name IN ('read_pi', 'read_file_swift', 'read_file_py', 'read_duck')"
+    )
+    still = [row[0] for row in cur.fetchall()]
+    check("E1", still == [], still)
     check("E1", end_count == saved["base_count"], (end_count, saved["base_count"]))
-    check("E1", end_rev > after_rev, (after_rev, end_rev))
+    check("E1", end_rev == after_rev + len(TOOL_ROWS), (after_rev, end_rev, len(TOOL_ROWS)))
+    check("D18", beat_lines["n"] == EXPECTED_TICKS, beat_lines["n"])
+    check("D18", TICK_CAP >= EXPECTED_TICKS + 4, (TICK_CAP, EXPECTED_TICKS))
     conn.commit()
     conn.close()
 
@@ -1321,30 +1725,44 @@ def run_ring() -> None:
         "max_cycles=6",
         ".duck-venv",
         "FIB_RENDER",
+        "docs/designs/v13-tool-ports.md",
+        "TP-WIRE-3",
+        "TP-FS-5",
+        "TP-DUCK-3",
     ):
         check("E3", needle in readme, needle)
 
 
 def run_f() -> None:
     inventory = duck_inventory()
+    platform = inventory["platform"]
     check(f"F1 {PIN_LABEL}", inventory["duckdb"] == EXPECTED_DUCKDB_VERSION, inventory["duckdb"])
-    check(f"F1 {PIN_LABEL}", inventory["platform"] == EXPECTED_PLATFORM, inventory["platform"])
+    check(f"F1 {PIN_LABEL}", platform in PINS_BY_PLATFORM, platform)
+    pins = PINS_BY_PLATFORM[platform]
     found = {row[0]: row for row in inventory["rows"]}
-    for name, pin in EXPECTED_EXTENSIONS.items():
+    for name, pin in pins.items():
         row = found.get(name)
         check(f"F1 {PIN_LABEL}", row is not None and row[1] == pin["version"] and row[2] is True, row)
-        binary = EXTENSION_CACHE / f"{name}.duckdb_extension"
+        binary = EXTENSION_ROOT / f"v{EXPECTED_DUCKDB_VERSION}" / platform / f"{name}.duckdb_extension"
         digest = file_sha256(binary)
         check(f"F2 {PIN_LABEL}", digest == pin["sha256"], digest)
-        info = (EXTENSION_CACHE / f"{name}.duckdb_extension.info").read_bytes()
+        install = row[3]
+        check(
+            f"F1 {PIN_LABEL}",
+            install is not None and os.path.realpath(install) == os.path.realpath(binary),
+            (install, binary),
+        )
+        info = Path(str(binary) + ".info").read_bytes()
         check("F2", b"http://community-extensions.duckdb.org" in info, name)
         check("F2", pin["version"].encode() in info, name)
     src = DUCK_PORT.read_text()
     for needle in (
         "SET autoinstall_known_extensions=false",
         "SET autoload_known_extensions=false",
-        "LOAD sitting_duck",
-        "LOAD duck_block_utils",
+        "extension_directory",
+        "install_path",
+        "platform_unpinned",
+        "PRAGMA platform",
         "SET enable_external_access=false",
         "parse_ast(?, ?, peek := 'full')",
         "ast_to_blocks_from('ast')",
@@ -1352,8 +1770,12 @@ def run_f() -> None:
         "duck_blocks_validate",
     ):
         check("F2", needle in src, needle)
+    check("F2", 'LOAD sitting_duck"' not in src and 'LOAD duck_block_utils"' not in src)
     check("F2", "INSTALL " not in src and "allow_unsigned_extensions" not in src)
     check("F2", "read_contract" not in src)
+    main_at = src.index("def main")
+    main_body = src[main_at:]
+    check("F5b", main_body.index("language_for(") < main_body.index("read_utf8("), main_body)
 
     body = (FIXTURES / "fib.py").read_bytes()
     check("F3", body == FIB_BYTES and body.endswith(b"\n") and body.isascii(), body)
@@ -1416,6 +1838,34 @@ def run_f() -> None:
         check("F8", True)
     else:
         check("F8", False, "bad json")
+    ok_proc = subprocess.run(
+        duck_argv(),
+        input=json.dumps({"root": root, "path": "fib.py"}).encode(),
+        capture_output=True,
+    )
+    ok_frames = [line for line in ok_proc.stdout.split(b"\n") if line.strip()]
+    check("F8", ok_proc.returncode == 0 and len(ok_frames) == 1, (ok_proc.returncode, ok_proc.stdout))
+    err_proc = subprocess.run(
+        duck_argv(),
+        input=json.dumps({"root": root, "path": "../../etc/hosts"}).encode(),
+        capture_output=True,
+    )
+    err_frames = [line for line in err_proc.stdout.split(b"\n") if line.strip()]
+    check("F8", err_proc.returncode == 3 and len(err_frames) == 1, (err_proc.returncode, err_proc.stdout))
+    for blank_root in ("", "   "):
+        blank_reply = duck_read(blank_root, "fib.py")
+        try:
+            resolve_path(blank_root, "fib.py")
+            py_code = None
+        except ReadError as exc:
+            py_code = exc.code
+        check(
+            "F6",
+            py_code == "invalid_params"
+            and blank_reply.error == "invalid_params"
+            and blank_reply.exit_code == 3,
+            (blank_root, py_code, blank_reply.payload),
+        )
 
     with tempfile.TemporaryDirectory(prefix="v13read-f-") as raw_dir:
         tmp = Path(raw_dir)
@@ -1438,6 +1888,40 @@ def run_f() -> None:
         check("F9", bad.error == "read_failed" and bad.exit_code == 3, bad.payload)
         missing = duck_read(str(fenced), "missing.py")
         check("F9", missing.error == "read_failed" and missing.exit_code == 3, missing.payload)
+        missing_txt = duck_read(str(fenced), "missing.txt")
+        check("F5", missing_txt.error == "language_unsupported" and missing_txt.exit_code == 3, missing_txt.payload)
+        outside_png = duck_read(str(fenced), "/etc/outside.png")
+        check("F6", outside_png.error == "path_outside_workspace" and outside_png.exit_code == 3, outside_png.payload)
+        (fenced / "nul.py").write_bytes(b"a\x00b")
+        nul_py = duck_read(str(fenced), "nul.py")
+        check(
+            "F9",
+            nul_py.error == "read_failed"
+            and nul_py.error != "parse_failed"
+            and nul_py.exit_code == 3
+            and nul_py.message == "contains NUL",
+            nul_py.payload,
+        )
+        loop = fenced / "loop.py"
+        try:
+            loop.symlink_to("loop.py")
+        except OSError as exc:
+            print(f"[SKIP] F6 symlink loop not created: {exc}")
+        else:
+            try:
+                read_text(str(fenced), "loop.py")
+                py_code = None
+            except ReadError as exc:
+                py_code = exc.code
+            except OSError as exc:
+                check("F6", False, f"bare OSError {exc}")
+                py_code = "OSError"
+            looped = duck_read(str(fenced), "loop.py")
+            check(
+                "F6",
+                py_code == "read_failed" and looped.error == "read_failed" and looped.exit_code == 3,
+                (py_code, looped.payload),
+            )
         (fenced / "add.js").write_bytes(JS_BYTES)
         js = duck_read(str(fenced), "add.js")
         check(
@@ -1450,40 +1934,149 @@ def run_f() -> None:
     for needle in (
         "uv run python v13/read_tools/duck_bringup.py",
         EXPECTED_DUCKDB_VERSION,
-        EXPECTED_PLATFORM,
-        EXPECTED_EXTENSIONS["sitting_duck"]["version"],
-        EXPECTED_EXTENSIONS["duck_block_utils"]["version"],
-        EXPECTED_EXTENSIONS["sitting_duck"]["sha256"],
-        EXPECTED_EXTENSIONS["duck_block_utils"]["sha256"],
+        platform,
+        pins["sitting_duck"]["version"],
+        pins["duck_block_utils"]["version"],
+        pins["sitting_duck"]["sha256"],
+        pins["duck_block_utils"]["sha256"],
         "language_unsupported",
         "ast_to_blocks_from",
         "duck_blocks_to_text",
         "D1-A",
         "enable_external_access=false",
+        "extension_directory",
+        "install_path",
+        "platform_unpinned",
     ):
         check("F10", needle in readme, needle)
+    bringup = (ROOT / "duck_bringup.py").read_text()
+    check("F11", "used official" not in bringup and "PINS_BY_PLATFORM" in bringup)
+    check("F11", "INSTALL {name} FROM community" in bringup)
+    check("F11", 'INSTALL {name}")' not in bringup and "used official" not in bringup)
+
+
+def protected_dirty(paths: list[str]) -> list[str]:
+    bad = []
+    for name in paths:
+        if name in {"v13/load.py", "pyproject.toml", "uv.lock"} or (
+            name.startswith("v13/") and name.endswith(".sql")
+        ):
+            bad.append(name)
+    return bad
+
+
+def run_g() -> None:
+    import inspect
+
+    check("G1", classify_planes(True, True, "absent") == ["duck"])
+    check("G1", classify_planes(True, True, "ok") == [])
+    check("G1", classify_planes(False, True, "ok") == ["swift"])
+    check("G1", classify_planes(True, False, "ok") == ["node"])
+    check("G1", classify_planes(True, True, "unpinned") == [])
+    check("G1", exit_for(["duck"], True) == 1)
+    check("G1", exit_for(["duck"], False) == 2)
+    check("G1", exit_for([], False) == 0)
+    check("G1", "能跑的组先跑；断言失败退出 1；有跳过才退出 2" in (__doc__ or ""))
+    main_src = inspect.getsource(main)
+    check("G1", main_src.index("run_g()") < main_src.index("run_a()"))
+    diff = subprocess.run(
+        ["git", "diff", "--name-only", "HEAD", "--", "v13", "pyproject.toml", "uv.lock"],
+        cwd=AGENT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "--", "v13", "pyproject.toml", "uv.lock"],
+        cwd=AGENT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    check("G2", diff.returncode == 0 and untracked.returncode == 0, (diff.stderr, untracked.stderr))
+    names = [line for line in (diff.stdout + untracked.stdout).splitlines() if line.strip()]
+    bad = protected_dirty(names)
+    check("G2", not bad, bad)
+    spec = AGENT_ROOT / "docs" / "designs" / "v13-tool-ports.md"
+    check("G2", spec.is_file(), spec)
+    readme = (ROOT / "README.md").read_text()
+    check("G2", "原 E2 由 G2 执行" in readme, "readme")
+    failed_status, failed_payload = jsonb_safe_result("succeeded", "a\x00b")
+    check(
+        "G3",
+        failed_status == "failed"
+        and failed_payload == {"error": "read_failed", "message": "contains NUL"},
+        (failed_status, failed_payload),
+    )
+    same_status, same_payload = jsonb_safe_result("succeeded", "hello")
+    check("G3", same_status == "succeeded" and same_payload == "hello")
+    bad_status, bad_payload = jsonb_safe_result("failed", {"error": "read_failed", "message": "bad\x00byte"})
+    check(
+        "G3",
+        bad_status == "failed" and bad_payload == {"error": "read_failed", "message": "contains NUL"},
+        bad_payload,
+    )
+
+
+def run_e4() -> None:
+    proc = subprocess.run(
+        ["bash", "-lc", E4_DISCOVER],
+        cwd=AGENT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    check("E4", proc.returncode == 0, proc.stderr)
+    paths = [line for line in proc.stdout.splitlines() if line.strip()]
+    check("E4", paths and "v13/read_tools/test_read_tools.py" not in paths, paths)
+    failed = []
+    for path in paths:
+        try:
+            child = subprocess.run(
+                ["uv", "run", "python", path],
+                cwd=AGENT_ROOT,
+                timeout=600,
+                env={**os.environ, "UV_FROZEN": "1"},
+            )
+        except subprocess.TimeoutExpired:
+            print(f"[E4] {path} → timeout")
+            failed.append((path, "timeout"))
+            continue
+        print(f"[E4] {path} → {child.returncode}")
+        if child.returncode != 0:
+            failed.append((path, child.returncode))
+    check("E4", not failed, failed)
 
 
 def main(argv: list[str]) -> int:
     contract = "--contract" in argv
-    if not toolchain_present() or not duck_toolchain_present():
-        print("[SKIP] not_run/toolchain_absent")
-        return 2
+    failed = False
+    skipped: list[str] = []
     try:
+        run_g()
         run_a()
-        run_b()
-        run_c()
-        if not contract:
+        swift_ok = command_ok(["swift", "--version"])
+        node_ok = command_ok(["node", "--version"])
+        duck_status = duck_probe()
+        skipped = classify_planes(swift_ok, node_ok, duck_status)
+        if swift_ok:
+            run_b()
+        if node_ok:
+            run_c()
+        if duck_status in ("ok", "unpinned"):
+            run_f()
+        if not contract and not skipped:
             run_ring()
-        run_f()
+            run_e4()
     except AssertionError as exc:
         print(exc)
-        return 1
-    except Exception as exc:
-        if exc.__class__.__name__ == "OperationalError":
-            print(exc)
-            return 1
-        raise
+        failed = True
+    except RingInfrastructureError as exc:
+        print(exc)
+        failed = True
+    if failed:
+        return exit_for(skipped, True)
+    if skipped:
+        ring = "" if contract else " ring"
+        print(f"[SKIP] not_run/toolchain_absent planes={','.join(skipped)}{ring}")
+        return exit_for(skipped, False)
     return 0
 
 
