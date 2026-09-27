@@ -279,3 +279,15 @@ stage 25（2026-09-27）补了 F29，进「改变」桶注记（不改上文计�
 - L29 已补（stage 29）：到顶时批量路径不调用 spawn，tool/call 留置，直调仍 RAISE。无并发复活且非 explore 时不 RAISE。复活窗口不承诺零 RAISE 或绝对不超售（台账 PC-8）。禁止写成「spawn 函数已不再报 cap」。
 
 `uv run python v13/govern/test_govern.py` 退出码 0。合同已证明。驱动器与 UI 未交付。
+
+parity 套件 stage 29 实测（`demo_v13/parity/parity_all.py` 15/15 退出码 0），不改上文计数表：
+
+- L26：`g_should_run.py` 真 LLM 活动后门真则 advance `progressed` 并派生子会话；窗内收据与能力差非空各使 advance `waiting`、零新 effect。
+- L6：同组窗内计次、滑出不计、不沿树；无 `quota/spent|voided`。
+- L37：资格为真不写 reward 事件，也不改审批。
+- L38：能力差非空停泊；`human_reward` 不改已完成的 llm effect。
+- L5：`g_attention.py` human 阻塞先于可跑、终态沉底；两次调用零事件、next_seq 不前移。
+- L21：同组 hint 三值各一例；不注册 `cron.job`。
+- L32：`g_govern.py` 指纹落事件、status 不变、行还在；recover 零 nudge；advance 零新 effect；resume 只追加；指纹不符零写。
+- L27：同组灭活 `handoff_policy` 后 extract 拒、零写。
+- L29：同组到顶 advance `waiting`、tool/call 留置、不 RAISE cap；直调仍 `v13: spawn budget cap`；explore 仍 `v13: explore spawn`。
