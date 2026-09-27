@@ -7,7 +7,7 @@ const PI_READ_TS = "/Users/wxl/Projects/pi/packages/coding-agent/src/core/tools/
 const PI_PKG = "/Users/wxl/Projects/pi/packages/coding-agent/package.json";
 const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp"]);
 
-register(new URL("./pi_resolve_hook.mjs", import.meta.url));
+await register(new URL("./pi_resolve_hook.mjs", import.meta.url));
 
 class ToolError extends Error {
   constructor(code, message) {
@@ -138,16 +138,28 @@ function textFromToolResult(executed) {
   return block.text;
 }
 
-async function readViaFramework(rootReal, rawPath, offset, limit) {
+function restoreCallerPathInBashHint(text, executedPath, callerPath) {
+  if (executedPath === callerPath) {
+    return text;
+  }
+  const marker = "sed -n '";
+  const at = text.lastIndexOf(marker);
+  if (at < 0 || !text.slice(at).includes(executedPath)) {
+    return text;
+  }
+  return text.slice(0, at) + text.slice(at).split(executedPath).join(callerPath);
+}
+
+async function readViaFramework(rootReal, absolutePath, callerPath, offset, limit) {
   const mod = await import(pathToFileURL(PI_READ_TS).href);
   if (typeof mod.createReadTool !== "function") {
     throw new ToolError("read_failed", "createReadTool is not exported");
   }
   const tool = mod.createReadTool(rootReal);
   process.stderr.write(
-    `pi_ports evidence: package=@earendil-works/pi-coding-agent version=${piVersion()} createReadTool=${PI_READ_TS} tool=${tool.name} execute=AgentTool.execute\n`,
+    `pi_ports evidence: package=@earendil-works/pi-coding-agent version=${piVersion()} createReadTool=${PI_READ_TS} tool=${tool.name} execute=AgentTool.execute path=fenced-absolute\n`,
   );
-  const params = { path: rawPath };
+  const params = { path: absolutePath };
   if (offset !== undefined) {
     params.offset = offset;
   }
@@ -156,7 +168,7 @@ async function readViaFramework(rootReal, rawPath, offset, limit) {
   }
   try {
     const executed = await tool.execute("pi-ports-read", params);
-    return textFromToolResult(executed);
+    return restoreCallerPathInBashHint(textFromToolResult(executed), absolutePath, callerPath);
   } catch (err) {
     if (err instanceof ToolError) {
       throw err;
@@ -204,7 +216,13 @@ async function main() {
     throw new ToolError("image_unsupported", "image files are not supported");
   }
   validateTextBytes(fenced.absolutePath);
-  const result = await readViaFramework(fenced.rootReal, req.path, takeInt(req.offset), limit);
+  const result = await readViaFramework(
+    fenced.rootReal,
+    fenced.absolutePath,
+    req.path,
+    takeInt(req.offset),
+    limit,
+  );
   emit({ ok: true, result }, 0);
 }
 

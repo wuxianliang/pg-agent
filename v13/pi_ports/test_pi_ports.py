@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -69,23 +70,18 @@ def run_guard() -> None:
     check("G0", "createReadTool" in src and "AgentTool.execute" in src, "framework call")
     check("G0", "function truncateHead" not in src and "truncateHead(" not in src, "no copied truncate")
     check("G0", "writeSync" in src and "process.stdout.write" not in src, "emit source")
-    check("G0", PI_READ.is_file(), PI_READ)
+    check("G0", "path: absolutePath" in src, "fenced path is what execute sees")
     load = (AGENT_ROOT / "v13" / "load.py").read_text()
     check("G0", "pi_ports" not in load, "load.py")
-    diff = subprocess.run(
+    names = []
+    for argv in (
         ["git", "diff", "--name-only", "HEAD", "--", "v13", "pyproject.toml", "uv.lock"],
-        cwd=AGENT_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    untracked = subprocess.run(
+        ["git", "diff", "--name-only", "HEAD^", "HEAD", "--", "v13", "pyproject.toml", "uv.lock"],
         ["git", "ls-files", "--others", "--exclude-standard", "--", "v13", "pyproject.toml", "uv.lock"],
-        cwd=AGENT_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    check("G2", diff.returncode == 0 and untracked.returncode == 0, (diff.stderr, untracked.stderr))
-    names = [line for line in (diff.stdout + untracked.stdout).splitlines() if line.strip()]
+    ):
+        proc = subprocess.run(argv, cwd=AGENT_ROOT, capture_output=True, text=True)
+        check("G2", proc.returncode == 0, (argv, proc.stderr))
+        names.extend(line for line in proc.stdout.splitlines() if line.strip())
     bad = protected_dirty(names)
     check("G2", not bad, bad)
 
@@ -225,6 +221,27 @@ def run_c() -> None:
         loop.symlink_to("loop")
         looped = pi_read(str(fenced), "loop")
         check("C6", looped.error == "read_failed" and looped.exit_code == 3, looped.payload)
+        outside_dir = tmp / "outside-dir"
+        outside_dir.mkdir()
+        (outside_dir / "secret.txt").write_bytes(b"SENTINEL-DIRLINK\n")
+        (fenced / "inside.txt").write_bytes(b"inside-hello\n")
+        (fenced / "out").symlink_to(outside_dir, target_is_directory=True)
+        dir_escape = pi_read(str(fenced), "out/secret.txt")
+        check(
+            "C6d",
+            dir_escape.error == "path_outside_workspace"
+            and dir_escape.exit_code == 3
+            and "SENTINEL-DIRLINK" not in json.dumps(dir_escape.payload),
+            dir_escape.payload,
+        )
+        dir_dotdot = pi_read(str(fenced), "out/../inside.txt")
+        check(
+            "C6d",
+            dir_dotdot.ok
+            and dir_dotdot.result == "inside-hello\n"
+            and "SENTINEL-DIRLINK" not in (dir_dotdot.result or ""),
+            dir_dotdot.payload,
+        )
         (tmp / "nul.txt").write_bytes(b"a\x00b")
         nul_body = pi_read(str(tmp), "nul.txt")
         encoded = json.dumps(nul_body.payload)
@@ -284,6 +301,50 @@ def run_c() -> None:
     raw = CRLF.decode("utf-8")
     by_lf = "\n".join(raw.split("\n"))
     check("C9", pi_crlf.ok and pi_crlf.result != HEADLESS_CRLF and pi_crlf.result == by_lf, pi_crlf.result)
+    crlf_lines = raw.split("\n")
+    crlf_limit = pi_read(fixture_root, "crlf.txt", limit=1)
+    crlf_expected = (
+        f"{crlf_lines[0]}\n\n[{len(crlf_lines) - 1} more lines in file. Use offset=2 to continue.]"
+    )
+    check(
+        "C9",
+        crlf_limit.ok
+        and crlf_limit.result == crlf_expected
+        and crlf_limit.result.startswith("alpha\r")
+        and "beta" not in crlf_limit.result.split("[", 1)[0],
+        crlf_limit.result,
+    )
+    run_tilde()
+
+
+def run_tilde() -> None:
+    with tempfile.TemporaryDirectory(prefix="v13pi-tilde-") as raw:
+        tmp = Path(raw)
+        root = tmp / "root"
+        home = tmp / "home"
+        (root / "~").mkdir(parents=True)
+        home.mkdir()
+        (root / "~" / "sentinel").write_bytes(b"sentinel-A\n")
+        (home / "sentinel").write_bytes(b"sentinel-B\n")
+        proc = subprocess.run(
+            NODE,
+            input=json.dumps({"root": str(root), "path": "~/sentinel"}).encode(),
+            capture_output=True,
+            timeout=60,
+            env={**os.environ, "HOME": str(home), "USERPROFILE": str(home)},
+        )
+        stdout = proc.stdout.decode("utf-8", "replace")
+        stderr = proc.stderr.decode("utf-8", "replace")
+        check("P0", proc.returncode == 0 and stdout.strip(), (proc.returncode, stdout, stderr))
+        payload = json.loads(stdout.splitlines()[0])
+        check(
+            "P0",
+            payload.get("ok") is True
+            and payload.get("result") == "sentinel-A\n"
+            and "sentinel-B" not in stdout
+            and "sentinel-B" not in stderr,
+            payload,
+        )
 
 
 def run_catalog() -> None:
