@@ -264,3 +264,18 @@ stage 24（2026-09-27）补了 F8 与 F18，进「改变」桶注记（不改上
 stage 25（2026-09-27）补了 F29，进「改变」桶注记（不改上文计数表，不把这条改标成一模一样）：
 
 - F29 已补：`v13_extract_handoff` 先授权再写 `control/handoff` 收据。不产 XML，不水合文件，不替代 `v13_fork`。窗口是整段前缀不是源尾窗（台账 F30）。`uv run python v13/handoff/test_handoff.py` 退出码 0。Phase B 六动词以 `SET ROLE v13_route` 走通：observe / session_log / user/message 注入 / 6 参 complete / 2 参 cancel / authorized / extract。合同已证明。驱动器未交付。parity 套件 handoff 组实测覆盖。
+
+## Phase C 状态
+
+不改上文 2026-09-26 的 13/29/29 计数表。下列条目从「完全没实现」进「改变」桶注记，不改标成一模一样。
+
+- L26 已补（stage 26）：`v13_should_run` / `v13_should_run_gate`。advance 三读点，假则零新 effect。`uv run python v13/should_run/test_should_run.py` 退出码 0。
+- L6 已补（stage 27）：`v13_quota_eligible`。窗内 `turn/material_spent` 重算，不写 `quota/spent|voided`。松种子不是产品额度（台账 PC-3）。
+- L38 已补（stage 27）：`v13_missing_capabilities`。`human_reward` 不改已判行。
+- L5 已补（stage 28）：`v13_attention`。秩是输出列，不是调度（台账 PC-6）。stage 29 增 `lifecycle` 列，仍不落表。
+- L21 已补（stage 28，stage 29 加 stopped → `dont_notify`）：`v13_scheduler_hint`。不注册 `cron.job`。禁止写成「pg_cron 已在生产调度」（台账 PC-5）。
+- L32 已补（stage 29）：`v13_goal_stop` / `v13_goal_resume` + `v13_goal_fingerprint`。停 ≠ cancel ≠ 删行。不换体 `v13_state_hash`（台账 PC-7）。无 UI。
+- L27 已补其政策回归（stage 25 写门，stage 29 只回归）：缺政策 / `enabled=false` 仍拒。`goal/*` 不进 transcript 排除名单。不新写门。
+- L29 已补（stage 29）：到顶时批量路径不调用 spawn，tool/call 留置，直调仍 RAISE。无并发复活且非 explore 时不 RAISE。复活窗口不承诺零 RAISE 或绝对不超售（台账 PC-8）。禁止写成「spawn 函数已不再报 cap」。
+
+`uv run python v13/govern/test_govern.py` 退出码 0。合同已证明。驱动器与 UI 未交付。

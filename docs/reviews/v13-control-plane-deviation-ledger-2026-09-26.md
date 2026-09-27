@@ -151,3 +151,5 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | PC-4 | 计次不沿树（R13 D9）。`v13_quota_eligible` 只计本会话 `turn/material_spent`。子会话收据不改变父会话布尔。树上席位仍只由 `spawn_budget` 管 | 接受。不与席位预算混成第二套树计次 |
 | PC-5 | hint 不是 ack，本 stage 不注册 cron（R13 L21）。`v13_scheduler_hint` 可重复调用，不写事件、不推进 `next_seq`、不插入 `cron.job`。`run_now` 不是入队许可 | 接受。仓库外 driver 若存在，必须读 hint 且仅 `run_now` 才 `v13_advance`；advance 体内再判一次。禁止写成「pg_cron 已在生产调度」 |
 | PC-6 | 秩是注意力不是调度（R13 L5）。`attention_rank` 只作输出列，human 阻塞先于可跑，终态沉底。hint 不是这个秩的第一名。返回行数预算不限制 `v_goal_tree` 源遍历 | 接受。不把秩接到 advance，不建成 VIEW 或投影表。传 1 仍扫全树；前移有界遍历须另裁 |
+| PC-7 | fingerprint 不改 `v13_state_hash`（R13 D15-A）。`v13_goal_fingerprint` 是新函数，八词无条件排除；`v13_state_hash` 继续计入五类独有排除。换体 state_hash 替代案已否决 | 接受。stop 必须改变 `v13_state_hash`。不把 `goal/*` 塞进 state_hash 排除名单做绿。`v13_transcript_hash` 仍只排除 `control/handoff` |
+| PC-8 | L29 留置 tool/call，直调仍 RAISE（R13 L29、小题⑨）。无并发复活且非 explore 时，到顶 advance 不 RAISE；explore 误用仍 `v13: explore spawn`。终态兄弟被 `user/message` 复活的窗口不承诺零 RAISE，也不承诺绝对不超售 | 接受。不删 `v13_spawn_subsession` 的 cap RAISE，不把该 RAISE 接住当成 skip。复活窗口记 `test_revive_race_backstop`，不标「不超售」已闭合 |

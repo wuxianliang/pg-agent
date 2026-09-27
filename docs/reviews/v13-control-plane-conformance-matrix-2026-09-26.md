@@ -96,3 +96,11 @@
 | 75 | 双调用 `next_seq` 不变、无 `scheduler_ack`、无新 events；`cron.job` 不存在则跳过；hint 之后翻 `allowed=0`，advance 仍 `waiting` 且零新 effect | ✅ | 同上 | 禁止写成「pg_cron 已在生产调度」 |
 | 76 | GRANT 只给 `v13_route`；snapshot route 可执行，worker/PUBLIC/recall/resolve/spawn_owner 不可且 `provolatile=s`；大树 501 行成功并记录耗时、不断言阈值 | ✅ | 同上。501 行约 96ms | spawn_owner 的 snapshot 授权留 stage 29 |
 | 77 | stage 1–28 回归 | ✅ | 2026-09-27 schema…attention 全部 `test_*.py` 串行退出码均 0（29 脚本，含 mgraph 两脚本） | 无 |
+| 78 | stage 29 指纹方向：无排除事件时 `v13_goal_fingerprint` = `v13_state_hash`；仅 `session/*` 仍相等；五类独有排除必不等；stop 改变 state_hash、不改变 fingerprint | ✅ | 2026-09-27 `uv run python v13/govern/test_govern.py` 退出码 0（228 checks） | 不换体 `v13_state_hash`（台账 PC-7） |
+| 79 | 转移与授权：重复 stop / 过早 resume / 终态 → `v13: goal lifecycle`；漂移 → `v13: goal fingerprint`；在途 → `v13: goal busy`（终态先于 busy）；非 operator → `v13: session not found`；`SET ROLE v13_route` 真 COMMIT；stop 不改 status | ✅ | 同上 | 无 UI。禁止写成「目标已可在 UI 停复」 |
+| 80 | stop 后 recover 零 nudge；cancel 仍 closeout `'terminal'`；duty=0 未停时 recover 跳过不变；stopped 不写 `triage/hold` | ✅ | 同上 | 停 ≠ `duty_cycle=0` |
+| 81 | 到顶批量路径 `'waiting'`、tool/call 留置、无 `spawn_fanout`；直调仍 `v13: spawn budget cap`；fanout/depth 同翻转且直调仍 RAISE；explore 到顶仍 `v13: explore spawn`；复活窗口捕获 cap RAISE 且不被吞成 waiting | ✅ | 同上 | 无并发复活且非 explore 时不 RAISE。复活窗口不承诺零 RAISE 或绝对不超售（台账 PC-8） |
+| 82 | handoff 回归：未停 extract 成功；`enabled=false` → `v13: handoff disabled`；零 active → `v13: handoff policy`；同身份重放返回原载荷；stop 不增加 handoff 行；NULL cutoff 的 hash 与 delivery 在 stop 后变化（`goal/*` 不进 transcript 排除名单） | ✅ | 同上。stage 25 `v13/handoff/test_handoff.py` 回归退出码 0（240 checks） | 不新写门。驱动器未交付 |
+| 83 | 折叠只在 `v13_goal_fold`；`v13_goal_lifecycle` 薄包装；空会话 `running` 非 NULL；attention 增 `lifecycle` 列，stopped 行 `blocked_by=goal_stopped` 且秩先于 quota 兄弟 | ✅ | 同上 | 索引 `ix_events_goal_lifecycle` 非 UNIQUE |
+| 84 | stage 29 `test_govern.py` | ✅ | 2026-09-27 `uv run python v13/govern/test_govern.py` 退出码 0（228 checks） | RED 基线记 `v13/govern/README.md`（HEAD `8678ebf`，`v13: spawn budget cap`） |
+| 85 | stage 1–29 回归 | ✅ | 2026-09-27 schema…govern 全部 `test_*.py` 串行退出码均 0（30 脚本，含 mgraph 两脚本） | 无 |
