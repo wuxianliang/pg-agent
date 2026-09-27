@@ -254,13 +254,13 @@ F9 的 `replay` 与 routed llm 的 `unsupported` 不要记成未裁。它们和�
 
 不改上文 2026-09-26 计数表。F17 仍留在 §2.3「完全没实现」。
 
-stage 23（2026-09-27）补了 F17 的 SQL 合同：`v13_control_authorized`，以及 `v13_cancel` / `v13_complete` 的 actor overload。`uv run python v13/acl/test_acl.py` 退出码 0。合同已证明。仓库内驱动器未在 agent 路径传 actor，未交付。不得写成「F17 已在生产路径生效」。③ 例外与 parity F17「失败一律 session not found」的字面冲突记台账 C15：operator 且空 actor 且目标无行保留活体 needle。
+stage 23（2026-09-27）补了 F17 的 SQL 合同：`v13_control_authorized`，以及 `v13_cancel` / `v13_complete` 的 actor overload。`uv run python v13/acl/test_acl.py` 退出码 0。合同已证明。仓库内驱动器未在 agent 路径传 actor，未交付。不得写成「F17 已在生产路径生效」。③ 例外与 parity F17「失败一律 session not found」的字面冲突记台账 C15：operator 且空 actor 且目标无行保留活体 needle。parity 套件 acl 组实测覆盖。
 
 stage 24（2026-09-27）补了 F8 与 F18，进「改变」桶注记（不改上文计数表，不把这两条改标成一模一样）：
 
-- F8 已补：`v13_observe(actor, ids[])` 全有或全无。无 waiter。「第一个 interesting 胜」由驱动器在返回行上选。`uv run python v13/observe/test_observe.py` 退出码 0。
-- F18 已补其 get_log 半：`v13_session_log` 先授权再读事件，不 join effects、不水合。`extract_handoff` 仍是 stage 25，不在本笔。
+- F8 已补：`v13_observe(actor, ids[])` 全有或全无。无 waiter。「第一个 interesting 胜」由驱动器在返回行上选。`uv run python v13/observe/test_observe.py` 退出码 0。parity 套件 observe 组实测覆盖。
+- F18 已补其 get_log 半：`v13_session_log` 先授权再读事件，不 join effects、不水合。`extract_handoff` 仍是 stage 25，不在本笔。parity 套件 observe 组实测覆盖。
 
 stage 25（2026-09-27）补了 F29，进「改变」桶注记（不改上文计数表，不把这条改标成一模一样）：
 
-- F29 已补：`v13_extract_handoff` 先授权再写 `control/handoff` 收据。不产 XML，不水合文件，不替代 `v13_fork`。窗口是整段前缀不是源尾窗（台账 F30）。`uv run python v13/handoff/test_handoff.py` 退出码 0。Phase B 六动词以 `SET ROLE v13_route` 走通：observe / session_log / user/message 注入 / 6 参 complete / 2 参 cancel / authorized / extract。合同已证明。驱动器未交付。
+- F29 已补：`v13_extract_handoff` 先授权再写 `control/handoff` 收据。不产 XML，不水合文件，不替代 `v13_fork`。窗口是整段前缀不是源尾窗（台账 F30）。`uv run python v13/handoff/test_handoff.py` 退出码 0。Phase B 六动词以 `SET ROLE v13_route` 走通：observe / session_log / user/message 注入 / 6 参 complete / 2 参 cancel / authorized / extract。合同已证明。驱动器未交付。parity 套件 handoff 组实测覆盖。
