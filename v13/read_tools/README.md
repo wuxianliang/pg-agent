@@ -156,7 +156,7 @@ ch8 练习 3：用 `tools.handler` 加一种 handler，只 INSERT 目录行再�
 
 - `v13_complete` 活体在 `v13/seam/v13_seam.sql:409`（计划写 419）。判定串是 `v13_record_worktree_released`。
 - `v13_advance` 活体在 `v13/triage/v13_triage.sql:561`，含 `WHEN 'finish'` 与 `v13_triage_prework`。`v13_claim` 在 `v13/fanout/v13_fanout.sql:266`。`v13_closeout` 在 `v13/spawn/v13_spawn.sql:585`，`turn/end.delivered` 在 `:748`。
-- `SQL_LOAD_ORDER` 现为 24 项（acl/observe 在 catalog 之后追加，均在 seam 之后），末项是 `v13/observe/v13_observe.sql`。`STAGE_THROUGH['seam']=21`，`load_stage(..., 'seam')` 仍停在 seam，不加载 catalog/acl/observe。计划写的「21 项、末项 seam」已过期。
+- `SQL_LOAD_ORDER` 现为 29 项（acl/observe/handoff/should_run/quota_window/attention/govern 依次在 catalog 之后追加，均在 seam 之后），末项是 `v13/govern/v13_govern.sql`。`STAGE_THROUGH['seam']=21`，`load_stage(..., 'seam')` 仍停在 seam，不加载 catalog 及其后任何 stage。计划写的「21 项、末项 seam」已过期。
 - `turn_budget` 种子仍是 `{"max_cycles": 3}`（`v13/schema/v13_core.sql:753`）。幸福路径在本库把它翻成 `max_cycles=6`，不改种子文件。`batch_questions` 仍是 32。加载到 seam 后 `tools` 基线是 7 行，含 `spawn_subsession`。裸根会话的 needed 是 10，不是计划写的 9（多一条 P1 的 `triage`）；D3 量的是插入前后的差 +8，不把 9 写死。插入后 needed 18，`18 <= batch_questions`（32）。
 
 resolve 的 `run_probes`（unreachable、timeout）未跳过。加载 seam 不需要额外 `stannum` GRANT。
