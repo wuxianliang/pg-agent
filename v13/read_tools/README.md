@@ -1,5 +1,7 @@
 # v13 read_tools
 
+> 权威：口岸合同以 `docs/designs/v13-tool-ports.md` 为准（合同版本 `v13/tool-port-contract-1`）。本文件是活台账。与规范冲突时以规范为准。本段不改变下文任何行为描述。
+
 M1 离线契约。Python 与 Swift 在 headless 契约上相等；Node 的 Pi 口岸只对照 Pi 文本读矩阵。DuckDB 平面的 `read_duck` 在 `--contract` 的 F 组对照，并作为第四个 `kind='tool'` 行进环（`worker:read_duck`）。单 root。不 spawn `pi`，不 spawn `repoprompt-mcp`。
 
 ## Gate

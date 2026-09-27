@@ -69,6 +69,7 @@ mini-dsh 的上游是 deepseek-harness；本教程的上游是**本仓库自己�
 
 ## 与仓库工件的关系
 
+- 口岸规范已冻结于 `docs/designs/v13-tool-ports.md`（合同版本 `v13/tool-port-contract-1`）；`docs/designs/v13-dev.md` 内核占位不动
 - 实现规范（冻结后）：`docs/designs/v13-dev.md`
 - 版本裁决依据：本仓库 `docs/designs/v8-dev.md`、`v10-dev.md`、`v12/README.md`
   及两轮 Oracle 批判（2026-09-18）
