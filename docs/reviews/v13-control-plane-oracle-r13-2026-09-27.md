@@ -54,7 +54,15 @@
 
 ## §3 文档落地
 
-- 计划：`docs/plans/v13-phase-c-governance-projections-plan-2026-09-27.md`（r40；终裁版待 §1.1 落定后出）。
+- 计划：`docs/plans/v13-phase-c-governance-projections-plan-2026-09-27.md`（r42 终裁版——含 R13c 两处验收口径修正）。
 - 批判稿：`docs/reviews/v13-phase-c-plan-critique-2026-09-27.md`（r19 时点处置注已更新）。
 - 台账：Phase C 编号（PC-1…PC-8 及新增主题）随各 stage 收尾分配；F27–F31/C15/C16 归 Phase B 不撞号。
 - 审核导出：`prompt-exports/oracle-review-2026-09-27-*.md`（gitignored，各轮全量）。
+
+## §4 R13c 微裁（2026-09-27，双通道；stage 26 开工停工两冲突）
+
+- 触发：stage 26 实施者按合同停工——当日 dump 与 r41 两处条文不可同时满足（停工报告全文在会话记录；证伪清单零命中、语句锡无漂移）。
+- **A（current_setting）**：绝对禁词误伤预存守卫——活体 advance 恰 1 处 `current_setting('statement_timeout', true)` 在唯一 EXCEPTION 的 query_canceled 臂（triage 底稿自带）。裁定：改差集断言（次数=1、调用文本逐字、臂语句文本仍为子串；prework=0；其余六词绝对零）；不删臂不写死行号。双通道采纳（grok 精确句入计划）。
+- **B（小题⑥正臂不可达）**：前缀三门（unknown/blocked_unknown、unconsumed_cancel、任一 ready/claimed）早退先于预检点，duty_cycle 门与预检条件互斥 → stage 26 无夹具可达正臂。裁定：双臂分阶段——负臂行为（duty=0 不预写）+ 源码断言（三合取项与 resolve/failed append 均在 prework 调用点前）在 stage 26；正臂行为验收入 stage 27 done-when；#43 注明源码在场≠正臂通过。施工形（预检代码）不动。双通道采纳。
+- 台账：C17（见偏差台账）。
+- 导出：`prompt-exports/oracle-review-2026-09-27-203023-*.md`。

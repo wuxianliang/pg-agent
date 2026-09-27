@@ -1,6 +1,6 @@
-# v13 Phase C 开发计划：L2 治理投影（stage 26 should_run + stage 27 quota_window + stage 28 attention + stage 29 govern）— R13 终裁版 r41（最终版：40 轮双车道审核 + R13b 决胜轮，双通道 APPROVE）
+# v13 Phase C 开发计划：L2 治理投影（stage 26 should_run + stage 27 quota_window + stage 28 attention + stage 29 govern）— R13 终裁版 r42（最终版：40 轮双车道审核 + R13b/R13c 决胜，双通道 APPROVE）
 
-> 状态：**终裁版 r41（最终版，可进入开工门槛）**。r0→r40 经 40 轮双车道审核（grokBuild `grok-4.7-build-fast-xhigh` + codex `gpt-5.6-sol@xhigh`；claude-fable 第三通道全程缺席，经用户 2026-09-27 指示由双通道收口、缺席记录在案）；第 40 轮双通道 APPROVE。**R13b 决胜轮（2026-09-27，同通道）裁定剩余两分歧：小题③ = 守卫同查 operator（grok 翻转——INSERT 面含 spawn_owner/triage_owner/handoff_owner 均在带外，「今日 route 在带内」是偶然闭包）；小题⑥ = `resolve/failed` 保留（grok 翻转——重取 snap 合同带不回 failed 字段，压掉即丢失唯一审计落库行）**。全部裁决见 `docs/reviews/v13-control-plane-oracle-r13-2026-09-27.md`（§0 收敛表 + R13b 补记）；逐轮修订史（r1–r40）见该记录与 `prompt-exports/oracle-review-2026-09-27-*.md`。本版已按采纳矩阵删除未采纳分支与条件施工语句；开工门槛 = Phase B 全绿 + §9 复核 GO + RED（L29）留证。基线（r6 时点）：handoff=25 已注册未提交，注册≠已绿。
+> 状态：**终裁版 r42（最终版，可开工）**。r41 经 R13c 微裁（2026-09-27，stage 26 开工停工两冲突处置：A=`current_setting` 改差集断言（预存 statement_timeout 守卫保留）；B=小题⑥审计豁免双臂分阶段（负臂+源码在 26，正臂行为在 27）——双通道采纳，见 R13 记录 §4；未采纳分支未回填）。其余历史：r0→r40 经 40 轮双车道审核（grokBuild + codex；claude-fable 全程缺席经用户指示双通道收口）；第 40 轮双通道 APPROVE；R13b 决胜（小题③查 operator/小题⑥保留）。开工门槛 = Phase B 全绿（✓ 26/26）+ §9 复核 GO（✓ B1–B14）+ RED（L29）留证（✓）。
 > 母计划：`docs/plans/v13-layered-control-roadmap-2026-09-26.md` §2.2 / §2.3 / §2.4 / §3 Phase C / §4 D9·D10·D15 / §5 红线。
 > 前序：Phase A 已提交（末笔 `f59058d`）。Phase B 计划 = `docs/plans/v13-phase-b-workflow-verbs-plan-2026-09-26.md`（R8 终裁版 **r11**（最终版））。**Phase B 施工中（r6 时点）**：stage 23 acl（`d33eed9`）与 stage 24 observe（`7b0e53c`）已提交；stage 25 handoff 文件已在工作区、`SQL_LOAD_ORDER` 已注册 25 项（末项 handoff=25）但**未提交**。开工前以 §9 复核时点的仓库为准。
 > 硬边界（不重开）：零新表零新列（含物化视图、投影表、概念缓存表，R4）；索引、只 RAISE 的守卫触发器、开放事件、STABLE/VOLATILE 函数不是新表；stage 1–20 SQL 文件字节冻结，行为变更只许后 stage `CREATE OR REPLACE`；events 是唯一干预通道；唯一推进函数是 `v13_advance`，不建第二运行时、不建 `v13_agent_run`；投影不授权（R1.5）；不把 `duty_cycle=0` 当成 L32；不写 `quota/spent|voided`；窗口时钟的**存储列**只用 `events.at`；外部 IO 不进事务；gate = `uv run python v13/<stage>/test_<name>.py` 退出码 0（Fake，不调真实 provider）；`SQL_LOAD_ORDER` 只在末尾追加。
@@ -14,7 +14,7 @@
 | Stage | 目录 | 交付 | Done when | 依赖 | 规模 |
 |---|---|---|---|---|---|
 | 26 | `v13/should_run/` | `v13_should_run_gate` + 布尔包装 `v13_should_run`；**`v13_policy_share`（五行策略锁 DEFINER helper，r35）**；策略行 `should_run`；`v13_advance` 与 `v13_triage_prework` 换体；`trg_sessions_parent_immutable`（小题⑧） | `test_should_run.py` 退出码 0 + 回归 1→25 全绿 + 收尾四件 | **D10-A、D10-B + 小题①⑥⑧**（r20 显式挂接：⑥ 决定 P-tail resolve/failed 行为、⑧ 决定守卫安装）+ Phase B 绿 + §9 GO；裁决前只许探针与文档 | 中 |
-| 27 | `v13/quota_window/` | `v13_quota_eligible`；`v13_missing_capabilities`；策略行 `quota_window`、`capabilities`；换体 `v13_should_run_gate` 增加两个 block 门；`v13_material_time_honest` + `trg_material_time_honest`（r32）；窗口部分索引是否建由 L6 裁决 | `test_quota_window.py` 退出码 0 + 回归 1→26 | **D9 已裁公式** + **L6 索引已裁（建）** + §1.9 残留已裁 + **D9-material-time 已裁①** + stage 26 | 中 |
+| 27 | `v13/quota_window/` | `v13_quota_eligible`；`v13_missing_capabilities`；策略行 `quota_window`、`capabilities`；换体 `v13_should_run_gate` 增加两个 block 门；`v13_material_time_honest` + `trg_material_time_honest`（r32）；窗口部分索引是否建由 L6 裁决 | `test_quota_window.py` 退出码 0 + 回归 1→26 + **小题⑥正臂行为验收（R13c-B）：quota/capability block id 存在、前缀三门不早退、duty<>0、snap.failed 非空、门假 → advance 先 append `resolve/failed` 随后 prework 单 gate 返 waiting、零新 effect、无 triage/hold** | **D9 已裁公式** + **L6 索引已裁（建）** + §1.9 残留已裁 + **D9-material-time 已裁①** + stage 26 | 中 |
 | 28 | `v13/attention/` | `v13_spawn_budget_snapshot`（r7）、`v13_attention(p_root, p_max_rows DEFAULT 512)`（r13 签名定稿）、`v13_scheduler_hint(p_sid)`；三函数同事务 REVOKE PUBLIC + GRANT `v13_route` | `test_attention.py` 退出码 0 + 回归 1→27 | **L5 排序键裁决**（r29：R13 记录须显式记「采纳 L5 推荐即接受已披露边界——返回行数预算不限制 `v_goal_tree` 源遍历；或要求前移有界遍历（另裁）」）+ stage 26（加载序上亦在 27 之后，不并行改 `SQL_LOAD_ORDER`） | 小 |
 | 29 | `v13/govern/` | `goal/stopped|resumed` + 守卫 + 恰一个部分索引；`v13_goal_fingerprint`；`v13_goal_lifecycle`；`v13_goal_stop` / `v13_goal_resume`；换体 `v13_should_run_gate`、`v13_recover_idle`、`v13_scheduler_hint`、`v13_advance`（L29）；`v13_attention` 增列用 DROP+CREATE（§1.7） | `test_govern.py` 退出码 0 + 回归 1→28 | **D15-A、D15-B、L29 + 小题②③④⑤⑦⑨⑩**（r20 显式挂接）+ stage 25 handoff 契约 + stage 26–28；裁决前只许探针与文档 | 大 |
 
@@ -772,7 +772,7 @@ v13_missing_capabilities(p_sid uuid) RETURNS TABLE (name text)
 
 - 最小 harness 前驱：本会话一条 succeeded 的 `harness_turn` tool effect，`v13_harness_request_ok` 为真（control `:143`），`result_kind=finish`，origin 等于当前 last user seq，无 open children，无 ready/claimed。duty 门 block 且 duty=0（或任何能让 `v13_should_run` 为假的已实现 block——此夹具用 duty block）。advance 返回 `'terminal'`，status `completed`。若有人把整个 harness 段包进门里，此用例失败。
 
-**审计豁免 `test_resolve_failed_audit_exemption`（R13b）**：duty=1 + 门假（duty block 测试版）+ snap.failed → advance `'waiting'`、`resolve/failed` **恰一条**、零新 effect、无 `triage/hold`；对照 duty=0 → 不预写（该事件零行——duty 分支行为不变的钉）。
+**审计豁免 `test_resolve_failed_audit_exemption`（R13b；R13c-B 双臂分阶段）**：stage 26 只验**负臂行为**——duty=0 时该预检不写 `resolve/failed`（事件零行，duty 分支行为不变的钉）；**源码验收**：预检的三个合取项（`v13_triage_duty()<>0` / `NOT public.v13_should_run(p_sid)` / `p_snap->>'failed' IS NOT NULL`）与 THEN 分支的 `resolve/failed` append 都位于 prework 调用点之前。**正臂行为（门假+duty<>0+snap.failed → 先 append resolve/failed 随后 prework 单 gate 返 waiting、零新 effect、无 triage/hold）写入 stage 27 的 done-when**——stage 26 无夹具可达（前缀三门早退先于预检点，duty_cycle 门与预检条件互斥），不得造非真门夹具。（r41 的双臂同阶段验收按 R13c-B 废止。）
 
 **入队被挡住 `test_continuation_suppressed`**
 
@@ -787,7 +787,7 @@ v13_missing_capabilities(p_sid uuid) RETURNS TABLE (name text)
 **源码差集 `test_source_delta`**
 
 - 测试进程保留安装前 dump（临时文件，不入库）。`v13_advance` 的 prosrc 与 dump 的差集只含：恰一处 `v13_policy_share()` 调用（**`IF jsonb_array_length(v_calls) > 0` 之外**、explore 后、任一 `v13_should_run` 之前）与**恰四处 `v13_should_run` 调用（r41）：P-spawn 一处 + approval 臂一处 + continuation 臂一处 + 审计豁免预检一处（prework 前，R13b）**；advance 在 prework 之后无任何 `v13_should_run`（P-tail 单 gate 只在 prework 内）；不含 `v_defer_spawn` 与 `v13_spawn_batch_allowed`（stage 29 对象）。`v13_triage_prework` 差集只含恰一处 gate（`IF v_dec='human'` 之前）。
-- 两函数 prosrc 不含 `goal/stopped`、`goal/resumed`、`v13_goal_lifecycle`、`quota/spent`、`quota/voided`、`current_setting`、`v13.control_actor`。
+- 换体后 `v13_advance` 的 prosrc 中，`current_setting` 的出现次数与当日 dump 相同，为 1。这一次调用的文本是 `current_setting('statement_timeout', true)`，且 dump 中唯一 EXCEPTION 的 query_canceled 臂语句文本仍整段留在换体后的 prosrc 中。断言比较出现次数、该调用文本，以及该臂语句文本仍作为子串存在。`v13_triage_prework` 换体后的 prosrc 中 `current_setting` 的出现次数为 0。`goal/stopped`、`goal/resumed`、`v13_goal_lifecycle`、`quota/spent`、`quota/voided`、`v13.control_actor` 在两函数 prosrc 中出现次数都为 0。（R13c-A：预存起时守卫臂不是预实现，差集不得新增也不得清洗；其余六词仍绝对零。）
 - 新函数 prosrc 不含 `INSERT`、`UPDATE`、`DELETE`、`v13_append_event`。
 - 新 SQL 文件不含 `CREATE TABLE`、`CREATE VIEW`、`MATERIALIZED`、`ALTER TABLE`、`LISTEN`、`pg_terminate_backend`、`pg_sleep`。
 - `v13_should_run` 的 prosrc 不含门 id 字面量（字面量只在 gate 函数）。
@@ -1139,7 +1139,7 @@ v13_missing_capabilities(p_sid uuid) RETURNS TABLE (name text)
 | 40 | cap 留置会话 hint 落 run_now，driver 空转；或 3.5 分支 requested/root 走法与 advance 不一致误判 | `test_hint_matrix` 的非根超 cap / 预算恢复两臂 |
 | 41 | wrapper 体内未限定业务名（`FROM sessions`/`hashtext(` 裸用）或 pg_temp 未排末位 | proconfig/prosrc 断言（r18） |
 | 42 | **仅 §1.9bis 裁①；裁②则本行随具名 writer 重写，不得再要求 `trg_material_time_honest`**。超户滑出绿 + route 未来插不进，或 (txn, clock] 缝/route 放行臂未钉，误当守卫已证明 | `test_material_backfill_rejected` **七臂**（txn-30h / clock+60s / **SET ROLE route** 新事务省略 at / clock-90s / (txn,clock] 缝（statement_timeout=0）/ 超户行仍在且 at 不改写 / 61s 长事务）+ 源码可执行式断言 |
-| 43 | 门假时 resolve/failed 被吞（唯一审计落库行丢失），或 duty=0 误预写 | `test_resolve_failed_audit_exemption` 双臂（R13b） |
+| 43 | 门假时 resolve/failed 被吞（唯一审计落库行丢失），或 duty=0 误预写 | 负臂（duty=0 不预写）+ 源码三合取项/append 位置在 stage 26；**正臂行为 stage 27（R13c-B）——源码在场不等于正臂行为通过** |
 
 ## 9. Phase B 落地后复核指导
 
