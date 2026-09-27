@@ -58,7 +58,7 @@ npm install --prefix v13/pi_ports
 
 ## Go 口岸证据
 
-模块：`v13/pi_ports/pig_port`。`go.mod` 用 replace 指向只读 checkout `/Users/wxl/Projects/PiG`，不改 PiG。本机 bootstrap `go` 可以低于 1.26；`toolchain go1.27.1` 由 `GOTOOLCHAIN=auto` 拉起，有效工具链须 ≥1.26。`go` 或 PiG checkout 缺席则 skip，退出 2。
+模块：`v13/pi_ports/pig_port`。`go.mod` 的 replace 钉的是作者机 PiG checkout 绝对路径，他机不能独立构建；这与既有的本地集成模型一致，不改 PiG。本机 bootstrap `go` 可以低于 1.26；`toolchain go1.27.1` 由 `GOTOOLCHAIN=auto` 拉起，有效工具链须 ≥1.26。`go` 或 PiG checkout 缺席则 skip，退出 2。
 
 公开面（外部 module 不能 import `internal/`）：
 
@@ -67,5 +67,7 @@ npm install --prefix v13/pi_ports
 - `agent.AgentTool.Execute` 收到的 `path` 是围栏规范化后的绝对路径
 
 版本证据来自 `coding/pigversion.Version`（`0.2.0+0.87.1`）和 `debug.ReadBuildInfo` 的 module 版本（`go_list=v0.2.0`）。stderr 一行 `pi_ports evidence:`。
+
+围栏先 `filepath.Abs` 再 `EvalSymlinks`，包含关系用 `filepath.Rel`（`..` 或以 `../` 开头才拒）。字符设备、块设备、fifo 在读正文前 `Stat` 拒绝为 `read_failed`；普通文件仍全文校验后再交给框架，与 JS/Python 平面同性质。
 
 合同适配与 JS 口岸同一闭集：`~/` 不展开；负 `limit` 先归一为 0；图像扩展名在调用框架前返回 `image_unsupported`，不把字节放进帧。PiG 的 read 工具本身会把 jpg/png/gif/webp/bmp 做成 image attachment（`internal/codingagent/tools/read.go` 的 `readImage`）；口岸不走那条路径，因为行协议是文本帧。差异报告留到三语言齐了之后。

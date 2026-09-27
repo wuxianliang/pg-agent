@@ -56,12 +56,17 @@ func failTool(err *toolError) {
 	emit(map[string]any{"ok": false, "error": err.code, "message": err.message}, 3)
 }
 
-func takeInt(value any) (int, bool) {
-	number, ok := value.(float64)
-	if !ok || math.IsNaN(number) || math.IsInf(number, 0) || number != math.Trunc(number) {
-		return 0, false
+func optionalInt(req map[string]any, key string) (*int, error) {
+	value, ok := req[key]
+	if !ok || value == nil {
+		return nil, nil
 	}
-	return int(number), true
+	number, ok := value.(float64)
+	if !ok || math.IsNaN(number) || math.IsInf(number, 0) || number != math.Trunc(number) || number > float64(math.MaxInt) || number < float64(math.MinInt) {
+		return nil, &toolError{code: "invalid_params", message: key + " must be an integer"}
+	}
+	parsed := int(number)
+	return &parsed, nil
 }
 
 func pigEvidence() string {
@@ -95,8 +100,12 @@ func missingOrNotDir(err error) bool {
 }
 
 func realpathLoose(target string) (string, error) {
+	abs, err := filepath.Abs(target)
+	if err != nil {
+		return "", &toolError{code: "read_failed", message: err.Error()}
+	}
 	var missing []string
-	cur := target
+	cur := abs
 	for {
 		resolved, err := filepath.EvalSymlinks(cur)
 		if err == nil {
@@ -132,7 +141,11 @@ func resolveFenced(root, raw string) (string, string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return "", "", &toolError{code: "invalid_params", message: "path must not be empty"}
 	}
-	rootReal, err := filepath.EvalSymlinks(root)
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", &toolError{code: "read_failed", message: err.Error()}
+	}
+	rootReal, err := filepath.EvalSymlinks(rootAbs)
 	if err != nil {
 		return "", "", &toolError{code: "read_failed", message: err.Error()}
 	}
@@ -146,10 +159,11 @@ func resolveFenced(root, raw string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if checked == rootReal || strings.HasPrefix(checked, rootReal+string(os.PathSeparator)) {
-		return rootReal, checked, nil
+	rel, err := filepath.Rel(rootReal, checked)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", "", &toolError{code: "path_outside_workspace", message: "path outside workspace"}
 	}
-	return "", "", &toolError{code: "path_outside_workspace", message: "path outside workspace"}
+	return rootReal, checked, nil
 }
 
 func isImagePath(absPath string) bool {
@@ -159,6 +173,13 @@ func isImagePath(absPath string) bool {
 }
 
 func validateTextBytes(absPath string) error {
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return &toolError{code: "read_failed", message: err.Error()}
+	}
+	if !info.Mode().IsRegular() {
+		return &toolError{code: "read_failed", message: "not a regular file"}
+	}
 	buffer, err := os.ReadFile(absPath)
 	if err != nil {
 		return &toolError{code: "read_failed", message: err.Error()}
@@ -227,7 +248,7 @@ func readViaFramework(callerPath, absolutePath string, offset *int, limit *int) 
 		return "", &toolError{code: "read_failed", message: err.Error()}
 	}
 	if _, err := os.Stderr.WriteString(pigEvidence()); err != nil {
-		os.Exit(1)
+		return "", &toolError{code: "read_failed", message: err.Error()}
 	}
 	params := map[string]any{"path": absolutePath}
 	if offset != nil {
@@ -295,16 +316,17 @@ func main() {
 	if strings.TrimSpace(path) == "" {
 		emit(map[string]any{"ok": false, "error": "invalid_params", "message": "path must not be empty"}, 3)
 	}
-	var offset *int
-	if value, ok := takeInt(req["offset"]); ok {
-		offset = &value
+	offset, err := optionalInt(req, "offset")
+	if err != nil {
+		failTool(asToolError(err))
 	}
-	var limit *int
-	if value, ok := takeInt(req["limit"]); ok {
-		if value < 0 {
-			value = 0
-		}
-		limit = &value
+	limit, err := optionalInt(req, "limit")
+	if err != nil {
+		failTool(asToolError(err))
+	}
+	if limit != nil && *limit < 0 {
+		zero := 0
+		limit = &zero
 	}
 	_, absolutePath, err := resolveFenced(root, path)
 	if err != nil {

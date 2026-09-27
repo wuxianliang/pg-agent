@@ -72,7 +72,7 @@ def run_guard() -> None:
     check("G0", "writeSync" in src and "process.stdout.write" not in src, "emit source")
     check("G0", "path: absolutePath" in src, "fenced path is what execute sees")
     pig_src = (ROOT / "pig_port" / "main.go").read_text()
-    check("G0", "coding.NewSession" in pig_src and "AgentTool.Execute" in pig_src, "pig framework call")
+    check("G0", "coding.NewSession(" in pig_src and "tool.Execute(" in pig_src, "pig framework call")
     check("G0", "internal/codingagent" not in pig_src, "no internal import")
     check("G0", "TruncateHead" not in pig_src, "no copied truncate")
     check("G0", '{"path": absolutePath}' in pig_src, "fenced path is what Execute sees")
@@ -371,6 +371,70 @@ def pig_read(argv, root: str, path: str, **fields):
 
 def run_go(argv) -> None:
     run_plane(lambda root, path, **fields: pig_read(argv, root, path, **fields), argv, "GO-", GO_EVIDENCE)
+    run_go_fence(argv)
+
+
+def run_go_fence(argv) -> None:
+    def once(cwd, root, path, timeout=30):
+        proc = subprocess.run(
+            argv,
+            input=json.dumps({"root": root, "path": path}).encode(),
+            capture_output=True,
+            timeout=timeout,
+            cwd=cwd,
+        )
+        line = proc.stdout.split(b"\n", 1)[0]
+        payload = json.loads(line.decode()) if line.strip() else {}
+        return proc.returncode, payload
+
+    with tempfile.TemporaryDirectory(prefix="v13pig-fence-") as raw:
+        parent = Path(raw)
+        fixtures = parent / "fixtures"
+        fixtures.mkdir()
+        (fixtures / "inside.txt").write_bytes(b"inside-ok\n")
+        (parent / "secret.txt").write_bytes(b"secret-no\n")
+        abs_inside = str((fixtures / "inside.txt").resolve())
+        abs_secret = str((parent / "secret.txt").resolve())
+
+        code, payload = once(str(fixtures), ".", "inside.txt")
+        check("GO-F1", code == 0 and payload.get("result") == "inside-ok\n", payload)
+        code, payload = once(str(fixtures), ".", abs_inside)
+        check("GO-F1", code == 0 and payload.get("result") == "inside-ok\n", payload)
+        code, payload = once(str(parent), "fixtures", "inside.txt")
+        check("GO-F1", code == 0 and payload.get("result") == "inside-ok\n", payload)
+        code, payload = once(str(parent), "fixtures", abs_inside)
+        check(
+            "GO-F1",
+            code == 0 and payload.get("result") == "inside-ok\n" and "secret-no" not in json.dumps(payload),
+            payload,
+        )
+        code, payload = once(None, "/", abs_inside)
+        check("GO-F1", code == 0 and payload.get("result") == "inside-ok\n", payload)
+        code, payload = once(str(parent), "fixtures", abs_secret)
+        check("GO-F1", code == 3 and payload.get("error") == "path_outside_workspace", payload)
+
+        fifo = parent / "pipe"
+        os.mkfifo(fifo)
+        code, payload = once(None, "/", str(fifo), timeout=5)
+        check(
+            "GO-F2",
+            code == 3 and payload.get("error") == "read_failed" and "result" not in payload,
+            payload,
+        )
+        if Path("/dev/zero").exists():
+            code, payload = once(None, "/", "/dev/zero", timeout=5)
+            check(
+                "GO-F2",
+                code == 3 and payload.get("error") == "read_failed" and "result" not in payload,
+                payload,
+            )
+
+    bad_off = pig_read(argv, str(FIXTURES), "hello.txt", offset="10")
+    check("GO-P2", bad_off.error == "invalid_params" and bad_off.exit_code == 3, bad_off.payload)
+    bad_lim = pig_read(argv, str(FIXTURES), "hello.txt", limit=1.5)
+    check("GO-P2", bad_lim.error == "invalid_params" and bad_lim.exit_code == 3, bad_lim.payload)
+    huge = pig_read(argv, str(FIXTURES), "hello.txt", offset=1e20)
+    check("GO-P2", huge.error == "invalid_params" and huge.exit_code == 3, huge.payload)
 
 
 class ToolchainMissing(Exception):
