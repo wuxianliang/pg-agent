@@ -34,3 +34,6 @@ prompt-exports/
 
 # Released-DuckDB plane for v13/read_tools (kernel freeze: not the repo venv)
 v13/read_tools/.duck-venv/
+
+# Runtime deps for loading the local pi checkout from v13/pi_ports (not vendored)
+v13/pi_ports/node_modules/

@@ -1,0 +1,52 @@
+# v13 pi_ports
+
+> 权威：口岸合同 `docs/designs/v13-tool-ports.md`（`v13/tool-port-contract-1`）。本轮只交付 JS 口岸与脚手架。Go / Swift 与三语言差异报告不在本轮。
+
+独立库 `agent_v13_pi_ports`。`setup_db.py` 用 `load_stage(..., 'seam')`。工具行只在该库运行时 INSERT/DELETE。不改 `v13/**/*.sql`，不改 `v13/load.py`。
+
+## Gate
+
+```bash
+UV_FROZEN=1 uv run python v13/pi_ports/test_pi_ports.py
+```
+
+node、本地 pi checkout、或 `v13/pi_ports/node_modules` 缺席则打印 `[SKIP] not_run/toolchain_absent` 并退出 2，不算通过。断言失败退出 1。全绿退出 0。
+
+首次装运行时依赖（只写本目录，不改 `/Users/wxl/Projects/pi`）：
+
+```bash
+npm install --prefix v13/pi_ports
+```
+
+`node_modules/` 已 gitignore。
+
+## JS 口岸证据
+
+脚本：`v13/pi_ports/read_pi_ext.mjs`。
+
+本地 checkout `/Users/wxl/Projects/pi` 的 `@earendil-works/pi-coding-agent` 版本是 **0.87.1**（`packages/coding-agent/package.json`）。read_tools 的证据锚是 0.80.3；本口岸用活 checkout，不回退、不改框架仓库。checkout 没有 `dist/`，也没有 `node_modules`。
+
+加载方式：
+
+- `node --experimental-strip-types` 直接 import `packages/coding-agent/src/core/tools/read.ts`
+- `pi_resolve_hook.mjs` 把裸说明符解析到本目录 `node_modules`（published 依赖，供 renderer 图用）
+- 同名 workspace 包 `@earendil-works/pi-tui`、`pi-ai`、`pi-agent-core` 解析到 checkout 的 `src/index.ts`。published 0.87.1 的 `pi-tui` dist 不导出活源码里的 `colorToOkhsl`，所以不能用 registry 包冒充 checkout
+
+框架调用（成功读文本时 stderr 有一行 `pi_ports evidence:`）：
+
+- `createReadTool(rootReal)`，来自 `packages/coding-agent/src/core/tools/read.ts`
+- 返回的 AgentTool 上调用 `execute("pi-ports-read", { path, offset, limit })`
+- 截断与 `formatSize` 在框架 `truncateHead` / `read.ts` 内部，本口岸不复制这两段实现
+
+合同适配（相对框架路径解析的显式偏差，与 read_tools Pi 偏差同一闭集）：
+
+- 显式 `root` 围栏：`fs.realpathSync` 加前缀检查。不把 `~` 交给 `resolveReadPathAsync`
+- 围栏成功后，扩展名属于 `{jpg,jpeg,png,gif,webp,bmp}` 即 `image_unsupported`，不把字节放进结果，也不调用框架的 image 路径
+- 读盘后做 fatal UTF-8 与 NUL 检查，再把已通过围栏的原始 `path` 交给 `createReadTool`，这样截断提示里的文件名与合同一致
+- 负整数 `limit` 在调用框架前归一为 0
+
+帧协议与 read_tools 相同：一行 JSON，`writeSync` 发帧，成功退出 0，工具错误退出 3，坏 JSON 退出 1。
+
+## 环（本轮只到目录行）
+
+`test_pi_ports.py` 的 R0/R1：`setup_db` 建库并加载到 seam，然后 INSERT `read_pi_ext` / `worker:read_pi_ext`，再 DELETE。不跑完整 turn。完整接环留到三语言齐了之后。
