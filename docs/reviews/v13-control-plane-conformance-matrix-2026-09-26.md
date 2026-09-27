@@ -87,3 +87,7 @@
 | 66 | finish closeout 不被门吞：duty block 且 duty=0 时 harness finish 仍 `'terminal'`/`completed` | ✅ | 同上 | 无 |
 | 67 | 投影零写入；GRANT 只给 `v13_route`；`v13_policy_share` DEFINER 五行锁；审计负臂 duty=0 不预写 `resolve/failed`；parent 不变由既有 `trg_sessions_fork_cols_immutable` 执法 | ✅ | 同上 | 正臂行为在 stage 27（源码在场≠通过）。不另装 parent 守卫 |
 | 68 | stage 1–26 回归 | ✅ | 2026-09-27 schema…should_run 全部 `test_*.py` 串行退出码均 0（27 脚本，含 mgraph 两脚本） | 无 |
+| 69 | stage 27 窗内计次、allowed=0、slot 间隔、不跨会话、不沿树；松种子不是产品额度 | ✅ | 2026-09-27 `uv run python v13/quota_window/test_quota_window.py` 退出码 0（226 checks） | 松种子不是「已配置 24 小时 8 次」（台账 PC-3）。计次不沿树（PC-4） |
+| 70 | 能力差、human_reward 不改已判行、finish 仍结算、索引、GRANT 只给 `v13_route` | ✅ | 同上 | 触发器函数只 REVOKE PUBLIC，不 GRANT |
+| 71 | 小题⑥正臂：quota 与 capability 门假、前缀三门不早退、duty<>0、snap.failed 非空 → 先 append `resolve/failed` 再 waiting、零新 effect、无 `triage/hold`；material 时间诚实七臂 | ✅ | 同上 | 源码在场≠正臂通过。本行是行为实测 |
+| 72 | stage 1–27 回归 | ✅ | 2026-09-27 schema…quota_window 全部 `test_*.py` 串行退出码均 0（28 脚本，含 mgraph 两脚本） | 无 |

@@ -147,3 +147,5 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | PC-1 | 三读点而非单点早退（R13 D10-A）。`v13_should_run` 插在 P-spawn / P-harness 两臂 / P-tail，不在会话锁后一次返回。前缀结算（cancel closeout、unknown 墙、在途 ready/claimed、material、finish/reject、wake）不进门 | 接受。不重排 advance 前缀。假路径 `'waiting'`，读点之后零新 effect |
 | PC-2 | duty 默认 shadow（R13 D10-B）。种子 `duty_cycle.effect=shadow`，duty=0 仍先 spawn，再由 prework 写 `triage/hold`。改 block 是新策略版本，不改函数、不搬 hold 写入者 | 接受。不把 `duty_cycle=0` 当成 L32 |
 | C18 | R13c-C：r42 小题⑧要求安装 `trg_sessions_parent_immutable` 并见 `v13: parent immutable`，但 stage 18 既有 `trg_sessions_fork_cols_immutable`/`v13_spawn_cols_guard` 已覆 parent_session_id 列（同级 BEFORE 按名序 `fork` 先火，新文案不可达） | 不装新守卫。parent 不可变由既有实例执法：stage 26 行为验收（route/spawn_owner 改 parent → 既有格式串 RAISE 零写 + NULL→非 NULL 臂按可构造性）+ 结构验收（OF 三列/函数/新名不存在）+ 源码（无新触发器无新文案）；stage 1–25 零改动；锁序重裁不触发。r43 |
+| PC-3 | 松配额种子不是产品额度（R13 D9）。活动 `quota_window` 为 `window_hours=8760`、`slot_minutes=0`、`allowed=1000000`。上线默认不因配额停跑 | 接受。收紧 = 新版本并翻转 active，不改函数。禁止写成「已配置 24 小时 8 次」 |
+| PC-4 | 计次不沿树（R13 D9）。`v13_quota_eligible` 只计本会话 `turn/material_spent`。子会话收据不改变父会话布尔。树上席位仍只由 `spawn_budget` 管 | 接受。不与席位预算混成第二套树计次 |
