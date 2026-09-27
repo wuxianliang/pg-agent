@@ -1,6 +1,6 @@
 # v13 read_tools
 
-M1 离线契约。Python 与 Swift 在 headless 契约上相等；Node 的 Pi 口岸只对照 Pi 文本读矩阵。DuckDB 平面的 `read_duck` 只在 `--contract` 的 F 组对照，不进目录。单 root。不 spawn `pi`，不 spawn `repoprompt-mcp`。
+M1 离线契约。Python 与 Swift 在 headless 契约上相等；Node 的 Pi 口岸只对照 Pi 文本读矩阵。DuckDB 平面的 `read_duck` 在 `--contract` 的 F 组对照，并作为第四个 `kind='tool'` 行进环（`worker:read_duck`）。单 root。不 spawn `pi`，不 spawn `repoprompt-mcp`。
 
 ## Gate
 
@@ -9,9 +9,9 @@ uv run python v13/read_tools/test_read_tools.py --contract
 uv run python v13/read_tools/test_read_tools.py
 ```
 
-`--contract` 跑 A–C 与 F，退出码 0 为通过。无旗标跑 A–E，退出码 0 为通过。
+`--contract` 跑 A–C 与 F，退出码 0 为通过。无旗标跑 A–E 与 F，退出码 0 为通过。
 
-`swift --version` 或 `node --version` 失败，或 `--contract` 时 duck bring-up 不在（`.duck-venv` 或 `~/.duckdb/extensions/v1.5.5/osx_arm64/` 下两扩展二进制缺失）：在 `setup_db` 之前、在任何绿色断言之前打印 `[SKIP] not_run/toolchain_absent` 并退出 2。先跑绿 Python 再退出 2 不算通过。退出 2 不是通过。断言失败退出 1。
+`swift --version` 或 `node --version` 失败，或 duck bring-up 不在（`.duck-venv` 或 `~/.duckdb/extensions/v1.5.5/osx_arm64/` 下两扩展二进制缺失）：两个入口都在 `setup_db` 之前、在任何绿色断言之前打印 `[SKIP] not_run/toolchain_absent` 并退出 2。环上的 `worker:read_duck` 与 F 组都要这套工具链，不再只在 `--contract` 时检查。先跑绿 Python 再退出 2 不算通过。退出 2 不是通过。断言失败退出 1。
 
 ## 工具链（R1）
 
@@ -59,7 +59,7 @@ Swift 与 Node 共用一帧一行 JSON，换行结尾。正文在 JSON 字符串
 
 ## DuckDB 平面
 
-第四个读工具 `read_duck` 的离线口岸。不注册进 v13 目录，不改 `v13/**/*.sql`，不改 `v13/load.py`，不改仓库根 `pyproject.toml` / `uv.lock`。
+第四个读工具 `read_duck` 的离线口岸。目录行只在库 `agent_v13_read_tools` 运行时 INSERT/DELETE，不改 `v13/**/*.sql`，不改 `v13/load.py`，不改仓库根 `pyproject.toml` / `uv.lock`。
 
 双平面（v6.1 D1-A）：口岸由 `v13/read_tools/.duck-venv` 里 pin 的 `duckdb==1.5.5` 运行，与仓库 fork dev 引擎隔离。装载硬化（v13.1）：进程内 `:memory:`，`SET autoinstall_known_extensions=false`，`SET autoload_known_extensions=false`，显式 `LOAD sitting_duck; LOAD duck_block_utils;`（从 `~/.duckdb/extensions/v1.5.5/osx_arm64/` 缓存，无网络面），然后 `SET enable_external_access=false`。不 `INSTALL`。不设 `allow_unsigned_extensions`。
 
@@ -91,7 +91,7 @@ uv run python v13/read_tools/duck_bringup.py
 
 `ast_to_blocks` / `ast_to_blocks_list` 内部走 `read_ast`。`enable_external_access=false` 之后读文件被拒。口岸用同族的 `ast_to_blocks_from`，吃内存表。两个扩展都必须已 LOAD：`sitting_duck` 提供 `parse_ast` 与 `ast_to_blocks_from`，`duck_block_utils` 提供 `duck_blocks_validate` 与 `duck_blocks_to_text`。社区 3.4.0 没有 `db_blocks_to_text`（1.x 旧名）；实测渲染函数是 `duck_blocks_to_text`。
 
-D3 闭合选项留给目录注册：本工具将来的 param_spec 只有 `{"fib.py": "Python fixture"}`。本里程碑不 INSERT 目录行。纯文本喂不进 AST，所以没有 `hello.txt` 选项。
+D3 闭合选项：本工具的 param_spec 只有 `{"fib.py": "Python fixture"}`。纯文本喂不进 AST，所以没有 `hello.txt` 选项。
 
 ### 错误分类
 
@@ -113,17 +113,30 @@ Pi 口岸对照上游源码行钉行为。本口岸不能：装载的是社区�
 
 ## 环
 
-三个 `kind='tool'` 行只在库 `agent_v13_read_tools` 里运行时 INSERT/DELETE。不写入 `v13_core.sql`，不追加 `SQL_LOAD_ORDER`，不改 `v13/**/*.sql`。`setup_db` 用 `load_stage(..., 'seam')`。hub 只按冻结的 `request.handler` 分派，不查活 `tools` 表。读盘在 `v13_claim` 已提交、`v13_complete` 未开启之间。
+四个 `kind='tool'` 行只在库 `agent_v13_read_tools` 里运行时 INSERT/DELETE。不写入 `v13_core.sql`，不追加 `SQL_LOAD_ORDER`，不改 `v13/**/*.sql`。`setup_db` 用 `load_stage(..., 'seam')`。hub 只按冻结的 `request.handler` 分派，不查活 `tools` 表。读盘在 `v13_claim` 已提交、`v13_complete` 未开启之间。
+
+| name | handler | 执行 |
+|---|---|---|
+| `read_pi` | `worker:read_pi` | `node read_pi.mjs`，只送 root/path |
+| `read_file_swift` | `worker:read_file_swift` | `swift read_file_swift.swift` |
+| `read_file_py` | `worker:read_file_py` | 进程内 `read_text` |
+| `read_duck` | `worker:read_duck` | `.duck-venv` 的 python + `read_duck_port.py`，只送 root/path；语言由口岸从扩展名推导 |
+
+前三行的 options 仍是 `hello.txt` / `crlf.txt`。`read_duck` 的 options 闭合为 `{"fib.py": "Python fixture"}`。
+
+策略 v2：把 v1 带复制过来后追加 8 条，`band_no=1, lo=0.60, hi=Infinity, action=pass`。六条是前三个工具的 `param::` / `stated::`，另两条是 `param::read_duck::path` 与 `stated::read_duck::path`。
+
+预算：负例仍在种子 `max_cycles=3` 上跑三条 tool route 后撞墙，结构不动。幸福路径是 `tool×4 + llm + finish = 6` 条 route，finish 在 `cycle_no=5` 发出，所以同一事务把 `turn_budget` 从 3 翻到 `max_cycles=6`。`read_duck` 的解码结果必须等于 `test_read_tools.py` 的 `FIB_RENDER`（F 组实测常量，标签 `duckdb=1.5.5 sitting_duck=b8c06a8 duck_block_utils=39941a7`），不重新发明渲染文本。
 
 ch8 练习 3：用 `tools.handler` 加一种 handler，只 INSERT 目录行再起进程，跑通一个 turn。这个练习改了几个 SQL 文件？答案是零 SQL 文件。
 
-预算 v2（`turn_budget.max_cycles=5`）和路由策略 v2 只活在会被 `setup_db` DROP 的库 `agent_v13_read_tools` 里，不进入其他 stage 的库。
+预算 v2（`turn_budget.max_cycles=6`）和路由策略 v2 只活在会被 `setup_db` DROP 的库 `agent_v13_read_tools` 里，不进入其他 stage 的库。
 
 ## 偏差台账
 
 ### P1
 
-活体 `v13_needed_judgments`（`v13/triage/v13_triage.sql:1005`）在无 `goal/override` 的根会话上多发一个 `triage` choice。`v13_triage_steer` 在没有 `triage` pass 带时对根会话 fail-closed，enqueue `human` / `triage_fail_closed`。种子 v1 与本 stage 的 v2 都不加这条带（D2 仍是 v1 带数 + 6）。环上每个 session 在首次 `v13_parse` 前调用 `v13_submit_override`，`intent=direct`。这让 `v13_triage_decide` 返回 `direct`，并抑制 `triage` 信号。不改 SQL 文件。
+活体 `v13_needed_judgments`（`v13/triage/v13_triage.sql:1005`）在无 `goal/override` 的根会话上多发一个 `triage` choice。`v13_triage_steer` 在没有 `triage` pass 带时对根会话 fail-closed，enqueue `human` / `triage_fail_closed`。种子 v1 与本 stage 的 v2 都不加这条带（D2 仍是 v1 带数 + 8）。环上每个 session 在首次 `v13_parse` 前调用 `v13_submit_override`，`intent=direct`。这让 `v13_triage_decide` 返回 `direct`，并抑制 `triage` 信号。不改 SQL 文件。
 
 ### P2
 
@@ -132,7 +145,7 @@ ch8 练习 3：用 `tools.handler` 加一种 handler，只 INSERT 目录行再�
 - `v13_complete` 活体在 `v13/seam/v13_seam.sql:409`（计划写 419）。判定串是 `v13_record_worktree_released`。
 - `v13_advance` 活体在 `v13/triage/v13_triage.sql:561`，含 `WHEN 'finish'` 与 `v13_triage_prework`。`v13_claim` 在 `v13/fanout/v13_fanout.sql:266`。`v13_closeout` 在 `v13/spawn/v13_spawn.sql:585`，`turn/end.delivered` 在 `:748`。
 - `SQL_LOAD_ORDER` 现为 22 项，末项是 `v13/catalog/v13_catalog.sql`。`STAGE_THROUGH['seam']=21`，`load_stage(..., 'seam')` 仍停在 seam，不加载 catalog。计划写的「21 项、末项 seam」已过期。
-- `turn_budget` 种子仍是 `{"max_cycles": 3}`（`v13/schema/v13_core.sql:753`）。`batch_questions` 仍是 32。加载到 seam 后 `tools` 基线是 7 行，含 `spawn_subsession`。裸根会话的 needed 是 10，不是计划写的 9（多一条 P1 的 `triage`）；D3 量的是插入前后的差 +6，不把 9 写死。插入后 needed 16，`16 <= batch_questions`（32）。
+- `turn_budget` 种子仍是 `{"max_cycles": 3}`（`v13/schema/v13_core.sql:753`）。幸福路径在本库把它翻成 `max_cycles=6`，不改种子文件。`batch_questions` 仍是 32。加载到 seam 后 `tools` 基线是 7 行，含 `spawn_subsession`。裸根会话的 needed 是 10，不是计划写的 9（多一条 P1 的 `triage`）；D3 量的是插入前后的差 +8，不把 9 写死。插入后 needed 18，`18 <= batch_questions`（32）。
 
 resolve 的 `run_probes`（unreachable、timeout）未跳过。加载 seam 不需要额外 `stannum` GRANT。
 
@@ -144,11 +157,20 @@ resolve 的 `run_probes`（unreachable、timeout）未跳过。加载 seam 不�
 
 `judgment_cache` 按 `request_hash` 全局只写一次，不看本次 mock。失败的 tool 不追加 `tool/result`，上下文哈希不变，下一拍会复用上一拍的 `tool_action`。失败场景用另一句用户消息，并在失败结算后再追加一条 user/message，下一拍的 `llm_generate` 才会真正被问到。
 
+### M4
+
+- 预算 v2 是 `max_cycles=6`。负例仍用种子 3。幸福路径六条 route，finish 在 `cycle_no=5` 发出；翻成 5 会在 finish 前撞 `budget_exhausted`。
+- 策略 v2 带数是 v1 带数 + 8。多出来的两条是 `param::read_duck::path` 与 `stated::read_duck::path`。
+- duck 工具链是全量 gate 与 `--contract` 的前置。`.duck-venv` 或 `~/.duckdb/extensions/v1.5.5/osx_arm64/` 下扩展二进制缺失：打印 `[SKIP] not_run/toolchain_absent`，退出 2，不跑 `setup_db`，不算通过。
+- 幸福路径 `read_duck` 的解码值抄 F 组实测常量 `FIB_RENDER`，不按源码行重算。outline 不含 `print(fib(6))`。
+- `read_duck` 失败拍是独立 session：判断面仍选闭合选项 `fib.py`，hub 只在这一拍把 path 换成围栏内 `hello.txt`。口岸返回 `language_unsupported`（`read_text` 会成功读这个文件，所以这条断言钉的是 duck 口岸，不是 Python 读者）。`complete failed` 落 `effects.status='failed'`，无 `tool/result`，session 不进终态。续跑到 finish 的证明仍在 D15（`read_file_py` + `missing.txt`）。tick 上限仍是 16。
+- 幸福路径的用户消息是 `Read hello.txt and fib.py`，不与负例的 `Read hello.txt` 相同。`judgment_cache` 按上下文哈希全局只写一次：负例在三条 `tool/result` 后的 parse 已经缓存了 `llm_generate`。同一句用户消息会让幸福路径的第四拍复用那条缓存，跳过 `read_duck`。
+
 ### E4
 
 改前基线 `.e4-baseline-2026-09-27.log`（2026-09-27）：23 个路径退出码全部为 0。无既有红，不豁免 envelope / twophase。
 
-改后同一清单（不含 `v13/read_tools`）全部仍为 0。零新增失败。
+改后同一清单（不含 `v13/read_tools`）全部仍为 0。M4 复跑（2026-09-27）同一 23 路径仍全部为 0。零新增失败。
 
 | 路径 | 改前 | 改后 |
 |---|---|---|

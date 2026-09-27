@@ -1,8 +1,8 @@
 """Native read-tool gates.
 
 --contract: A-C and F, exit 0 = pass.
-No flag: A-E, exit 0 = pass.
-Missing swift or node, or --contract with duck bring-up absent:
+No flag: A-E and F, exit 0 = pass.
+Missing swift, node, or duck bring-up:
 prints [SKIP] not_run/toolchain_absent and exits 2
 before setup_db and before any green assertion.
 """
@@ -523,11 +523,6 @@ def run_c() -> None:
     check("C9", pi_crlf.ok and pi_crlf.result != HEADLESS_CRLF and pi_crlf.result == by_lf, pi_crlf.result)
 
 
-TOOL_ROWS = (
-    ("read_pi", "Read a text file with Pi line slicing and truncation.", "worker:read_pi"),
-    ("read_file_swift", "Read a text file with the headless line contract (swift).", "worker:read_file_swift"),
-    ("read_file_py", "Read a text file with the headless line contract (python).", "worker:read_file_py"),
-)
 PARAM_SPEC = {
     "path": {
         "question": "Which fixture file should be read?",
@@ -535,6 +530,19 @@ PARAM_SPEC = {
         "options": {"hello.txt": "LF fixture", "crlf.txt": "CRLF fixture"},
     }
 }
+DUCK_PARAM_SPEC = {
+    "path": {
+        "question": "Which fixture file should be read?",
+        "stated": "Does the user name a fixture file to read?",
+        "options": {"fib.py": "Python fixture"},
+    }
+}
+TOOL_ROWS = (
+    ("read_pi", "Read a text file with Pi line slicing and truncation.", "worker:read_pi", PARAM_SPEC),
+    ("read_file_swift", "Read a text file with the headless line contract (swift).", "worker:read_file_swift", PARAM_SPEC),
+    ("read_file_py", "Read a text file with the headless line contract (python).", "worker:read_file_py", PARAM_SPEC),
+    ("read_duck", "Read a source file with the DuckDB AST block contract.", "worker:read_duck", DUCK_PARAM_SPEC),
+)
 NEW_BANDS = (
     "param::read_pi::path",
     "stated::read_pi::path",
@@ -542,14 +550,17 @@ NEW_BANDS = (
     "stated::read_file_swift::path",
     "param::read_file_py::path",
     "stated::read_file_py::path",
+    "param::read_duck::path",
+    "stated::read_duck::path",
 )
 HANDLERS = {
     "worker:read_pi": "read_pi",
     "worker:read_file_swift": "read_file_swift",
     "worker:read_file_py": "read_file_py",
+    "worker:read_duck": "read_duck",
 }
 LLM_RESULT = {
-    "text": "three reads recorded",
+    "text": "four reads recorded",
     "model": "fake",
     "usage": {"input_tokens": 1, "output_tokens": 1},
 }
@@ -597,6 +608,11 @@ def dispatch_handler(handler: str, params: dict, root: str) -> str:
         reply = run_line_json(["node", PI_SRC], {"root": root, "path": params["path"]})
         if not reply.ok:
             raise ReadError(reply.error or "read_failed", reply.message or "pi read failed")
+        return reply.result or ""
+    if handler == "worker:read_duck":
+        reply = run_line_json(duck_argv(), {"root": root, "path": params["path"]})
+        if not reply.ok:
+            raise ReadError(reply.error or "read_failed", reply.message or "duck read failed")
         return reply.result or ""
     raise ReadError("protocol_error", f"unknown handler {handler}")
 
@@ -697,17 +713,22 @@ def run_ring() -> None:
                 phase = "tool"
             elif has_llm:
                 phase = "finish"
-            elif n_tools >= 3:
+            elif n_tools >= (3 if mode == "neg" else 4):
                 phase = "llm"
             else:
                 phase = "tool"
         if phase == "tool":
-            tool = "read_file_py" if mode in ("fail", "literal") else (
-                "read_pi", "read_file_swift", "read_file_py")[n_tools]
+            if mode == "duck_fail":
+                tool = "read_duck"
+            elif mode in ("fail", "literal"):
+                tool = "read_file_py"
+            else:
+                tool = ("read_pi", "read_file_swift", "read_file_py", "read_duck")[n_tools]
+            path_choice = "fib.py" if tool == "read_duck" else "hello.txt"
             base["intent"] = choice_answer("tool_action")
             base["tool"] = choice_answer(tool)
             base[f"stated::{tool}::path"] = {"type": "noul", "noul": 0.9}
-            base[f"param::{tool}::path"] = choice_answer("hello.txt")
+            base[f"param::{tool}::path"] = choice_answer(path_choice)
         else:
             base["intent"] = choice_answer("llm_generate")
             base["tool"] = choice_answer("none")
@@ -941,7 +962,7 @@ def run_ring() -> None:
         cur,
         "SELECT state FROM v13_route_policies WHERE policy_name='default' AND policy_version=2",
     )
-    check("D2", v2_bands == v1_bands + 6, (v1_bands, v2_bands))
+    check("D2", v2_bands == v1_bands + 8, (v1_bands, v2_bands))
     check("D2", found_bands == set(NEW_BANDS), found_bands)
     check("D2", state == "frozen", state)
     conn.commit()
@@ -958,18 +979,26 @@ def run_ring() -> None:
     batch = int(q1(cur, "SELECT v13_policy('resolve_fast_path')->>'batch_questions'"))
     check("D3", base_count == 7 and set(base_names) == set(BASELINE_TOOLS), base_names)
     print(f"[anchor] tools={base_count} needed_before={needed_before} signals={signals_before}")
-    for name, desc, handler in TOOL_ROWS:
+    for name, desc, handler, spec in TOOL_ROWS:
         cur.execute(
             "INSERT INTO tools (name, description, kind, handler, param_spec, enabled) "
             "VALUES (%s, %s, 'tool', %s, %s::jsonb, true)",
-            (name, desc, handler, json.dumps(PARAM_SPEC)),
+            (name, desc, handler, json.dumps(spec)),
         )
     after_count = q1(cur, "SELECT count(*) FROM tools")
     after_rev = q1(cur, "SELECT revision FROM v13_tools_meta WHERE singleton")
     needed_after = q1(cur, "SELECT count(*) FROM v13_needed_judgments(%s)", (measure,))
-    check("D3", after_count == base_count + 3, (base_count, after_count))
-    check("D3", after_rev == base_rev + 3, (base_rev, after_rev))
-    check("D3", needed_after == needed_before + 6, (needed_before, needed_after, signals_before))
+    duck_row = as_obj(q1(
+        cur,
+        "SELECT jsonb_build_object('kind', kind, 'handler', handler, 'enabled', enabled, "
+        "'description', description, 'param_spec', param_spec) FROM tools WHERE name='read_duck'",
+    ))
+    check("D3", after_count == base_count + 4, (base_count, after_count))
+    check("D3", after_rev == base_rev + 4, (base_rev, after_rev))
+    check("D3", needed_after == needed_before + 8, (needed_before, needed_after, signals_before))
+    check("D3", duck_row["kind"] == "tool" and duck_row["handler"] == "worker:read_duck" and duck_row["enabled"] is True, duck_row)
+    check("D3", duck_row["description"].isascii(), duck_row["description"])
+    check("D3", duck_row["param_spec"]["path"]["options"] == {"fib.py": "Python fixture"}, duck_row["param_spec"])
     check("D3", needed_after <= batch, (needed_after, batch))
     conn.commit()
     saved["needed_before"] = needed_before
@@ -1027,9 +1056,9 @@ def run_ring() -> None:
     cur.execute(
         "INSERT INTO v13_policies (name, version, value, active) "
         "VALUES ('turn_budget', 2, %s::jsonb, true)",
-        (json.dumps({"max_cycles": 5}),),
+        (json.dumps({"max_cycles": 6}),),
     )
-    check("D5", q1(cur, "SELECT v13_policy('turn_budget')->>'max_cycles'") == "5")
+    check("D5", q1(cur, "SELECT v13_policy('turn_budget')->>'max_cycles'") == "6")
     conn.commit()
 
     cur = begin()
@@ -1090,29 +1119,73 @@ def run_ring() -> None:
     conn.rollback()
 
     cur = begin()
-    happy = open_session(cur, "Read hello.txt")
+    duck_sid = open_session(cur, "Read fib.py")
+    conn.commit()
+    duck_failed = beat(duck_sid, "duck_fail", swap={"path": "hello.txt"}, phase="tool")
+    check(
+        "D15b",
+        duck_failed["claim"]["request"].get("handler") == "worker:read_duck"
+        and duck_failed["claim"]["request"].get("params") == {"path": "fib.py"},
+        duck_failed.get("claim"),
+    )
+    check(
+        "D15b",
+        duck_failed["status"] == "failed"
+        and duck_failed["payload"]["error"] == "language_unsupported",
+        duck_failed,
+    )
+    cur = begin()
+    duck_effect = q1(
+        cur,
+        "SELECT status FROM effects WHERE effect_id=%s::uuid",
+        (duck_failed["claim"]["effect_id"],),
+    )
+    duck_type = q1(
+        cur,
+        "SELECT jsonb_typeof(result) FROM effects WHERE effect_id=%s::uuid",
+        (duck_failed["claim"]["effect_id"],),
+    )
+    duck_err = q1(
+        cur,
+        "SELECT result->>'error' FROM effects WHERE effect_id=%s::uuid",
+        (duck_failed["claim"]["effect_id"],),
+    )
+    duck_results = q1(
+        cur,
+        "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+        (duck_sid,),
+    )
+    duck_status = q1(cur, "SELECT status FROM sessions WHERE session_id=%s", (duck_sid,))
+    check("D15b", residual(cur) == 0)
+    conn.rollback()
+    check("D15b", duck_effect == "failed" and duck_type == "object" and duck_err == "language_unsupported")
+    check("D15b", duck_results == 0, duck_results)
+    check("D15b", duck_status not in ("completed", "failed", "cancelled"), duck_status)
+
+    cur = begin()
+    happy = open_session(cur, "Read hello.txt and fib.py")
     user_seq = q1(
         cur,
         "SELECT max(seq) FROM events WHERE session_id=%s AND type='user/message'",
         (happy,),
     )
     conn.commit()
-    happy_steps = [beat(happy, "happy") for _ in range(4)]
+    happy_steps = [beat(happy, "happy") for _ in range(5)]
     happy_end = beat(happy, "happy", expect_terminal=True)
     check("D6", happy_end["advance"] == "terminal")
     happy_routes = routes_of(happy)
-    check("D6", len(happy_routes) == 5, happy_routes)
-    check("D6", [r.get("action") for r in happy_routes] == ["tool", "tool", "tool", "llm", "finish"], happy_routes)
+    check("D6", len(happy_routes) == 6, happy_routes)
+    check("D6", [r.get("action") for r in happy_routes] == ["tool", "tool", "tool", "tool", "llm", "finish"], happy_routes)
     check(
         "D6",
-        [r.get("tool") for r in happy_routes[:3]] == ["read_pi", "read_file_swift", "read_file_py"],
+        [r.get("tool") for r in happy_routes[:4]] == ["read_pi", "read_file_swift", "read_file_py", "read_duck"],
         happy_routes,
     )
-    for step, handler in zip(happy_steps[:3], (
-        "worker:read_pi", "worker:read_file_swift", "worker:read_file_py",
-    )):
+    for step, handler, path in zip(happy_steps[:4], (
+        "worker:read_pi", "worker:read_file_swift", "worker:read_file_py", "worker:read_duck",
+    ), ("hello.txt", "hello.txt", "hello.txt", "fib.py")):
         req = step["claim"]["request"]
-        check("D7", req.get("handler") == handler and req.get("params") == {"path": "hello.txt"}, req)
+        check("D7", req.get("handler") == handler and req.get("params") == {"path": path}, req)
     cur = begin()
     cur.execute(
         "SELECT effect_id::text, tool_name, request_hash, idempotency_key, origin_user_seq, "
@@ -1135,18 +1208,25 @@ def run_ring() -> None:
     )
     llm_rows = cur.fetchall()
     conn.rollback()
-    check("D9", len(effects) == 3 and all(row[8] == "succeeded" for row in effects), effects)
+    check("D9", len(effects) == 4 and all(row[8] == "succeeded" for row in effects), effects)
     check("D9", len({row[5] for row in effects}) == 1, [row[5] for row in effects])
     check("D9", len({row[4] for row in effects}) == 1 and effects[0][4] == user_seq, effects)
-    check("D10", len({row[0] for row in effects}) == 3)
-    check("D10", len({row[2] for row in effects}) == 3)
-    check("D10", len({row[3] for row in effects}) == 3)
-    check("D10", [row[1] for row in effects] == ["read_pi", "read_file_swift", "read_file_py"])
-    check("D10", len(result_events) == 3 and len({row[0] for row in result_events}) == 3)
+    check("D10", len({row[0] for row in effects}) == 4)
+    check("D10", len({row[2] for row in effects}) == 4)
+    check("D10", len({row[3] for row in effects}) == 4)
+    check("D10", [row[1] for row in effects] == ["read_pi", "read_file_swift", "read_file_py", "read_duck"])
+    check("D10", len(result_events) == 4 and len({row[0] for row in result_events}) == 4)
     headless = HELLO.decode("utf-8")
     by_tool = {row[1]: row[2] for row in result_events}
     check("D8", by_tool["read_file_swift"] == by_tool["read_file_py"] == headless, by_tool)
     check("D8", by_tool["read_pi"] == pi_plain(headless), by_tool["read_pi"])
+    check("D8", by_tool["read_duck"] == FIB_RENDER, by_tool.get("read_duck"))
+    duck_effect = next(row for row in effects if row[1] == "read_duck")
+    check(
+        "D9",
+        duck_effect[8] == "succeeded" and duck_effect[9] == "string" and duck_effect[10] == FIB_RENDER,
+        duck_effect,
+    )
     check("D9", all(row[9] == "string" for row in effects), [row[9] for row in effects])
     happy_status, happy_ends = end_of(happy)
     check("D6", happy_status == "completed", happy_status)
@@ -1156,23 +1236,24 @@ def run_ring() -> None:
     check("D11", residual(cur) == 0)
     conn.rollback()
 
-    replay_claim = happy_steps[0]["claim"]
-    replay_text = happy_steps[0]["payload"]
-    cur = begin()
-    before_results = q1(
-        cur,
-        "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
-        (happy,),
-    )
-    replay = complete(cur, replay_claim, "succeeded", replay_text)
-    after_results = q1(
-        cur,
-        "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
-        (happy,),
-    )
-    conn.rollback()
-    check("D13", replay == "replay", replay)
-    check("D13", before_results == after_results == 3, (before_results, after_results))
+    for step in happy_steps[:4]:
+        replay_claim = step["claim"]
+        replay_text = step["payload"]
+        cur = begin()
+        before_results = q1(
+            cur,
+            "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+            (happy,),
+        )
+        replay = complete(cur, replay_claim, "succeeded", replay_text)
+        after_results = q1(
+            cur,
+            "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+            (happy,),
+        )
+        conn.rollback()
+        check("D13", replay == "replay" and step["claim"]["request"].get("handler"), replay)
+        check("D13", before_results == after_results == 4, (before_results, after_results, step["claim"]["request"].get("handler")))
 
     with tempfile.TemporaryDirectory(prefix="v13read-d16-") as raw:
         body = Path(raw) / "body.txt"
@@ -1210,7 +1291,8 @@ def run_ring() -> None:
 
     cur = begin()
     cur.execute(
-        "DELETE FROM tools WHERE name IN ('read_pi', 'read_file_swift', 'read_file_py')"
+        "DELETE FROM tools WHERE name IN ('read_pi', 'read_file_swift', 'read_file_py', 'read_duck')"
+
     )
     end_count = q1(cur, "SELECT count(*) FROM tools")
     end_rev = q1(cur, "SELECT revision FROM v13_tools_meta WHERE singleton")
@@ -1235,6 +1317,10 @@ def run_ring() -> None:
         "P1",
         "P2",
         "E4",
+        "worker:read_duck",
+        "max_cycles=6",
+        ".duck-venv",
+        "FIB_RENDER",
     ):
         check("E3", needle in readme, needle)
 
@@ -1380,17 +1466,16 @@ def run_f() -> None:
 
 def main(argv: list[str]) -> int:
     contract = "--contract" in argv
-    if not toolchain_present() or (contract and not duck_toolchain_present()):
+    if not toolchain_present() or not duck_toolchain_present():
         print("[SKIP] not_run/toolchain_absent")
         return 2
     try:
         run_a()
         run_b()
         run_c()
-        if contract:
-            run_f()
-            return 0
-        run_ring()
+        if not contract:
+            run_ring()
+        run_f()
     except AssertionError as exc:
         print(exc)
         return 1
