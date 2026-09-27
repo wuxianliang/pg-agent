@@ -5,11 +5,13 @@ JS 组标签不变。Go 组标签带 GO- 前缀，Swift 组带 SW- 前缀，语�
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -539,6 +541,537 @@ def run_catalog_piswift() -> None:
     run_catalog_row("SW-", "read_piswift", "Read a text file through the PiSwift framework read tool.")
 
 
+WORKERS: dict[str, tuple[list[str], int]] = {}
+BASELINE_TOOLS = (
+    "session_stats",
+    "send_summary_email",
+    "harness_turn",
+    "spawn_subsession",
+    "worktree_prepare",
+    "worktree_merge",
+    "worktree_release",
+)
+LLM_RESULT = {
+    "text": "pi ports recorded",
+    "model": "fake",
+    "usage": {"input_tokens": 1, "output_tokens": 1},
+}
+RING_SPEC = {
+    "path": {
+        "question": "Which fixture file should be read?",
+        "stated": "Does the user name a fixture file to read?",
+        "options": {"hello.txt": "LF fixture"},
+    }
+}
+
+
+class PortError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def as_obj(value):
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def choice_answer(name: str, conf: float = 0.9) -> dict:
+    return {
+        "type": "choice",
+        "choice": name,
+        "probabilities": {name: conf},
+        "confidence": conf,
+    }
+
+
+def jsonb_safe_result(status: str, payload):
+    if status == "succeeded" and isinstance(payload, str) and "\0" in payload:
+        return "failed", {"error": "read_failed", "message": "contains NUL"}
+    if isinstance(payload, dict):
+        cleaned = {}
+        changed = False
+        for key, value in payload.items():
+            if isinstance(value, str) and "\0" in value:
+                cleaned[key] = "contains NUL"
+                changed = True
+            else:
+                cleaned[key] = value
+        if changed:
+            return status, cleaned
+    return status, payload
+
+
+def dispatch_handler(handler: str, params: dict, root: str) -> str:
+    spec = WORKERS.get(handler)
+    if spec is None:
+        raise PortError("protocol_error", f"unknown handler {handler}")
+    if "path" not in params:
+        raise PortError("invalid_params", "path missing")
+    argv, timeout = spec
+    reply = run_line_json(argv, {"root": root, "path": params["path"]}, timeout=timeout)
+    if not reply.ok:
+        raise PortError(reply.error or "read_failed", reply.message or "")
+    return reply.result or ""
+
+
+def run_ring(planes: list[tuple[str, str, str, list[str], int]]) -> None:
+    import psycopg2
+
+    from server import get_server
+    from v13.pi_ports.setup_db import DB, main as setup_db
+
+    n = len(planes)
+    names = [plane[1] for plane in planes]
+    WORKERS.clear()
+    for _tag, name, _desc, argv, timeout in planes:
+        WORKERS[f"worker:{name}"] = (list(argv), timeout)
+    fixture_root = os.path.realpath(FIXTURES)
+    direct: dict[str, str] = {}
+    for tag, name, _desc, argv, timeout in planes:
+        reply = run_line_json(argv, {"root": fixture_root, "path": "hello.txt"}, timeout=timeout)
+        check(
+            f"{tag}Hdirect",
+            reply.ok and reply.exit_code == 0 and isinstance(reply.result, str),
+            reply.payload,
+        )
+        direct[name] = reply.result or ""
+        print(f"[ring] {name} direct_len={len(direct[name])}")
+
+    ticks = {"n": 0}
+
+    def q1(cur, sql, params=None):
+        cur.execute(sql, params)
+        return cur.fetchone()[0]
+
+    def begin():
+        if conn.get_transaction_status() != psycopg2.extensions.TRANSACTION_STATUS_IDLE:
+            conn.rollback()
+        return conn.cursor()
+
+    def event_count(cur, sid, etype) -> int:
+        cur.execute(
+            "SELECT count(*) FROM events WHERE session_id=%s AND type=%s",
+            (sid, etype),
+        )
+        return cur.fetchone()[0]
+
+    def mock_from_needed(cur, sid, **over) -> str:
+        cur.execute("SELECT signal, kind, criteria FROM v13_needed_judgments(%s)", (sid,))
+        answers = {}
+        for signal, kind, criteria in cur.fetchall():
+            criteria = as_obj(criteria)
+            if signal in over:
+                answers[signal] = over[signal]
+                continue
+            if kind == "choice":
+                keys = list(criteria.keys()) if isinstance(criteria, dict) else ["none"]
+                answers[signal] = choice_answer(keys[0])
+            elif kind == "score":
+                answers[signal] = {"type": "score", "score": 0.5, "confidence": 0.9}
+            else:
+                answers[signal] = {"type": "noul", "noul": 0.1}
+        answers.update(over)
+        return json.dumps({
+            "model": "jev-mock",
+            "answers": answers,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        })
+
+    def overrides_for(cur, sid) -> dict:
+        base = {
+            "gate_action": {"type": "noul", "noul": 0.9},
+            "gate_off_topic": {"type": "noul", "noul": 0.1},
+            "risk": {"type": "score", "score": 0, "confidence": 0.9},
+        }
+        n_tools = event_count(cur, sid, "tool/result")
+        has_llm = event_count(cur, sid, "llm/message") > 0
+        if has_llm or n_tools >= n:
+            base["intent"] = choice_answer("llm_generate")
+            base["tool"] = choice_answer("none")
+            return base
+        tool = names[n_tools]
+        base["intent"] = choice_answer("tool_action")
+        base["tool"] = choice_answer(tool)
+        base[f"stated::{tool}::path"] = {"type": "noul", "noul": 0.9}
+        base[f"param::{tool}::path"] = choice_answer("hello.txt")
+        return base
+
+    def parse_fresh(sid):
+        pc = psycopg2.connect(server.get_uri(DB))
+        pc.autocommit = False
+        pcur = pc.cursor()
+        pcur.execute("SELECT set_config('typesafe.provider', 'mock', false)")
+        pcur.fetchone()
+        pcur.execute("SELECT set_config('typesafe.model', 'fake-judge', false)")
+        pcur.fetchone()
+        mock = mock_from_needed(pcur, sid, **overrides_for(pcur, sid))
+        pcur.execute("SELECT set_config('typesafe.mock_response', %s, true)", (mock,))
+        pcur.fetchone()
+        try:
+            snap = as_obj(q1(pcur, "SELECT v13_parse(%s)", (sid,)))
+        except psycopg2.Error as exc:
+            pc.rollback()
+            pc.close()
+            raise AssertionError(
+                f"parse: {exc.pgcode} {exc.diag.message_primary if exc.diag else exc}"
+            ) from exc
+        pc.commit()
+        pc.close()
+        return snap
+
+    def complete(cur, claim, status, result):
+        cur.execute(
+            "SELECT v13_complete(%s, %s, %s, %s, %s::jsonb)",
+            (
+                claim["effect_id"],
+                claim["attempt_no"],
+                claim["fence"],
+                status,
+                json.dumps(result),
+            ),
+        )
+        return cur.fetchone()[0]
+
+    def abort_claim(claim) -> None:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        try:
+            cur = begin()
+            complete(cur, claim, "failed", {
+                "error": "protocol_error",
+                "message": "hub aborted",
+            })
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+    def beat(sid, expect_terminal=False):
+        ticks["n"] += 1
+        check("ticks", ticks["n"] <= 24, ticks["n"])
+        snap = parse_fresh(sid)
+        check("Hparse", int(snap["remaining"]) == 0, snap.get("remaining"))
+        cur = begin()
+        cur.execute("SET LOCAL lock_timeout='250ms'")
+        cur.execute("SET LOCAL statement_timeout='5s'")
+        cur.execute(
+            "UPDATE sessions SET context_active_revision = v13_context_required(session_id) "
+            "WHERE session_id=%s",
+            (sid,),
+        )
+        try:
+            status = q1(cur, "SELECT v13_advance(%s, %s::jsonb)", (sid, json.dumps(snap)))
+        except psycopg2.Error as exc:
+            conn.rollback()
+            raise AssertionError(
+                f"advance: {exc.pgcode} {exc.diag.message_primary if exc.diag else exc}"
+            ) from exc
+        conn.commit()
+        if status == "terminal":
+            check("Hadvance", expect_terminal, status)
+            return {"advance": status}
+        check("Hadvance", status == "waiting", status)
+        cur = begin()
+        cur.execute(
+            "SELECT effect_id::text, session_id::text FROM effects WHERE status='ready'"
+        )
+        ready = cur.fetchall()
+        check("Hclaim", len(ready) == 1 and ready[0][1] == sid, ready)
+        claim = as_obj(q1(cur, "SELECT v13_claim(%s, %s)", ("pi-ports-hub", 120000)))
+        check("Hclaim", claim and str(claim["effect_id"]) == ready[0][0], claim)
+        conn.commit()
+        req = claim.get("request") or {}
+        print(f"[beat] {claim['kind']} {req.get('handler') or req.get('reason')}")
+        completed = False
+        flag = None
+        try:
+            kind = claim["kind"]
+            request = claim["request"]
+            if kind == "human":
+                payload, st, flag = {"reason": request.get("reason")}, "succeeded", "human"
+            elif kind == "llm":
+                payload, st, flag = LLM_RESULT, "succeeded", None
+            elif kind == "judge":
+                payload = {"error": "protocol_error", "message": "judge effect"}
+                st, flag = "failed", "unknown"
+            elif kind != "tool":
+                payload = {"error": "protocol_error", "message": f"unknown kind {kind}"}
+                st, flag = "failed", "unknown"
+            else:
+                handler = request.get("handler")
+                params = dict(request.get("params") or {})
+                try:
+                    payload = dispatch_handler(handler, params, fixture_root)
+                    st, flag = "succeeded", None
+                except PortError as exc:
+                    payload = {"error": exc.code, "message": exc.message}
+                    st, flag = "failed", "port"
+            st, payload = jsonb_safe_result(st, payload)
+            cur = begin()
+            cur.execute("SET LOCAL lock_timeout='250ms'")
+            cur.execute("SET LOCAL statement_timeout='5s'")
+            got = complete(cur, claim, st, payload)
+            check("H8", got == "accepted", got)
+            conn.commit()
+            completed = True
+            if flag == "unknown":
+                raise AssertionError(f"unknown handler settled: {claim}")
+            if flag in ("port", "human"):
+                raise AssertionError(f"ring beat {flag}: {payload}")
+            return {"advance": status, "claim": claim, "payload": payload, "status": st}
+        finally:
+            if not completed:
+                abort_claim(claim)
+
+    def routes_of(sid):
+        cur = begin()
+        cur.execute(
+            "SELECT payload FROM events WHERE session_id=%s AND type='turn/route' ORDER BY seq",
+            (sid,),
+        )
+        rows = [as_obj(row[0]) for row in cur.fetchall()]
+        conn.rollback()
+        return rows
+
+    def end_of(sid):
+        cur = begin()
+        cur.execute(
+            "SELECT payload FROM events WHERE session_id=%s AND type='turn/end' ORDER BY seq",
+            (sid,),
+        )
+        rows = [as_obj(row[0]) for row in cur.fetchall()]
+        status = q1(cur, "SELECT status FROM sessions WHERE session_id=%s", (sid,))
+        conn.rollback()
+        return status, rows
+
+    check("H7", "FROM tools" not in inspect.getsource(dispatch_handler))
+    beat_src = inspect.getsource(beat)
+    accepted_at = beat_src.index('got == "accepted"')
+    commit_at = beat_src.index("conn.commit()", accepted_at)
+    completed_at = beat_src.index("completed = True")
+    check("H8", accepted_at < commit_at < completed_at, (accepted_at, commit_at, completed_at))
+
+    check("H0", setup_db() == 0, "setup_db")
+    server = get_server()
+    conn = psycopg2.connect(server.get_uri(DB))
+    conn.autocommit = False
+    try:
+        cur = begin()
+        cur.execute("SELECT set_config('typesafe.provider', 'mock', false)")
+        cur.fetchone()
+        cur.execute("SELECT set_config('typesafe.model', 'fake-judge', false)")
+        cur.fetchone()
+        cur.execute(
+            "UPDATE tools SET enabled=false WHERE name='spawn_subsession' AND enabled"
+        )
+        conn.commit()
+
+        cur = begin()
+        cur.execute(
+            "INSERT INTO v13_route_policies (policy_name, policy_version) VALUES ('default', 2)"
+        )
+        cur.execute(
+            "INSERT INTO thresholds (policy_name, policy_version, signal, band_no, lo, hi, action) "
+            "SELECT 'default', 2, signal, band_no, lo, hi, action "
+            "FROM thresholds WHERE policy_name='default' AND policy_version=1"
+        )
+        bands = []
+        for name in names:
+            bands.append(f"param::{name}::path")
+            bands.append(f"stated::{name}::path")
+        for signal in bands:
+            cur.execute(
+                "INSERT INTO thresholds (policy_name, policy_version, signal, band_no, lo, hi, action) "
+                "VALUES ('default', 2, %s, 1, 0.60, 'Infinity', 'pass')",
+                (signal,),
+            )
+        cur.execute(
+            "UPDATE v13_route_policies SET state='frozen' "
+            "WHERE policy_name='default' AND policy_version=2"
+        )
+        v1_bands = q1(
+            cur,
+            "SELECT count(*) FROM thresholds WHERE policy_name='default' AND policy_version=1",
+        )
+        v2_bands = q1(
+            cur,
+            "SELECT count(*) FROM thresholds WHERE policy_name='default' AND policy_version=2",
+        )
+        cur.execute(
+            "SELECT signal FROM thresholds WHERE policy_name='default' AND policy_version=2 "
+            "AND signal = ANY(%s)",
+            (bands,),
+        )
+        found_bands = {row[0] for row in cur.fetchall()}
+        state = q1(
+            cur,
+            "SELECT state FROM v13_route_policies WHERE policy_name='default' AND policy_version=2",
+        )
+        check("Hcat", v2_bands == v1_bands + 2 * n, (v1_bands, v2_bands, n))
+        check("Hcat", found_bands == set(bands), found_bands)
+        check("Hcat", state == "frozen", state)
+        conn.commit()
+
+        cur = begin()
+        base_count = q1(cur, "SELECT count(*) FROM tools")
+        cur.execute("SELECT name FROM tools ORDER BY name")
+        base_names = tuple(row[0] for row in cur.fetchall())
+        base_rev = q1(cur, "SELECT revision FROM v13_tools_meta WHERE singleton")
+        measure = str(q1(cur, "SELECT v13_open_session('{}'::jsonb)"))
+        needed_before = q1(cur, "SELECT count(*) FROM v13_needed_judgments(%s)", (measure,))
+        batch = int(q1(cur, "SELECT v13_policy('resolve_fast_path')->>'batch_questions'"))
+        check("Hcat", base_count == 7 and set(base_names) == set(BASELINE_TOOLS), base_names)
+        for index, (tag, name, description, _argv, _timeout) in enumerate(planes, start=1):
+            handler = f"worker:{name}"
+            cur.execute(
+                "INSERT INTO tools (name, description, kind, handler, param_spec, enabled) "
+                "VALUES (%s, %s, 'tool', %s, %s::jsonb, true)",
+                (name, description, handler, json.dumps(RING_SPEC)),
+            )
+            cur.execute(
+                "SELECT kind, handler, enabled, param_spec FROM tools WHERE name=%s",
+                (name,),
+            )
+            kind, got_handler, enabled, spec = cur.fetchone()
+            spec = as_obj(spec)
+            check(f"{tag}Hcat", (kind, got_handler, enabled) == ("tool", handler, True), (kind, got_handler, enabled))
+            check(f"{tag}Hcat", spec["path"]["options"] == {"hello.txt": "LF fixture"}, spec)
+            check(f"{tag}Hcat", description.isascii(), description)
+            check(f"{tag}Hcat", q1(cur, "SELECT count(*) FROM tools") == base_count + index, index)
+        after_rev = q1(cur, "SELECT revision FROM v13_tools_meta WHERE singleton")
+        needed_after = q1(cur, "SELECT count(*) FROM v13_needed_judgments(%s)", (measure,))
+        check("Hcat", after_rev == base_rev + n, (base_rev, after_rev, n))
+        check("Hcat", needed_after == needed_before + 2 * n, (needed_before, needed_after))
+        check("Hcat", needed_after <= batch, (needed_after, batch))
+        conn.commit()
+
+        cycles = n + 2
+        cur = begin()
+        if cycles != 3:
+            cur.execute("UPDATE v13_policies SET active=false WHERE name='turn_budget' AND active")
+            cur.execute(
+                "INSERT INTO v13_policies (name, version, value, active) "
+                "VALUES ('turn_budget', 2, %s::jsonb, true)",
+                (json.dumps({"max_cycles": cycles}),),
+            )
+        check("Hbudget", q1(cur, "SELECT v13_policy('turn_budget')->>'max_cycles'") == str(cycles), cycles)
+        conn.commit()
+
+        cur = begin()
+        sid = str(q1(
+            cur,
+            "SELECT v13_open_session(%s::jsonb)",
+            (json.dumps({"route_policy_name": "default", "version": 2}),),
+        ))
+        cur.execute(
+            "SELECT v13_append_event(%s, %s, 'user/message', %s::jsonb)",
+            (sid, str(uuid.uuid4()), json.dumps({"text": "Read hello.txt via pi ports"})),
+        )
+        cur.execute(
+            "SELECT v13_submit_override(%s, %s::jsonb)",
+            (sid, json.dumps({
+                "schema_version": 1,
+                "intent": "direct",
+                "source_principal": "user",
+                "reason": "pi-ports gate",
+            })),
+        )
+        pointed = q1(cur, "SELECT route_policy_version FROM sessions WHERE session_id=%s", (sid,))
+        user_seq = q1(
+            cur,
+            "SELECT max(seq) FROM events WHERE session_id=%s AND type='user/message'",
+            (sid,),
+        )
+        check("Hsession", pointed == 2, pointed)
+        conn.commit()
+
+        steps = [beat(sid) for _ in range(n + 1)]
+        end = beat(sid, expect_terminal=True)
+        check("H1", [row.get("action") for row in routes_of(sid)] == ["tool"] * n + ["llm", "finish"], routes_of(sid))
+        check("H1", [row.get("tool") for row in routes_of(sid)[:n]] == names, routes_of(sid))
+        check("H5", end["advance"] == "terminal", end)
+        for step, name in zip(steps[:n], names):
+            req = step["claim"]["request"]
+            check(
+                "H2",
+                step["claim"]["kind"] == "tool"
+                and req.get("handler") == f"worker:{name}"
+                and req.get("params") == {"path": "hello.txt"},
+                req,
+            )
+        check("H2", steps[n]["claim"]["kind"] == "llm", steps[n].get("claim"))
+        cur = begin()
+        cur.execute(
+            "SELECT payload->>'tool', payload->>'result' FROM events "
+            "WHERE session_id=%s AND type='tool/result' ORDER BY seq",
+            (sid,),
+        )
+        result_events = cur.fetchall()
+        cur.execute(
+            "SELECT tool_name, status, jsonb_typeof(result), result #>> '{}', origin_user_seq "
+            "FROM effects WHERE session_id=%s AND kind='tool' ORDER BY created_at",
+            (sid,),
+        )
+        effects = cur.fetchall()
+        cur.execute(
+            "SELECT payload->>'text', (payload->>'origin_user_seq')::bigint "
+            "FROM events WHERE session_id=%s AND type='llm/message'",
+            (sid,),
+        )
+        llm_rows = cur.fetchall()
+        conn.rollback()
+        check("H3", [row[0] for row in result_events] == names, result_events)
+        for tool, result in result_events:
+            check("H3", result == direct[tool], (tool, result, direct.get(tool)))
+        check("H4", len(effects) == n and [row[0] for row in effects] == names, effects)
+        check("H4", all(row[1] == "succeeded" and row[2] == "string" for row in effects), effects)
+        for tool_name, _status, _kind, decoded, origin in effects:
+            check("H4", decoded == direct[tool_name] and origin == user_seq, (tool_name, decoded, origin, user_seq))
+        sess_status, ends = end_of(sid)
+        check("H5", sess_status == "completed", sess_status)
+        check("H5", len(ends) == 1 and ends[0].get("delivered") is True, ends)
+        check("H5", len(llm_rows) == 1 and llm_rows[0][0] == "pi ports recorded" and llm_rows[0][1] == user_seq, llm_rows)
+
+        replay_claim = steps[0]["claim"]
+        replay_text = steps[0]["payload"]
+        cur = begin()
+        before_results = q1(
+            cur,
+            "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+            (sid,),
+        )
+        replay = complete(cur, replay_claim, "succeeded", replay_text)
+        after_results = q1(
+            cur,
+            "SELECT count(*) FROM events WHERE session_id=%s AND type='tool/result'",
+            (sid,),
+        )
+        conn.rollback()
+        check("H9", replay == "replay" and before_results == after_results == n, (replay, before_results, after_results))
+
+        cur = begin()
+        cur.execute("DELETE FROM tools WHERE name = ANY(%s)", (names,))
+        end_count = q1(cur, "SELECT count(*) FROM tools")
+        end_rev = q1(cur, "SELECT revision FROM v13_tools_meta WHERE singleton")
+        cur.execute("SELECT name FROM tools WHERE name = ANY(%s)", (names,))
+        still = [row[0] for row in cur.fetchall()]
+        check("H6", still == [], still)
+        check("H6", end_count == base_count, (end_count, base_count))
+        check("H6", end_rev == after_rev + n, (after_rev, end_rev, n))
+        conn.commit()
+    finally:
+        conn.close()
+
 
 def toolchain_absent() -> list[str]:
     skipped = []
@@ -774,6 +1307,15 @@ def main(argv: list[str]) -> int:
         if swift_argv is not None:
             run_swift(swift_argv)
             run_catalog_piswift()
+        ring_planes = []
+        if not skipped:
+            ring_planes.append(("", "read_pi_ext", "Read a text file through the pi framework read tool.", NODE, 60))
+        if pig_argv is not None:
+            ring_planes.append(("GO-", "read_pig", "Read a text file through the PiG framework read tool.", pig_argv, 90))
+        if swift_argv is not None:
+            ring_planes.append(("SW-", "read_piswift", "Read a text file through the PiSwift framework read tool.", swift_argv, 90))
+        if ring_planes:
+            run_ring(ring_planes)
     except AssertionError as exc:
         print(exc)
         failed = True

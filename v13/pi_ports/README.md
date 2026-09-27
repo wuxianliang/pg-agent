@@ -1,6 +1,6 @@
 # v13 pi_ports
 
-> 权威：口岸合同 `docs/designs/v13-tool-ports.md`（`v13/tool-port-contract-1`）。已交付 JS、Go 与 Swift 口岸。三语言差异报告不在本轮。
+> 权威：口岸合同 `docs/designs/v13-tool-ports.md`（`v13/tool-port-contract-1`）。已交付 JS、Go 与 Swift 口岸。差异报告：`docs/reviews/v13-pi-ports-trilingual-2026-09-28.md`。
 
 独立库 `agent_v13_pi_ports`。`setup_db.py` 用 `load_stage(..., 'seam')`。工具行只在该库运行时 INSERT/DELETE。不改 `v13/**/*.sql`，不改 `v13/load.py`。
 
@@ -52,9 +52,9 @@ npm install --prefix v13/pi_ports
 
 帧协议与 read_tools 相同：一行 JSON，`writeSync` 发帧，成功退出 0，工具错误退出 3，坏 JSON 退出 1。
 
-## 环（本轮只到目录行）
+## 环
 
-`test_pi_ports.py` 的 R0/R1：`setup_db` 建库并加载到 seam，然后 INSERT `read_pi_ext` / `worker:read_pi_ext`，再 DELETE。Go 组同样 INSERT/DELETE `read_pig` / `worker:read_pig`。Swift 组同样 INSERT/DELETE `read_piswift` / `worker:read_piswift`。不跑完整 turn。完整接环留到三语言差异报告。
+R0/R1 仍是目录行 INSERT/DELETE roundtrip：每个在场平面各自 `setup_db`，INSERT `worker:<name>`，再 DELETE。另外 `run_ring` 再 `setup_db` 一次，把在场平面放进同一个会话：每行先 `v13_submit_override`（`intent=direct`），然后 `v13_parse` → `v13_advance` → `v13_claim('pi-ports-hub', 120000)` → `dispatch_handler`（只看冻结的 `request.handler`，不查 `tools`）→ `v13_complete`。三平面齐时路由是 `tool, tool, tool, llm, finish`，运行时把 `turn_budget.max_cycles` 提到 `n+2`（三平面为 5）。落库的 `tool/result` 与 `effects.result` 必须等于同 argv 对 `hello.txt` 的直跑结果。工具行仍只在 `agent_v13_pi_ports` 运行时 INSERT/DELETE。
 
 ## Go 口岸证据
 
@@ -70,7 +70,7 @@ npm install --prefix v13/pi_ports
 
 围栏先 `filepath.Abs` 再 `EvalSymlinks`，包含关系用 `filepath.Rel`（`..` 或以 `../` 开头才拒）。字符设备、块设备、fifo 在读正文前 `Stat` 拒绝为 `read_failed`；普通文件仍全文校验后再交给框架，与 JS/Python 平面同性质。
 
-合同适配与 JS 口岸同一闭集：`~/` 不展开；负 `limit` 先归一为 0；图像扩展名在调用框架前返回 `image_unsupported`，不把字节放进帧。PiG 的 read 工具本身会把 jpg/png/gif/webp/bmp 做成 image attachment（`internal/codingagent/tools/read.go` 的 `readImage`）；口岸不走那条路径，因为行协议是文本帧。差异报告留到三语言齐了之后。
+合同适配与 JS 口岸同一闭集：`~/` 不展开；负 `limit` 先归一为 0；图像扩展名在调用框架前返回 `image_unsupported`，不把字节放进帧。PiG 的 read 工具本身会把 jpg/png/gif/webp/bmp 做成 image attachment（`internal/codingagent/tools/read.go` 的 `readImage`）；口岸不走那条路径，因为行协议是文本帧。差异见 `docs/reviews/v13-pi-ports-trilingual-2026-09-28.md`。
 
 ## Swift 口岸证据
 
@@ -90,4 +90,4 @@ stderr 一行 `pi_ports evidence: module=PiSwift version=<VERSION> function=crea
 
 PiSwift 0.87.1 的续读提示是 `to continue]`，共享矩阵锁的是 pi TS 的 `to continue.]`。口岸只在最终单行 trailer 上补这个句点，不复制截断实现。
 
-PiSwift 的 `split(separator: "\n")` 按 Swift 字素切。`\r\n` 是一个字素，CRLF 文件不会被切开，`limit` 因此失效。探测：`String(contentsOfFile:encoding: .utf8)` 对含 `U+0000` 的文件成功并保留该标量；`ReadTool.swift` 的文本路径就是这个 API，之后没有 NUL 拒绝。因此口岸用字节中性替换：已校验快照里的 `\r\n` 换成 `\0\n`（等长），只把该副本交给 `execute`，并且只在这条副本路径上把结果里的 `\0` 还原成 `\r`。无 CRLF 的文件不走副本，字面 `U+E000` 不会被改写。evidence 在副本路径上写 `path=fenced-derived-copy`，否则 `path=fenced-absolute`。副本写失败是 `read_failed` 帧、退出 3。差异报告留到三语言齐了之后。
+PiSwift 的 `split(separator: "\n")` 按 Swift 字素切。`\r\n` 是一个字素，CRLF 文件不会被切开，`limit` 因此失效。探测：`String(contentsOfFile:encoding: .utf8)` 对含 `U+0000` 的文件成功并保留该标量；`ReadTool.swift` 的文本路径就是这个 API，之后没有 NUL 拒绝。因此口岸用字节中性替换：已校验快照里的 `\r\n` 换成 `\0\n`（等长），只把该副本交给 `execute`，并且只在这条副本路径上把结果里的 `\0` 还原成 `\r`。无 CRLF 的文件不走副本，字面 `U+E000` 不会被改写。evidence 在副本路径上写 `path=fenced-derived-copy`，否则 `path=fenced-absolute`。副本写失败是 `read_failed` 帧、退出 3。差异见 `docs/reviews/v13-pi-ports-trilingual-2026-09-28.md`。
