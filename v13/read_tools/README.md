@@ -1,6 +1,6 @@
 # v13 read_tools
 
-M1 离线契约。Python 与 Swift 在 headless 契约上相等；Node 的 Pi 口岸只对照 Pi 文本读矩阵。单 root。不 spawn `pi`，不 spawn `repoprompt-mcp`。
+M1 离线契约。Python 与 Swift 在 headless 契约上相等；Node 的 Pi 口岸只对照 Pi 文本读矩阵。DuckDB 平面的 `read_duck` 只在 `--contract` 的 F 组对照，不进目录。单 root。不 spawn `pi`，不 spawn `repoprompt-mcp`。
 
 ## Gate
 
@@ -9,9 +9,9 @@ uv run python v13/read_tools/test_read_tools.py --contract
 uv run python v13/read_tools/test_read_tools.py
 ```
 
-`--contract` 跑 A–C，退出码 0 为通过。无旗标跑 A–E，退出码 0 为通过。
+`--contract` 跑 A–C 与 F，退出码 0 为通过。无旗标跑 A–E，退出码 0 为通过。
 
-`swift --version` 或 `node --version` 失败：在 `setup_db` 之前、在任何绿色断言之前打印 `[SKIP] not_run/toolchain_absent` 并退出 2。先跑绿 Python 再退出 2 不算通过。退出 2 不是通过。断言失败退出 1。
+`swift --version` 或 `node --version` 失败，或 `--contract` 时 duck bring-up 不在（`.duck-venv` 或 `~/.duckdb/extensions/v1.5.5/osx_arm64/` 下两扩展二进制缺失）：在 `setup_db` 之前、在任何绿色断言之前打印 `[SKIP] not_run/toolchain_absent` 并退出 2。先跑绿 Python 再退出 2 不算通过。退出 2 不是通过。断言失败退出 1。
 
 ## 工具链（R1）
 
@@ -56,6 +56,60 @@ Swift 与 Node 共用一帧一行 JSON，换行结尾。正文在 JSON 字符串
 - 文本只按 `"\n"` 切，所以 `crlf.txt` 全文不得等于 `alpha\n\nbeta\n\n`。
 
 `truncateHead` 控制流照抄 `truncate.ts`。`limit` 键缺失，以及口岸把 `limit: null` 归一成缺失，才走默认帽。不要向 Node 送 JSON `null` 的 `limit`。
+
+## DuckDB 平面
+
+第四个读工具 `read_duck` 的离线口岸。不注册进 v13 目录，不改 `v13/**/*.sql`，不改 `v13/load.py`，不改仓库根 `pyproject.toml` / `uv.lock`。
+
+双平面（v6.1 D1-A）：口岸由 `v13/read_tools/.duck-venv` 里 pin 的 `duckdb==1.5.5` 运行，与仓库 fork dev 引擎隔离。装载硬化（v13.1）：进程内 `:memory:`，`SET autoinstall_known_extensions=false`，`SET autoload_known_extensions=false`，显式 `LOAD sitting_duck; LOAD duck_block_utils;`（从 `~/.duckdb/extensions/v1.5.5/osx_arm64/` 缓存，无网络面），然后 `SET enable_external_access=false`。不 `INSTALL`。不设 `allow_unsigned_extensions`。
+
+### Bring-up
+
+一次性，允许联网：
+
+```bash
+uv run python v13/read_tools/duck_bringup.py
+```
+
+建 `.duck-venv`（gitignore，CPython 3.12），装 `duckdb==1.5.5`，`INSTALL sitting_duck FROM community` 与 `INSTALL duck_block_utils FROM community`。社区渠道失败时脚本会再试官方渠道并在 stderr 打 `WARN`；那不是本机订死的渠道，哈希不符就要重测。
+
+2026-09-27 作者机实测（`PRAGMA platform` = `osx_arm64`）：
+
+| 组件 | 版本 | SHA-256 |
+|---|---|---|
+| duckdb | `__version__` = `1.5.5` | wheel，不钉二进制 |
+| sitting_duck | `extension_version` = `b8c06a8` | `e031481f864f342b97deb1e985b6ff5f4b27a97de28d7ec37cf1ad64b6483176` |
+| duck_block_utils | `extension_version` = `39941a7` | `4a4f6ff8800c23e959198fa62c134da311acd82d81258f85c64aa16ef21cf529` |
+
+社区描述文件另写 sitting_duck 1.11.0、duck_block_utils 3.4.0。gate 不采信描述文件版本，只断言上表的 `__version__` 与 `duckdb_extensions().extension_version`。`duck_block_utils` 的 v1.2.1 / `125662df` 是 v1.4.5 轨道，不是本机 v1.5.5 构建。
+
+### 管线
+
+围栏与读盘在口岸进程里，算法与 headless Python 读者相同（realpath 前缀、strict UTF-8），但口岸不 import 仓库模块。读盘不经过 DuckDB 文件面。扩展名去点、大小写不敏感，对照 `ast_supported_languages().extensions`。然后：
+
+`parse_ast($content, $lang, peek := 'full')` → `ast_to_blocks_from` → `duck_blocks_validate` → `duck_blocks_to_text`。
+
+`ast_to_blocks` / `ast_to_blocks_list` 内部走 `read_ast`。`enable_external_access=false` 之后读文件被拒。口岸用同族的 `ast_to_blocks_from`，吃内存表。两个扩展都必须已 LOAD：`sitting_duck` 提供 `parse_ast` 与 `ast_to_blocks_from`，`duck_block_utils` 提供 `duck_blocks_validate` 与 `duck_blocks_to_text`。社区 3.4.0 没有 `db_blocks_to_text`（1.x 旧名）；实测渲染函数是 `duck_blocks_to_text`。
+
+D3 闭合选项留给目录注册：本工具将来的 param_spec 只有 `{"fib.py": "Python fixture"}`。本里程碑不 INSERT 目录行。纯文本喂不进 AST，所以没有 `hello.txt` 选项。
+
+### 错误分类
+
+与 Swift / Node 同一帧一行 JSON。
+
+| 情况 | error | 退出码 |
+|---|---|---|
+| 成功 | `ok=true`，`result` 为字符串 | 0 |
+| 空 stdin、缺 path、path 空、类型不对 | `invalid_params` | 3 |
+| NUL、`../`、根外绝对路径、符号链接逃出 | `path_outside_workspace` | 3 |
+| 缺文件、目录、非 UTF-8、`~` 不展开 | `read_failed` | 3 |
+| 扩展名不在 `ast_supported_languages()` | `language_unsupported` | 3 |
+| 解析或块校验失败 | `parse_failed` | 3 |
+| 坏 JSON、版本/SHA 不符、扩展装不上 | 无成功帧 | 1 |
+
+### 与 Pi 口岸的差别
+
+Pi 口岸对照上游源码行钉行为。本口岸不能：装载的是社区签名二进制，不是仓库里的源码行。本地 sitting_duck checkout 与已装载的 `b8c06a8` 不是同一棵树。期望文本以本机实测钉死（`fib.py` 全文渲染常量，断言标签带 `duckdb=1.5.5 sitting_duck=b8c06a8 duck_block_utils=39941a7`），不按 README 列数或源码行号。outline 默认样式只渲染定义：`fib.py` 含 `print(fib(6))`，渲染结果不含这次调用。这是实测结果，不是漏读。
 
 ## 环
 

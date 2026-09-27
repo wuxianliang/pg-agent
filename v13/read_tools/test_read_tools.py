@@ -1,13 +1,15 @@
 """Native read-tool gates.
 
---contract: A-C, exit 0 = pass.
+--contract: A-C and F, exit 0 = pass.
 No flag: A-E, exit 0 = pass.
-Missing swift or node: prints [SKIP] not_run/toolchain_absent and exits 2
+Missing swift or node, or --contract with duck bring-up absent:
+prints [SKIP] not_run/toolchain_absent and exits 2
 before setup_db and before any green assertion.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -22,11 +24,45 @@ AGENT_ROOT = ROOT.parent.parent
 sys.path.insert(0, str(AGENT_ROOT))
 
 from v13.read_tools.bridge import ProtocolError, run_line_json
-from v13.read_tools.read_contract import ReadError, read_text
+from v13.read_tools.read_contract import ReadError, read_text, resolve_path
+from v13.read_tools.read_duck_port import (
+    EXPECTED_DUCKDB_VERSION,
+    EXPECTED_EXTENSIONS,
+    EXPECTED_PLATFORM,
+    EXTENSION_CACHE,
+    ToolError,
+    resolve_path as duck_resolve,
+)
 
 SWIFT_SRC = str(ROOT / "read_file_swift.swift")
 PI_SRC = str(ROOT / "read_pi.mjs")
+DUCK_PY = ROOT / ".duck-venv" / "bin" / "python"
+DUCK_PORT = ROOT / "read_duck_port.py"
 FIXTURES = ROOT / "fixtures"
+FIB_BYTES = (
+    b"def fib(n):\n"
+    b"    if n < 2:\n"
+    b"        return n\n"
+    b"    return fib(n - 1) + fib(n - 2)\n"
+    b"\n"
+    b"\n"
+    b"print(fib(6))\n"
+)
+FIB_RENDER = (
+    "fib(n)\n"
+    "\n"
+    "def fib(n):\n"
+    "    if n < 2:\n"
+    "        return n\n"
+    "    return fib(n - 1) + fib(n - 2)"
+)
+JS_BYTES = b"function add(a, b) {\n  return a + b;\n}\nadd(1, 2);\n"
+JS_RENDER = "add(a, b)\n\nfunction add(a, b) {\n  return a + b;\n}"
+PIN_LABEL = (
+    f"duckdb={EXPECTED_DUCKDB_VERSION}"
+    f" sitting_duck={EXPECTED_EXTENSIONS['sitting_duck']['version']}"
+    f" duck_block_utils={EXPECTED_EXTENSIONS['duck_block_utils']['version']}"
+)
 HELLO = b"line one\nline two\nline three\n"
 CRLF = b"alpha\r\nbeta\r\n"
 HEADLESS_CRLF = "alpha\n\nbeta\n\n"
@@ -49,6 +85,63 @@ def toolchain_present() -> bool:
         if proc.returncode != 0:
             return False
     return True
+
+
+def duck_toolchain_present() -> bool:
+    if not DUCK_PY.is_file():
+        return False
+    return all(
+        (EXTENSION_CACHE / f"{name}.duckdb_extension").is_file()
+        for name in EXPECTED_EXTENSIONS
+    )
+
+
+def duck_argv() -> list[str]:
+    return [str(DUCK_PY), str(DUCK_PORT)]
+
+
+def duck_read(root: str, path: str, *, path_key: bool = True):
+    payload = {"root": root}
+    if path_key:
+        payload["path"] = path
+    return run_line_json(duck_argv(), payload)
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def duck_inventory() -> dict:
+    script = """
+import json
+import duckdb
+con = duckdb.connect(":memory:")
+con.execute("SET autoinstall_known_extensions=false")
+con.execute("SET autoload_known_extensions=false")
+con.execute("LOAD sitting_duck")
+con.execute("LOAD duck_block_utils")
+platform = con.execute("PRAGMA platform").fetchone()[0]
+rows = con.execute(
+    "SELECT extension_name, extension_version, loaded FROM duckdb_extensions() "
+    "WHERE extension_name IN ('sitting_duck', 'duck_block_utils')"
+).fetchall()
+langs = con.execute(
+    "SELECT language, extensions FROM ast_supported_languages()"
+).fetchall()
+print(json.dumps({
+    "duckdb": duckdb.__version__,
+    "platform": platform,
+    "rows": rows,
+    "langs": langs,
+}))
+"""
+    proc = subprocess.run(duck_argv()[:1] + ["-c", script], capture_output=True, text=True)
+    check("F1", proc.returncode == 0, proc.stderr)
+    return json.loads(proc.stdout)
 
 
 def expect_py(label: str, root: str, path: str, code: str) -> None:
@@ -1146,15 +1239,156 @@ def run_ring() -> None:
         check("E3", needle in readme, needle)
 
 
+def run_f() -> None:
+    inventory = duck_inventory()
+    check(f"F1 {PIN_LABEL}", inventory["duckdb"] == EXPECTED_DUCKDB_VERSION, inventory["duckdb"])
+    check(f"F1 {PIN_LABEL}", inventory["platform"] == EXPECTED_PLATFORM, inventory["platform"])
+    found = {row[0]: row for row in inventory["rows"]}
+    for name, pin in EXPECTED_EXTENSIONS.items():
+        row = found.get(name)
+        check(f"F1 {PIN_LABEL}", row is not None and row[1] == pin["version"] and row[2] is True, row)
+        binary = EXTENSION_CACHE / f"{name}.duckdb_extension"
+        digest = file_sha256(binary)
+        check(f"F2 {PIN_LABEL}", digest == pin["sha256"], digest)
+        info = (EXTENSION_CACHE / f"{name}.duckdb_extension.info").read_bytes()
+        check("F2", b"http://community-extensions.duckdb.org" in info, name)
+        check("F2", pin["version"].encode() in info, name)
+    src = DUCK_PORT.read_text()
+    for needle in (
+        "SET autoinstall_known_extensions=false",
+        "SET autoload_known_extensions=false",
+        "LOAD sitting_duck",
+        "LOAD duck_block_utils",
+        "SET enable_external_access=false",
+        "parse_ast(?, ?, peek := 'full')",
+        "ast_to_blocks_from('ast')",
+        "duck_blocks_to_text",
+        "duck_blocks_validate",
+    ):
+        check("F2", needle in src, needle)
+    check("F2", "INSTALL " not in src and "allow_unsigned_extensions" not in src)
+    check("F2", "read_contract" not in src)
+
+    body = (FIXTURES / "fib.py").read_bytes()
+    check("F3", body == FIB_BYTES and body.endswith(b"\n") and body.isascii(), body)
+    proc = subprocess.run(
+        duck_argv(),
+        input=json.dumps({"root": str(FIXTURES), "path": "fib.py"}).encode(),
+        capture_output=True,
+    )
+    frames = [line for line in proc.stdout.split(b"\n") if line.strip()]
+    check("F3", proc.returncode == 0 and len(frames) == 1, (proc.returncode, proc.stdout, proc.stderr))
+    got = duck_read(str(FIXTURES), "fib.py")
+    source = FIB_BYTES.decode("utf-8")
+    check(
+        f"F3 {PIN_LABEL}",
+        got.ok and got.exit_code == 0 and got.result == FIB_RENDER and got.result != source,
+        got.payload,
+    )
+    check("F3", got.result is not None and "print(fib(6))" not in got.result and "fib(n)" in got.result)
+
+    by_lang = {row[0]: row[1] for row in inventory["langs"]}
+    check("F4", "py" in (by_lang.get("python") or []), by_lang.get("python"))
+    check("F4", "javascript" in by_lang and "js" in by_lang["javascript"], by_lang.get("javascript"))
+    check("F4", "javascript" != "python")
+
+    root = str(FIXTURES)
+    for raw in ("fib.py", "../../etc/hosts", "/etc/hosts", "a\0b", "", "   ", "~/fib.py"):
+        try:
+            py_path = resolve_path(root, raw)
+            py_code = None
+        except ReadError as exc:
+            py_path = None
+            py_code = exc.code
+        try:
+            duck_path = duck_resolve(root, raw)
+            duck_code = None
+        except ToolError as exc:
+            duck_path = None
+            duck_code = exc.code
+        check("F6", py_code == duck_code and py_path == duck_path, (raw, py_code, duck_code, py_path, duck_path))
+
+    escaped = duck_read(root, "../../etc/hosts")
+    check("F6", escaped.error == "path_outside_workspace" and escaped.exit_code == 3, escaped.payload)
+    absolute = duck_read(root, "/etc/hosts")
+    check("F6", absolute.error == "path_outside_workspace" and absolute.exit_code == 3, absolute.payload)
+    nul = duck_read(root, "a\0b")
+    check("F6", nul.error == "path_outside_workspace" and nul.exit_code == 3, nul.payload)
+    tilde = duck_read(root, "~/fib.py")
+    check("F6", (not tilde.ok) and tilde.error == "read_failed" and tilde.exit_code == 3, tilde.payload)
+    missing_key = duck_read(root, "fib.py", path_key=False)
+    check("F7", missing_key.error == "invalid_params" and missing_key.exit_code == 3, missing_key.payload)
+    blank = duck_read(root, "   ")
+    check("F7", blank.error == "invalid_params" and blank.exit_code == 3, blank.payload)
+    empty = run_line_json(duck_argv(), {}, stdin=b"")
+    check("F8", empty.error == "invalid_params" and empty.exit_code == 3, empty.payload)
+    blank_in = run_line_json(duck_argv(), {}, stdin=b" \n\t")
+    check("F8", blank_in.error == "invalid_params" and blank_in.exit_code == 3, blank_in.payload)
+    try:
+        run_line_json(duck_argv(), {}, stdin=b"{")
+    except ProtocolError:
+        check("F8", True)
+    else:
+        check("F8", False, "bad json")
+
+    with tempfile.TemporaryDirectory(prefix="v13read-f-") as raw_dir:
+        tmp = Path(raw_dir)
+        outside = tmp / "secret.py"
+        outside.write_bytes(b"def secret():\n    return 1\n")
+        fenced = tmp / "root"
+        fenced.mkdir()
+        (fenced / "escape.py").symlink_to(outside)
+        link = duck_read(str(fenced), "escape.py")
+        check("F6", link.error == "path_outside_workspace" and link.exit_code == 3, link.payload)
+        (fenced / "note.txt").write_bytes(b"hello\n")
+        unsupported = duck_read(str(fenced), "note.txt")
+        check(
+            "F5",
+            unsupported.error == "language_unsupported" and unsupported.exit_code == 3,
+            unsupported.payload,
+        )
+        (fenced / "bad.py").write_bytes(b"\xff\xfe")
+        bad = duck_read(str(fenced), "bad.py")
+        check("F9", bad.error == "read_failed" and bad.exit_code == 3, bad.payload)
+        missing = duck_read(str(fenced), "missing.py")
+        check("F9", missing.error == "read_failed" and missing.exit_code == 3, missing.payload)
+        (fenced / "add.js").write_bytes(JS_BYTES)
+        js = duck_read(str(fenced), "add.js")
+        check(
+            f"F4 {PIN_LABEL}",
+            js.ok and js.exit_code == 0 and js.result == JS_RENDER and "add(1, 2)" not in (js.result or ""),
+            js.payload,
+        )
+
+    readme = (ROOT / "README.md").read_text()
+    for needle in (
+        "uv run python v13/read_tools/duck_bringup.py",
+        EXPECTED_DUCKDB_VERSION,
+        EXPECTED_PLATFORM,
+        EXPECTED_EXTENSIONS["sitting_duck"]["version"],
+        EXPECTED_EXTENSIONS["duck_block_utils"]["version"],
+        EXPECTED_EXTENSIONS["sitting_duck"]["sha256"],
+        EXPECTED_EXTENSIONS["duck_block_utils"]["sha256"],
+        "language_unsupported",
+        "ast_to_blocks_from",
+        "duck_blocks_to_text",
+        "D1-A",
+        "enable_external_access=false",
+    ):
+        check("F10", needle in readme, needle)
+
+
 def main(argv: list[str]) -> int:
-    if not toolchain_present():
+    contract = "--contract" in argv
+    if not toolchain_present() or (contract and not duck_toolchain_present()):
         print("[SKIP] not_run/toolchain_absent")
         return 2
     try:
         run_a()
         run_b()
         run_c()
-        if "--contract" in argv:
+        if contract:
+            run_f()
             return 0
         run_ring()
     except AssertionError as exc:

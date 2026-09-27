@@ -254,3 +254,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## sitting_duck (Apache-2.0) and duck_block_utils (MIT)
+
+`v13/read_tools/read_duck_port.py` loads these as DuckDB community-extension binaries. This repository does not vendor their source or their binaries. The user cache is filled by `INSTALL ... FROM community` in `v13/read_tools/duck_bringup.py`. Pins below are the 2026-09-27 measured `duckdb_extensions().extension_version` values and SHA-256 of the cached binaries for DuckDB 1.5.5 / `osx_arm64`, not the community descriptor's marketing versions.
+
+- sitting_duck. Maintainer teaguesterling. License Apache-2.0 (community descriptor and upstream NOTICE; bundled tree-sitter pieces stay inside the binary under their own MIT / Apache-2.0 terms and are not extracted here). `extension_version` `b8c06a8` (descriptor 1.11.0, repo ref `b8c06a843193a84065ae24cc95c6a4052f3c84ec`). Channel `http://community-extensions.duckdb.org/v1.5.5/osx_arm64/sitting_duck.duckdb_extension.gz`. SHA-256 `e031481f864f342b97deb1e985b6ff5f4b27a97de28d7ec37cf1ad64b6483176`.
+- duck_block_utils. Copyright (c) 2024-2026 Teague Sterling. MIT. `extension_version` `39941a7` (descriptor 3.4.0, repo ref `39941a70c7d4e48d5e70ffdaddb680793e59968a`). The v1.2.1 / `125662df` pin is the DuckDB v1.4.5 track, not this build. Channel `http://community-extensions.duckdb.org/v1.5.5/osx_arm64/duck_block_utils.duckdb_extension.gz`. SHA-256 `4a4f6ff8800c23e959198fa62c134da311acd82d81258f85c64aa16ef21cf529`.
