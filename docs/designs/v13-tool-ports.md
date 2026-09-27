@@ -167,7 +167,7 @@ headless 禁止 `image_unsupported` / `language_unsupported` / `parse_failed`。
 
 **TP-GATE-3** `main` 顺序：`run_g()`（G1+G2+G3）→ `run_a()` → swift 在则 B、node 在则 C → duck 为 ok 或 unpinned 则 F → 无 `--contract` 且跳过为空才 ring → ring 跑完且无跳过才 E4 → `AssertionError` 打印并返回 1 → 跳过非空则打印含 `[SKIP] not_run/toolchain_absent` 与 `planes=` 后缀并返回 2 → 否则 0。文首 docstring 必须写「能跑的组先跑；断言失败退出 1；有跳过才退出 2」。DB setup/connect 失败只许包装为 `RingInfrastructureError`，禁止用 `OperationalError` 类名字符串判断，禁止吞其他 traceback。检查：gate G1；source `main`。
 
-**TP-GATE-4** E4 进无旗标全量 gate。ring 全部连接关闭后启动。发现命令必须是 `find v13 -name 'test_*.py' -not -path 'v13/read_tools/*' | sort`。禁止写死条数（冻结时清单为 25，含 acl/observe；条数变化不构成豁免，也不构成跳过）。逐个 `uv run python <路径>` 串行，记录 `路径 → 退出码`。任何非零即红。不重试，不豁免，不缓存。用该次输出刷新 README 的 E4 表。超时即失败。排除 `v13/read_tools/*` 以防递归。检查：gate 无旗标全量的 E4 段；manual（F 落地前）：同一发现命令，逐个 `uv run python <路径>`，全部退出 0。
+**TP-GATE-4** E4 进无旗标全量 gate。ring 全部连接关闭后启动。发现命令必须是 `find v13 -name 'test_*.py' -not -path 'v13/read_tools/*' | sort`。禁止写死条数（冻结时清单为 25，含 acl/observe；条数变化不构成豁免，也不构成跳过）。逐个 `uv run python <路径>` 串行，记录 `路径 → 退出码`。当前环境下未冻结的 `uv run` 会改写 `uv.lock`，本 stage 的 gate 命令带 `UV_FROZEN=1`（见 `v13/read_tools/README.md` Gate 节）；G2 要求 `uv.lock` 零 diff。任何非零即红。不重试，不豁免，不缓存。用该次输出刷新 README 的 E4 表。超时即失败。排除 `v13/read_tools/*` 以防递归。检查：gate 无旗标全量的 E4 段；manual（F 落地前）：同一发现命令，逐个 `uv run python <路径>`，全部退出 0。
 
 **TP-GATE-5** `duck_probe()` 是短命子进程：`.duck-venv/bin/python` 只 `import duckdb`、`connect(":memory:")`、打印 `__version__` 与 `PRAGMA platform`，禁止 LOAD。venv 或解释器缺失，或该平台扩展文件缺失 → `absent`。版本 ≠ `1.5.5` → 不是 absent，F1 失败退出 1。`PRAGMA platform` 不在 `PINS_BY_PLATFORM` → `unpinned`（F 照跑，退出 1）。新平台不是静默加一行缓存，见 TP-SNAP-3。检查：gate G1/F1。
 

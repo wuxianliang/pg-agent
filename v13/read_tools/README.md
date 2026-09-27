@@ -7,9 +7,11 @@ M1 离线契约。Python 与 Swift 在 headless 契约上相等；Node 的 Pi �
 ## Gate
 
 ```bash
-uv run python v13/read_tools/test_read_tools.py --contract
-uv run python v13/read_tools/test_read_tools.py
+UV_FROZEN=1 uv run python v13/read_tools/test_read_tools.py --contract
+UV_FROZEN=1 uv run python v13/read_tools/test_read_tools.py
 ```
+
+当前环境（`../pgembed` 带 sqlalchemy `>=2,<2.1` 钉版）下，未冻结的 `uv run` 会改写 `uv.lock`。本 stage 的 gate 按 `UV_FROZEN=1 uv run python v13/read_tools/test_read_tools.py ...` 跑。G2 要求 `uv.lock` 零 diff。待 pgembed 线落定其 sqlalchemy 变更后，此段可移除。
 
 `--contract` 跑 G、A–C 与 F，退出码 0 为通过。无旗标在 ring 之后再跑 E4，退出码 0 为通过。
 
