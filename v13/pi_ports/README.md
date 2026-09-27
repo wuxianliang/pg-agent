@@ -1,6 +1,6 @@
 # v13 pi_ports
 
-> 权威：口岸合同 `docs/designs/v13-tool-ports.md`（`v13/tool-port-contract-1`）。已交付 JS 与 Go 口岸。Swift 与三语言差异报告不在本轮。
+> 权威：口岸合同 `docs/designs/v13-tool-ports.md`（`v13/tool-port-contract-1`）。已交付 JS、Go 与 Swift 口岸。三语言差异报告不在本轮。
 
 独立库 `agent_v13_pi_ports`。`setup_db.py` 用 `load_stage(..., 'seam')`。工具行只在该库运行时 INSERT/DELETE。不改 `v13/**/*.sql`，不改 `v13/load.py`。
 
@@ -10,7 +10,7 @@
 UV_FROZEN=1 uv run python v13/pi_ports/test_pi_ports.py
 ```
 
-node、本地 pi checkout、或 `v13/pi_ports/node_modules` 缺席，或 `go` / 本地 PiG checkout 缺席，则打印 `[SKIP] not_run/toolchain_absent` 并退出 2，不算通过。能跑的组先跑。断言失败退出 1。全绿退出 0。
+node、本地 pi checkout、或 `v13/pi_ports/node_modules` 缺席，或 `go` / 本地 PiG checkout 缺席，或 `swift` / 本地 PiSwift checkout 缺席，则打印 `[SKIP] not_run/toolchain_absent` 并退出 2，不算通过。能跑的组先跑。断言失败退出 1。全绿退出 0。
 
 首次装运行时依赖（只写本目录，不改 `/Users/wxl/Projects/pi`）：
 
@@ -54,7 +54,7 @@ npm install --prefix v13/pi_ports
 
 ## 环（本轮只到目录行）
 
-`test_pi_ports.py` 的 R0/R1：`setup_db` 建库并加载到 seam，然后 INSERT `read_pi_ext` / `worker:read_pi_ext`，再 DELETE。Go 组同样 INSERT/DELETE `read_pig` / `worker:read_pig`。不跑完整 turn。完整接环留到三语言齐了之后。
+`test_pi_ports.py` 的 R0/R1：`setup_db` 建库并加载到 seam，然后 INSERT `read_pi_ext` / `worker:read_pi_ext`，再 DELETE。Go 组同样 INSERT/DELETE `read_pig` / `worker:read_pig`。Swift 组同样 INSERT/DELETE `read_piswift` / `worker:read_piswift`。不跑完整 turn。完整接环留到三语言差异报告。
 
 ## Go 口岸证据
 
@@ -71,3 +71,23 @@ npm install --prefix v13/pi_ports
 围栏先 `filepath.Abs` 再 `EvalSymlinks`，包含关系用 `filepath.Rel`（`..` 或以 `../` 开头才拒）。字符设备、块设备、fifo 在读正文前 `Stat` 拒绝为 `read_failed`；普通文件仍全文校验后再交给框架，与 JS/Python 平面同性质。
 
 合同适配与 JS 口岸同一闭集：`~/` 不展开；负 `limit` 先归一为 0；图像扩展名在调用框架前返回 `image_unsupported`，不把字节放进帧。PiG 的 read 工具本身会把 jpg/png/gif/webp/bmp 做成 image attachment（`internal/codingagent/tools/read.go` 的 `readImage`）；口岸不走那条路径，因为行协议是文本帧。差异报告留到三语言齐了之后。
+
+## Swift 口岸证据
+
+包：`v13/pi_ports/piswift_port`。`Package.swift` 以本地路径依赖作者机 PiSwift checkout（`/Users/wxl/Projects/PiSwift`），他机不能独立构建；这与 Go 口岸的本地集成模型一致，不改 PiSwift。平台要求 macOS 15+ / Swift 工具链 6.2+。`swift` 或 PiSwift checkout 缺席则 skip，退出 2。gate 用 `swift build --build-path <repo>/.piswift-build`（仓库根，已 gitignore）。不能把构建目录放在 `v13/` 下：`test_read_tools.py` 的 E4 会 `find v13 -name test_*.py`，SwiftPM checkout 里的 `test_*.py` 会把全量 gate 打红。
+
+公开面（外部 package 可 import，不改框架）：
+
+- `createReadTool(cwd:)`（`PiSwiftCodingAgent`，`Sources/PiSwiftCodingAgent/Core/Tools/ReadTool.swift`）
+- 返回的 `AgentTool.execute`（`PiSwiftAgent`）收到的 `path` 是围栏规范化后的绝对路径
+- 版本常量 `PiSwiftCodingAgent.VERSION`（`Sources/PiSwiftCodingAgent/Config.swift`，本 checkout 为 `0.87.1`）
+
+stderr 一行 `pi_ports evidence: module=PiSwift version=<VERSION> function=createReadTool tool=read execute=AgentTool.execute path=fenced-absolute`。
+
+围栏先词法绝对化（不展开 `~`、不解符号链接），再 `realpath`，包含关系用相对路径（`..` 或以 `../` 开头才拒），不用字符串前缀。`~/file` 是 root 下的字面相对路径。非 regular 文件（目录、fifo、设备）在读正文前拒绝为 `read_failed`。
+
+合同适配与 JS/Go 同一闭集：负 `limit` 先归一为 0；`offset`/`limit` 键存在但非整数、NaN/Inf 或超 `Int` 范围 → `invalid_params`；图像扩展名在调用框架前返回 `image_unsupported`，框架结果里的图像附件再做一道闸。`offset_out_of_range` 的识别正则钉在 PiSwift 0.87.1 `ReadTool.swift` 的措辞 `Offset .+ is beyond end of file`。升级 checkout 必须跟着改这处匹配。
+
+PiSwift 0.87.1 的续读提示是 `to continue]`，共享矩阵锁的是 pi TS 的 `to continue.]`。口岸只在最终单行 trailer 上补这个句点，不复制截断实现。
+
+PiSwift 的 `split(separator: "\n")` 按 Swift 字素切。`\r\n` 是一个字素，CRLF 文件不会被切开，`limit` 因此失效。口岸在已围栏、已校验的副本里于 `U+000D` 与 `U+000A` 之间插入 `U+E000`，把该副本的绝对路径交给 `execute`，再从结果剥掉 `\r\u{E000}`。调用方原始路径仍不进入框架。`U+E000` 会计入框架的字节帽；本矩阵的 `crlf.txt` 不触及该帽。差异报告留到三语言齐了之后。

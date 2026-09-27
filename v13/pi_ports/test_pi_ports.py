@@ -1,7 +1,7 @@
-"""JS and Go read ports on real framework tools.
+"""JS, Go, and Swift read ports on real framework tools.
 
 能跑的组先跑；断言失败退出 1；有跳过才退出 2。
-JS 组标签不变。Go 组标签带 GO- 前缀，语义对齐，不改 JS 断言。
+JS 组标签不变。Go 组标签带 GO- 前缀，Swift 组带 SW- 前缀，语义对齐，不改既有断言。
 """
 from __future__ import annotations
 
@@ -76,6 +76,11 @@ def run_guard() -> None:
     check("G0", "internal/codingagent" not in pig_src, "no internal import")
     check("G0", "TruncateHead" not in pig_src, "no copied truncate")
     check("G0", '{"path": absolutePath}' in pig_src, "fenced path is what Execute sees")
+    sw_src = (ROOT / "piswift_port" / "Sources" / "read_piswift" / "main.swift").read_text()
+    check("G0", "createReadTool(" in sw_src and ".execute(" in sw_src, "swift framework call")
+    check("G0", "truncateHead(" not in sw_src, "no copied truncate")
+    check("G0", "FileHandle.standardOutput.write" in sw_src and "print(" not in sw_src, "swift emit")
+    check("G0", "AnyCodable(absolutePath)" in sw_src, "fenced path is what execute sees")
     load = (AGENT_ROOT / "v13" / "load.py").read_text()
     check("G0", "pi_ports" not in load, "load.py")
     names = []
@@ -357,6 +362,15 @@ GO_EVIDENCE = [
     "path=fenced-absolute",
 ]
 PIG_ROOT = Path("/Users/wxl/Projects/PiG")
+SW_EVIDENCE = [
+    "module=PiSwift",
+    "version=0.87.1",
+    "function=createReadTool",
+    "tool=read",
+    "execute=AgentTool.execute",
+    "path=fenced-absolute",
+]
+PISWIFT_ROOT = Path("/Users/wxl/Projects/PiSwift")
 
 
 def run_c() -> None:
@@ -585,17 +599,192 @@ def go_toolchain_absent() -> list[str]:
     return skipped
 
 
+def swift_toolchain_absent() -> list[str]:
+    skipped = []
+    if not command_ok(["swift", "--version"]):
+        skipped.append("swift")
+    read_tool = PISWIFT_ROOT / "Sources" / "PiSwiftCodingAgent" / "Core" / "Tools" / "ReadTool.swift"
+    if not (PISWIFT_ROOT / "Package.swift").is_file() or not read_tool.is_file():
+        skipped.append("piswift_checkout")
+    return skipped
+
+
+def piswift_read(argv, root: str, path: str, **fields):
+    payload = {"root": root, "path": path}
+    payload.update(fields)
+    return run_line_json(argv, payload, timeout=90)
+
+
+def run_swift(argv) -> None:
+    run_plane(lambda root, path, **fields: piswift_read(argv, root, path, **fields), argv, "SW-", SW_EVIDENCE)
+    run_swift_fence(argv)
+
+
+def run_swift_fence(argv) -> None:
+    def once(cwd, root, path, timeout=30):
+        proc = subprocess.run(
+            argv,
+            input=json.dumps({"root": root, "path": path}).encode(),
+            capture_output=True,
+            timeout=timeout,
+            cwd=cwd,
+        )
+        line = proc.stdout.split(b"\n", 1)[0]
+        payload = json.loads(line.decode()) if line.strip() else {}
+        return proc.returncode, payload
+
+    with tempfile.TemporaryDirectory(prefix="v13sw-fence-") as raw:
+        parent = Path(raw)
+        fixtures = parent / "fixtures"
+        fixtures.mkdir()
+        (fixtures / "inside.txt").write_bytes(b"inside-ok\n")
+        (parent / "secret.txt").write_bytes(b"secret-no\n")
+        abs_inside = str((fixtures / "inside.txt").resolve())
+        abs_secret = str((parent / "secret.txt").resolve())
+
+        code, payload = once(str(fixtures), ".", "inside.txt")
+        check("SW-F1", code == 0 and payload.get("result") == "inside-ok\n", payload)
+        code, payload = once(str(fixtures), ".", abs_inside)
+        check("SW-F1", code == 0 and payload.get("result") == "inside-ok\n", payload)
+        code, payload = once(str(parent), "fixtures", "inside.txt")
+        check("SW-F1", code == 0 and payload.get("result") == "inside-ok\n", payload)
+        code, payload = once(str(parent), "fixtures", abs_inside)
+        check(
+            "SW-F1",
+            code == 0 and payload.get("result") == "inside-ok\n" and "secret-no" not in json.dumps(payload),
+            payload,
+        )
+        code, payload = once(None, "/", abs_inside)
+        check("SW-F1", code == 0 and payload.get("result") == "inside-ok\n", payload)
+        code, payload = once(str(parent), "fixtures", abs_secret)
+        check("SW-F1", code == 3 and payload.get("error") == "path_outside_workspace", payload)
+
+        fifo = parent / "pipe"
+        os.mkfifo(fifo)
+        code, payload = once(None, "/", str(fifo), timeout=5)
+        check(
+            "SW-F2",
+            code == 3 and payload.get("error") == "read_failed" and "result" not in payload,
+            payload,
+        )
+        if Path("/dev/zero").exists():
+            code, payload = once(None, "/", "/dev/zero", timeout=5)
+            check(
+                "SW-F2",
+                code == 3 and payload.get("error") == "read_failed" and "result" not in payload,
+                payload,
+            )
+
+    bad_off = piswift_read(argv, str(FIXTURES), "hello.txt", offset="10")
+    check("SW-P2", bad_off.error == "invalid_params" and bad_off.exit_code == 3, bad_off.payload)
+    bad_lim = piswift_read(argv, str(FIXTURES), "hello.txt", limit=1.5)
+    check("SW-P2", bad_lim.error == "invalid_params" and bad_lim.exit_code == 3, bad_lim.payload)
+    huge = piswift_read(argv, str(FIXTURES), "hello.txt", offset=1e20)
+    check("SW-P2", huge.error == "invalid_params" and huge.exit_code == 3, huge.payload)
+
+
+def build_piswift() -> list[str]:
+    port = ROOT / "piswift_port"
+    build_path = AGENT_ROOT / ".piswift-build"
+    proc = subprocess.run(
+        ["swift", "build", "-c", "release", "--product", "read_piswift", "--build-path", str(build_path)],
+        cwd=port,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if proc.returncode != 0:
+        err = (proc.stderr or "") + (proc.stdout or "")
+        lowered = err.lower()
+        if "unable to find" in lowered and "swift" in lowered:
+            raise ToolchainMissing(["swift"], err)
+        raise AssertionError(f"swift build: {err[-2000:]}")
+    shown = subprocess.run(
+        ["swift", "build", "-c", "release", "--product", "read_piswift", "--build-path", str(build_path), "--show-bin-path"],
+        cwd=port,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if shown.returncode != 0:
+        raise AssertionError(f"swift bin path: {(shown.stderr or shown.stdout)[-1000:]}")
+    binary = Path(shown.stdout.strip()) / "read_piswift"
+    if not binary.is_file():
+        raise AssertionError(f"missing binary: {binary}")
+    return [str(binary)]
+
+
+def run_catalog_piswift() -> None:
+    import psycopg2
+
+    from server import get_server
+    from v13.pi_ports.setup_db import DB, main as setup_db
+
+    check("SW-R0", setup_db() == 0, "setup_db")
+    server = get_server()
+    conn = psycopg2.connect(server.get_uri(DB))
+    conn.autocommit = False
+    spec = {
+        "path": {
+            "question": "Which fixture file should be read?",
+            "stated": "Does the user name a fixture file to read?",
+            "options": {"hello.txt": "LF fixture"},
+        }
+    }
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT count(*) FROM tools")
+        before = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO tools (name, description, kind, handler, param_spec, enabled) "
+            "VALUES (%s, %s, 'tool', %s, %s::jsonb, true)",
+            (
+                "read_piswift",
+                "Read a text file through the PiSwift framework read tool.",
+                "worker:read_piswift",
+                json.dumps(spec),
+            ),
+        )
+        cur.execute(
+            "SELECT kind, handler, enabled FROM tools WHERE name=%s",
+            ("read_piswift",),
+        )
+        row = cur.fetchone()
+        check("SW-R1", row == ("tool", "worker:read_piswift", True), row)
+        cur.execute("SELECT count(*) FROM tools")
+        check("SW-R1", cur.fetchone()[0] == before + 1, before)
+        cur.execute("DELETE FROM tools WHERE name=%s", ("read_piswift",))
+        cur.execute("SELECT count(*) FROM tools WHERE name=%s", ("read_piswift",))
+        check("SW-R1", cur.fetchone()[0] == 0)
+        cur.execute("SELECT count(*) FROM tools")
+        check("SW-R1", cur.fetchone()[0] == before, before)
+        conn.commit()
+    finally:
+        conn.rollback()
+        conn.close()
+
+
 def main(argv: list[str]) -> int:
     del argv
     failed = False
     skipped = toolchain_absent()
     go_skipped = go_toolchain_absent()
+    swift_skipped = swift_toolchain_absent()
     pig_argv = None
+    swift_argv = None
     if not go_skipped:
         try:
             pig_argv = build_pig()
         except ToolchainMissing as exc:
             go_skipped.extend(exc.planes)
+        except AssertionError as exc:
+            print(exc)
+            failed = True
+    if not swift_skipped:
+        try:
+            swift_argv = build_piswift()
+        except ToolchainMissing as exc:
+            swift_skipped.extend(exc.planes)
         except AssertionError as exc:
             print(exc)
             failed = True
@@ -607,6 +796,9 @@ def main(argv: list[str]) -> int:
         if pig_argv is not None:
             run_go(pig_argv)
             run_catalog_pig()
+        if swift_argv is not None:
+            run_swift(swift_argv)
+            run_catalog_piswift()
     except AssertionError as exc:
         print(exc)
         failed = True
@@ -615,7 +807,7 @@ def main(argv: list[str]) -> int:
         failed = True
     if failed:
         return 1
-    planes = skipped + go_skipped
+    planes = skipped + go_skipped + swift_skipped
     if planes:
         print(f"[SKIP] not_run/toolchain_absent planes={','.join(planes)}")
         return 2

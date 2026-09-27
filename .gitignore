@@ -38,3 +38,6 @@ v13/read_tools/.duck-venv/
 # Runtime deps for loading the local pi checkout from v13/pi_ports (not vendored)
 v13/pi_ports/node_modules/
 v13/pi_ports/pig_port/read_pig
+v13/pi_ports/piswift_port/.build/
+v13/pi_ports/piswift_port/.swiftpm/
+.piswift-build/
