@@ -149,3 +149,5 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | C18 | R13c-C：r42 小题⑧要求安装 `trg_sessions_parent_immutable` 并见 `v13: parent immutable`，但 stage 18 既有 `trg_sessions_fork_cols_immutable`/`v13_spawn_cols_guard` 已覆 parent_session_id 列（同级 BEFORE 按名序 `fork` 先火，新文案不可达） | 不装新守卫。parent 不可变由既有实例执法：stage 26 行为验收（route/spawn_owner 改 parent → 既有格式串 RAISE 零写 + NULL→非 NULL 臂按可构造性）+ 结构验收（OF 三列/函数/新名不存在）+ 源码（无新触发器无新文案）；stage 1–25 零改动；锁序重裁不触发。r43 |
 | PC-3 | 松配额种子不是产品额度（R13 D9）。活动 `quota_window` 为 `window_hours=8760`、`slot_minutes=0`、`allowed=1000000`。上线默认不因配额停跑 | 接受。收紧 = 新版本并翻转 active，不改函数。禁止写成「已配置 24 小时 8 次」 |
 | PC-4 | 计次不沿树（R13 D9）。`v13_quota_eligible` 只计本会话 `turn/material_spent`。子会话收据不改变父会话布尔。树上席位仍只由 `spawn_budget` 管 | 接受。不与席位预算混成第二套树计次 |
+| PC-5 | hint 不是 ack，本 stage 不注册 cron（R13 L21）。`v13_scheduler_hint` 可重复调用，不写事件、不推进 `next_seq`、不插入 `cron.job`。`run_now` 不是入队许可 | 接受。仓库外 driver 若存在，必须读 hint 且仅 `run_now` 才 `v13_advance`；advance 体内再判一次。禁止写成「pg_cron 已在生产调度」 |
+| PC-6 | 秩是注意力不是调度（R13 L5）。`attention_rank` 只作输出列，human 阻塞先于可跑，终态沉底。hint 不是这个秩的第一名。返回行数预算不限制 `v_goal_tree` 源遍历 | 接受。不把秩接到 advance，不建成 VIEW 或投影表。传 1 仍扫全树；前移有界遍历须另裁 |

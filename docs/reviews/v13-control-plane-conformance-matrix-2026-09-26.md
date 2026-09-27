@@ -91,3 +91,8 @@
 | 70 | 能力差、human_reward 不改已判行、finish 仍结算、索引、GRANT 只给 `v13_route` | ✅ | 同上 | 触发器函数只 REVOKE PUBLIC，不 GRANT |
 | 71 | 小题⑥正臂：quota 与 capability 门假、前缀三门不早退、duty<>0、snap.failed 非空 → 先 append `resolve/failed` 再 waiting、零新 effect、无 `triage/hold`；material 时间诚实七臂 | ✅ | 同上 | 源码在场≠正臂通过。本行是行为实测 |
 | 72 | stage 1–27 回归 | ✅ | 2026-09-27 schema…quota_window 全部 `test_*.py` 串行退出码均 0（28 脚本，含 mgraph 两脚本） | 无 |
+| 73 | stage 28 秩：human 阻塞先于可跑，终态沉底；同层 `session_id` 升序；`attention_rank` 不落列；双调用字节相同且零事件 | ✅ | 2026-09-27 `uv run python v13/attention/test_attention.py` 退出码 0（156 checks） | 秩是注意力不是调度（台账 PC-6）。返回行数预算不保树遍历 |
+| 74 | hint 闭集 `run_now`/`wait`/`dont_notify`：duty=0 且无 cancel → `wait` 且不写 hold；未消费 cancel 无 claimed/unknown → `run_now`；在途+坏策略仍 `wait`；fanout/depth/cap 超限 → `wait`，满树无 tool/call 仍 `run_now`；终态 `dont_notify` | ✅ | 同上 | hint 不是 ack，不注册 cron（PC-5） |
+| 75 | 双调用 `next_seq` 不变、无 `scheduler_ack`、无新 events；`cron.job` 不存在则跳过；hint 之后翻 `allowed=0`，advance 仍 `waiting` 且零新 effect | ✅ | 同上 | 禁止写成「pg_cron 已在生产调度」 |
+| 76 | GRANT 只给 `v13_route`；snapshot route 可执行，worker/PUBLIC/recall/resolve/spawn_owner 不可且 `provolatile=s`；大树 501 行成功并记录耗时、不断言阈值 | ✅ | 同上。501 行约 96ms | spawn_owner 的 snapshot 授权留 stage 29 |
+| 77 | stage 1–28 回归 | ✅ | 2026-09-27 schema…attention 全部 `test_*.py` 串行退出码均 0（29 脚本，含 mgraph 两脚本） | 无 |
