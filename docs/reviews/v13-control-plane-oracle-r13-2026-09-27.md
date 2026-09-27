@@ -66,3 +66,4 @@
 - **B（小题⑥正臂不可达）**：前缀三门（unknown/blocked_unknown、unconsumed_cancel、任一 ready/claimed）早退先于预检点，duty_cycle 门与预检条件互斥 → stage 26 无夹具可达正臂。裁定：双臂分阶段——负臂行为（duty=0 不预写）+ 源码断言（三合取项与 resolve/failed append 均在 prework 调用点前）在 stage 26；正臂行为验收入 stage 27 done-when；#43 注明源码在场≠正臂通过。施工形（预检代码）不动。双通道采纳。
 - 台账：C17（见偏差台账）。
 - 导出：`prompt-exports/oracle-review-2026-09-27-203023-*.md`。
+- **C（parent 守卫文案不可达）**：r42 复工后第三停工——stage 18 既有 `trg_sessions_fork_cols_immutable`（BEFORE UPDATE OF parent_session_id,... → `v13_spawn_cols_guard`）按名序先火，小题⑧新触发器的 `v13: parent immutable` 永不可达。裁定（双通道采纳，grok 精确句）：**不装新守卫**，执法者保持既有实例；行为（route/spawn_owner×IS DISTINCT FROM×格式串全等×NULL→非 NULL 臂按可构造性，不 RAISE 则停工）+ 结构（OF 三列/函数/新名不存在）+ 源码（无新触发器无新文案）三段验收；九处条文清扫（§0/§1.5/裁决终态/探针表/§2-15/§3.1-3/§3.2-9a/test_parent_immutable/§4.2-10）+ 头部 r43；台账 C18。锁序重裁不触发（不可变执法已在位）。导出：`...-205305-*.md`。
