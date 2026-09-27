@@ -40,6 +40,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "acl" / "v13_acl.sql",
     V13_ROOT / "observe" / "v13_observe.sql",
     V13_ROOT / "handoff" / "v13_handoff.sql",
+    V13_ROOT / "should_run" / "v13_should_run.sql",
 ]
 
 STAGE_THROUGH = {
@@ -68,6 +69,7 @@ STAGE_THROUGH = {
     "acl": 23,
     "observe": 24,
     "handoff": 25,
+    "should_run": 26,
 }
 
 

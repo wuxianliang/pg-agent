@@ -76,3 +76,14 @@
 | 60 | stage 25 负例：未授权（含非法 cutoff / 禁用策略）只得 `v13: session not found`；空会话 NULL→`handoff empty`、显式 0→`handoff watermark`；守卫属主直插：1.5 / 1.0 / 溢出不泄 22003 / 缺键多键 / schema 字符串 / 非 canonical delivery / 非 64hex / hash 不符 / source 非空；route 直插 `handoff writer`；两索引正交 23505 约束名；策略 disabled / 零 active / 形状错；回读先于策略 | ✅ | 同上 | 物理 DELETE 策略行不测（冻结触发器）。route→emit 直调=受信 helper（台账 F31） |
 | 61 | stage 25 F19 属主自举与 Phase B 六动词：安装后 aclexplode 直接 ACL（含 schema CREATE、`digest(text,text)`、`gen_random_uuid`）；emit DEFINER 属主、其余 INVOKER；`blocked_unknown` 上 owner emit COMMIT 墙未 RAISE；`SET ROLE v13_route` 走通 observe / session_log / user/message 注入 / 6 参 complete / 2 参 cancel / authorized / extract 并 COMMIT | ✅ | 同上。六动词结果：observe=ok log=ok inject=ok respond=ok cancel=ok authorized=ok extract=ok | 驱动器未交付。R4:23 非生命周期收据澄清记台账 C16 |
 | 62 | stage 1–25 回归 | ✅ | 2026-09-27 schema…handoff 全部 `test_*.py` 串行退出码均 0（26 脚本，含 mgraph 两脚本） | 无 |
+
+## Phase C
+
+| # | 条文 | 状态 | 测试落点 | 缺口 |
+|---|---|---|---|---|
+| 63 | stage 26 直接调用真/假与 duty shadow：ready 会话 gate NULL；ready human → `human_pending`；`blocked_unknown`/unknown effect → `unknown_wall`；未消费 cancel → `unconsumed_cancel`；duty=0 默认种子仍 NULL；改序不改函数 oid；坏尾仍 `v13: should_run gate` | ✅ | 2026-09-27 `uv run python v13/should_run/test_should_run.py` 退出码 0（194 checks） | 无。驱动器未交付 |
+| 64 | cancel 前缀高于投影：duty block 且 duty=0 时未消费 cancel 仍 `'terminal'`/`cancelled` | ✅ | 同上 | 无 |
+| 65 | spawn 读点：duty shadow 仍 `'progressed'`；duty block 返回 `'waiting'`、零新 effect、无 `triage/hold`、tool/call 留置；explore 假路径仍 `v13: explore spawn` | ✅ | 同上 | 无 |
+| 66 | finish closeout 不被门吞：duty block 且 duty=0 时 harness finish 仍 `'terminal'`/`completed` | ✅ | 同上 | 无 |
+| 67 | 投影零写入；GRANT 只给 `v13_route`；`v13_policy_share` DEFINER 五行锁；审计负臂 duty=0 不预写 `resolve/failed`；parent 不变由既有 `trg_sessions_fork_cols_immutable` 执法 | ✅ | 同上 | 正臂行为在 stage 27（源码在场≠通过）。不另装 parent 守卫 |
+| 68 | stage 1–26 回归 | ✅ | 2026-09-27 schema…should_run 全部 `test_*.py` 串行退出码均 0（27 脚本，含 mgraph 两脚本） | 无 |
