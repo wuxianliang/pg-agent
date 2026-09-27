@@ -90,4 +90,4 @@ stderr 一行 `pi_ports evidence: module=PiSwift version=<VERSION> function=crea
 
 PiSwift 0.87.1 的续读提示是 `to continue]`，共享矩阵锁的是 pi TS 的 `to continue.]`。口岸只在最终单行 trailer 上补这个句点，不复制截断实现。
 
-PiSwift 的 `split(separator: "\n")` 按 Swift 字素切。`\r\n` 是一个字素，CRLF 文件不会被切开，`limit` 因此失效。口岸在已围栏、已校验的副本里于 `U+000D` 与 `U+000A` 之间插入 `U+E000`，把该副本的绝对路径交给 `execute`，再从结果剥掉 `\r\u{E000}`。调用方原始路径仍不进入框架。`U+E000` 会计入框架的字节帽；本矩阵的 `crlf.txt` 不触及该帽。差异报告留到三语言齐了之后。
+PiSwift 的 `split(separator: "\n")` 按 Swift 字素切。`\r\n` 是一个字素，CRLF 文件不会被切开，`limit` 因此失效。探测：`String(contentsOfFile:encoding: .utf8)` 对含 `U+0000` 的文件成功并保留该标量；`ReadTool.swift` 的文本路径就是这个 API，之后没有 NUL 拒绝。因此口岸用字节中性替换：已校验快照里的 `\r\n` 换成 `\0\n`（等长），只把该副本交给 `execute`，并且只在这条副本路径上把结果里的 `\0` 还原成 `\r`。无 CRLF 的文件不走副本，字面 `U+E000` 不会被改写。evidence 在副本路径上写 `path=fenced-derived-copy`，否则 `path=fenced-absolute`。副本写失败是 `read_failed` 帧、退出 3。差异报告留到三语言齐了之后。

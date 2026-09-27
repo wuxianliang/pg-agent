@@ -48,11 +48,21 @@ func optionalInt(_ req: [String: Any], key: String) throws -> Int? {
     if CFGetTypeID(number) == CFBooleanGetTypeID() {
         throw ToolError(code: "invalid_params", message: "\(key) must be an integer")
     }
-    let parsed = number.doubleValue
-    guard parsed.isFinite, let exact = Int(exactly: parsed) else {
+    if CFNumberIsFloatType(number) {
+        let parsed = number.doubleValue
+        guard parsed.isFinite, let exact = Int(exactly: parsed) else {
+            throw ToolError(code: "invalid_params", message: "\(key) must be an integer")
+        }
+        return exact
+    }
+    var wide: Int64 = 0
+    guard CFNumberGetValue(number, .sInt64Type, &wide) else {
         throw ToolError(code: "invalid_params", message: "\(key) must be an integer")
     }
-    return exact
+    guard number.compare(NSNumber(value: wide)) == .orderedSame else {
+        throw ToolError(code: "invalid_params", message: "\(key) must be an integer")
+    }
+    return Int(wide)
 }
 
 func lexicalClean(_ path: String) -> String {
@@ -186,7 +196,7 @@ func isRegularFile(_ path: String) throws -> Bool {
     }
 }
 
-func validateTextBytes(_ path: String) throws {
+func validateTextBytes(_ path: String) throws -> Data {
     if try !isRegularFile(path) {
         throw ToolError(code: "read_failed", message: "not a regular file")
     }
@@ -202,23 +212,33 @@ func validateTextBytes(_ path: String) throws {
     if data.contains(0) {
         throw ToolError(code: "read_failed", message: "contains NUL")
     }
+    return data
 }
 
 func isOffsetBeyond(_ message: String) -> Bool {
-    message.range(of: #"Offset .+ is beyond end of file"#, options: .regularExpression) != nil
+    let pattern = #"^Offset .+ is beyond end of file \([0-9]+ lines total\)$"#
+    return message.range(of: pattern, options: .regularExpression) != nil
 }
 
 func restoreCallerPath(_ text: String, executed: String, caller: String) -> String {
-    if executed == caller {
+    if executed == caller || executed.isEmpty {
         return text
     }
-    let marker = "sed -n '"
-    guard let at = text.range(of: marker, options: .backwards), text[at.lowerBound...].contains(executed) else {
+    let pattern = #"^\[Line [0-9]+ is [^,\]]+, exceeds [^,\]]+ limit\. Use bash: sed -n '[0-9]+p' (.*) \| head -c 51200\]$"#
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
         return text
     }
-    let head = text[..<at.lowerBound]
-    let tail = text[at.lowerBound...].replacingOccurrences(of: executed, with: caller)
-    return head + tail
+    let full = NSRange(text.startIndex..., in: text)
+    guard let match = regex.firstMatch(in: text, range: full),
+          match.range.location == 0,
+          match.range.length == full.length,
+          let pathRange = Range(match.range(at: 1), in: text) else {
+        return text
+    }
+    guard String(text[pathRange]) == executed else {
+        return text
+    }
+    return text.replacingCharacters(in: pathRange, with: caller)
 }
 
 func alignContractTrailer(_ text: String) -> String {
@@ -237,12 +257,13 @@ func alignContractTrailer(_ text: String) -> String {
     guard let at = found else {
         return text
     }
-    let tail = scalars[at...]
-    guard !tail.dropFirst(marker.count).contains("\n") else {
-        return text
-    }
-    let suffix: [Unicode.Scalar] = Array("to continue]".unicodeScalars)
-    guard tail.count >= suffix.count, Array(tail.suffix(suffix.count)) == suffix else {
+    let tail = String(String.UnicodeScalarView(scalars[at...]))
+    let patterns = [
+        #"^\n\n\[Showing lines [0-9]+-[0-9]+ of [0-9]+\. Use offset=[0-9]+ to continue\]$"#,
+        #"^\n\n\[Showing lines [0-9]+-[0-9]+ of [0-9]+ \([^)\n]+ limit\)\. Use offset=[0-9]+ to continue\]$"#,
+        #"^\n\n\[[0-9]+ more lines in file\. Use offset=[0-9]+ to continue\]$"#,
+    ]
+    guard patterns.contains(where: { tail.range(of: $0, options: .regularExpression) != nil }) else {
         return text
     }
     var fixed = scalars
@@ -269,49 +290,61 @@ func resultText(_ result: AgentToolResult) -> String {
     }.joined()
 }
 
-func evidenceLine() -> String {
-    "pi_ports evidence: module=PiSwift version=\(VERSION) function=createReadTool tool=read execute=AgentTool.execute path=fenced-absolute\n"
+func evidenceLine(derivedCopy: Bool) -> String {
+    let pathTag = derivedCopy ? "path=fenced-derived-copy" : "path=fenced-absolute"
+    return "pi_ports evidence: module=PiSwift version=\(VERSION) function=createReadTool tool=read execute=AgentTool.execute \(pathTag)\n"
 }
 
 struct PreparedRead {
     let path: String
+    let transformed: Bool
     let cleanup: () -> Void
 }
 
-func prepareFrameworkPath(_ absolutePath: String) throws -> PreparedRead {
-    let text = try String(contentsOfFile: absolutePath, encoding: .utf8)
-    let scalars = Array(text.unicodeScalars)
-    var hasCRLF = false
-    if scalars.count >= 2 {
-        for index in 0..<(scalars.count - 1) where scalars[index] == "\r" && scalars[index + 1] == "\n" {
-            hasCRLF = true
-            break
+func prepareFrameworkPath(snapshot: Data) throws -> PreparedRead {
+    let crlf = Data([0x0D, 0x0A])
+    guard snapshot.range(of: crlf) != nil else {
+        return PreparedRead(path: "", transformed: false, cleanup: {})
+    }
+    var copy = Data()
+    copy.reserveCapacity(snapshot.count)
+    var index = snapshot.startIndex
+    while index < snapshot.endIndex {
+        if index + 1 < snapshot.endIndex, snapshot[index] == 0x0D, snapshot[index + 1] == 0x0A {
+            copy.append(0x00)
+            copy.append(0x0A)
+            index += 2
+        } else {
+            copy.append(snapshot[index])
+            index += 1
         }
     }
-    if !hasCRLF {
-        return PreparedRead(path: absolutePath, cleanup: {})
-    }
-    let broken = text.replacingOccurrences(of: "\r\n", with: "\r\u{E000}\n")
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent("v13-read-piswift-\(UUID().uuidString).txt")
-    try Data(broken.utf8).write(to: url, options: .atomic)
-    return PreparedRead(path: url.path, cleanup: { try? FileManager.default.removeItem(at: url) })
+    do {
+        try copy.write(to: url, options: .atomic)
+    } catch {
+        throw ToolError(code: "read_failed", message: error.localizedDescription)
+    }
+    return PreparedRead(path: url.path, transformed: true, cleanup: { try? FileManager.default.removeItem(at: url) })
 }
 
-func stripGraphemeBreak(_ text: String) -> String {
-    text.replacingOccurrences(of: "\r\u{E000}", with: "\r")
+func restoreCRLFStandIn(_ text: String) -> String {
+    text.replacingOccurrences(of: "\u{0000}", with: "\r")
 }
 
-func readViaFramework(callerPath: String, absolutePath: String, offset: Int?, limit: Int?) async throws -> String {
-    let prepared = try prepareFrameworkPath(absolutePath)
+func readViaFramework(callerPath: String, absolutePath: String, snapshot: Data, offset: Int?, limit: Int?) async throws -> String {
+    let prepared = try prepareFrameworkPath(snapshot: snapshot)
     defer { prepared.cleanup() }
+    let toolPath = prepared.transformed ? prepared.path : absolutePath
     let cwd = (absolutePath as NSString).deletingLastPathComponent
     let tool = createReadTool(cwd: cwd.isEmpty ? "/" : cwd)
-    try FileHandle.standardError.write(contentsOf: Data(evidenceLine().utf8))
-    var params: [String: AnyCodable] = ["path": AnyCodable(absolutePath)]
-    if prepared.path != absolutePath {
-        params["path"] = AnyCodable(prepared.path)
+    do {
+        try FileHandle.standardError.write(contentsOf: Data(evidenceLine(derivedCopy: prepared.transformed).utf8))
+    } catch {
+        throw ToolError(code: "read_failed", message: error.localizedDescription)
     }
+    var params: [String: AnyCodable] = ["path": AnyCodable(toolPath)]
     if let offset {
         params["offset"] = AnyCodable(offset)
     }
@@ -331,11 +364,11 @@ func readViaFramework(callerPath: String, absolutePath: String, offset: Int?, li
     if hasImageAttachment(result) {
         throw ToolError(code: "image_unsupported", message: imageMessage)
     }
-    let text = resultText(result)
-    if isOffsetBeyond(text) {
-        throw ToolError(code: "offset_out_of_range", message: text)
+    var text = resultText(result)
+    if prepared.transformed {
+        text = restoreCRLFStandIn(text)
     }
-    let restored = restoreCallerPath(stripGraphemeBreak(text), executed: prepared.path, caller: callerPath)
+    let restored = restoreCallerPath(text, executed: toolPath, caller: callerPath)
     return alignContractTrailer(restored)
 }
 
@@ -380,10 +413,11 @@ struct ReadPiSwift {
             if isImagePath(absolutePath) {
                 failTool(ToolError(code: "image_unsupported", message: imageMessage))
             }
-            try validateTextBytes(absolutePath)
+            let snapshot = try validateTextBytes(absolutePath)
             let result = try await readViaFramework(
                 callerPath: path,
                 absolutePath: absolutePath,
+                snapshot: snapshot,
                 offset: offset,
                 limit: limit
             )

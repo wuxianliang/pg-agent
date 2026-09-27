@@ -80,7 +80,9 @@ def run_guard() -> None:
     check("G0", "createReadTool(" in sw_src and ".execute(" in sw_src, "swift framework call")
     check("G0", "truncateHead(" not in sw_src, "no copied truncate")
     check("G0", "FileHandle.standardOutput.write" in sw_src and "print(" not in sw_src, "swift emit")
-    check("G0", "AnyCodable(absolutePath)" in sw_src, "fenced path is what execute sees")
+    check("G0", "prepared.transformed ? prepared.path : absolutePath" in sw_src, "copy path is gated")
+    check("G0", "path=fenced-absolute" in sw_src and "path=fenced-derived-copy" in sw_src, "evidence distinguishes copy")
+    check("G0", "prepareFrameworkPath(snapshot:" in sw_src and "contentsOfFile" not in sw_src, "copy uses snapshot")
     load = (AGENT_ROOT / "v13" / "load.py").read_text()
     check("G0", "pi_ports" not in load, "load.py")
     names = []
@@ -479,13 +481,13 @@ def build_pig() -> list[str]:
     return [str(out)]
 
 
-def run_catalog() -> None:
+def run_catalog_row(tag: str, name: str, description: str) -> None:
     import psycopg2
 
     from server import get_server
     from v13.pi_ports.setup_db import DB, main as setup_db
 
-    check("R0", setup_db() == 0, "setup_db")
+    check(f"{tag}R0", setup_db() == 0, "setup_db")
     server = get_server()
     conn = psycopg2.connect(server.get_uri(DB))
     conn.autocommit = False
@@ -496,6 +498,7 @@ def run_catalog() -> None:
             "options": {"hello.txt": "LF fixture"},
         }
     }
+    handler = f"worker:{name}"
     cur = conn.cursor()
     try:
         cur.execute("SELECT count(*) FROM tools")
@@ -503,80 +506,38 @@ def run_catalog() -> None:
         cur.execute(
             "INSERT INTO tools (name, description, kind, handler, param_spec, enabled) "
             "VALUES (%s, %s, 'tool', %s, %s::jsonb, true)",
-            (
-                "read_pi_ext",
-                "Read a text file through the pi framework read tool.",
-                "worker:read_pi_ext",
-                json.dumps(spec),
-            ),
+            (name, description, handler, json.dumps(spec)),
         )
         cur.execute(
             "SELECT kind, handler, enabled FROM tools WHERE name=%s",
-            ("read_pi_ext",),
+            (name,),
         )
         row = cur.fetchone()
-        check("R1", row == ("tool", "worker:read_pi_ext", True), row)
+        check(f"{tag}R1", row == ("tool", handler, True), row)
         cur.execute("SELECT count(*) FROM tools")
-        check("R1", cur.fetchone()[0] == before + 1, before)
-        cur.execute("DELETE FROM tools WHERE name=%s", ("read_pi_ext",))
-        cur.execute("SELECT count(*) FROM tools WHERE name=%s", ("read_pi_ext",))
-        check("R1", cur.fetchone()[0] == 0)
+        check(f"{tag}R1", cur.fetchone()[0] == before + 1, before)
+        cur.execute("DELETE FROM tools WHERE name=%s", (name,))
+        cur.execute("SELECT count(*) FROM tools WHERE name=%s", (name,))
+        check(f"{tag}R1", cur.fetchone()[0] == 0)
         cur.execute("SELECT count(*) FROM tools")
-        check("R1", cur.fetchone()[0] == before, before)
+        check(f"{tag}R1", cur.fetchone()[0] == before, before)
         conn.commit()
     finally:
         conn.rollback()
         conn.close()
+
+
+def run_catalog() -> None:
+    run_catalog_row("", "read_pi_ext", "Read a text file through the pi framework read tool.")
 
 
 def run_catalog_pig() -> None:
-    import psycopg2
+    run_catalog_row("GO-", "read_pig", "Read a text file through the PiG framework read tool.")
 
-    from server import get_server
-    from v13.pi_ports.setup_db import DB, main as setup_db
 
-    check("GO-R0", setup_db() == 0, "setup_db")
-    server = get_server()
-    conn = psycopg2.connect(server.get_uri(DB))
-    conn.autocommit = False
-    spec = {
-        "path": {
-            "question": "Which fixture file should be read?",
-            "stated": "Does the user name a fixture file to read?",
-            "options": {"hello.txt": "LF fixture"},
-        }
-    }
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT count(*) FROM tools")
-        before = cur.fetchone()[0]
-        cur.execute(
-            "INSERT INTO tools (name, description, kind, handler, param_spec, enabled) "
-            "VALUES (%s, %s, 'tool', %s, %s::jsonb, true)",
-            (
-                "read_pig",
-                "Read a text file through the PiG framework read tool.",
-                "worker:read_pig",
-                json.dumps(spec),
-            ),
-        )
-        cur.execute(
-            "SELECT kind, handler, enabled FROM tools WHERE name=%s",
-            ("read_pig",),
-        )
-        row = cur.fetchone()
-        check("GO-R1", row == ("tool", "worker:read_pig", True), row)
-        cur.execute("SELECT count(*) FROM tools")
-        check("GO-R1", cur.fetchone()[0] == before + 1, before)
-        cur.execute("DELETE FROM tools WHERE name=%s", ("read_pig",))
-        cur.execute("SELECT count(*) FROM tools WHERE name=%s", ("read_pig",))
-        check("GO-R1", cur.fetchone()[0] == 0)
-        cur.execute("SELECT count(*) FROM tools")
-        check("GO-R1", cur.fetchone()[0] == before, before)
-        conn.commit()
-    finally:
-        conn.rollback()
-        conn.close()
+def run_catalog_piswift() -> None:
+    run_catalog_row("SW-", "read_piswift", "Read a text file through the PiSwift framework read tool.")
+
 
 
 def toolchain_absent() -> list[str]:
@@ -681,6 +642,69 @@ def run_swift_fence(argv) -> None:
     check("SW-P2", bad_lim.error == "invalid_params" and bad_lim.exit_code == 3, bad_lim.payload)
     huge = piswift_read(argv, str(FIXTURES), "hello.txt", offset=1e20)
     check("SW-P2", huge.error == "invalid_params" and huge.exit_code == 3, huge.payload)
+    exact = piswift_read(argv, str(FIXTURES), "hello.txt", offset=2**53 + 1)
+    check("SW-P2", exact.error == "offset_out_of_range" and exact.exit_code == 3, exact.payload)
+    imax = piswift_read(argv, str(FIXTURES), "hello.txt", offset=2**63 - 1)
+    check("SW-P2", imax.error == "offset_out_of_range" and imax.exit_code == 3, imax.payload)
+    over = piswift_read(argv, str(FIXTURES), "hello.txt", offset=2**63)
+    check("SW-P2", over.error == "invalid_params" and over.exit_code == 3, over.payload)
+
+    with tempfile.TemporaryDirectory(prefix="v13sw-adapt-") as raw:
+        root = Path(raw)
+        quoted = "Offset 3 is beyond end of file (1 lines total)\n"
+        (root / "quoted.txt").write_bytes(quoted.encode())
+        got = piswift_read(argv, str(root), "quoted.txt")
+        check("SW-BODY", got.ok and got.exit_code == 0 and got.result == quoted, got.payload)
+
+        sed_path = root / "sed.txt"
+        sed_path.write_bytes(b"placeholder\n")
+        abs_sed = str(sed_path.resolve())
+        sed_body = f"note sed -n '1p' {abs_sed} | head stays\n"
+        sed_path.write_bytes(sed_body.encode())
+        got = piswift_read(argv, str(root), "sed.txt")
+        check("SW-SED", got.ok and got.result == sed_body, got.payload)
+
+        trail = "hello\n\n[note to continue]"
+        (root / "trail.txt").write_bytes(trail.encode())
+        got = piswift_read(argv, str(root), "trail.txt")
+        check("SW-TRAIL", got.ok and got.result == trail, got.payload)
+
+        mixed = "keep\r\uE000here\r\nnext\n"
+        (root / "mixed.txt").write_bytes(mixed.encode())
+        got = piswift_read(argv, str(root), "mixed.txt")
+        check("SW-E000", got.ok and got.result == mixed and "\uE000" in (got.result or ""), got.payload)
+
+        under = b"a" * 51198 + b"\r\n"
+        (root / "cap.txt").write_bytes(under)
+        proc = subprocess.run(
+            argv,
+            input=json.dumps({"root": str(root), "path": "cap.txt"}).encode(),
+            capture_output=True,
+            timeout=60,
+        )
+        line = proc.stdout.split(b"\n", 1)[0]
+        payload = json.loads(line.decode()) if line.strip() else {}
+        check(
+            "SW-CAP",
+            proc.returncode == 0
+            and payload.get("result") == under.decode()
+            and "50.0KB" not in (payload.get("result") or "")
+            and b"path=fenced-derived-copy" in proc.stderr
+            and b"path=fenced-absolute" not in proc.stderr,
+            (proc.returncode, payload.get("result", "")[-80:], proc.stderr.decode("utf-8", "replace")),
+        )
+        over_cap = b"b" * 51199 + b"\r\n"
+        (root / "over.txt").write_bytes(over_cap)
+        got = piswift_read(argv, str(root), "over.txt")
+        check(
+            "SW-CAP",
+            got.ok
+            and got.result != over_cap.decode()
+            and got.result is not None
+            and "50.0KB limit" in got.result
+            and got.result.startswith("b" * 51199 + "\r"),
+            got.result[-120:] if got.result else got.payload,
+        )
 
 
 def build_piswift() -> list[str]:
@@ -713,55 +737,6 @@ def build_piswift() -> list[str]:
         raise AssertionError(f"missing binary: {binary}")
     return [str(binary)]
 
-
-def run_catalog_piswift() -> None:
-    import psycopg2
-
-    from server import get_server
-    from v13.pi_ports.setup_db import DB, main as setup_db
-
-    check("SW-R0", setup_db() == 0, "setup_db")
-    server = get_server()
-    conn = psycopg2.connect(server.get_uri(DB))
-    conn.autocommit = False
-    spec = {
-        "path": {
-            "question": "Which fixture file should be read?",
-            "stated": "Does the user name a fixture file to read?",
-            "options": {"hello.txt": "LF fixture"},
-        }
-    }
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT count(*) FROM tools")
-        before = cur.fetchone()[0]
-        cur.execute(
-            "INSERT INTO tools (name, description, kind, handler, param_spec, enabled) "
-            "VALUES (%s, %s, 'tool', %s, %s::jsonb, true)",
-            (
-                "read_piswift",
-                "Read a text file through the PiSwift framework read tool.",
-                "worker:read_piswift",
-                json.dumps(spec),
-            ),
-        )
-        cur.execute(
-            "SELECT kind, handler, enabled FROM tools WHERE name=%s",
-            ("read_piswift",),
-        )
-        row = cur.fetchone()
-        check("SW-R1", row == ("tool", "worker:read_piswift", True), row)
-        cur.execute("SELECT count(*) FROM tools")
-        check("SW-R1", cur.fetchone()[0] == before + 1, before)
-        cur.execute("DELETE FROM tools WHERE name=%s", ("read_piswift",))
-        cur.execute("SELECT count(*) FROM tools WHERE name=%s", ("read_piswift",))
-        check("SW-R1", cur.fetchone()[0] == 0)
-        cur.execute("SELECT count(*) FROM tools")
-        check("SW-R1", cur.fetchone()[0] == before, before)
-        conn.commit()
-    finally:
-        conn.rollback()
-        conn.close()
 
 
 def main(argv: list[str]) -> int:
