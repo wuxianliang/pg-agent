@@ -260,3 +260,7 @@ stage 24（2026-09-27）补了 F8 与 F18，进「改变」桶注记（不改上
 
 - F8 已补：`v13_observe(actor, ids[])` 全有或全无。无 waiter。「第一个 interesting 胜」由驱动器在返回行上选。`uv run python v13/observe/test_observe.py` 退出码 0。
 - F18 已补其 get_log 半：`v13_session_log` 先授权再读事件，不 join effects、不水合。`extract_handoff` 仍是 stage 25，不在本笔。
+
+stage 25（2026-09-27）补了 F29，进「改变」桶注记（不改上文计数表，不把这条改标成一模一样）：
+
+- F29 已补：`v13_extract_handoff` 先授权再写 `control/handoff` 收据。不产 XML，不水合文件，不替代 `v13_fork`。窗口是整段前缀不是源尾窗（台账 F30）。`uv run python v13/handoff/test_handoff.py` 退出码 0。Phase B 六动词以 `SET ROLE v13_route` 走通：observe / session_log / user/message 注入 / 6 参 complete / 2 参 cancel / authorized / extract。合同已证明。驱动器未交付。

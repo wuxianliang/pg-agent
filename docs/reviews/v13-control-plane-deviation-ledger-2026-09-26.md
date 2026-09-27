@@ -131,7 +131,10 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | F27 | actor 通道与信任边界（R8-① overload，≠ parity F27）。2 参 `v13_cancel` / 6 参 `v13_complete` 是唯一正文，旧签名纯委托 `actor=NULL`。DB 只验带与亲缘，不证 actor 的网络来源；来源由服务端绑定 | 接受。不读工具 JSON、human result、事件 payload、会话参数。不建 link 表、不加列 |
 | F28 | 生产绑定两格（≠ parity F28）。谓词+换体+`test_acl.py` 绿 = 合同已证明；仓库内驱动器在 agent 路径传 actor = 未交付（`demo_v13/` gitignored） | 不得写成「F17 已在生产路径生效」。driver 补丁不进本里程碑 |
 | F29 | 读面拒绝=零行不 RAISE（≠ parity F29）。`v13_observe` / `v13_session_log` 授权失败零行，不把「不存在」与「无亲缘」分成两种异常。参数合同错误（重复、NULL 元素、游标 `< -1`）仍 RAISE，且发生在授权前。旧动词 cancel/complete 仍 RAISE，operator 空 actor 缺目标保留活体 needle（C15） | 接受。不把读面改成 RAISE，不把旧动词改成零行 |
+| F30 | 前缀窗口非源尾窗（≠ parity F30）。信封四键无 `from_seq`，hash 材料必须是 `seq <= up_to_seq` 的整段前缀。与源合同「最近 N 条」不同，是四键约束下的换体。不产 XML，不截断，不设 `max_events` | 接受。改窗口形状须另裁并升 transcript 版本 v1→v2。不建摘要表 |
+| F31 | 收据排除出 transcript 材料（防自激）+ route→emit 直调=受信内部 helper（≠ parity F31）。`type <> 'control/handoff'` 才入 hash。`v13_handoff_emit` / `v13_transcript_hash` 不是 actor 入口；D7 只承诺 `v13_extract_handoff`。直调行为已定义：新身份落收据；同身份撞 `ux_events_handoff_snapshot` 裸 23505；`enabled=false` → `v13: handoff disabled` | 接受。不授 PUBLIC/worker/recall/resolve/spawn_owner。不把直调收成授权错误，也不用 EXCEPTION 吞 23505 |
 
 | # | 冲突 | 采用 |
 |---|---|---|
 | C15 | D7「可控任意非终态会话」若读进谓词，会把 R3 已冻终态 cancel `replay` 改成 `session not found`。parity F17 字面「失败一律 session not found」与 operator 空 actor 缺目标时的活体 needle 冲突 | 状态中立：谓词不读 status，终态 `replay` 保持。③ 例外：operator 且 actor 空且目标无行保留活体 `v13: unknown session %`（cancel）/`v13: unknown effect %`（complete）；agent 路径与非 operator 空 actor 一律 `v13: session not found` |
+| C16 | R4:23「生命周期写面 = 开放事件 + 唯一折叠函数」与路线图 §2.4「交接无读面函数，收据即事件」的张力。交接不是可翻转当前态（对比 stop/resume，折叠函数留在 stage 29 `v13_goal_lifecycle`） | 非生命周期收据澄清。唯一承诺函数 = `v13_transcript_hash`。advance 不调用。不新增 `v13_latest_handoff` / `v13_handoff_state` / 全局 VIEW。路线图 §2.4 维持「收据即事件」 |
