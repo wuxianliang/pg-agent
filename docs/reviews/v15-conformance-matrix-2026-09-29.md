@@ -1,8 +1,8 @@
 # v15 覆盖矩阵（2026-09-29）
 
-记 stage 1–5 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
+记 stage 1–6 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
 
-状态来自实跑：`uv run python v15/repl/test_repl.py` 退出码 0。随后复跑 `v15/schema/test_schema.py`、`v15/namespace/test_namespace.py`、`v15/config/test_config.py`、`v15/protocol/test_protocol.py`，四道都是退出码 0。
+状态来自实跑：`uv run python v15/io/test_io.py` 退出码 0。随后复跑 `v15/schema/test_schema.py`、`v15/namespace/test_namespace.py`、`v15/config/test_config.py`、`v15/protocol/test_protocol.py`、`v15/repl/test_repl.py`。
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
@@ -46,4 +46,21 @@
 | 36 | §17 级联删除探针 | ✅ | 同上 | `v15_owner` 的 definer 创建 schema，`v15_repl` 在该 scratch 建表，definer `DROP SCHEMA … CASCADE` 后 schema 不存在。`v15_owner` 不是 `v15_repl` 的成员。函数体内没有 `SET ROLE`。不写后备路径 |
 | 37 | §4.1 租约与栅栏 | ✅ | 同上 | 栅栏不符且仍 `leased` 抛 `P1501`。owner 不符、再次 `begin_exec`、租约过期抛 `P1523` |
 
-§2 的 `EXECUTE` 归属、§3 的 21 张表/PK/终态 CHECK、§11.1 的 invoke 清单断言，由 stage 1 gate 覆盖，不另立不变量编号。stage 2–5 不新增表。`v15_protocol.sql` 只有注释。stage 5 不实现 `v15_finish_exec`，因此 complete / fail 不把后继标成 `skipped`；切点是 `resume_stmt`。`v15_on_phase` 桩仍返回 `proceed`，abort 关闭形状在 `v15_begin_exec` 里，本 gate 打不到。stage 5 gate 之后复跑 stage 1–4，四道都是退出码 0。
+§2 的 `EXECUTE` 归属、§3 的 21 张表/PK/终态 CHECK、§11.1 的 invoke 清单断言，由 stage 1 gate 覆盖，不另立不变量编号。stage 2–6 不新增表。`v15_protocol.sql` 只有注释。stage 5 不实现 `v15_finish_exec`，因此 complete / fail 不把后继标成 `skipped`；切点是 `resume_stmt`。`v15_on_phase` 桩仍返回 `proceed`。stage 6 的 abort 关闭形状在 `v15_begin_llm` 里，桩打不到 phase abort；迭代上限、I/O 耗尽、预留 0 行和 `input_chars` 超限会走到关闭。本 gate 没有父 invoke。
+
+| 38 | §4.5 / §12 全链 | ✅ | `v15/io/test_io.py` | claim 颁发 fence。begin 返回 `proceed` 及 attempt、request、digest、`n`。mark 之后、会话无打开事务时才 `FakeLLM.complete`。settle 后 attempt `settled`，迭代 `executing`，助手消息与 `pending` 语句留下。`llm_query` 以 `completed` 关闭，`invoke` span 仍开 |
+| 39 | §4.5.1 载体 | ✅ | 同上 | send 事件的 `io` 含 `enter_messages` 与 `enter_overlay`，桩路径都是 JSON `null`。begin 不把 hook 消息插入 `llm_messages` |
+| 40 | §4.13 `V15_STALE_FENCE` | ✅ | 同上 | 仍 `leased` 时出示旧 fence，begin 与 settle 都抛 `P1501`，不写 attempt、不写 response |
+| 41 | §0.6 / §4.10 / §12 `unknown` | ✅ | 同上 | `call_started` 已提交而租约过期：行变 `unknown`，`calls_used` 加上存放的预留，`cost_used` 不变。不插入新 attempt。span 保持打开。迟结算抛 `P1502`，不写转录 |
+| 42 | §12 `failed` | ✅ | 同上 | 未 mark 而过期：行变 `failed`，只释放预留，不加 `calls_used`。mark 之前 settle 抛 `P1523`。终态再 settle 抛 `P1502` |
+| 43 | §4.5.1 重试 | ✅ | 同上 | 回收后重新 claim，再 `begin_llm` 插入 `n+1`。不复制 `enter` / `send` 事件。`logical_digest` 不变 |
+| 44 | §0.21 / §4.5.1 `V15_IO_EXHAUSTED` | ✅ | 同上 | `n` 将超过有效上限时不插入该行。request `exhausted`，invoke `failed`、`fatal = false`、`P1513`。scratch 删除 |
+| 45 | §4.5.1 / §11.3 预留 0 行 | ✅ | 同上 | 池盖不住缺省预留时返回 `abort`，`fatal = true`、`P1514`。不插入 attempt，预留不加。无父时只有自身 `aborted` |
+| 46 | §4.5.1 迭代上限 | ✅ | 同上 | `iteration >= max` 在 enter 之前提交类关闭，`P1520`，`fatal = false`。不写 `llm_query/enter`。历史行 `repl_output` 为空 |
+| 47 | §4.5.1 `input_chars` | ✅ | 同上 | 超限是提交类 `V15_VALUE_INVALID`。base 形状不对是回滚类 `P1524`，invoke 仍 `leased` |
+| 48 | §4.5.3 `p_statements` | ✅ | 同上 | digest、kind、规范 `bind_invoke` 缺 `arg_sql` 都抛 `P1524`，attempt 仍 `leased`，不留语句行 |
+| 49 | §4.11 / §17 切分失败 | ✅ | 同上 | 未闭合合成一行 `failed`，`error.code = V15_DIALECT`（`P1511`），attempt `settled`。本 stage 不执行、不 continue |
+| 50 | §17 NUL | ✅ | 同上 | 六字符 `\u0000` 替换后的合成行结算为 `failed`，`V15_VALUE_INVALID`，attempt `settled`。原始 NUL 不进入 settle 参数 |
+| 51 | §4.10 租约收回 | ✅ | 同上 | 无过期 attempt 时返回 0。过期 invoke 的 `running` 语句回到 `pending`，fence 加 1，审计 `lease_reclaimed`。未过期调用无写入 |
+| 52 | §4.13 `40001` / `40P01` | ✅ | 同上 | 分类结果是整段重试，不是 `P1523`。不据此把 attempt 收成 `unknown` |
+| 53 | §12 FakeLLM | ✅ | 同上 | 同一 `(logical_digest, n)` 两次 `complete` 返回同一 jsonb。未登记键在 Python 里失败。实现不导入时钟、随机或套接字 |
