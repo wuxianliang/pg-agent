@@ -1,8 +1,8 @@
 # PG 原生 Pi 对标 Coding Agent（v14）开发规范
 
-> 状态：草稿第 11 版，核心冻结候选。冻结标准：评审至 0 P0 / 0 P1。exec 面不在本冻结，见 `docs/designs/v14.1-exec.md`。
-> 撰写日期：2026-09-28（第 1 版 `e97f4ce`；第 2 版 `e854e04`；第 3 版 `3af3dc6`；第 4 版 `0ee355f`；第 5 版 `b5ee119`；第 6 版 `abeb6d3`；第 7 版 `928fe62`；第 8 版 `c30e87e`；第 9 版 `5778bbb`；第 10 版 `d225285`）。工作分支：`v14-dev`。
-> 修订记录：第 2 版吸收轮 1 双裁（4+3 P0）与父循环两裁决；第 3 版吸收轮 2 双裁裁决 A..M；第 4 版吸收轮 3 合并裁决 N1..N20；第 5 版吸收轮 4 合并裁决 R1..R19（条款级补丁：双序键合一、lease fencing、基线判别式决策表、准入合一、投影面拆分），全部落正文。第 6 版吸收轮 5 合并裁决 S1..S17（纯谓词判别式、出生边统一、两阶段 reconcile、digest 字节语法），全部落正文。第 7 版把 exec 面拆到 v14.1-exec 骨架，并吸收轮 6 核心面裁决 T1..T5。第 8 版吸收轮 7 合并裁决 U1..U20。第 9 版吸收轮 8 合并裁决 V1..V16。第 10 版吸收轮 9 合并裁决 W1..W15。第 11 版吸收轮 10 合并裁决 X1..X19（四支有序划分、digest 残句删净、五步序终版）。第 11 版不自含自身哈希。
+> 状态：草稿第 12 版，核心冻结候选。冻结标准：评审至 0 P0 / 0 P1。exec 面不在本冻结，见 `docs/designs/v14.1-exec.md`。
+> 撰写日期：2026-09-28（第 1 版 `e97f4ce`；第 2 版 `e854e04`；第 3 版 `3af3dc6`；第 4 版 `0ee355f`；第 5 版 `b5ee119`；第 6 版 `abeb6d3`；第 7 版 `928fe62`；第 8 版 `c30e87e`；第 9 版 `5778bbb`；第 10 版 `d225285`；第 11 版 `3d416ab`）。工作分支：`v14-dev`。
+> 修订记录：第 2 版吸收轮 1 双裁（4+3 P0）与父循环两裁决；第 3 版吸收轮 2 双裁裁决 A..M；第 4 版吸收轮 3 合并裁决 N1..N20；第 5 版吸收轮 4 合并裁决 R1..R19（条款级补丁：双序键合一、lease fencing、基线判别式决策表、准入合一、投影面拆分），全部落正文。第 6 版吸收轮 5 合并裁决 S1..S17（纯谓词判别式、出生边统一、两阶段 reconcile、digest 字节语法），全部落正文。第 7 版把 exec 面拆到 v14.1-exec 骨架，并吸收轮 6 核心面裁决 T1..T5。第 8 版吸收轮 7 合并裁决 U1..U20。第 9 版吸收轮 8 合并裁决 V1..V16。第 10 版吸收轮 9 合并裁决 W1..W15。第 11 版吸收轮 10 合并裁决 X1..X19。第 12 版吸收轮 11 合并裁决 Y1..Y13（四支全函数重写、G1 残句删净、0 行语义统一）。第 12 版不自含自身哈希。
 > 效力：本文件只冻结设计，不实现；不改变 v8 / v10 / v13 已冻结面；与既有文档的合同关系见 §2。
 > 上游裁决：`prompt-exports/loop-orchestrate-v14-runs.md`（父循环台账）。
 > 评审分级：条款与 gate 标注〔P0〕（冻结后不可让步，违反即红）或〔P1〕（重要，偏差须登记偏差台账后方可让步）。
@@ -71,7 +71,7 @@
 - **命题 A（事件面，独立语义子流）**：已提交事件的**A 子流**（字面 kind 白名单写死于 V14-HARN-4：`effect/terminal`（`terminal_reason=attempt_exhausted`）入 effect 终态；proposal 只收 `consumed` / `denied` / `expired`；beat、grant 变更、`resume_probe` / `preflight_probe` / `claim_probe` / `reconcile_probe`、attempt、lease reclaim **不入 A**；增 kind 须 bump）的规范化投影在「杀过」与「未杀」两条世界线上一致。G3 窗 1 断言子流逐行相等 + `tool/result` 规范 diff 与 `workspace_effect_seq` 相同。**A 允许表是〔P0〕比较面，偏差台账不能扩**（V14-HARN-4）。
 - **命题 B（工作区面）**：工作区终态 = 会话创建时持久化的 **per-path 初始全观测** 起，按 `workspace_effect_seq` 升序折叠「成功 tool/result diff ∪ reconcile/diff」（`expected`，V14-EFF-5）。tree hash 只做同一性校验，不是折叠基底。reconcile SQL 成功后，折叠含该 seq 的 reconcile/diff；只排除 reconcile 前的 unknown 前缀。
 
-**适用面**：FakeLLM 路径与已提交 judgment 的 provider 路径；write/edit 的 unknown 未 reconcile 窗口、provider 未提交 judgment 的窗口除外。**命题 A 只覆盖窗 1 与无 unknown 的路径**。`degraded_effect_id IS NOT NULL` 的世界线（unknown 或 failed+degraded）都不宣称命题 B。reconcile CAS 成功后 B 恢复，折叠含该 seq 的 reconcile/diff。`failed(stale)` 与 `attempt_exhausted` 不设 degraded，保持可比较。exec 走 reconcile 时只恢复 B、不恢复 A 的原句见 `docs/designs/v14.1-exec.md`，不在本核心面。检查：G3 杀进程续跑 gate（write/edit，不依赖 exec）+ G4 kill gate 按 EFF-6 断言。
+**适用面**：FakeLLM 路径与已提交 judgment 的 provider 路径；write/edit 的 unknown 未 reconcile 窗口、provider 未提交 judgment 的窗口除外。**命题 A 只覆盖窗 1 与没有任何 degraded effect 的路径**。`degraded_effect_id IS NOT NULL` 的世界线（unknown 或 failed+degraded）都不宣称命题 B。reconcile CAS 成功后 B 恢复，折叠含该 seq 的 reconcile/diff。`failed(stale)` 与 `attempt_exhausted` 不设 degraded，保持可比较。exec 走 reconcile 时只恢复 B、不恢复 A 的原句见 `docs/designs/v14.1-exec.md`，不在本核心面。检查：G3 杀进程续跑 gate（write/edit，不依赖 exec）+ G4 kill gate 按 EFF-6 断言。
 
 **V14-INV-4 双壳等价**〔P0〕Chainlit 驱动与脚本驱动同输入 → **服务端投影 ::text 逐字节相等**。比较面与投影算法**写死于 §4.3（V14-HARN-4）**：库内唯一 canonical 投影函数、代理键 allowlist、volatile 键表、服务端比较；**双壳用 §4.3 全流**（两壳无杀点，与 INV-3 命题 A 的子流是两个不同比较面）。比较面新增排除项不属于已冻结类别时必须 bump 本规范——偏差台账无权松动 P0 比较面。检查：G3 双壳等价 gate。
 
@@ -165,7 +165,7 @@ v2 bump 走法（父循环已裁）：
 
 **V14-EFF-2 intent 行、效果身份、观测请求与 lease fencing（终版）**〔P0〕任何 **v14 effect** 的外部 IO 发生前，effect intent 行必须已提交入库（intent 事件位置仅表「IO 前日志已提交」，**不定义序**）；**效果身份 = `effect_id`（唯一）**。**三类 effect 创建事务均写 `fencing_gen=1`**。**范围边界**：proposal preflight read（V14-TOOL-3 ①）**不属于 effect IO**——只读、受读 lease 保护、不建 effect；apply 阶段以 EFF-3 锁内复算基线为准。
 
-**观测请求（SQL 先建、不可变）**：preflight 与 pre-claim baseline probe **各有身份**。worker 任何观测 IO 之前，SQL 已提交 observation request 行（`request_id`、角色 `preflight | claim_baseline | resume | reconcile`、所绑 effect 或读 lease、`fencing_gen`）。worker 不得自造 request。回库走 INV-1 第 4 类，kind = `preflight_probe | claim_probe | resume_probe | reconcile_probe`，**必须绑定 `request_id`**（不是第五类提交）。digest 预映像、fencing 代、投影归类（probe 类不入 A，V14-HARN-4）与失败/超时边同轮冻结：
+**观测请求（SQL 先建、不可变）**：preflight 与 pre-claim baseline probe **各有身份**。worker 任何观测 IO 之前，SQL 已提交 observation request 行（`request_id`、角色 `preflight | claim_baseline | resume | reconcile | session_baseline`、所绑 effect 或读 lease、`fencing_gen`）。worker 不得自造 request。回库走 INV-1 第 4 类，kind = `preflight_probe | claim_probe | resume_probe | reconcile_probe`，**必须绑定 `request_id`**（不是第五类提交）。digest 预映像、fencing 代、投影归类（probe 类不入 A，V14-HARN-4）与失败/超时边同轮冻结：
 
 - fencing：probe receipt 的 `fencing_gen` 必须等于 request 行当前代；绑 effect 时还必须等于该 effect 当前代；不一致 → 拒绝落库、状态不变；
 - **probe request 状态闭集**：`pending → succeeded | failed | timeout | superseded`。`superseded` 不可提交 receipt，不可驱动 effect。成功 receipt 同事务原子记下不可变 body。重复成功 = 幂等零更新。`failed` / `timeout` 之后的迟到成功 **拒绝**。timeout 只有 DB 时钟入口。
@@ -174,13 +174,13 @@ v2 bump 走法（父循环已裁）：
 claim 带 `lease_owner` / `lease_until`（now 取 V14-APPR-3 的 effective_now）与 **fencing generation**（初值 1；升代点按下文写死，不含同 owner 的 TTL 刷新）。read-only 在出生事务写 lease。provider 出生写 `fencing_gen=1`，**无 reclaim**。**fencing 规则（写死）**：
 
 - `claimed→started` = EFF-1 一条条件更新，**且仅在 renew 之后、锁内基线匹配之后**，**0 行即零 IO**；
-- **mutating renew/reclaim** = 单条 SQL，`WHERE state=claimed ∧ (lease_owner=当前执行者 OR lease_until≤effective_now)`。0 行 → 零 IO。**只在两处升代**：claim 后强制 1→2，以及 lease **owner 变更**。同一 owner 的纯 TTL 刷新不升代，不失效当前代已成功 probe。`claimed→started` 在「当前代 probe 已成功 ∧ owner 仍是该执行者」时，先做不升代 TTL 刷新再转移。probe timeout 短于剩余 TTL；超时后迟到成功仍拒。
+- **mutating renew/reclaim** = 单条 SQL，`WHERE state=claimed ∧ (lease_owner=当前执行者 OR lease_until≤effective_now)`。0 行不改状态。`claimed→started` 的判定顺序以 EFF-1 四行表为准：①②③先于最终 UPDATE；只有④的 UPDATE 本身匹配 0 行才零 IO、不改状态；②③要写终态。**只在两处升代**：claim 后强制 1→2，以及 lease **owner 变更**。同一 owner 的纯 TTL 刷新不升代，不失效当前代已成功 probe。`claimed→started` 在「当前代 probe 已成功 ∧ owner 仍是该执行者」时，先做不升代 TTL 刷新再转移。probe timeout 短于剩余 TTL；超时后迟到成功仍拒。
 - **read-only reclaim** = 行级 CAS：`state=started ∧ 当前 attempt 无未入账 receipt ∧ lease_until≤effective_now`，同事务续租 + `fencing_gen+1`，不新开 attempt，不要求 workspace 锁。attempt 2 不是这条边；
 - **provider 无 reclaim**；
 - **resume_probe 单胜者 CAS**（`WHERE state=started`；败者零 IO）。reconcile 的单胜者是 token CAS，不是 effect 行上的第二套胜者（V14-EFF-5）；
 - **receipt 携带 fencing generation**，与 effect 或 request 当前代不一致 → 拒绝落库、状态不变（INV-1 第 4 类）。
 
-检查：G1 gate（intent 先于 IO、创建事务 fencing_gen=1、观测请求先于 probe IO、fencing CAS 0 行零 IO、mutating reclaim 持锁前置、read-only reclaim 不要求 workspace 锁、provider 无 reclaim、probe 失败不改 effect 态、过期 receipt 拒绝）。
+检查：G1 gate（intent 先于 IO、创建事务 fencing_gen=1、观测请求先于 probe IO、claimed→started 只有第④行 UPDATE 匹配 0 行才不改状态、mutating reclaim 持锁前置、read-only reclaim 不要求 workspace 锁、provider 无 reclaim、probe 失败不改 effect 态、过期 receipt 拒绝）。
 
 **V14-EFF-3 write/edit 原子写与 resume 分类（顺序钉死 + 观测完备）**〔P0〕apply 顺序写死，不得重排：
 
@@ -191,11 +191,11 @@ claim 带 `lease_owner` / `lease_until`（now 取 V14-APPR-3 的 effective_now�
 5. **按代际 2 新建锁内 claim_probe**。禁复用 pre-claim body。
 6. **不符** → 终态（explainable 漂移 → `failed(stale)` 不 degraded；symlink 见 EFF-5 例外；其余非 explainable → `failed`+degraded）。proposal **保持 consumed**，seq 复用，unlock，不发 tool/result。proposal 到期或 grant 撤销/到期 → effect `failed`，proposal 保持 consumed，seq 保留，释放锁与连接。lease 失效或 owner 不匹配 → 零 IO，走既有恢复，不误写终态。基线失败走 stale/degraded。未 started 不得进 resume 分类。G1 必测「锁内 probe 期间到期」。
 7. **符合才** `claimed→started`（要求代际 ≥2）。之后才写临时文件。
-死于 `claimed`：先 `try_lock`，0 行则下拍再试并保持 claimed；reclaim（owner 变更才升代）；再按当前代新建 claim_probe。禁无锁 probe。
+死于 `claimed` 的唯一恢复序：① `try_lock` 0 行则下拍保持 claimed；② 调与快乐路径同一条 renew/reclaim SQL。`fencing_gen=1` 必定升到 2；此后只有 owner 变更再升，同 owner 且代际已 ≥2 只刷 TTL；③ 当前代已有 succeeded 且 `request.fencing_gen=effect.fencing_gen` 的 claim_probe → 禁新观测、复用 body。代际已变 → 旧 request 标 `superseded` 并新建。旧 request 已 failed 或 timeout → 按当前代新建。禁无锁 probe。代际 1 的 pre-claim body 升到 2 后不得驱动 started。
 
 **started 之后**，mutating 无合法 succeeded receipt 时终态只来自分类四支。窄禁令保留：禁 `attempt_exhausted`、裸 `status=failed`、分类外 SQL 边。
 
-临时文件是 **effect 专属**（路径含 `effect_id`），存活至 effect 终态。**清理**（kind=`cleanup`，第 4 类，不是第五类提交）：SQL 先建 cleanup request（`pending`）。受限 worker 确认 effect 已终态后删该 effect 专属 temp。`failed`/`timeout` 后按 effect 唯一键建新 cleanup request，同时至多一个未完成。超上限留 cleanup-debt，不静默丢失。temp 已不存在 = `succeeded`。只改 request 行，**不改 effect、不改工作区语义**。重复 = 幂等零更新。越界写入声明路径外 = `failed`。timeout 只走 DB 时钟。gate 覆盖重复、失败、receipt 提交后杀 driver、越界。
+临时文件是 **effect 专属**（路径含 `effect_id`），存活至 effect 终态。**清理**（kind=`cleanup`，第 4 类，不是第五类提交）：SQL 先建 cleanup request（`pending`）。受限 worker 确认 effect 已终态后删该 effect 专属 temp。`failed`/`timeout` 后按 effect 唯一键建新 cleanup request，同时至多一个未完成。重试上限 = 3。达上限后停止重建，cleanup-debt 仍在（release evidence 事件，kind=`cleanup/debt`，入 HARN-4 总表），工作区字节不变。supervisor = driver。temp 已不存在 = `succeeded`。只改 request 行，**不改 effect、不改工作区语义**。重复 = 幂等零更新。越界写入声明路径外 = `failed`。timeout 只走 DB 时钟。gate 覆盖重复、失败、receipt 提交后杀 driver、越界。
 
 **resume 分类是无 receipt 终态的唯一来源。** 有合法 succeeded receipt 则不分类。mutating 在 `started` 且无合法 succeeded receipt 时，终态只来自下面四支。**唯一** `started→failed` 是第 4 支。`failed(stale)` 仍只用于未 started 的漂移。IO 证据 = 本 effect 已执行 rename，或目标 inode 已换成该 temp。**「目标 ≠ expected」单独不构成 IO 证据。**path 集合基数恰 1（TOOL-1）。`expected` 见 EFF-5。
 
@@ -207,12 +207,14 @@ claim 带 `lease_owner` / `lease_until`（now 取 V14-APPR-3 的 effective_now�
 
 整 effect：
 
-有序划分（先判 IO 证据：本 effect 已 rename，或目标 inode 已换成该 temp）：
+**symlink 前置臂**（优先，不进四支）：目标或任一父分量是 symlink。未 started → `failed(stale)`，零 rename，不设 degraded。已 started → `unknown`+degraded，零再 rename。
 
-1. 观测 = 目标态 → 补做必要 fsync 与验证。通过才 `succeeded`+`tool/result`，不重放。fsync/验证失败 → `unknown`+degraded，零再 rename，不依赖进程内历史错误位。
-2. 无 IO 证据 ∧ 观测 = `expected`，且全部 path 满足 pending 且未 rename → 事务外重建或沿用 temp、fsync、rename、fsync 父目录、复验。不满足且未 rename → 第 4 支，禁 rename。复验覆盖 exists、file_type、mode、sha256、payload。CAS 绑定已胜出 resume request 与当前 fencing_gen；0 行丢弃，不另开 request。
-3. 有 IO 证据 ∧ 观测 ≠ 目标态 → `unknown`+degraded，零再 rename。
-4. 无 IO 证据 ∧ 观测 ≠ `expected` → `failed`+degraded，零 rename。这是唯一 mutating `started→failed`。
+有序四支（IO 证据 = 本 effect 已 rename，或目标 inode 已换成该 temp；目标 ≠ expected 单独不是 IO 证据）：
+
+1. 有 IO 证据 ∧ 观测 = 目标态 → 补 fsync 与验证。通过才 `succeeded`+`tool/result`，不重放。失败 → `unknown`+degraded，零再 rename。
+2. 有 IO 证据 ∧ 观测 ≠ 目标态 → `unknown`+degraded，零再 rename。pending 臂 rename 后复验失败走这里，禁写 tool/result。
+3. 无 IO 证据 ∧ 观测 = `expected` ∧ 全部 path 满足 pending ∧ 未 rename → 事务外重建或沿用 temp、fsync、rename、fsync 父目录、复验。复验输入 = `request_id` + 当前 `fencing_gen` + 复验全观测。SQL 谓词加「全观测 = 目标态」。不等 → 0 行成功、不写 tool/result、改走第 2 支。0 行因 state/fencing 不匹配 → 丢弃复验，不另开 request；盘上已 rename 则下拍按有 IO 证据重分。
+4. **其余无 IO**（含观测 ≠ `expected`，以及观测 = `expected` 但 pending 不成立，以及无 IO 但观测已 = 目标态）→ `failed`+degraded，零 rename。这是唯一 mutating `started→failed`。成功支必须同时具备 IO 证据。
 
 **不写 `failed(stale)`。** `failed(stale)` 只用于尚未 started 的基线漂移。删除「无 path 达目标态即 stale」。
 
@@ -232,7 +234,7 @@ claim 带 `lease_owner` / `lease_until`（now 取 V14-APPR-3 的 effective_now�
 
 按 s 升序。**禁止用 `proposal.old_*` 当折叠基底。** `baseline_workspace_effect_seq` 只记录冻结当时的 horizon：冻结时 `old_*` 必须等于该 horizon 下的 `expected`；claim 时用**新 horizon 重算** `expected` 再比，不把旧 `old_*` 当成基底。增量缓存仅当缓存字节已等于绝对 `expected` 时，才允许从缓存继续折叠。回归：会话创建后已有成功 effect，再建 proposal，必须用新 horizon 重算。全观测耦合见 TOOL-2（U20）。
 
-**fold 应用**：初始 map 无该 path = `{exists:0, file_type:absent, mode:null, sha256:null}`。按 s 升序，每条 diff 只改自己的 path。应用前 `old_*` 必须等于当前四元组，否则日志损坏、gate 失败。应用后取 `new_*`。`new_file_type=file` 时 payload 哈希必须 = `new_sha256`。dir 的 sha256=`null`、payload=`null`，mode=lstat 低 12 位。成功 `tool/result` 的 file_type 只许 `file|dir|absent`。probe body 可记 `symlink|other`。**清 degraded 的 reconcile/diff `new_*` 只许 `file|dir|absent`**。观测仍是 symlink/other → CAS 不得成功、不得清 degraded；request 标可重试 `unsupported`，不写 reconcile/diff、不写 `reconciled_at`；外部修复后重新取 token 再观测。explainable 与命题 B 比较四元组。
+**fold 应用**：初始 map 无该 path = `{exists:0, file_type:absent, mode:null, sha256:null}`。按 s 升序，每条 diff 只改自己的 path。应用前 `old_*` 必须等于当前四元组，否则日志损坏、gate 失败。应用后取 `new_*`。`new_file_type=file` 时 payload 哈希必须 = `new_sha256`。dir 的 sha256=`null`、payload=`null`，mode=lstat 低 12 位。成功 `tool/result` 的 file_type 只许 `file|dir|absent`。probe body 可记 `symlink|other`。**清 degraded 的 reconcile/diff `new_*` 只许 `file|dir|absent`**。观测仍是 symlink/other → CAS 匹配失败，不写 reconcile/diff、不清 degraded、不写 `reconciled_at`。同事务把 request 定为 `failed`，`payload.reason=unsupported`，并使 token 失效。之后允许重新取 token。路径变成 file/dir/absent 之前，新 probe 仍走此失败边。explainable 与命题 B 比较四元组。
 
 **symlink 分流优先于**「非 explainable → degraded」：未 started = `failed(stale)`，零 rename，不 degraded；started 后 = `unknown`+degraded，零再 rename。
 
@@ -279,7 +281,7 @@ reconcile/diff 的 `old_*` = 该 seq 的 `expected`，`new_*` = 受信观测；f
 | `timeout` / `transport_error` | 不写成功 judgment | 消耗该 attempt | 保持 `started` |
 | `content_invalid` / `budget_exceeded` | 写错误 judgment（这些错误码写入错误 judgment 的唯一边） | 消耗 | `failed` |
 
-effect 已 `succeeded`/`failed` 时 `start_attempt` 幂等零更新。仅 `started` ∧ 当前 attempt 已消耗 ∧ 行数<2 才插入。行数=2 且都已消耗才 `attempt_exhausted`（`effect/terminal`，`terminal_reason=attempt_exhausted`，不写错误 judgment）。provider 的 failed **恰两支**：错误 judgment，或 `attempt_exhausted`（`effect/terminal` reason，不写错误 judgment）。禁第三支。消耗后禁重派；迟到 ok 零更新。
+effect 已 `succeeded`/`failed` 时 `start_attempt` 幂等零更新。仅 `started` ∧ 当前 attempt 已消耗 ∧ 行数<2 才插入。行数=2 且都已消耗才 `attempt_exhausted`（`effect/terminal`，`terminal_reason=attempt_exhausted`，不写错误 judgment）。错误 judgment 只来自 `content_invalid` / `budget_exceeded`。`attempt_exhausted` 是另一支 failed，不写错误 judgment、不设 degraded。禁第三支。消耗后禁重派；迟到 ok 零更新。
 
 **INV-3 命题 A/B 等价仅适用于 FakeLLM 路径与已提交 judgment 的 provider 路径**；G4 kill gate 不得把 provider 未提交 judgment 窗口宣称为 A/B 等价。检查：G4 gate（提交函数原子性：校验→写 judgment→消耗 attempt→改 effect 同事务；迟到零更新；乘积表五行逐行断言；attempt 上限；failed 的终结边只有错误 judgment 行；attempt 行数=2；第 3 次不插行；独立 judgment 世代断言）。
 
@@ -339,6 +341,8 @@ V-rcpt-claim 636c61696d5f70726f62651f30303030303030302d303030302d343030302d38303
 V-rcpt-resume 726573756d655f70726f62651f30303030303030302d303030302d343030302d383030302d3030303030303030303030311f6e756c6c1f30303030303030302d303030302d343030302d383030302d3030303030303030303030331f311f7375636365656465641f6e756c6c1f653362306334343239386663316331343961666266346338393936666239323432376165343165343634396239333463613439353939316237383532623835350a
 V-rcpt-recon 7265636f6e63696c655f70726f62651f30303030303030302d303030302d343030302d383030302d3030303030303030303030311f6e756c6c1f30303030303030302d303030302d343030302d383030302d3030303030303030303030331f311f7375636365656465641f6e756c6c1f653362306334343239386663316331343961666266346338393936666239323432376165343165343634396239333463613439353939316237383532623835350a
 V-rcpt-prov 6a7564676d656e741f30303030303030302d303030302d343030302d383030302d3030303030303030303030311f30303030303030302d303030302d343030302d383030302d3030303030303030303030321f6e756c6c1f311f7375636365656465641f6e756c6c1f653362306334343239386663316331343961666266346338393936666239323432376165343165343634396239333463613439353939316237383532623835350a
+V-rcpt-baseline 73657373696f6e5f626173656c696e651f6e756c6c1f6e756c6c1f30303030303030302d303030302d343030302d383030302d3030303030303030303030331f311f7375636365656465641f301f653362306334343239386663316331343961666266346338393936666239323432376165343165343634396239333463613439353939316237383532623835350a
+V-rcpt-cleanup 636c65616e75701f30303030303030302d303030302d343030302d383030302d3030303030303030303030311f6e756c6c1f30303030303030302d303030302d343030302d383030302d3030303030303030303030331f321f7375636365656465641f301f373932356433653961393631336130393365356562343035346233326161333964653931306432623033626137653830343663336234353530623864653165340a
 ```
 
 diff 是 events 流的一部分（落 `tool/result` 载荷），供审批渲染与 `expected` 重放。检查：G1 gate 先断言上列 hex，再断言 sha256；mode 不定宽拒绝；空 stdout ≠ null。
@@ -349,13 +353,13 @@ diff 是 events 流的一部分（落 `tool/result` 载荷），供审批渲染�
 
 **V14-APPR-1**〔P0〕proposal 不可变、一次构建。**核心摘要只冻结 write/edit**：合同版本、generation、工具名、完整参数、cwd、受控环境标识、冻结 horizon 下的 expected、规范化 diff、expires_at、可空 `grant_id`（比较面按 HARN-4 重算）。exec 不得复用此摘要或 grant 路径（摘要在 v14.1）。`requested`/approve/deny 保留 schema，无核心产品入口，G1 不测。检查：G1 gate 摘要双型完备性断言。
 
-**V14-APPR-2 批准与消费（谓词定位 + 单次消费 + 竞争审计）**〔P0〕批准只批摘要（哈希锚定）。**批准输入禁止携带代理键字面量**（proposal_id、session_id 等）：approve/deny/expire/reconcile **不收 session_id / proposal_id / principal / now**，目标用谓词选（如「本会话唯一 requested proposal」，会话来自**认证连接绑定**），命中非唯一即拒绝。**条件更新写死**：approve/deny/expire 用 `WHERE state=requested` 条件更新，胜负各写一条 `approval/audit`（`payload.reason` ∈ win/loss）。消费：`planned→claimed` 与 `proposal approved→consumed` 同事务单次消费（EFF-1 后置条件表）；执行 claim 时 CAS 重验（摘要哈希一致、状态、未过期、workspace 基线仍匹配、grant 未撤销未过期（APPR-5）），任一不符即按 EFF-1 后置条件表处置并留痕。检查：G1 gate（谓词定位非唯一负例/重放/篡改/基线漂移负例/竞争胜负审计事件断言）。
+**V14-APPR-2 批准与消费（谓词定位 + 单次消费 + 竞争审计）**〔P0〕批准只批摘要（哈希锚定）。**批准输入禁止携带代理键字面量**（proposal_id、session_id 等）：approve/deny/expire/reconcile **不收 session_id / proposal_id / principal / now**，目标用谓词选（如「本会话唯一 requested proposal」，会话来自**认证连接绑定**），命中非唯一即拒绝。**条件更新写死**：approve/deny/expire 用 `WHERE state=requested` 条件更新，胜负各写一条 `approval/audit`（`payload.reason` ∈ win/loss）。消费：`planned→claimed` 与 `proposal approved→consumed` 同事务单次消费（EFF-1 后置条件表）；执行 claim 时 CAS 重验（摘要哈希一致、状态、未过期、workspace 基线仍匹配、grant 未撤销未过期（APPR-5）），任一不符即按 EFF-1 后置条件表处置并留痕。检查：G1（谓词定位非唯一负例、摘要篡改、claim CAS 重验；requested 动态审计移 v14.1）。
 
 **V14-APPR-3 effective_now（DB 时钟；test-only 注入）**〔P0〕生产 approve/deny/expire/reconcile **不接受调用方 now、不读调用方可写会话变量**；effective_now 来自 DB 时钟。仅**测试专用角色**经隔离 test-only 入口注入 now。所有 CAS 用同一 effective_now 在同事务检查 `expires_at`。检查：G1 gate（生产入口无 now 参数 source 断言 + test-only 注入正例 + 共享 CAS 时钟断言）。
 
-**V14-APPR-4 等待与串行（单名额在请求创建时执法）**〔P0〕proposal 状态机：**`approved` 是显式非终态**。出边：`requested → approved | denied | expired`；`approved → consumed`（与 effect claim 同事务）；`approved → expired`（claim 谓词失败/到期时，EFF-1 后置条件表；expired 为过期终态**唯一**落点）。**终态闭集 = `denied | expired | consumed`**（approved 不是终态，不得写成三择终态）。超时判定用 APPR-3 的 effective_now（expire_due 见 EFF-4）。等待期游标停 `await_approval`：不持 claim、不占 beat 前进位；批准后重新走 V14-EFF claim。**mutating 单名额执法时点 = 请求创建时**，执法句以三条件为准：已存在 requested proposal、未消费 approved proposal、或未终态 mutating effect **且其 effect_id ≠ 当前 `degraded_effect_id`**。degraded 期间至多一个排队 approved+planned。claim 仍靠屏障。创建事务在查三条件前 `try_lock`（锁序与 claim 相同）。失败 → 不插 proposal/effect、不耗名额、返回可重试。同 workspace 至多一个 requested/approved proposal，且至多一个 id ≠ `degraded_effect_id` 的未终态 mutating。deny/过期/失败路径**释放名额**。检查：G1 gate（创建时三条件拒绝负例/名额释放/等待期 beat 推进/approved 非终态）。
+**V14-APPR-4 等待与串行（单名额在请求创建时执法）**〔P0〕proposal 状态机：**`approved` 是显式非终态**。出边：`requested → approved | denied | expired`；`approved → consumed`（与 effect claim 同事务）；`approved → expired`（claim 谓词失败/到期时，EFF-1 后置条件表；expired 为过期终态**唯一**落点）。**终态闭集 = `denied | expired | consumed`**（approved 不是终态，不得写成三择终态）。超时判定用 APPR-3 的 effective_now（expire_due 见 EFF-4）。等待期游标停 `await_approval`：不持 claim、不占 beat 前进位；批准后重新走 V14-EFF claim。**mutating 单名额执法时点 = 请求创建时**，执法句以三条件为准：已存在 requested proposal、未消费 approved proposal、或未终态 mutating effect **且其 effect_id ≠ 当前 `degraded_effect_id`**。degraded 期间至多一个排队 approved+planned。claim 仍靠屏障。创建事务在查三条件前 `try_lock`（锁序与 claim 相同）。失败 → 不插 proposal/effect、不耗名额、返回可重试。同 workspace 至多一个 requested/approved proposal，且至多一个 id ≠ `degraded_effect_id` 的未终态 mutating。deny/过期/失败路径**释放名额**。检查：G1（创建三条件、名额释放、approved 非终态）。requested 等待动态移 v14.1。
 
-**V14-APPR-5 grant 字段全集与命中规则（终版）**〔P0〕grant 行字段冻结：`grant_id / granting_principal / session_id / workspace_id / tool_set / argument_schema / cwd 根 / contract_version / generation / issued_at / expires_at / revoked_at`。**grant 行除 `revoked_at` 空→非空外禁 UPDATE**。**核心面 grant 不覆盖 exec**。mutating exec 的拒签与 requested 人批见 v14.1。核心面 write/edit 未命中 grant = 准入拒绝，零 proposal。**grant 命中 = 请求创建事务内的内部动作**（非独立入口）：命中即在同事务生成不可变 proposal 并由 SQL 转 `approved`（principal 记录 = granting_principal），EXECUTE 权限对 harness 与 service role 一律 REVOKE；每次命中仍单次消费（APPR-2）；命中已 approved 的请求直入 claim（无等待相，TOOL-3）。**命中合取（写死）**：工具名 ∈ tool_set ∧ 每受影响相对路径匹配 glob ∧ cwd 在 grant 根下 ∧ workspace_id/session_id/contract_version/generation 相等 ∧ 未撤销未过期 ∧ 非路径标量过 argument_schema；**正文/diff/哈希不参与比较**。**两检查点（写死）**：① claim CAS 时见撤销/过期 → EFF-1 后置条件表 grant 行（**此时无 IO**）；② **receipt 接受时见撤销 → 不回滚已 started 的 IO**，终态按 receipt/EFF-5。模式闭集 = 工具名 + 相对路径 glob。签发/撤销/越界负例进 `test_approval`。检查：G1 gate（字段完备/签发/撤销/越界/核心面不测 exec 拒签/命中合取逐项/内部动作 + REVOKE 断言/两检查点分支/命中直入 claim/grant 行禁 UPDATE 除 revoked_at）。
+**V14-APPR-5 grant 字段全集与命中规则（终版）**〔P0〕grant 行字段冻结：`grant_id / granting_principal / session_id / workspace_id / tool_set / argument_schema / cwd 根 / contract_version / generation / issued_at / expires_at / revoked_at`。**grant 行除 `revoked_at` 空→非空外禁 UPDATE**。**核心面 grant 不覆盖 exec**。mutating exec 的拒签与 requested 人批见 v14.1。核心面 write/edit 未命中 grant = 准入拒绝，零 proposal。**grant 命中 = 请求创建事务内的内部动作**（非独立入口）：命中即在同事务生成不可变 proposal 并由 SQL 转 `approved`（principal 记录 = granting_principal），EXECUTE 权限对 harness 与 service role 一律 REVOKE；每次命中仍单次消费（APPR-2）；命中已 approved 的请求直入 claim（无等待相，TOOL-3）。**命中合取（写死）**：工具名 ∈ tool_set ∧ 每受影响相对路径匹配 glob ∧ cwd 在 grant 根下 ∧ workspace_id/session_id/contract_version/generation 相等 ∧ 未撤销未过期 ∧ 非路径标量过 argument_schema；**正文/diff/哈希不参与比较**。**两检查点（写死）**：① 只覆盖 `planned→claimed` 的 CAS（后置条件表 grant 行：proposal `expired`、不分配 seq、零 IO）。已 consumed 且仍 claimed 的撤权走 EFF-1 第②行（proposal 保持 consumed、seq 保留）；② **receipt 接受时见撤销 → 不回滚已 started 的 IO**，终态按 receipt/EFF-5。模式闭集 = 工具名 + 相对路径 glob。签发/撤销/越界负例进 `test_approval`。检查：G1 gate（字段完备/签发/撤销/越界/核心面不测 exec 拒签/命中合取逐项/内部动作 + REVOKE 断言/两检查点分支/命中直入 claim/grant 行禁 UPDATE 除 revoked_at）。
 
 **V14-APPR-6 principal 与签发封死（DB 认证，fail closed）**〔P0〕审批/签发/撤销函数**不接受 principal 参数**（issue_grant/revoke_grant 亦不收 session_id/now/proposal_id；`granting_principal` 取当前认证 principal）。**权限封死（写死）**：`issue_grant / revoke_grant / approve / deny / expire / reconcile` 全部 **REVOKE FROM PUBLIC** + 从 harness 与 service role REVOKE，**EXECUTE 仅授认证 approver 角色**。生产路径须有与实际 approver 一一对应的 **DB 认证 principal**；共享 service role 不得执行审批；无法映射即 fail closed（拒绝并留痕）。**会话绑定 = 认证时写连接不可变属性**；审批/签发不读调用方可写 GUC。Chainlit 部署的身份映射 = 受信连接 / 角色属性。principal 写 events。检查：G1 gate（principal 映射断言 + REVOKE FROM PUBLIC 断言 + service role 拒绝 + 无法映射 fail-closed 负例 + 签发参数面断言）。
 
@@ -366,7 +370,7 @@ diff 是 events 流的一部分（落 `tool/result` 载荷），供审批渲染�
 **V14-TOOL-4**〔移出〕exec 闭集命令执行器、动词目录、mutating/read-only exec、exec×write 并发，整体移到 `docs/designs/v14.1-exec.md`（种子 V141-SEED-TOOL-4）。本核心面**无** exec 实现义务，**无** `{run-test, build}` 冻结目录。任意 shell 仍然不做（§9）。原句保留在 v14.1 骨架，避免六轮裁定丢失。
 
 
-**V14-TOOL-5**〔P0〕glob/grep 只读口岸。`V14_RO_OUTPUT_CAP` 为写死整数。错误码只由 `exit_code` 区分，禁用 stdout 文本：`ok`→succeeded/`0`；`output_limit`→failed/`1`；`bad_input`→failed/`2`；`io_error`→failed/`3`（消耗当前 attempt，保持 started）。`output_limit`/`bad_input` 不产独立事件 kind，UI 由 judgment 转述。超限不截断成成功。attempt 2 的 fencing 继承 effect 当前代，不另升。调度走 EFF-1 五步优先级。检查：G1 五步序 + exit_code 映射。
+**V14-TOOL-5**〔P0〕glob/grep 只读口岸。`V14_RO_OUTPUT_CAP = 65536`。错误码只由 `exit_code` 区分，禁用 stdout 文本：`ok`→succeeded/`0`；`output_limit`→failed/`1`；`bad_input`→failed/`2`；`io_error`→failed/`3`（消耗当前 attempt，保持 started）。`output_limit`/`bad_input` 不产独立事件 kind，UI 由 judgment 转述。超限不截断成成功。attempt 2 的 fencing 继承 effect 当前代，不另升。调度走 EFF-1 五步优先级。检查：G1 五步序 + exit_code 映射。
 
 **V14-TOOL-6 准入合一与四路径（产品语义裁决）**〔P0〕**单一准入路径**：
 
@@ -406,7 +410,7 @@ payload 闭集 = `{session_id, seq 高水位}`，不携带业务事实。**负�
 3. **canonical 投影（库内唯一函数）**：投影函数在**库内**实现（递归 jsonb 遍历），禁止客户端拼串。**遍历序冻结 = jsonb 自身键序、数组从左到右**。归一规则：
    - **代理键 allowlist（写死，十个前缀、十一个键名）**：`session_id→$s`、`event_id→$ev`、`effect_id→$ef`、`judgment_id→$j`、`proposal_id→$p`、`attempt_id→$at`、`grant_id→$g`、`workspace_id→$w`、`request_id→$rq`、`token_id→$tk`、`degraded_effect_id→$ef` 及递归出现的同值——替换两遍：先收集 allowlist 值，再替换全部同值出现。同值同替换、跨行一致。`degraded_effect_id` 与 `effect_id` 同值必须得到同一个 `$efN`。
    - **volatile metadata 键表（与时间分开，写死）**：`ts / wall_time / created_at / pid / lsn / expires_at / started_at / finished_at / duration_ms / elapsed_ms / lease_until / lease_owner / issued_at / revoked_at / effective_now / fencing_gen` → 类型占位符（`fencing_gen` 在杀/不杀世界线可分叉，比较面用占位符；单调与 CAS 由独立 fencing gate 断言）；
-   - **workspace 根 → `$ws`**；事件内文件路径一律以**相对根形式**存储；
+   - temp 根前缀 → `$tmp`（字面量，非代理键），在 `$ws` 替换之前做。然后 **workspace 根 → `$ws`**。两替换后仍残留 workspace 外绝对路径才 gate 失败。事件内文件路径一律以相对根形式存储。
    - **attempt 事件按 kind 丢弃**（不属任何比较面，EFF-6）；`workspace_effect_seq` 每 workspace 从 1 单调、同构操作两壳同值 → **原样入比较面（不替换）**；
    - **派生字段表（对 A 与 INV-4 两比较面都生效，写死）**：含代理 ID 的哈希必须二择一，未列入者不得入任一比较面，新增须 bump。`payload_digest` = **排除 + 独立 digest gate 验证**（G1，含 TOOL-2 黄金向量）。proposal 摘要哈希与 approval 摘要哈希（含 `grant_id` 等代理 ID）= **canonicalize 输入重算**：代理键替换 + volatile 占位 + `$ws` 替换之后再哈希，不比较原始哈希字节。`diff_digest` 预映像不含代理 ID（TOOL-2）→ 原样入比较面；若实现期发现预映像含代理 ID，必须改为 canonicalize 重算，不得静默排除；
    - **封闭性执法（字符串模式，写死）**：epoch 只匹配：整个标量是 RFC3339 文本，或键名匹配 `*_at` / `*_ms` / `*_until` / `*_pid` / `*_lsn`，或十进制整数 ≥ 1000000000。**原样保留**：`workspace_effect_seq`、`exit_code`、`mode`、judgment usage 的 token 整数、status 枚举。timestamptz 型标量、绝对路径、未识别 uuid → **gate 失败**，新增类别必须 bump 本规范（偏差台账无权松动）。**uuid 规则仅作用于整个 jsonb 标量值 = uuid 形**（对 stdout/stderr/diff 等文本载荷不做子串扫描）；**字符串先做 `$ws` 前缀替换，替换后仍残留绝对路径才失败**；digest 规范化用显式保序文本编码（V14-TOOL-2），不经 jsonb::text；
@@ -429,6 +433,7 @@ payload 闭集 = `{session_id, seq 高水位}`，不携带业务事实。**负�
 | `preflight_probe` / `claim_probe` / `resume_probe` / `reconcile_probe` | request 已终态 | 不入 | 入 |
 | `session_baseline` | request 已终态 | 不入 | 入 |
 | `cleanup` | `pending` / `succeeded` / `failed` / `timeout` | 不入 | 入 |
+| `cleanup/debt` | 达重试上限仍未清掉 | 不入 | 入 |
 | `claim/audit` | `payload.reason` ∈ time/grant/baseline；每次 claim 失败恰一条 | 不入 | 入 |
 | `approval/audit` | `payload.reason` ∈ win/loss | 不入 | 入 |
 | `attempt` | 任意 | 不入 | 不入 |
@@ -491,7 +496,7 @@ payload 闭集 = `{session_id, seq 高水位}`，不携带业务事实。**负�
 范围：合同 v2 bump 与回填（§2.3）+ 效果协议（§3.1：单一 `expected`、degraded 单主、resume 三分、renew 续租、cleanup/probe 状态闭集）+ write/edit + glob/grep 只读出生 + 审批（不含 exec 人批）+ diff 字节语法（V14-TOOL-2）。
 提交集合（枚举，见 V14-PROC-3）：**K**（内核提交：合同 bump 文档 + v14 迁移 SQL（含 contract_version/generation 回填列）+ 允许名单）→ **S**（实现提交：口岸、目录行、gate）。
 gate 验收（写死）：
-- 〔P0〕`v14/tools/test_tools_v2.py`（required）exit 0：EFF-1 转移表全路径 + **后置条件表三行逐列**（短路序 ①时间 ②grant ③基线，先命中独占一条 `claim/audit`（`payload.reason` ∈ time/grant/baseline），禁并行 kind；基线行 proposal→expired 且释放名额；pre-apply unlock+归还专属连接；planned→claimed 无已 IO→unknown）+ 非法转移负例；intent 先于 IO；**出生统一**（三类创建事务 fencing_gen=1；read-only 同事务 started+attempt 1、无 claimed 停留；provider 无 reclaim；mutating receipt attempt_id=JSON null 且无 attempt 行；read-only receipt attempt_id 非空绑定；read-only lease 到期只 reclaim、不新开 attempt；attempt 2 仅当当前 attempt 已消耗且行数=1，新 attempt 自带 lease）；**fencing**（claimed→started 仅基线匹配后、0 行零 IO、mutating reclaim 持锁前置 + generation 递增、probe 败者零 IO、过期 receipt 拒绝落库）；try-lock 不可得留态重试；**屏障只统计 mutating** + 未终态 claimed/started/unknown 时禁 claim 新 mutating（越序负例）+ reclaim 不绕屏障；seq 分配点恰 {claim 成功, 进入 degraded}，stale 不分配，horizon 冻结；write/edit 幸福路径 diff 单格式与字节语法逐项（排序/null 与空串区分/base64 alphabet+padding/mode 定宽/黄金向量 sha256；创建/删除/二进制/symlink 拒绝）；resume 三分 done/pending/unexplained，pending 含全 pending 时 rename 后写 tool/result；receipt 与分类互斥；write/edit 接受谓词=全观测，read-only 不是；started 后无 receipt 禁止 started→failed；write create-only + edit 目标存在非 symlink；**准入两分支夹具**（write/edit 未命中 grant 拒绝不建行；grant 命中直入 claim）；拒绝路径工作区字节零变化；**两阶段 reconcile**（只绑 degraded_effect_id、CAS 成功写 reconciled_at 并清 degraded、历史 failed 不可重选）；观测请求先于 probe IO、probe 失败不改 effect 态；**独立 digest 正确性 gate**（payload_digest/diff_digest 预映像 + TOOL-2 黄金向量，与两比较面分离）。
+- 〔P0〕`v14/tools/test_tools_v2.py`（required）exit 0：EFF-1 转移表全路径 + **后置条件表三行逐列**（短路序 ①时间 ②grant ③基线，先命中独占一条 `claim/audit`（`payload.reason` ∈ time/grant/baseline），禁并行 kind；基线行 proposal→expired 且释放名额；pre-apply unlock+归还专属连接；planned→claimed 无已 IO→unknown）+ 非法转移负例；intent 先于 IO；**出生统一**（三类创建事务 fencing_gen=1；read-only 同事务 started+attempt 1、无 claimed 停留；provider 无 reclaim；mutating receipt attempt_id=JSON null 且无 attempt 行；read-only receipt attempt_id 非空绑定；read-only lease 到期只 reclaim、不新开 attempt；attempt 2 仅当当前 attempt 已消耗且行数=1，新 attempt 自带 lease）；**fencing**（claimed→started 仅第④行匹配 0 行才不改状态、mutating reclaim 持锁前置 + generation 递增、probe 败者零 IO、过期 receipt 拒绝落库）；try-lock 不可得留态重试；**屏障只统计 mutating** + 未终态 claimed/started/unknown 时禁 claim 新 mutating（越序负例）+ reclaim 不绕屏障；seq 分配点恰 {claim 成功, 进入 degraded}，stale 不分配，horizon 冻结；write/edit 幸福路径 diff 单格式与字节语法逐项（排序/null 与空串区分/base64 alphabet+padding/mode 定宽/黄金向量 sha256；创建/删除/二进制/symlink 拒绝）；resume 三分 done/pending/unexplained，pending 含全 pending 时 rename 后写 tool/result；receipt 与分类互斥；write/edit 接受谓词=全观测，read-only 不是；无合法 succeeded receipt 时终态只来自 EFF-3 四支；started→failed 仅第④支；禁 attempt_exhausted、裸 status=failed、分类外 SQL 边；write create-only + edit 目标存在非 symlink；**准入两分支夹具**（write/edit 未命中 grant 拒绝不建行；grant 命中直入 claim）；拒绝路径工作区字节零变化；**两阶段 reconcile**（只绑 degraded_effect_id、CAS 成功写 reconciled_at 并清 degraded、历史 failed 不可重选）；观测请求先于 probe IO、probe 失败不改 effect 态；**独立 digest 正确性 gate**（payload_digest/diff_digest 预映像 + TOOL-2 黄金向量，与两比较面分离）。
 - 〔P0〕`v14/tools/test_approval.py`（required）exit 0：V14-APPR-1..7 全断言（**write/edit 摘要字段集**（不含 exec 摘要）/单次消费 CAS/状态机含 approved→consumed 与 approved→expired/生产无 now 参数 + test-only 注入/请求创建时单名额执法与释放/核心面无 exec requested 夹具（write/edit 无等待相；人批夹具不在 G1）/grant 字段全集 + 签发/撤销/越界 + **核心面 grant 不覆盖 exec** + 命中合取逐项 + 内部动作 EXECUTE REVOKE（harness 与 service role）+ **两检查点**（claim CAS 见撤销零 IO；receipt 接受见撤销不回滚 IO）+ 命中直入 claim/**REVOKE FROM PUBLIC 全函数面** + 签发不收 principal/session_id/now/proposal_id + grant 行禁 UPDATE 除 revoked_at/principal 映射 fail-closed/无裸 DML/approved 为显式非终态/名额执法以三条件为准不得缩写成仅未终态 proposal）。
 - 〔P0〕`v14/tools/test_contract_v2.py`（required）exit 0：contract-2 已 bump；v1 条款字节零改动；回填列默认值与既有 request 回填；v1 排队请求走 v1 handler + v2 新建请求两路径；无法解析绑定拒绝创建负例；`v13/**/*.sql` 零 diff。
 - 〔P0〕同文件另断言：`expected` 全量重放式（禁用 proposal.old_* 当基底；会话创建后已有成功 effect 再建 proposal 须重算）；`session_baseline` 持锁冻结 W，扫描期拒新 claim；「已有 started effect 时建会话」与「未来新路径 create-only」；probe 成功后、状态事务前 kill 再 reclaim 不得用旧 body；claim 屏障行 0 行更新；首次 started 要求 fencing_gen≥2；reclaim 后 ≥3 进 started 为正例；write/edit receipt 只收 succeeded；分类四支（pending 复验失败禁写 tool/result）；`affected_paths` 基数=1 拒绝；read-only 五步序与 `V14_RO_OUTPUT_CAP`；advisory 键高 8 位 `0x14`；degraded 期间 expire_due 不终结排队 approved+planned。
@@ -509,7 +514,7 @@ gate 验收（写死）：
 
 范围：beat driver 提炼（§4.1）+ Chainlit 窗 + `v14_wake` + psql submit/observe demo + 双壳等价 + 会话可弃。**不依赖 exec**；write/edit 即可测 resume 与双壳。
 gate 验收（写死）：
-- 〔P0〕`v14/harness/test_resume.py`（required）exit 0：**SIGKILL 进程组**实证杀（非模拟），**只用 write/edit**。窗 1 = 四杀点并集：temp 已 fsync 未 rename、started 后 temp 前、temp 部分写入、rename 完成且复验成功但 receipt 前提交前被杀。这四缝终态皆 `succeeded`，命题 A 逐行相等。复验失败缝不宣称 A 也不宣称 B；reconcile CAS 成功后再断言 B。窗 1 四缝 = 三 pending + 一 done。进程组只含 driver 与其 worker/provider 子进程。三缝走 resume 分类。另两缝：rename 已完成、目标复验成功、receipt 提交前 kill → 分类 done、不重放；rename 后注入复验失败、receipt 前 kill → unknown+degraded → reconcile → 断言命题 B。命题 A 只断言窗 1 与无 unknown 的路径。write/edit unknown 的 reconcile SQL 成功后断言命题 B（折叠含该 seq 的 reconcile/diff）。**cleanup gate**：receipt 或分类写完 tool/result 后杀 driver；resume 后 `cleanup` request 清 temp，temp 不在 = succeeded，工作区字节不变；另覆盖重复、失败、越界。execve 窗不在本 gate。
+- 〔P0〕`v14/harness/test_resume.py`（required）exit 0：**SIGKILL 进程组**实证杀（非模拟），**只用 write/edit**。窗 1 = 四杀点并集：temp 已 fsync 未 rename、started 后 temp 前、temp 部分写入、rename 完成且复验成功但 receipt 前提交前被杀。这四缝终态皆 `succeeded`，命题 A 逐行相等。复验失败缝不宣称 A 也不宣称 B；reconcile CAS 成功后再断言 B。窗 1 后半：三 pending 走第③支；done 走第①支、不重放。复验失败缝在窗 1 之外。进程组只含 driver 与其 worker/provider 子进程。三缝走 resume 分类。另两缝：rename 已完成、目标复验成功、receipt 提交前 kill → 分类 done、不重放；rename 后注入复验失败、receipt 前 kill → unknown+degraded → reconcile → 断言命题 B。命题 A 只断言窗 1 与无 unknown 的路径。write/edit unknown 的 reconcile SQL 成功后断言命题 B（折叠含该 seq 的 reconcile/diff）。**cleanup gate**：receipt 或分类写完 tool/result 后杀 driver；resume 后 `cleanup` request 清 temp，temp 不在 = succeeded，工作区字节不变；另覆盖重复、失败、越界。execve 窗不在本 gate。
 - 〔P0〕`v14/harness/test_dual_shell.py`（required）exit 0：两壳（脚本壳 + Chainlit 壳——经 Chainlit 无头测试模式驱动**真实 handler 模块**，禁止为 gate 另写假 handler；同一测试 principal）按 V14-HARN-4 算法比较（§4.3 **全流**、ORDER BY seq 后服务端投影 ::text 逐字节相等；两比较面均按派生字段表（payload_digest 排除、摘要哈希 canonicalize 重算）；A 面只收 HARN-4 字面白名单；workspace_effect_seq 原样入面），封闭性执法含新增键与 timestamptz 标量；两 principal 越权负例另测。**不使用 exec 输出夹具**。整场景共用一个 test-only `effective_now`。outer event seq 不入投影。
 - 〔P0〕`v14/harness/test_thin.py`（required）exit 0：per-file 决策点计数（INV-5 上限表：driver ≤15 / handler ≤5 / 其余合计 0）+ import 前缀黑名单（六前缀）+ worker/provider 能力协议。
 - 〔P0〕`v14/harness/test_listen.py`（required）exit 0：v14_wake 同事务 notify、payload 闭集、独立 autocommit 连接、初始补读、补读循环、四负例（通知合并/断线插入/查询-订阅间隙/重连无后续通知）、重连后 UI 历史从 events 重建。
@@ -590,29 +595,24 @@ gate 验收（写死）：
 | govern/economy 面 | `v13/govern/`、`v13/economy/`、`v13/control/` 均为既有 stage（SQL+gate+README） |
 | compaction 语义 | `docs/designs/v8-dev.md` §3.3（seq、cancel、compact、repair） |
 
-## 附录 B. 轮 10 → 轮 11 修订对照（核心面 X1..X19）
+## 附录 B. 轮 11 → 轮 12 修订对照（核心面 Y1..Y13）
 
-| # | 裁决 | 第 11 版落点 |
+| # | 裁决 | 第 12 版落点 |
 |---|---|---|
-| X1 | 四支有序划分 | 先判 IO 证据。①目标态后补 fsync；②无 IO 且 =expected 才 pending；③有 IO 且 ≠目标态 → unknown；④无 IO 且 ≠expected → 唯一 started→failed。删「禁止无 receipt 的 started→failed」 |
-| X2 | digest 残句 | TOOL-2 mutating 行改为 observation_digest。worker diff 只做一致性校验 |
-| X3 | 五步序残句 | exhausted 条件改回第 ③ 原文。TOOL-5 用 exit_code 0/1/2/3，禁 stdout 区分 |
-| X4 | fencing 残句 | 删「每次 renew +1」与「每次 lease 变更 +1」。G1 改为 ≥2，并补 reclaim 后 ≥3 |
-| X5 | symlink 不冒充 | 清 degraded 的 reconcile/diff new_* 只许 file/dir/absent。仍是 symlink 则 CAS 失败，不写 reconciled_at |
-| X6 | 第①支 fsync | 观测=目标态后必须补 fsync/验证。失败走 unknown，不走第①支短路 |
-| X7 | 0 行有序表 | 删合并的「0 行→零 IO」。lease 失配走 reclaim；到期/撤销写 failed 且 consumed 保持；基线走 stale/degraded；其余才 started |
-| X8 | provider 边 | 「唯一终结边」改为这些错误码写入错误 judgment 的唯一边 |
-| X9 | `$tmp` | 绝对路径检查前把 temp 根换成 `$tmp` |
-| X10 | 基线预检查 | 冻结 W 之前先查无 claimed/started 且 degraded 为空。不满足不扫描 |
-| X11 | 命题 B | failed+degraded 同样不宣称 B。stale 与 attempt_exhausted 保持可比较 |
-| X12 | APPR 检查拆净 | requested 动态项移 v14.1。核心留 grant、CAS、REVOKE、reconcile |
-| X13 | 复验 CAS | 绑定已胜出 request_id 与当前 fencing_gen。0 行丢弃 |
-| X14 | baseline/cleanup 预映像 | body 与 nullable 写死。out_of_bounds → request failed |
-| X15 | 死于 claimed | try_lock → reclaim（owner 变更才升代）→ 当前代新 probe。禁无锁 probe |
-| X16 | 复验失败缝 | 不宣称 A 也不宣称 B。reconcile 成功后再断言 B |
-| X17 | 声明路径 | workspace 目标 ∪ 该 effect 专属 temp。cleanup 只删该 temp |
-| X18 | 收尾四项 | superseded 入 request 闭集。pending 须全部 path 满足才 rename。cleanup 失败可重建，超上限留 debt。worker 崩溃关连接放锁 |
-| X19 | P2 | CAP 为写死整数。attempt 2 不另升代。reconcile/audit 补覆盖 outcome。窗 1 = 三 pending + 一 done。删「不重叠叠」 |
+| Y1 | 四支全函数重写 | symlink 前置臂优先。①有 IO 且=目标态才成功；②有 IO 且≠目标态 → unknown；③无 IO 且=expected 且 pending 才重建；④其余无 IO → 唯一 started→failed |
+| Y2 | G1 残句 | 删「started 后无 receipt 禁止 started→failed」。改成四支窄禁令 |
+| Y3 | 0 行语义 | EFF-2：只有第④行 UPDATE 匹配 0 行才零 IO。②③要写终态 |
+| Y4 | 死于 claimed | 与快乐路径同一条 SQL。代际 1 必定升到 2。同代已成功 probe 复用 body。代际变了标 superseded |
+| Y5 | unsupported | 不新增状态。request 定为 failed，reason=unsupported，token 失效。不写 reconcile/diff |
+| Y6 | 三处残句 | probe digest 与 TOOL-2 相同。错误 judgment 只来自两个错误码。命题 A 只覆盖无 degraded effect 的路径 |
+| Y7 | APPR 检查 | 竞争胜负审计与等待期 beat 移 v14.1 |
+| Y8 | `$tmp` 入 HARN-4 | 在 `$ws` 替换之前做。INV-5 不重复该句 |
+| Y9 | 复验输入 | request_id + fencing_gen + 复验全观测。不等走第②支 |
+| Y10 | 八元组 | baseline 与 cleanup 的 kind/id/fencing/status/exit_code/body 写死，并各有黄金向量 |
+| Y11 | 检查点① | 只覆盖 planned→claimed。已 consumed 的撤权走第②行 |
+| Y12 | pending 失败 gate | temp 不可验证且不可重建且观测=expected → 第④支 |
+| Y13 | P2 | 窗 1 后半：三 pending 走③，done 走①。cleanup 上限 3。`V14_RO_OUTPUT_CAP=65536`。supervisor=driver。`cleanup/debt` 入总表 |
+
 
 
 
