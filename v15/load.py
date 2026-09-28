@@ -23,6 +23,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V15_ROOT / "io" / "v15_io.sql",
     V15_ROOT / "loop" / "v15_loop.sql",
     V15_ROOT / "tree" / "v15_tree.sql",
+    V15_ROOT / "govern" / "v15_govern.sql",
 ]
 
 STAGE_THROUGH = {
@@ -34,6 +35,7 @@ STAGE_THROUGH = {
     "io": 6,
     "loop": 7,
     "tree": 8,
+    "govern": 9,
 }
 
 

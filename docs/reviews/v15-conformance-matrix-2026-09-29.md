@@ -1,8 +1,22 @@
 # v15 覆盖矩阵（2026-09-29）
 
-记 stage 1–8 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
+记 stage 1–9 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。
 
-状态来自实跑：`uv run python v15/tree/test_tree.py` 退出码 0。随后复跑 stage 1–7 的 gate，退出码都是 0。
+完整 `SQL_LOAD_ORDER`：
+
+1. `v15/schema/v15_schema.sql`
+2. `v15/namespace/v15_namespace.sql`
+3. `v15/config/v15_config.sql`
+4. `v15/protocol/v15_protocol.sql`
+5. `v15/repl/v15_repl.sql`
+6. `v15/io/v15_io.sql`
+7. `v15/loop/v15_loop.sql`
+8. `v15/tree/v15_tree.sql`
+9. `v15/govern/v15_govern.sql`
+
+合运行时是这九个文件都加载之后。`agent_v15_govern` 是这个库。更早的 `agent_v15_*` 库是前缀 gate，不是合运行时。
+
+状态来自实跑：`uv run python v15/govern/test_govern.py` 退出码 0。随后复跑 stage 1–8 的 gate，退出码都是 0。
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
@@ -89,3 +103,126 @@ stage 8 是树。fatal 只走桩预留耗尽。`invoke/enter` abort 的同事务
 | 70 | §4.12 崩溃后扫回 | ✅ | 同上 | 杀掉停在 bind-wait 的 worker 后，新 worker 把子跑到终态，送达，父从下一条已生成语句继续，不再次调父 LLM |
 | 71 | §7.2 / §8.3 按值复制与继承 | ✅ | 同上 | 子 `assign` 不改父 scope。显式 input 与 explicit 工具不进子。scope 工具连 `tool_grants` 复制。子不收父 local layer，不拷父 `resolved_config`，propagating hook 以新 ordinal 接上，local hook 不复制 |
 | 72 | §4.7 求值捕获 | ✅ | 同上 | `V15_RECURSION_DISABLED`、`V15_SCOPE_CONFLICT`、`V15_INVOKE_FORM`（`jaz.assign` 与 scratch 写）、零行 `V15_VALUE_INVALID`、原生 `22012` 都把该语句提交为 `failed`，不留子行，不留在 `pending` |
+
+stage 9 是合运行时。`v15_on_phase` 与四个治理 handler 同 oid 替换。可选 hook 只在 govern 文件创建。
+
+| 73 | §0.12 / §9 合成 | ✅ | `v15/govern/test_govern.py` | 同 phase 等值黑板合并为一代；不等值抛 `P1533` 且不留行。输入不等抛 `P1534` 且不留 binding。同 id 消息不等抛 `P1535`。预留名抛 `P1506`。未知键抛 `P1516` |
+| 74 | §0.15 / §9.2 调用 | ✅ | 同上 | `public` 同名诱饵不被调用。同会话 `CREATE OR REPLACE` 后 oid 不变，不更新摘要抛 `P1536`，更新后新体生效。只 `GRANT` 或给 owner 表权限也是 `P1536` |
+| 75 | §9.2 异常隔离 | ✅ | 同上 | 非 baseline `RAISE` 留审计、兄弟效应仍落地、事务继续。baseline `RAISE` 抛 `P1508`，审计不留下。exit 上 abort 抛 `P1506`，outcome 行回滚。exit 可以写黑板 |
+| 76 | §0.12 代际 | ✅ | 同上 | 同 phase 后一个 handler 读到的代数是写入前的 0，落地后该键 generation 为 1 |
+| 77 | §9.5 / R-C12 / R-D20 | ✅ | 同上 | 保留码外的 abort 归一为 `V15_HOOK_ABORT`。`V15_ITERATION_EXCEEDED` 的 fatal 归一为 false。保留码不一致时顶层也是 `V15_HOOK_ABORT`，fatal 取归一后的或 |
+| 78 | §10.1 四个治理 hook | ✅ | 同上 | 迭代 `>= max` 在租赁前 abort `P1520`，不插 attempt。`next_attempt_n > max` 为 `P1513`。`depth = max` 关闭递归，`depth > max` 为 `P1519`。语句毫秒与 ceiling 不一致时 handler 抛 `P1521`。超时地板不超过治理 max |
+| 79 | §10.2 可选 hook | ✅ | 同上 | `iteration_limit` 更紧时下一轮租赁前 abort `P1520`。`budget_forcing:<ordinal>:<n>` 正文逐字冻结，complete 不改计数。窗口警告两套正文逐字冻结；叶子变体不含 `bind_invoke`；瞬态行不进 `llm_messages` |
+| 80 | §11.3 池 | ✅ | 同上 | `budget_pool` 预留恰好一次，结算把存放量转入 `calls_used`。未开始的回收退回预留且不加 `calls_used`。预留 0 行是 `P1514`、`fatal = true`，不插 attempt，池不动 |
+| 81 | §9.3 登记 | ✅ | 同上 | `IMMUTABLE`、`pg_temp`、错 owner、内核表权限、C 语言都抛 `P1537`，不留 `hook_defs` 行 |
+| 82 | §4.3 / §4.8 hook 终态 | ✅ | 同上 | 子 `invoke/enter` 的 hook abort 同事务送达，父语句是 `V15_CHILD_ERROR`，子行保留 `V15_RECURSION_EXCEEDED`，父不停在 `suspended`。hook 返回的 `fatal = true` 把父和子都收成 `aborted` / `V15_BUDGET_EXHAUSTED` |
+| 83 | §10.2 端到端 | ✅ | 同上 | 根→子→孙加 `budget_forcing`、窗口警告和池，`FakeLLM` 剧本经 `run_until_quiescent` 收敛。三行都 `completed`。警告不入 `llm_messages`。叶子 `recursion_available = false` |
+
+## M3 · §0
+
+| 条 | 证明 | 断言的行为 |
+|---|---|---|
+| §0.0 合运行时 | `v15/govern/test_govern.py` | 九文件加载后的库才跑 dispatcher。前缀库不是合运行时 |
+| §0.1 版本隔离 | 同上 | 只改 `v15/` 与 v15 文档，不改 v8 / v13 |
+| §0.2 同迭代消费 | `v15/tree/test_tree.py` | 父下一条 `jaz.var` 读到子结果，父不再次 LLM |
+| §0.3 行是权威 | `v15/schema/test_schema.py` | `invoke_events` 只追加，`seq` 连续 |
+| §0.4 事务内无外部 IO | `v15/io/test_io.py` | FakeLLM 只在无打开事务时调用。SQL 不调 provider |
+| §0.5 栅栏 | `v15/repl/test_repl.py`、`v15/io/test_io.py` | 旧 fence 抛 `P1501`，不改控制态 |
+| §0.6 unknown | `v15/io/test_io.py` | 已开始而过期是 `unknown`；迟结算抛 `P1502`，不写转录 |
+| §0.7 语句原子性 | `v15/repl/test_repl.py` | 已 `done` 的语句不重跑；未提交的 prepare 回到 `pending` |
+| §0.8 语句间挂起 | `v15/tree/test_tree.py` | 挂起在语句之间。函数本身不产子 |
+| §0.9 函数不产子 | `v15/repl/test_repl.py` | `jaz.bind_invoke` 抛 `P1503`，不插子行 |
+| §0.10 一个租约持有者 | `v15/tree/test_tree.py` | `suspended` 不可 claim。扫描不返回父 |
+| §0.11 fatal | `v15/tree/test_tree.py`、`v15/govern/test_govern.py` | 桩预留耗尽与 hook `fatal = true` 都展开祖先。非 fatal 只结束本 invoke |
+| §0.12 效应代数 | `v15/govern/test_govern.py` | 闭集、合成、预留最先、代际屏障、保留码归一 |
+| §0.13 治理清单 | `v15/schema/test_schema.py`、`v15/config/test_config.py` | 恰好一行。调用方只能收紧。放宽抛 `P1505` |
+| §0.14 授权靠 grant | `v15/namespace/test_namespace.py`、`v15/govern/test_govern.py` | 无 grant 的工具抛 `P1507`，invoke 不因此终态 |
+| §0.15 handler 只返回效应 | `v15/govern/test_govern.py` | 按 oid 调用。摘要或表权限漂移抛 `P1536`。baseline 异常是 `P1508` |
+| §0.16 配置冻结 | `v15/config/test_config.py` | open 之后改 profile，已打开行的 `config_digest` 不变 |
+| §0.17 历史隔离 | `v15/namespace/test_namespace.py` | 另一 invoke 的历史不出现。无关 id 抛 `P1510` |
+| §0.18 方言 | `v15/protocol/test_protocol.py` | 五式、`DO` 为 `V15_DIALECT`、`ALTER TABLE` 为 `V15_DDL` |
+| §0.19 SQLSTATE | `v15/schema/test_schema.py` 起 | gate 按 `pgcode` 分类。本族不用 `P0001` 当合同码 |
+| §0.20 身份 | `v15/schema/test_schema.py`、`v15/namespace/test_namespace.py` | 转移看 `session_user`。模型语句的 `current_user` 是 `v15_repl`。definer 体不 `SET ROLE` |
+| §0.21 attempt 上限 | `v15/io/test_io.py`、`v15/govern/test_govern.py` | 越限不插行。预留数量来自合成结果，不是写死的 1 |
+| §0.22 打印与结束互斥 | `v15/namespace/test_namespace.py`、`v15/repl/test_repl.py` | 既打印又 return / raise 抛 `P1515`，invoke 不终态 |
+| §0.23 扫描恢复 | `v15/loop/test_loop.py`、`v15/tree/test_tree.py` | 丢失 `NOTIFY` 仍能扫回。回收能送达已终态的子 |
+| §0.24 span 只在事件 | `v15/schema/test_schema.py`、`v15/loop/test_loop.py` | 没有 span 表。exit 的 outcome 是小写三值 |
+| §0.25 深度与迭代 | `v15/tree/test_tree.py`、`v15/govern/test_govern.py` | `depth = max` 关递归，`depth > max` 才是 `P1519`。迭代上限在租赁前 |
+| §0.26 scratch | `v15/schema/test_schema.py`、`v15/repl/test_repl.py` | 属主 `v15_owner`。终态由属主 `DROP SCHEMA … CASCADE`。体内无 `SET ROLE` |
+| §0.27 历史时点 | `v15/loop/test_loop.py` | 当前轮不在 `repl_history`。finish 之后才入历史 |
+| §0.28 阶段签名 | `v15/schema/test_schema.py`、`v15/govern/test_govern.py` | 桩与真体同 oid。`contract` 不是 1 或未知键抛 `P1516` |
+| §0.29 工具同步 | `v15/namespace/test_namespace.py`、`v15/repl/test_repl.py` | 语句内返回 jsonb。调用后 `current_user` 仍是 `v15_repl`。`external = true` 抛 `P1517` |
+
+## M3 · §13
+
+| 码 | SQLSTATE | 证明 | 断言的行为 |
+|---|---|---|---|
+| `V15_STALE_FENCE` | `P1501` | `v15/io/test_io.py` | 仍 leased 时旧 fence 不写 attempt、不写 response |
+| `V15_ATTEMPT_NOT_SETTLEABLE` | `P1502` | 同上 | `unknown` / `failed` 再 settle 被拒，不写转录 |
+| `V15_INVOKE_FORM` | `P1503` | `v15/repl/test_repl.py`、`v15/tree/test_tree.py` | 函数不产子。实参写记号或求值错误把语句收成 `failed` |
+| `V15_GOVERNANCE_MISSING` | `P1504` | `v15/schema/test_schema.py` | 清单损坏或缺失时 assert 抛这个码 |
+| `V15_GOVERNANCE_RAISE` | `P1505` | `v15/config/test_config.py`、`v15/govern/test_govern.py` | 放宽 ceiling 或可选 hook 的 max 被拒。open 不留行 |
+| `V15_INVALID_EFFECT` | `P1506` | `v15/govern/test_govern.py` | 预留名、exit abort、不允许的效应回滚阶段 |
+| `V15_TOOL_UNAUTHORIZED` | `P1507` | `v15/namespace/test_namespace.py`、`v15/govern/test_govern.py` | 无 grant 的 `jaz.tool` 只失败该语句 |
+| `V15_GOVERNANCE_FAULT` | `P1508` | `v15/govern/test_govern.py` | baseline handler 抛异常时阶段回滚，不留审计 |
+| `V15_SCOPE_CONFLICT` | `P1509` | `v15/tree/test_tree.py` | 子 open 撞名把该语句收成 `failed`，不留子行 |
+| `V15_HISTORY_SCOPE` | `P1510` | `v15/namespace/test_namespace.py` | 非自身非祖先的 `prior_history` 被拒 |
+| `V15_DIALECT` | `P1511` | `v15/protocol/test_protocol.py`、`v15/io/test_io.py` | `DO` 等在分类时拒绝。未闭合合成行结算为 `failed` |
+| `V15_DDL` | `P1512` | `v15/schema/test_schema.py`、`v15/protocol/test_protocol.py` | `ALTER TABLE` 与越界 DDL 被拒 |
+| `V15_IO_EXHAUSTED` | `P1513` | `v15/io/test_io.py`、`v15/govern/test_govern.py` | 下一 attempt 越限不插入。hook 在 enter 返回同一码 |
+| `V15_BUDGET_EXHAUSTED` | `P1514` | `v15/io/test_io.py`、`v15/govern/test_govern.py` | 预留 0 行是 fatal abort。不插 attempt，效应不写 |
+| `V15_PRINT_AND_RETURN` | `P1515` | `v15/repl/test_repl.py` | 已打印再 return 抛这个码，invoke 不终态 |
+| `V15_PHASE_CONTRACT` | `P1516` | `v15/govern/test_govern.py` | 返回对象含未列出的键时阶段回滚 |
+| `V15_EXTERNAL_TOOL` | `P1517` | `v15/repl/test_repl.py` | `external = true` 不调用 handler |
+| `V15_RECURSION_DISABLED` | `P1518` | `v15/tree/test_tree.py` | 递归已关时 `bind_invoke` 把语句收成 `failed` |
+| `V15_RECURSION_EXCEEDED` | `P1519` | `v15/tree/test_tree.py`、`v15/govern/test_govern.py` | 内核守卫与 hook abort 都是提交类。父语句另记 `V15_CHILD_ERROR` |
+| `V15_ITERATION_EXCEEDED` | `P1520` | `v15/io/test_io.py`、`v15/govern/test_govern.py` | 租赁 attempt 之前中止。更紧的可选 hook 同样不插越限行 |
+| `V15_MANIFEST_DIGEST` | `P1521` | `v15/schema/test_schema.py`、`v15/govern/test_govern.py` | 有效上限摘要不符，或治理 handler 的 max 与 ceiling 不一致 |
+| `V15_ROLE` | `P1522` | `v15/namespace/test_namespace.py` | 非 `v15_repl` 调包装被拒 |
+| `V15_INVALID_TRANSITION` | `P1523` | `v15/repl/test_repl.py`、`v15/io/test_io.py` | 租约、owner、重复 begin、mark 前 settle 被拒 |
+| `V15_VALUE_INVALID` | `P1524` | `v15/config/test_config.py`、`v15/io/test_io.py`、`v15/tree/test_tree.py` | 折叠、base 形状、零行实参各自按自己的路径失败 |
+| `V15_HANDLER_FAILED` | `P1525` | `v15/repl/test_repl.py` | 工具 handler 异常只失败该语句 |
+| `V15_STATEMENT_TIMEOUT` | `P1526` | `v15/repl/test_repl.py`、`v15/loop/test_loop.py` | 进程截止把长语句收成这个码 |
+| `V15_DELIVERY_CONFLICT` | `P1527` | `v15/tree/test_tree.py` | 绑定名被 scope 占用时不覆盖，子仍 `completed` |
+| `V15_CHILD_ERROR` | `P1528` | `v15/tree/test_tree.py`、`v15/govern/test_govern.py` | 子 `failed` 时父语句用这个码，不抄子码 |
+| `V15_RAISE` | `P1529` | `v15/loop/test_loop.py` | `jaz."raise"` 把 invoke 收成 `failed`，不写 `invoke/complete` |
+| `V15_DEPTH_SELF` | `P1530` | `v15/config/test_config.py` | depth 层写组件列或 partial 再含 `depth_map` 被拒 |
+| `V15_CONFIG_LOCAL` | `P1531` | 同上 | local 指向 scope / depth 层，或子路径传入 local，被拒 |
+| `V15_BASELINE_IMMUTABLE` | `P1532` | `v15/schema/test_schema.py`、`v15/config/test_config.py` | 改写 baseline 行或层里写 `baseline_hooks` 被拒 |
+| `V15_BLACKBOARD_CONFLICT` | `P1533` | `v15/govern/test_govern.py` | 同 phase 同键 value 不等则回滚，不留行 |
+| `V15_INPUT_CONFLICT` | `P1534` | 同上 | 同名 input 不等则回滚，不留 binding |
+| `V15_EFFECT_CONFLICT` | `P1535` | 同上 | 同 id 消息载荷不等则回滚 |
+| `V15_HANDLER_DIGEST` | `P1536` | 同上 | 体、GRANT、表权限任一漂移都在调用前失败 |
+| `V15_HANDLER_SHAPE` | `P1537` | `v15/repl/test_repl.py`、`v15/govern/test_govern.py` | 登记拒绝 IMMUTABLE、错 search_path、错 owner、表权限、C 语言 |
+| `V15_HOOK_ABORT` | `P1538` | `v15/govern/test_govern.py` | 保留码外的 abort，或规范化后不一致的 abort，顶层用这个码 |
+
+## M3 · §14
+
+| 行 | 证明 | 断言的行为 |
+|---|---|---|
+| V15-D01 | `v15/protocol/test_protocol.py` | 一轮回复按 SQL 切分，不是 Python |
+| V15-D02 | `v15/tree/test_tree.py` | 子结果在下一条已生成语句里用 `jaz.var` 读取 |
+| V15-D03 | `v15/protocol/test_protocol.py`、`v15/namespace/test_namespace.py` | 历史是 `jaz.history` / `jaz.prior_history`，提示词没有 `__history__` |
+| V15-D04 | `v15/protocol/test_protocol.py` | 未加引号的 return / raise 在执行前就是 `V15_INVOKE_FORM`。探针只打印 |
+| V15-D05 | `v15/repl/test_repl.py` | 工具在语句内同步返回 jsonb，不写 scratch，不切换角色 |
+| V15-D06 | `v15/tree/test_tree.py` | 父 `suspended` 时不可 claim。没有同一父迭代的两个 running 子语句 |
+| V15-D07 | `v15/protocol/test_protocol.py` | 渲染正文以冻结段落为准，不读模板文件 |
+| V15-D08 | `v15/govern/test_govern.py` | 效应闭集。不等的消息回滚。不等的 abort 码提交为 `V15_HOOK_ABORT` |
+| V15-D09 | `v15/config/test_config.py` | open 之后改 profile，已打开 invoke 的摘要不变 |
+| V15-D10 | `v15/tree/test_tree.py`、`v15/govern/test_govern.py` | 根深度是 1。`depth = max` 关递归，`depth > max` 才越限 |
+| V15-D11 | `v15/tree/test_tree.py` | 子按自己的深度重折，不拷父的 `resolved_config`，不收 local |
+| V15-D12 | `v15/tree/test_tree.py` | propagating 行以新 ordinal 复制。local 不复制。计数不跟着走 |
+| V15-D13 | `v15/repl/test_repl.py` | 失败语句的写入随保存点消失。已提交的前序语句还在 |
+| V15-D14 | `v15/io/test_io.py` | 过期 attempt 是 `failed` 或 `unknown`。回收不插新 attempt，不调阶段函数 |
+| V15-D15 | `v15/tree/test_tree.py`、`v15/govern/test_govern.py` | 池盖不住预留时 fatal 展开。尚未写下的 hook 效应不写 |
+| V15-D16 | `v15/schema/test_schema.py`、`v15/config/test_config.py` | 没有清单就不能 open。invoke 摘要是有效上限，不是单例摘要的拷贝 |
+| V15-D17 | `v15/namespace/test_namespace.py`、`v15/govern/test_govern.py` | 只有 binding 没有 grant 时 `jaz.tool` 抛 `P1507` |
+| V15-D18 | `v15/schema/test_schema.py`、`v15/loop/test_loop.py` | span 只是事件行。父等待期间 `repl_exec` 没有 exit |
+| V15-D19 | `v15/protocol/test_protocol.py`、`v15/loop/test_loop.py` | 截断只发生在送进模型的 base。历史行保存观测全文 |
+| V15-D20 | `v15/protocol/test_protocol.py` | `DO` 是 `V15_DIALECT`。`ALTER TABLE` 是 `V15_DDL`。`WITH RECURSIVE` 仍是 `plain` |
+| V15-D21 | `v15/govern/test_govern.py` | `supply_llm_response` 使阶段回滚。非 baseline 抛出的异常才只留审计 |
+| V15-D22 | `v15/namespace/test_namespace.py` | 隔离证据是第二个 invoke 的行集，不是 `EXPLAIN` |
+| V15-D23 | `v15/tree/test_tree.py` | local hook 不复制给子。子只接 propagating 行 |
+| V15-D24 | `v15/repl/test_repl.py`、`v15/tree/test_tree.py` | bind 实参只授 `USAGE`。写记号和 scratch 写都是 `V15_INVOKE_FORM` |
+| V15-D25 | `v15/protocol/test_protocol.py` | `DO` 被拒绝。语句内部的迭代只走 `WITH RECURSIVE` |
+| V15-D26 | `v15/govern/test_govern.py` | exit 上的 abort 回滚，outcome 行不留下。exit 只能写黑板 |

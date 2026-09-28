@@ -76,3 +76,5 @@ stage 1 只装了清单单例与四项上限的检查。stage 4 不新增偏差�
 stage 5 不新增偏差行。`test_repl.py` 覆盖 D05 的同步工具调用、D13 的保存点回滚，以及 D24 里「prepare 不把事务改成只读、bind 只授 `USAGE`」这一截。`jaz.bind_invoke` 实执行仍是 `V15_INVOKE_FORM`，不产子。级联删除探针在 PostgreSQL 18.4 上通过，终态删除不改成函数内 `SET ROLE`。后继 `skipped` 仍是 finish 的事，不是本 stage 的偏差。
 
 stage 8 不新增偏差行。`test_tree.py` 覆盖保留清单里的同迭代 `jaz.var`、父不再次 LLM、scope 按值复制、以及 D02 / D06 / D10 / D11 / D15 的可观察后果。`context_window_warning` 的两套正文仍是 stage 9。
+
+stage 9 不新增偏差行，也不把任何一行修回 jaz。`test_govern.py` 覆盖 D08 的效应闭集与 `V15_HOOK_ABORT`、D15 的预留失败不写效应、D21 的预留名回滚与非 baseline 异常隔离、D26 的 exit 不能 abort。五个可选 hook 的可观察意图也在这一 gate：更紧的迭代上限、池预留恰好一次、`budget_forcing:<ordinal>:<n>`、以及按 `recursion_available` 二选一的瞬态窗口警告。
