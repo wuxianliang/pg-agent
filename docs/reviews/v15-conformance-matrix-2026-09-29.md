@@ -1,8 +1,8 @@
 # v15 覆盖矩阵（2026-09-29）
 
-记 stage 1–3 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
+记 stage 1–4 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
 
-状态来自实跑：`uv run python v15/config/test_config.py` 退出码 0；随后 `uv run python v15/schema/test_schema.py` 退出码 0；随后 `uv run python v15/namespace/test_namespace.py` 退出码 0。
+状态来自实跑：`uv run python v15/protocol/test_protocol.py` 退出码 0；随后 `uv run python v15/schema/test_schema.py`、`uv run python v15/namespace/test_namespace.py`、`uv run python v15/config/test_config.py` 均退出码 0。
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
@@ -26,4 +26,12 @@
 | 18 | §8.2 / §8.3 / §8.6 配置错误码 | ✅ | 同上 | depth 层写组件列或 `extra_hooks`、partial 再含 `depth_map` 抛 `P1530`。local 指向 scope 层或 depth 层、子路径传入 local 抛 `P1531`。partial 或 extra_hooks 含 `baseline_hooks` 抛 `P1532` |
 | 19 | §8.5 / §11.2 两枚清单摘要与收紧 | ✅ | 同上 | `p_ceilings` 为空时有效摘要等于单例行摘要；收紧后不等，且不抄单例摘要。子路径与当时清单逐项取 min，不大于父也不大于清单。放宽抛 `P1505`；非整数与 `< 1` 抛 `P1524` |
 
-§2 的 `EXECUTE` 归属、§3 的 21 张表/PK/终态 CHECK、§11.1 的 invoke 清单断言，由 stage 1 gate 覆盖，不另立不变量编号。stage 2 与 stage 3 不新增表。
+| 20 | §0.18 / §6.1 切分 | ✅ | `v15/protocol/test_protocol.py` | 嵌套块注释、字符串 / `E''` / `U&''` / 标识符引号 / 行注释里的分号不切开；dollar-quote 异 tag 是文本、同 tag 闭合且不按栈嵌套；空语句消去、首尾空白去掉；未闭合不产生部分列表，`kind = plain`、`reject_code = V15_DIALECT`、`sql` 为原文 |
+| 21 | §0.18 / §6.1 NUL | ✅ | 同上 | 每个 NUL 换成六字符 `\u0000`，`reject_code = V15_VALUE_INVALID`，不再另报未闭合。本 stage 不调用 `v15_settle_llm` |
+| 22 | §0.18 / §6.2 五式与控制名 | ✅ | 同上 | 五条规范形式识别出对应 `kind`，`arg_sql` 为原文区间。未加引号 `return` / `raise` 为 `V15_INVOKE_FORM`。带引号必须正好小写。字符串、注释、dollar-quote 内的控制名不是拒绝。非字面量 ident、保留字、超长名字为 `V15_INVOKE_FORM`。`bind_invoke` 的 `arg_sql` 在引号外出现写记号或 `nextval` / `setval` / `currval`（含 `pg_catalog.`）为 `V15_INVOKE_FORM` |
+| 23 | §0.18 / §6.2 方言与 DDL | ✅ | 同上 | `DO`（含 `DO $$ … $$`）为 `V15_DIALECT`。`ALTER TABLE` 加列、`CREATE FUNCTION` 等 §6.2 第 3/6 步为 `V15_DDL`。`TRUNCATE`、`END` / `ABORT` / `RELEASE` 及其余实用语句为 `V15_DIALECT`。scratch 白名单与 `WITH RECURSIVE` 为 `plain`、空拒绝码。本 stage 不在 scratch 里执行它们 |
+| 24 | §6.3 超时 pragma | ✅ | 同上 | 只认第一行整行 `-- timeout:` 加有限正十进制秒。`floor(秒 * 1000) >= 1` 才合法。配不上或 floor 为 0 是 `V15_VALUE_INVALID`。第二行及以后是普通注释。存放文本保留 pragma 行 |
+| 25 | §6.5 / §0.25 渲染 | ✅ | 同上 | 冻结段落与规格代码块逐字相同，含 `jaz.history` 措辞。`recursion_available = false` 时正文不出现 `bind_invoke`。scoped 名按字节序，隐藏名不出现，工具行带 description。无显式输入时 user 段为 `None`。截断按码点，不改 `message_id`；system 不截断；观测先受 `max_repl_output_length`，仍超限则从最旧观测收到标记，再截显式输入。不计算 digest |
+| 26 | V15-D04 未加引号探针 | ✅ | 同上 | `SELECT jaz.return('null'::jsonb)` 与 `SELECT jaz.raise('x')` 的解析器反应只打印到标准输出，不写入仓库文件，也不成为第二种规范拼写。分类器仍在执行前拒绝 |
+
+§2 的 `EXECUTE` 归属、§3 的 21 张表/PK/终态 CHECK、§11.1 的 invoke 清单断言，由 stage 1 gate 覆盖，不另立不变量编号。stage 2–4 不新增表。`v15_protocol.sql` 只有注释。stage 4 gate 之后复跑 stage 1–3，三道都是退出码 0。

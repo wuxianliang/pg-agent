@@ -1,0 +1,4 @@
+-- v15 stage 4 protocol.
+-- Splitting and rendering are not in the database.
+-- Authority is v15/protocol/split_sql.py and v15/protocol/render_prompt.py.
+-- Loading this file must succeed and must not create a table.
