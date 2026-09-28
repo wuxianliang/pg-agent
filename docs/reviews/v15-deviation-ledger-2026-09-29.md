@@ -71,4 +71,6 @@
 - `unknown` attempt 不是成功，迟到响应不进转录。
 - 五个可选 hook 的可观察意图：更紧的迭代与递归、池预留、拒绝过早的 `return`、以及按 `recursion_available` 二选一的瞬态窗口警告。
 
-stage 1 只装了清单单例与四项上限的检查。保留清单的其余行为要等后续 stage 的 gate。
+stage 1 只装了清单单例与四项上限的检查。stage 4 不新增偏差行。`test_protocol.py` 覆盖 D01 / D04 / D07 / D20 / D25 的切分、分类与渲染返回值，不结算语句。`recursion_available = false` 时 system 正文不写出 `bind_invoke`；`context_window_warning` 的两套正文仍是 stage 9。保留清单的其余行为要等后续 stage 的 gate。
+
+stage 5 不新增偏差行。`test_repl.py` 覆盖 D05 的同步工具调用、D13 的保存点回滚，以及 D24 里「prepare 不把事务改成只读、bind 只授 `USAGE`」这一截。`jaz.bind_invoke` 实执行仍是 `V15_INVOKE_FORM`，不产子。级联删除探针在 PostgreSQL 18.4 上通过，终态删除不改成函数内 `SET ROLE`。后继 `skipped` 仍是 finish 的事，不是本 stage 的偏差。
