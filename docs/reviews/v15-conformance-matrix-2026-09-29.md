@@ -1,8 +1,8 @@
 # v15 覆盖矩阵（2026-09-29）
 
-记 stage 1–7 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
+记 stage 1–8 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
 
-状态来自实跑：`uv run python v15/loop/test_loop.py` 退出码 0。随后复跑 stage 1–6 的 gate。
+状态来自实跑：`uv run python v15/tree/test_tree.py` 退出码 0。随后复跑 stage 1–7 的 gate，退出码都是 0。
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
@@ -76,3 +76,16 @@ stage 7 不包含子 invoke。`v15_open_invoke` 在本 stage 落地，因为 loo
 | 60 | §9.1 exit 信封 | ✅ | 同上 | `v15_repl_fatal_expand` 的 `llm_query/exit` phase `io` 是 `{attempt_id}`（可为 JSON `null`）；事件 payload 仍含匹配的 `outcome`。`repl_exec/exit` 与 `invoke/exit` 的 phase `io` 是 `{outcome}`。settle 路径的 `llm_query/exit` 同样是 `{attempt_id}` |
 | 61 | §4.13 `40001` | ✅ | 同上 | worker 把 `40001` 整段重试，不改写成 `P1523`。`40P01` 同类，`55P03` 不是 |
 | 62 | §4.6.2 进程截止 | ✅ | 同上 | 短 pragma 的长语句被另一条连接取消，记 `P1526`，连接不复用 |
+
+stage 8 是树。fatal 只走桩预留耗尽。`invoke/enter` abort 的同事务送达是把桩临时改成返回 `abort`，不是 hook。hook 产生的 fatal 与 enter abort 仍是 stage 9。
+
+| 63 | §0.2 / §4.8 同迭代消费 | ✅ | `v15/tree/test_tree.py` | 父一次回复里 `bind_invoke` 后的下一条 `jaz.var` 读到子结果并 `return`。父迭代仍是 0，`llm_attempts` 仍是 1。等待期间父 `repl_exec` 没有 `exit` |
+| 64 | §4.7 先 bind-wait 再子 open | ✅ | 同上 | 挂起审计在送达之前。子停在 `runnable` 时父是 `suspended`、无租约，`v15_claim` 返回 NULL，扫描不返回父 |
+| 65 | §4.8 三分支 | ✅ | 同上 | 子 `completed` 写 `kind = var`。子 `raise` 时父语句是 `V15_CHILD_ERROR`（`P1528`）、剩余语句 `skipped`、迭代 `continue`，子行保留 `V15_RAISE`。名字被 scope 占用是 `V15_DELIVERY_CONFLICT`（`P1527`），子仍 `completed`，不覆盖 scope |
+| 66 | §0.11 / §4.8 fatal 展开 | ✅ | 同上 | 子孙的桩预留耗尽把父、子、孙都收成 `aborted`、`fatal = true`、`V15_BUDGET_EXHAUSTED`。链上原来 `running` 的 bind 语句失败，更晚语句 `skipped`。没有 `running` 残留。父语句不是 `V15_CHILD_ERROR` |
+| 67 | §4.7 深度守卫同事务送达 | ✅ | 同上 | 子出生即 `V15_RECURSION_EXCEEDED`，无 attempt，scratch 已删。父语句是 `V15_CHILD_ERROR`，父不停在 `suspended` |
+| 68 | §4.7 桩 `invoke/enter` abort 同事务送达 | ✅ | 同上 | 桩对深度 ≥ 2 的 enter 返回非 fatal `V15_HOOK_ABORT` 时，子 `failed` 并保留该码，父语句是 `V15_CHILD_ERROR`，父不停在 `suspended`。不是 hook 产生的 abort |
+| 69 | §4.10 bind-wait 修理 | ✅ | 同上 | 过期租约、语句 `running` 且子已终态时，先置 `suspended` 再送达。`fence` 不加。`resume_stmt` 指向下一条，随后该语句读到送达的 var |
+| 70 | §4.12 崩溃后扫回 | ✅ | 同上 | 杀掉停在 bind-wait 的 worker 后，新 worker 把子跑到终态，送达，父从下一条已生成语句继续，不再次调父 LLM |
+| 71 | §7.2 / §8.3 按值复制与继承 | ✅ | 同上 | 子 `assign` 不改父 scope。显式 input 与 explicit 工具不进子。scope 工具连 `tool_grants` 复制。子不收父 local layer，不拷父 `resolved_config`，propagating hook 以新 ordinal 接上，local hook 不复制 |
+| 72 | §4.7 求值捕获 | ✅ | 同上 | `V15_RECURSION_DISABLED`、`V15_SCOPE_CONFLICT`、`V15_INVOKE_FORM`（`jaz.assign` 与 scratch 写）、零行 `V15_VALUE_INVALID`、原生 `22012` 都把该语句提交为 `failed`，不留子行，不留在 `pending` |
