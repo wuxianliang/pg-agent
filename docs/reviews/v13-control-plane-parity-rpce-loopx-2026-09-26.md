@@ -3,7 +3,7 @@
 > W5 交付。回答：repoprompt-ce 与 LoopX 的哪些控制 Agent 运行功能在 v13 一模一样、哪些改变了、哪些完全没有实现。
 > 源合同：`prompt-exports/parity-rpce-2026-09-26.md`（F1–F30）、`prompt-exports/parity-loopx-2026-09-26.md`（L1–L41）、`prompt-exports/parity-v13-2026-09-26.md`（V1–V47、R1–R13）。
 > 裁决源：R2 §1–§3 与 A15–A21；R3 / R3a / R3b / R3c（`docs/reviews/v13-control-plane-oracle-r3-2026-09-26.md`，R3c 全文同目录）；迁移报告 `docs/analysis/v13-control-plane-migration-2026-09-25.md` §2 与 §0「明确不做」。
-> v13 行号是 `SQL_LOAD_ORDER` 最后一次 `CREATE OR REPLACE` 的活体（control → spawn → fanout → triage）。源行号取 D1/D2（2026-09-26 复验）；未裁三项的源侧与全部 v13 锚由本文抽查。
+> v13 行号是 `SQL_LOAD_ORDER` 最后一次 `CREATE OR REPLACE` 的活体（control → spawn → fanout → triage）。源行号取 D1/D2（2026-09-26 复验）；原未裁三项（2026-09-27 R5/R6/R7 裁决链闭环，见 §0 第 4 条与 §4 第 2/8/10 条）的源侧与全部 v13 锚由本文抽查。
 > 编号不要和偏差台账的 F1–F8、D3 残留里的「F19/F20/F22」混用。那些是安装事实或 stage 内部缝，不是本文的 RP-CE F 号。
 
 ## 0. 执行摘要
@@ -26,7 +26,7 @@
 1. **没有一条源合同连失败模式一起被测试证明等价。** 最近的是 F11：错 `interaction_ref` 会 RAISE、带回当前 ref、零写入（`g_approval.py:56`）。它仍不是一模一样——种类折叠、无自答拒绝、无选项标签。
 2. **RP-CE 的控制意图大多有落点（17 条改变）。** 没有落点的是进程内机器：shutdown、多目标 wait、TTL、授权/grant/经纪人、冷恢复、handoff、oversight link（13 条）。epoch/fence 是改变（F12/F13），不是缺函数。
 3. **LoopX 的 26 表治理面按「明确不做」整包不搬**（§0：`quota_spends` / `command_receipts` / `outbox` / `leases`，以及六层文件面）。结算四步被拆成三次事务：`v13_complete`（writeback）、advance ⑤（material 收据）、`v13_closeout`（封账）。
-4. **确认未裁 3 条：** F4 静默 no-op、F23 release 不把 latch 写成 `released`、已答 `repair_cap` 与 `harness tail gap` 叠用。见 §4。
+4. **原未裁 3 条已全部闭环（2026-09-27 R5/R6/R7 裁决链 + Phase A stage 21 交付）：** F4 静默 no-op（R5 裁不移植，台账 F23）；F23 release 不写 latch（R5 裁 `v13_worktree_state` 投影折叠 `worktree/released`，台账 D12）；已答 `repair_cap` 与 `harness tail gap` 叠用（R6 裁 has-event only 豁免，D11 交付 `v13_tail_gap_cap_exempt`，台账 F24）。见 §4。
 5. **两条候选不是未裁。** 终态 cancel 返回 `replay` 是 R3 / R3b 写死的。`tool_name` 为空的 routed llm 不能 `complete(cancelled)` 是 R3c「未点名 → unsupported」的字面结果。
 
 ## 1. 判定标准
@@ -48,7 +48,7 @@
 - 裁决把落点指到一个**已存在**的函数，即使失败模式不全 → 改变。F7 无 poll/wait 函数，但迁移 §2.2 把观测落成读行，故不进没实现。
 - 裁决写「不建」且没有替代函数实现该合同 → 完全没实现。F5 的租约与 cancel 是别的功能，不算 shutdown。
 - 条文点了名、SQL 零命中 → 仍是没实现，标「落点未写」。L26 的 `quota.should_run` 属此，不是未裁。
-- 两条已裁规则的组合没有排序 → 桶仍按单条归类，组合本身进 §4 未裁。repair_cap × tail gap 属此。
+- 两条已裁规则的组合没有排序 → 桶仍按单条归类，组合本身进 §4 未裁。repair_cap × tail gap 属此（后经 R6 裁决闭环，见 §4 第 10 条）。
 
 ## 2. RP-CE 对照（F1–F30）
 
@@ -65,7 +65,7 @@ V 号：F1/F6=V17，F2/F10/F15=V15，F3/F9=V7+V26+V28，F4/F11/F27=V12，F7=V22�
 | F1 | 活进程幂等返回；失败自 `shutdown`；`existingSessionID` 续同一进程 | `NativeAgentRuntimeContracts.swift:17`；`ClaudeNativeProcessSessionController.swift:378` | `v13_open_session` 总是新行，spec 无 `session_id`（`v13/spawn/v13_spawn.sql:285`） | `g_steer.py:22` 只证两个新 id。幂等续跑标明非测试 | 迁移 §2.1 根/续跑/子拆开；R3 D4 与 §1 附「不接受调用者 session_id」 |
 | F2 | 无进程则 `processNotRunning`；在途第二发是 interrupt-style steer | `NativeAgentRuntimeContracts.swift:25`；Controller `:451` | 七键水位不符 → `stale`；claimed 期间 request 不变。`steer/injected` 载荷已注册，P1 无正文生产者 | `g_steer.py:100,102` | R1.9；迁移 §2.1；R3b §7.3「P1 不新增生产者」 |
 | F3 | 四值 `acknowledged\|noTurnInFlight\|timedOut\|failed`，不抛；1.5s ACK | Controller `:460`；`InterruptOutcome` `:86` | `v13_cancel`（`v13/fanout/v13_fanout.sql:153`）+ `v13_interruptible`（`:37`）+ `complete(cancelled)`（`:335`）。无 provider ACK | `g_cancel.py:63` | R2 A18；R3c-full:177。routed llm 的 RAISE 是已裁默认，见 §4 |
-| F4 | 未知/已答 id：`removeValue` 失败则 **return**，不写线 | Controller `:495-498` | human 成功结算：ref 不等则 RAISE，消息含 `submitted` 与 `current`（fanout `:370-373`） | `g_approval.py:56` 证明的是 RAISE | v13 通道由 R3 C4 冻成 RAISE。**相对 native 静默 no-op 无对照条文，未裁** |
+| F4 | 未知/已答 id：`removeValue` 失败则 **return**，不写线 | Controller `:495-498` | human 成功结算：ref 不等则 RAISE，消息含 `submitted` 与 `current`（fanout `:370-373`） | `g_approval.py:56` 证明的是 RAISE | v13 通道由 R3 C4 冻成 RAISE。**R5 已裁：不移植**（台账 F23）；native `removeValue` 静默返回不进 v13 |
 | F6 | `op=start` 总是新 tab；传入 `session_id` 即拒；`detach`/timeout 等待 | `MCPAgentControlToolProvider.swift:179`；`AgentRunMCPToolService.swift:440` | 同 F1。无 MCP 等待策略、无 `detach` | `g_steer.py:19` | R3 §1 附；迁移 §2.2 start 行（等待形状不进事件） |
 | F7 | `poll` 立即快照；`wait` 停到 interesting/终态/超时；过期句柄抛恢复说明 | `AgentRunMCPToolService.swift:1009,1155` | 无 poll/wait 函数。落点是读行 + `v13_recover_idle`（spawn `:508`）。无 `[120,300,…]` 超时集 | `g_steer.py:102` 只证水位双检 | 迁移 §2.2 新裁=否；R1.7；R3c §8.4 |
 | F9 | 终态 cancel **抛错**，消息含当前 status | `AgentRunMCPToolService.swift:1186-1188` | 根已终态 → `RETURN 'replay'`，零写（fanout `:217-218`） | `g_cancel.py:53` | R3 §1「终态 → replay」；R3b `v13_cancel` 终化。**已裁** |
@@ -76,7 +76,7 @@ V 号：F1/F6=V17，F2/F10/F15=V15，F3/F9=V7+V26+V28，F4/F11/F27=V12，F7=V22�
 | F14 | 同 `commitID` 原样重放；不同 `commitID` 拒绝 | `DomainAgentRunSessionStore.swift:420` | `v13_closeout` 重放已存印章；outcome 冲突 RAISE。无独立 commit id（spawn `:585`） | `g_closeout.py:51,64` | R2 A16；R3b §7.2 重放短路。**已裁** |
 | F15 | 停车前再验 epoch / 终态发布失败 / 可行动快照 | `DomainAgentRunSessionStore.swift:629` | advance 步 0 七键；recover 锁内复验。无 per-waiter 超时 | `g_steer.py:102` | 迁移 §2.2；R3c §8.4 |
 | F22 | worktree 参数只属于 `start`；绑定先于 provider 启动；`inherit_worktree` 默认真 | `MCPAgentControlToolProvider.swift:194`；`AgentMCPStartWorktreeCoordinator.swift:86` | latch 名 `worktree` + `worktree_prepare\|merge\|release`。子不继承。prepare 的 `tool/result` 被下一格 advance 看见才 `v13_latch_fire` | `g_worktree.py:46-86` | R2 A19；迁移 §2.2；R3c worktree 节 |
-| F23 | 绑定前准入变化 → `git worktree remove --force`；`apply` 要 preview 的 `operation_id` | Coordinator `:409,:429` | `worktree_release` complete 成功，latch 仍 `state=prepared`。唯一写入是 prepare 路径的 `'prepared'`（fanout `:146`） | `g_worktree.py:102-105` | 三工具名与 `prepared\|released` 词表是 R3c。**谁把 state 写成 `released` 没有条文，未裁** |
+| F23 | 绑定前准入变化 → `git worktree remove --force`；`apply` 要 preview 的 `operation_id` | Coordinator `:409,:429` | `worktree_release` complete 成功，latch 仍 `state=prepared`。唯一写入是 prepare 路径的 `'prepared'`（fanout `:146`） | `g_worktree.py:102-105` | 三工具名与 `prepared\|released` 词表是 R3c。**R5 已裁：latch 保持 `prepared` 是预期**；`released` 由 `v13_worktree_state` 投影折叠 `worktree/released` 事件（台账 D12，stage 21 交付 `e925ebe`） |
 | F27 | kind 六值、responseType 五值；`interaction_id` 出现两次；`amendment` / elicitation | `DomainAgentSessionModels.swift:253`；payload `AgentModeViewModel+Types.swift:431` | 折叠进 `wait_reason=approval`。通道严格 one-of：`response` / `answers` / `skip`。无 amendment | `g_approval.py:44,97` | R2 §1.2；迁移 §2.3；R3 D6 / C4 / C5 |
 | F28 | 两段提交；commit 已开始则 indeterminate，**绝不自动重执行**；journal 按 commitID 重放 | `MCPDomainProtectedMutationToolProvider.swift:9`；`DomainMutationJournal.swift:175` | 非 judge 过期 → `unknown` 且抬墙。只有 `v13_resolve_unknown` 能拆（`v13/control/v13_control.sql:831`）。无 journal 表 | `g_unknown.py:28,62` | 迁移 §4；R3 D5。零新表，不建 mutation journal |
 
@@ -176,9 +176,9 @@ V 号：L8=V5+V19，L9=V1+V14，L10/L11=V8，L12=V10，L14/L15=V5，L18=V1+V2，
 | 5 | 已终态根 cancel 返回 `replay`，不抛含 status 的错 | `g_cancel.py:54` | **已裁，不是未裁。** R3 §1；R3b 终化；fanout `:217-218`。源侧抛错在 `AgentRunMCPToolService.swift:1186-1188` |
 | 6 | closeout 重放收据，无独立 commitID | `g_closeout.py:64` | **已裁。** R3b §7.2 印章即提交；迁移 §4 |
 | 7 | 无 300s TTL，无 `claimResumableSession` | `g_unknown.py:83,86` | **已裁为不建**（F16/F25），不是未裁的行为分叉 |
-| 8 | `worktree_release` 完成，latch 仍 `prepared` | `g_worktree.py:105` | **未裁偏差候选（F23）。** R3c 词表含 `released`，并指定 prepare → `v13_latch_fire`。没有指定 release 的写入者，也没有说「不得翻转」。活体只在 fanout `:146` 写 `'prepared'` |
+| 8 | `worktree_release` 完成，latch 仍 `prepared` | `g_worktree.py:105` | **已裁（R5，台账 D12）。** latch 行保持 `prepared` 是预期；`released` 由 `v13_worktree_state` 投影折叠 `worktree/released` 事件（stage 21 seam 交付 `e925ebe`，R7 锁协议细化 `0a94d9c`）。本条观察即裁决后形态 |
 | 9 | 无 fingerprint stop/resume；`duty_cycle=0` 只是邻近闸 | `g_triage.py:65` | **已裁为不建**（L32）。没有条文把 duty hold 当成 L32 |
-| 10 | 已答 `repair_cap` 铸新 `logical_turn_id` index 0，下一格 advance RAISE `harness tail gap` | `g_triage.py:168` | **未裁偏差候选。** 两条已裁规则的组合没有排序 |
+| 10 | 已答 `repair_cap` 铸新 `logical_turn_id` index 0，下一格 advance RAISE `harness tail gap` | `g_triage.py:168` | **已裁（R6，台账 F24）。** has-event only 豁免：`v13_tail_gap_cap_exempt` 只认匹配类 anchor 之后、`source_effect_id = effect_id` 的自身事件（stage 21 seam 交付 `e925ebe`，细化 `d68f37a`）。无自身事件永不盖章、closeout 形状 (C) 仍 RAISE `continuation owed`；行落合格自身事件后自愈 |
 
 第 10 条的叠用，活体是：
 
@@ -186,7 +186,7 @@ V 号：L8=V5+V19，L9=V1+V14，L10/L11=V8，L12=V10，L14/L15=V5，L18=V1+V2，
 - R3b：更老的 progress+signals 若没有 index+1 后继，`v13_harness_tail_gap` RAISE（`v13/control/v13_control.sql:196-223`）。禁止挑最近一条掩盖断链。
 - 结果：新逻辑回合已经入队并被 complete 成 finish，旧 progress+repair 的 index+1 仍欠着。下一格不能 closeout，只能逃生 `v13_closeout(..., 'cancelled', 'cancel')`（`g_triage.py:173`）。
 
-没有条文说「cap 已答则取消续传义务」，也没有说「先补 index+1 再铸新 id」。
+R6 已裁此排序（2026-09-27，Phase A stage 21 D11 交付）：`v13_cap_human_answered` 为真时走 `v13_tail_gap_cap_exempt` has-event only 豁免——cap 已答免除续传义务的**证据形态**是匹配类 anchor 后的自身事件；无自身事件永不盖章、closeout 形状 (C) 仍 RAISE `continuation owed`，行落合格自身事件后自愈。台账 F24 接受残留（不改 R3a §7.1、不补指向键、不搬 PERFORM）。
 
 ## 5. 测试覆盖与复现
 
@@ -220,7 +220,7 @@ W4 记录：`step-3.7-flash` 两连绿，编排器独立复跑 9/9，共三次�
 
 完全没实现的 F5/F8/F16–F21/F24–F26/F29/F30 与 L1–L7/L13/L16/L17/L19–L30/L32/L36/L38–L41 **故意没有通过测试**。套件若为它们写绿，就是在测一个不存在的函数。
 
-stage 17–20 gate（`uv run python v13/<stage>/test_*.py`）覆盖 V1–V41 的 SQL 合同，用 fake，不覆盖本文的源对照，也不覆盖 §4 的未裁组合。
+stage 17–20 gate（`uv run python v13/<stage>/test_*.py`）覆盖 V1–V41 的 SQL 合同，用 fake，不覆盖本文的源对照，也不覆盖 §4 的组合项（原未裁，2026-09-27 R5/R6 已闭环）。
 
 ## 6. 残留与后续
 
@@ -239,13 +239,13 @@ R1–R13 是 D3 已记录的未做项。它们造成的对照缺口如下。不�
 | R9 不新增 G6 条文 | F3 的四值 ACK 没有 gate | 已裁不编 ch08 没有的断言 |
 | R10 `thresholds.action` 仍 `pass\|reject` | triage 六值只在路由出口 | 已裁禁止 ALTER |
 | R11 steer 正文未写 | F2 只保住冻结信封，没有消息正文 | 已裁 P1 不做 |
-| R12 `artifacts.kind` 无 CHECK | `worktree_binding` 字面写入 | 不改变 F23 的未裁点 |
+| R12 `artifacts.kind` 无 CHECK | `worktree_binding` 字面写入 | 不改变 F23 的已裁投影点 |
 | R13 无「无条件让出」 | 无源功能对应 | 台账判伪缺口。不进对照桶 |
 
-建议只把三件未裁送出去，不要把已裁项再开一轮：
+三件原未裁的去向（2026-09-27 更新：全部闭环，不再送裁）：
 
-1. **repair_cap × tail gap（优先）。** 会把一个已答的 fold 卡死，只能 cancel 逃生。需要一句排序：cap 已答是否免除续传义务，还是必须先补 index+1。这是 Oracle 或台账级，不是注释能收的。
-2. **F23 latch。** 词表有 `released`，没有写入者。需要一句：`worktree_release` 成功是否 `v13_latch_fire(..., state=released)`，以及失败的 release 是否保持 `prepared`。适合短裁决，不必重开 A19。
+1. **repair_cap × tail gap——已闭环。** R6 已裁 has-event only（stage 21 D11 交付 `v13_tail_gap_cap_exempt`，`e925ebe`+`d68f37a`；台账 F24 接受残留）。原送裁建议撤销。
+2. **F23 latch——已闭环。** R5 已裁：latch 保持 `prepared` 是预期，`released` 由 `v13_worktree_state` 投影折叠 `worktree/released` 事件（stage 21 D12 交付 `e925ebe`，R7 锁协议细化 `0a94d9c`；台账 D12「预期行为，不是实现差」）。原送裁建议撤销。
 3. **F4 静默 no-op。** **R5 已裁：不移植**（台账 F23）。C4 已经冻了 RAISE。native `removeValue` 静默返回不移植。
 
 F9 的 `replay` 与 routed llm 的 `unsupported` 不要记成未裁。它们和源合同不同，但条文已经选择了 v13 侧的失败模式。
