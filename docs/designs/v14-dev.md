@@ -1,8 +1,8 @@
 # PG 原生 Pi 对标 Coding Agent（v14）开发规范
 
-> 状态：草稿第 2 版，待 oracle 对抗评审轮 2。冻结标准：评审至 0 P0 / 0 P1（最多 3 轮，余 2 轮）。
-> 撰写日期：2026-09-28（第 1 版同日，`e97f4ce`）。工作分支：`v14-dev`。
-> 修订记录：第 2 版吸收 oracle 轮 1 双裁结论（4+3 P0，判定不能冻结）与父循环对两处 oracle 分歧的裁决（合同 v2 载体=就地 bump；bash=闭集命令执行器）。修订对照见附录 B。
+> 状态：草稿第 3 版，待 oracle 终审轮 3（冻结预算最后一轮）。冻结标准：评审至 0 P0 / 0 P1。
+> 撰写日期：2026-09-28（第 1 版 `e97f4ce`；第 2 版 `e854e04`）。工作分支：`v14-dev`。
+> 修订记录：第 2 版吸收轮 1 双裁（4+3 P0）与父循环两裁决；第 3 版吸收轮 2 双裁（4+5 P0）逐条裁决 A..M（见附录 B），全部落正文，不再有「留给 stage 计划」的 P0 语义。
 > 效力：本文件只冻结设计，不实现；不改变 v8 / v10 / v13 已冻结面；与既有文档的合同关系见 §2。
 > 上游裁决：`prompt-exports/loop-orchestrate-v14-runs.md`（父循环台账）。
 > 评审分级：条款与 gate 标注〔P0〕（冻结后不可让步，违反即红）或〔P1〕（重要，偏差须登记偏差台账后方可让步）。
@@ -23,7 +23,7 @@
 | 会话事实源 | 进程内 session 状态 + 持久化层 | events 表（只追加），一切历史从表重建 |
 | 判断 | 进程内模型调用 | SQL 面发起判断请求，回答落 judgment 记录 |
 | 载体 | TUI（进程内终端 UI） | 可丢弃窗口（Chainlit / 脚本 / psql 三壳等价） |
-| 崩溃语义 | 进程死即会话死 | kill 载体 → resume → 终态有定义且可实证（INV-3 双命题） |
+| 崩溃语义 | 进程死即会话死 | kill 载体 → resume → 终态有定义且可实证（INV-3 双命题，适用面见 V14-EFF-6） |
 
 仿的是：工具集形状（read/write/edit/bash/glob/grep）、REPL 对话体验、基准任务成绩。不仿的是：进程内循环、进程内事实源、TUI 耦合。检查：设计评审对照本表；G3 双壳/可弃 gate。
 
@@ -41,20 +41,27 @@
 
 > 本节原文照录父循环裁决，是全部后续条款的上位约束。任何 stage 设计、实现、gate 与本节冲突即无效。
 
-**V14-INV-1 判断零外置**〔P0〕一切决策（下一步做什么、何时结束、调用什么工具、是否需要模型判断）由 SQL 面产出（advance / 判断请求拼装与入队全在库内）；LLM 调用只是判断请求的数据面——问题由 SQL 面拼装、回答落 judgment 记录。**执法语义（闭集）**：events 与判断请求只由 SQL 构造；harness 只向既有 SQL 入口提交标量——用户文本、审批决定、脚本化答案，仅此三类。人批与模型回答同属外部判断数据面：请求由 SQL 产出、答复落库；harness 不代批、不代答、不拼装。检查：G3 source gate（INV-5 扫描 + import 黑名单）+ 判断面 gate 回归。
+**V14-INV-1 判断零外置（四类提交闭集）**〔P0〕一切决策（下一步做什么、何时结束、调用什么工具、是否需要模型判断）由 SQL 面产出（advance / 判断请求拼装与入队全在库内）；LLM 调用只是判断请求的数据面——问题由 SQL 面拼装、回答落 judgment 记录。**执法语义（四类提交闭集）**：harness 向库内提交的输入只许四类，每类只能调用**已登记 SQL 函数**（v13 既有 + v14 迁移新建），禁止裸 DML、禁止 harness 发 `pg_notify`：
 
-**V14-INV-2 beat 序列是数据**〔P0〕beat 序列（judge/parse/advance/claim/tool/llm/finish 一类的拍结构）是库内数据，不是代码控制流。advance 决定下一步，harness 仅执行。先例：`v13/pi_parity/test_pi_parity.py:66` 的 `GOLDEN_SEQUENCE`（canonical phases）与 `v13/read_tools/test_read_tools.py` / `v13/pi_ports/test_pi_ports.py` 的 ring 驱动。检查：G3 gate 断言 beat 拍落 events 表且驱动模块无硬编码序列分支。
+1. **用户文本**（submit 入口）；
+2. **审批决定**（approve | deny | reconcile 的标量参数）；
+3. **判断答案**（FakeLLM 与真 provider 的回答文本同形，落 judgment）；
+4. **工具回执**（统一 envelope：`kind`、`effect_id`、`attempt_id`、`status`、`payload_digest`、`stdout`、`stderr`、`diff`——SQL 验证绑定与状态后落库；driver 仅 opaque 转发，禁止解析回执推导下一步）。
 
-**V14-INV-3 会话可弃（双命题）**〔P0〕kill harness → 重启 resume 的可操作承诺收窄为两个命题，分别断言：
+人批与模型回答同属外部判断数据面：请求由 SQL 产出、答复落库；harness 不代批、不代答、不拼装。检查：G3 source gate（INV-5 扫描 + import 黑名单 + envelope 仅经登记函数断言）+ 判断面 gate 回归。
+
+**V14-INV-2 beat 序列是数据**〔P0〕beat 序列（judge/parse/advance/claim/tool/llm/finish 一类的拍结构）是库内数据，不是代码控制流。advance 决定下一步，harness 仅执行。先例：`v13/pi_parity/test_pi_parity.py:66` 的 `GOLDEN_SEQUENCE`（canonical phases）与 `v13/read_tools/test_read_tools.py` / `v13/pi_ports/test_pi_ports.py` 的 ring 驱动。**相位定案**：assistant（模型）输出是**显式 canonical phase**（拍结构中的 `llm` 相），不是 `claim kind=llm`——按 pi_parity schema-v2 定案，本条为二选一歧义的落死。检查：G3 gate 断言 beat 拍落 events 表且驱动模块无硬编码序列分支、llm 拍为独立相位。
+
+**V14-INV-3 会话可弃（双命题，适用面受限于 V14-EFF-6）**〔P0〕kill harness → 重启 resume 的可操作承诺收窄为两个命题，分别断言：
 
 - **命题 A（事件面）**：已提交事件的规范化投影（§4.3 算法）在「杀过」与「未杀」两条世界线上一致。
-- **命题 B（工作区面）**：工作区终态 = 已提交 diff 依 effect 全序的确定性重放结果（V14-EFF-3）。
+- **命题 B（工作区面）**：工作区终态 = 已提交 diff 依 `workspace_effect_seq` 全序的确定性重放结果（V14-EFF-4）。
 
-bash `unknown` 场景（started 无 receipt）只承诺**终态有定义**（effect 停在 unknown 并可进人工 reconcile，V14-EFF-5），**不承诺**「与不杀一致」——该承诺与命题 A/B 分开表述、分开断言，禁止合并成一句「终态不变」。检查：G3 杀进程续跑 gate（SIGKILL 进程组、两杀点窗口，见 §6 G3）。
+bash `unknown` 场景（started 无 receipt）只承诺**终态有定义**（effect 停在 unknown 并可进人工 reconcile，V14-EFF-5），**不承诺**「与不杀一致」。命题 A/B 的**适用面**：FakeLLM 路径与已提交 receipt 的 provider 路径——见 V14-EFF-6；provider 未提交 receipt 窗口**不得**宣称为 A/B 等价。检查：G3 杀进程续跑 gate（两杀点，见 §6 G3）+ G4 kill gate 按 EFF-6 断言。
 
-**V14-INV-4 双壳等价**〔P0〕Chainlit 驱动与脚本驱动同输入 → 同 events 流逐字节一致。比较面与投影算法**写死于 §4.3（V14-HARN-4）**：按 seq 排序、代理键保结构 alpha-替换、时间类列按冻结键名表归一、服务端 jsonb::text 比较。比较面新增排除项不属于上述类别时必须 bump 本规范——偏差台账无权松动 P0 比较面。检查：G3 双壳等价 gate。
+**V14-INV-4 双壳等价**〔P0〕Chainlit 驱动与脚本驱动同输入 → 同 events 流逐字节一致。比较面与投影算法**写死于 §4.3（V14-HARN-4）**：库内唯一 canonical 投影函数、代理键 allowlist、volatile 键表、服务端比较。比较面新增排除项不属于已冻结类别时必须 bump 本规范——偏差台账无权松动 P0 比较面。检查：G3 双壳等价 gate。
 
-**V14-INV-5 harness 决策点计数进 gate**〔P0〕harness 的「薄」用决策点计数量化并进 gate。**口径（闭集）**：对 `v14/harness/**/*.py`（排除 `tests/` 与 `workers/` 子树）做 ast 扫描，计数节点闭集 = `If` / `For` / `While` / `Match` / `ExceptHandler` / `IfExp` / 推导式 `if`；`BoolOp` 不计。**上限（现在冻结）**：driver 模块 ≤ 15，handler 模块 ≤ 5；改上限须 bump 本规范。**workers 豁免**按包路径 + 能力协议界定：worker（经 `run_line_json` 拉起的子进程）禁止 import 判断编排 / advance / govern 面，回传仅 stdout/stderr/exit code/diff，豁免不延伸到 harness 进程内代码。检查：G3 静态扫描 gate（ast 计数 + 包路径豁免边界 + import 黑名单）。
+**V14-INV-5 harness 决策点计数进 gate（按文件上限）**〔P0〕harness 的「薄」用决策点计数量化并进 gate。**口径（闭集）**：ast 扫描，计数节点闭集 = `If` / `For` / `While` / `Match` / `ExceptHandler` / `IfExp` / 推导式 `if`；`BoolOp` 不计。**扫描集**：`v14/harness/**/*.py`（排除 `tests/`、`workers/` 子树）∪ `v14/provider/**/*.py`（排除 `tests/`）。**上限（按文件，现在冻结）**：`v14/harness/driver.py` ≤ 15；`v14/harness/handler.py` ≤ 5；`v14/harness/` 同目录其余文件（除 `tests/`、`workers/`、`provider/`）合计 0——**新增 harness 文件须 bump 本规范**。provider 文件不设数值上限，但执行能力闭集（见下）。**import 前缀黑名单（写死）**：`litellm`、`v13.govern`、`v14.govern`、`v14.tools`、`v14.exec`、`v14.provider`——harness 内（driver/handler 及同目录）一律禁止 import。**worker 能力协议**（豁免边界 = 经 `run_line_json` 拉起的子进程）：单 effect 单进程、禁开 DB 连接、禁 import 模型 SDK、禁写声明路径外、退出即终；回传仅 stdout/stderr/exit code/diff。**provider 进程能力闭集**（`v14/provider/`）：可 import litellm；禁开 DB 连接、禁 beat 循环、禁写工作区；回答由 driver 按 INV-1 第 3 类提交。检查：G3 `test_thin.py`（per-file 计数 + 黑名单 + 两类能力协议）；G4 provider 能力 gate。
 
 **V14-INV-6 载体即窗口**〔P0〕UI 只 submit + LISTEN 渲染。历史从 events 表重建，Chainlit 会话内存不得成为事实源；刷新、重连、换壳后 UI 呈现完全由库内 events 决定。检查：G3 gate（重连后从表重建渲染断言）+ source gate（V14-ARCH-3/4）。
 
@@ -78,68 +85,92 @@ v14 冻结时将 P0C **解除/退役**（retire），并做三件事写死：
 
 v14 与 v10 的关系：v14 **不是** v10 的实现，也不回改 v10 规格。G1/G2 在 v13 底座上承接残留缺口：
 
-- G1 工具目录加 mutating 语义（§2.3 合同 v2）即「工具/插件世代」问题的 v14 承接面：目录行版本化、request 创建时绑定 `contract_version` + generation、旧请求 handler 冻结语义（先例 TP-CAT-2）必须保持。
+- G1 工具目录加 mutating 语义（§2.3 合同 v2）即「工具/插件世代」问题的 v14 承接面：目录行版本化、request 创建时绑定 `contract_version` + generation（§2.3 回填机制）、旧请求 handler 冻结语义（先例 TP-CAT-2）必须保持。
 - G2 权限与审批环落在 v13 既有 `v13/govern/`（`v13_govern.sql` + gate）之上：govern 人批由 **v14 新函数调用既有入口**实现，不改 `v13/**/*.sql`；如确需动 v13 冻结面，一律走独立内核变更流程（§2.3 路径）。
 
 检查：G1/G2 source gate（对 v13 冻结面零 diff，除内核变更提交）；设计评审对照本条。
 
-### 2.3 口岸合同 v1 → v2 bump（载体已裁：就地 bump）
+### 2.3 口岸合同 v1 → v2 bump（就地 bump + 回填机制）
 
 **V14-SUP-3**〔P0〕v14 工具面扩展遵守 `docs/designs/v13-tool-ports.md` 的合同纪律：现行版本 `v13/tool-port-contract-1`（该文档 L5：改变行为必须同一提交 bump 版本号；已发布条款 ID 禁止复用；废止保留 ID）。**TP-CAT-4**（该文档 L48）明文：新口岸确需改 schema 或加列（含 `input_schema` / `mutating` / `allowlist` / `timeout_ms` / `consumes` / `produces`）时，必须拆成**独立内核变更**并 bump 合同版本，禁止夹带在口岸提交里。
 
 v2 bump 走法（父循环已裁）：
 
-1. **载体**：在 `docs/designs/v13-tool-ports.md` 原文档**就地 bump** 版本号至 `v13/tool-port-contract-2` 并追加 v2 条款（mutating 语义 / diff 协议 / 审批 hook / 闭集命令执行器）。**v1 条款字节不动**（不可变性由条款 ID 纪律满足：旧 ID 保留原文，新义务一律用新 ID 追加）。
-2. **混合世代语义（v2 正文必写）**：v2 发布前已排队/已创建的 v1 请求仍走 v1 handler，禁止降级、禁止重解析为 v2 语义；request 创建时绑定 `contract_version` + generation，分派按该绑定执行。
-3. **schema 落点（已裁）**：v14 累计迁移——`ADD COLUMN mutating boolean NOT NULL DEFAULT false` 等列以 v14 拥有的迁移 SQL 进入累计加载序列；`v13/**/*.sql` 历史 SQL 零改动。
-4. **同笔义务**：内核变更提交（K，见 §6 G1）内同时包含合同 bump 文档、迁移 SQL、允许名单（哪些新列/新口岸被 v2 授权）；既有全量 gate 复跑绿。
-5. **条款延续**：v2 完整继承 TP-INV-1..15 与 TP-WIRE / TP-FS / TP-GATE / TP-ADMIT 既有条款；新增面按 TP-ADMIT-1 十项准入清单同等标准补齐。
+1. **载体**：在 `docs/designs/v13-tool-ports.md` 原文档**就地 bump** 版本号至 `v13/tool-port-contract-2` 并追加 v2 条款（mutating 语义 / diff 协议 / 审批 hook / 闭集命令执行器）。**v1 条款字节不动**（旧 ID 保留原文，新义务一律用新 ID 追加）。
+2. **混合世代与回填机制（写死）**：
+   - 迁移列：`contract_version text NOT NULL DEFAULT 'v13/tool-port-contract-1'`；`generation` NOT NULL，默认取 v13 世代常量；既有 request 行按此回填。
+   - v14 trigger/wrapper 承接双入口：旧入口创建的 request 从绑定 generation 回填 v1；v2 入口同事务写 v2 + 当前 generation。
+   - **无法解析绑定即拒绝创建**，禁止隐式降级、禁止重解析旧请求为新语义。
+   - gate 覆盖两条路径：v2 发布前排队的 v1 请求（仍走 v1 handler）+ v2 发布后新建的 v2 请求。
+3. **版本头预检（已核实）**：v13 gate 对该文档只有 `isfile`（`v13/read_tools/test_read_tools.py:1998`，G2）与 README 路径/条款 ID 针（`:1728`，E3 needle 列表），**不解析文档版本头**——K 提交 bump 版本号不触碰 v13 断言；K 提交仍须同笔复跑 E4 全量实证。若实现期发现任何读取版本头的断言，先把「文档版本」与「v13 运行时常量」拆开再 bump。
+4. **schema 落点（已裁）**：v14 累计迁移——`ADD COLUMN mutating boolean NOT NULL DEFAULT false` 等列以 v14 拥有的迁移 SQL 进入累计加载序列；`v13/**/*.sql` 历史 SQL 零改动。
+5. **同笔义务**：内核变更提交（K，见 §6 G1）内同时包含合同 bump 文档、迁移 SQL、允许名单（哪些新列/新口岸被 v2 授权）；既有全量 gate 复跑绿。
+6. **条款延续**：v2 完整继承 TP-INV-1..15 与 TP-WIRE / TP-FS / TP-GATE / TP-ADMIT 既有条款；新增面按 TP-ADMIT-1 十项准入清单同等标准补齐。
 
-检查：G1 gate 断言 contract-2 版本号已 bump、v1 条款字节零改动、混合世代条款存在；E4 回归。
+检查：G1 `test_contract_v2.py` 断言 contract-2 已 bump、v1 条款字节零改动、回填两路径、无隐式降级负例；E4 回归。
 
 ## 3. 效果协议、工具面与执行面（G1/G2 冻结面）
 
 ### 3.1 效果协议（V14-EFF，G1 起生效，全部 stage 共用）
 
-**V14-EFF-1**〔P0〕外部效果（文件写入、命令执行、provider 调用）统一状态机：`planned → approved → claimed → started → succeeded | failed | unknown → reconciled`。每个效果有稳定 `effect_id`；重试、resume、reconcile 复用同一 ID，禁止换 ID 重放。检查：G1 起各 gate 断言状态机合法转移集。
+**V14-EFF-1 效果状态机（六态闭集 + 转移表写死）**〔P0〕effect 态闭集 = `planned | claimed | started | succeeded | failed | unknown`（**无** approved/reconciled 态；批准语义在 proposal 上，V14-APPR；reconcile 是动作不是态）。转移表：
 
-**V14-EFF-2**〔P0〕IO 前提交 intent 行：任何外部 IO 发生前，效果行（intent）必须已提交入库；该行是幂等键——同一 effect 再次执行以「行已存在 + 状态」判定续跑或重放，不凭进程内存。检查：G1 gate（intent 先于 IO 的断言，先例 TP-HUB-2 结算顺序纪律）。
+| 转移 | 条件与方式 |
+|---|---|
+| （INSERT）→ `planned` | 与 proposal 批准**同事务**插入；proposal 被 deny/expire 的**不建 effect 行** |
+| `planned` → `claimed` | 单条条件 UPDATE：proposal=approved、now 未过 expires_at、workspace 基线匹配；**同事务** proposal → `consumed` |
+| `claimed` → `started` | 外部 IO 前**单独提交**（先例 TP-HUB-2 结算顺序纪律） |
+| `started` → `succeeded \| failed` | 仅当带 receipt（INV-1 第 4 类 envelope） |
+| `started`（resume，无 receipt） | 按工具类分流：bash → `unknown`（禁自动重试，EFF-5）；write/edit → 三分法（EFF-3）；provider → 不进 unknown，新记 attempt 重试（EFF-4/EFF-6） |
+| `unknown` → `succeeded \| failed` | 仅 reconcile SQL（EFF-5） |
 
-**V14-EFF-3**〔P0〕write/edit 的原子写与幂等重放：临时文件写入 → fsync → rename → 基线哈希校验。resume 时若目标文件哈希已等于该 effect 的目标态，**结算原 effect，不重放写入**。工作区终态 = 已提交 diff 依 effect 全序的确定性重放（INV-3 命题 B 的构造基础）。成功后提交 `tool/result`（含 diff 载荷，V14-TOOL-2）。检查：G3 窗 1 杀点 gate；G1 原子写正/负例。
+检查：G1 起各 gate 断言合法转移集（非法转移负例）。
 
-**V14-EFF-4**〔P0〕provider 调用记 attempt：每次真实模型调用记 attempt 行（request 指纹、时长、结果）；kill 后重发可能产生重复计费——这是**已声明的语义**，不是缺陷；attempt 行如实记录（economy 记账见 V14-HARN-9）。检查：G4 gate（attempt 行断言，含重复 attempt 场景）。
+**V14-EFF-2 intent 行、效果键与 claim lease**〔P0〕任何外部 IO 发生前，effect intent 行必须已提交入库；**全序键 = intent 事件的 `(session_id, seq)`**（效果身份与顺序锚点）。claim 带 `lease_owner` / `lease_until`（now 取 V14-APPR-3 的 effective_now）；lease 过期经 CAS reclaim，禁止裸抢占。检查：G1 gate（intent 先于 IO、lease 过期 CAS reclaim 正/负例）。
 
-**V14-EFF-5**〔P0〕bash `started` 无 receipt → `unknown`：resume 后无法判定 IO 是否已发生的 bash 效果停在 unknown，**禁止自动重试**，进人工 reconcile（SQL 命令裁决 succeeded/failed，留痕 events；先例目录 `v8/reconcile/`）。检查：G3 窗 2 杀点 gate（unknown + reconcile 路径走通）。
+**V14-EFF-3 write/edit 原子写与 resume 三分法**〔P0〕写路径：临时文件写入 → fsync（**含父目录 fsync**）→ rename → 基线哈希校验。临时文件命名规范与残留清理在 G1 实现冻结；**目标为 symlink 一律拒绝**。resume 三分法（started 无 receipt 时）：
+
+1. 目标哈希 = 目标态 → **结算原 effect，不重放**；
+2. 目标哈希 = 基线（文件不存在时用**冻结哨兵 `EMPTY`**）→ 从临时文件重放；
+3. 都不是 → `unknown`，**禁止覆盖**。
+
+成功后提交 `tool/result`（含 diff 载荷，V14-TOOL-2）。检查：G3 窗 1 杀点 gate；G1 原子写正/负例（symlink 拒绝、父目录 fsync、残留清理）。
+
+**V14-EFF-4 workspace 全序与排他 apply 锁**〔P0〕每个 workspace 有 `workspace_id`。所有 mutating effect **apply 前**取 workspace-scoped 排他 claim；持锁期间**重算受影响路径基线**，任一不匹配 = stale/fail，禁止 rename。所有受控 writer（含 bash mutating verb）用同一把锁。**首次取得 apply 锁时分配不可变 `workspace_effect_seq`**（resume/reconcile 复用原 seq，不重排）。INV-3 命题 B 的重放全序 = `workspace_effect_seq` 升序。**外部写入检测（写死）**：受控面外的写入一经检测到，workspace 即进 `degraded`，拒绝后续 mutating effect 直到 reconcile。检查：G1 gate（锁争用/基线漂移/degraded 负例）+ G3 命题 B 断言。
+
+**V14-EFF-5 bash unknown 与人工 reconcile**〔P0〕bash `started` 无 receipt → `unknown`，**禁止自动重试**。`unknown → succeeded|failed` 仅经 reconcile SQL：写 `reconciled_outcome` + `observed_hash`；**后续 effect 的基线改用 `observed_hash`**。reconcile 决定走 INV-1 第 2 类提交，留痕 events（先例目录 `v8/reconcile/`）。检查：G3 窗 2 杀点 gate（unknown + reconcile 路径 + observed_hash 生效断言）。
+
+**V14-EFF-6 provider at-least-once 与 INV-3 适用面**〔P0〕provider effect `started` 无 receipt：**不转 unknown**——新记 attempt 重试（at-least-once 现实语义，重复计费是已声明语义）；**同一 effect 最多 2 次 attempt**，仍无 receipt（第 3 次需求）必须转 `failed`，且 attempt 行数 = 2（G4 断言）。attempt 行**不属于** INV-4 规范化投影比较面。显式 reconcile provider effect 产生**新 judgment 世代**，不承诺与未杀世界线投影一致。**INV-3 命题 A/B 等价仅适用于 FakeLLM 路径与已提交 receipt 的 provider 路径**；G4 kill gate 不得把 provider 未提交 receipt 窗口宣称为 A/B 等价。检查：G4 gate（attempt 上限/failed/新 judgment 世代断言）。
 
 ### 3.2 write/edit 口岸（G1）
 
-**V14-TOOL-1**〔P0〕write/edit 是 mutating 口岸：结果改变工作区文件系统状态。mutating 请求必须走审批环（§3.4）且经 V14-EFF 效果协议执行；未获批的 mutating 请求不得产生文件系统效果，拒绝路径 events 记录完整。检查：G1 gate（拒绝路径断言工作区字节零变化）。
+**V14-TOOL-1**〔P0〕write/edit 是 mutating 口岸：结果改变工作区文件系统状态。mutating 请求必须走审批环（§3.3）且经 V14-EFF 效果协议执行；未获批的 mutating 请求不得产生文件系统效果，拒绝路径 events 记录完整（deny/expire 不建 effect 行，EFF-1）。检查：G1 gate（拒绝路径断言工作区字节零变化）。
 
-**V14-TOOL-2**〔P0〕diff 协议：edit 口岸的请求参数与结果必须携带可机器判定的 diff（old/new 成对或统一 diff 格式），diff 是 events 流的一部分（落 `tool/result` 载荷），供审批环渲染、INV-3 命题 B 重放与 gate 断言。格式在合同 v2 条款冻结；禁止「只给最终全文不给 diff」。检查：G1 gate 对 diff 载荷的结构断言。
+**V14-TOOL-2 diff 协议（单格式）**〔P0〕diff 只有一种格式：每 path 记 `{old_exists, old_sha256, new_exists, new_sha256, mode, payload 编码}`——payload 编码 = 文本 utf8 / 二进制 base64；覆盖创建（old_exists=false）、删除（new_exists=false）、二进制、symlink 拒绝策略。**禁止** old/new 成对与 unified diff 二选一的旧措辞。write 的 diff = old 全空（old_exists=false）。diff 是 events 流的一部分（落 `tool/result` 载荷），供审批渲染、INV-3 命题 B 重放与 gate 断言。检查：G1 gate 对 diff 载荷结构断言（含创建/删除/二进制/symlink 负例）。
 
-**V14-TOOL-3**〔P0〕write/edit 执行拆三步，各守 claim 纪律：① **只读 proposal 构建**（读工作区、算 diff 与基线哈希；构建过程持只读 claim，提交 proposal 后释放）；② **审批等待**（不持任何 claim，V14-APPR-4）；③ **apply**（claim effect → 原子写（V14-EFF-3）→ complete）。检查：G1 gate 三步各断言 claim 生命周期。
+**V14-TOOL-3**〔P0〕write/edit 执行拆三步，各守 claim 纪律：① **只读 proposal 构建**（读工作区、算 diff 与基线哈希；构建过程持只读 claim，提交 proposal 后释放）；② **审批等待**（游标停 `await_approval`，不持任何 claim，V14-APPR-4）；③ **apply**（取 workspace 排他锁（EFF-4）→ claim effect → 原子写（EFF-3）→ complete）。检查：G1 gate 三步各断言 claim 生命周期。
 
 ### 3.3 审批协议（V14-APPR，G1 交付状态机与批准命令；G2 只加 bash 策略）
 
 **V14-APPR-1**〔P0〕proposal 不可变、一次构建。proposal 摘要（被批准的对象）字段冻结：合同版本、generation、工具名、完整参数、cwd、受控环境标识、workspace 基线哈希、规范化 diff（mutating 类）、有效期（expires_at）。检查：G1 gate 摘要字段完备性断言。
 
-**V14-APPR-2**〔P0〕批准只批摘要（哈希锚定），单次消费；执行 claim 时 CAS 重验（摘要哈希一致、状态 approved、未过期、workspace 基线仍匹配）。任一不符即拒绝执行并留痕。检查：G1 gate（重放/篡改/基线漂移负例）。
+**V14-APPR-2 批准与消费（谓词定位 + 单次消费）**〔P0〕批准只批摘要（哈希锚定）。**批准输入禁止携带代理键字面量**（proposal_id 等）：批准命令用谓词选目标（如「本会话唯一 requested proposal」），命中非唯一即拒绝。消费：`planned→claimed` 与 `proposal approved→consumed` 同事务单次消费（EFF-1）；执行 claim 时 CAS 重验（摘要哈希一致、状态、未过期、workspace 基线仍匹配），任一不符即拒绝并留痕。检查：G1 gate（谓词定位非唯一负例/重放/篡改/基线漂移负例）。
 
-**V14-APPR-3**〔P0〕状态机 `requested → approved | denied | expired`，终态不可逆。超时判定用**注入 now**（SQL 参数/会话变量），禁止读客户端时钟。检查：G1 gate 全转移断言（含注入时钟过期）。
+**V14-APPR-3 effective_now（DB 时钟；test-only 注入）**〔P0〕生产 approve/deny/expire/reconcile **不接受调用方 now、不读调用方可写会话变量**；effective_now 来自 DB 时钟。仅**测试专用角色**经隔离 test-only 入口注入 now。所有 CAS 用同一 effective_now 在同事务检查 `expires_at`。检查：G1 gate（生产入口无 now 参数 source 断言 + test-only 注入正例 + 共享 CAS 时钟断言）。
 
-**V14-APPR-4**〔P0〕等待期不持 claim：审批等待不占用 beat 前进位、不持 effect claim；批准后重新走 V14-EFF claim。检查：G1 gate（等待期 beat 推进断言）。
+**V14-APPR-4 等待与串行**〔P0〕proposal 状态机 `requested → approved | denied | expired`（三择终态）+ `approved → consumed`（与 effect claim 同事务）。超时判定用 APPR-3 的 effective_now。等待期游标停 `await_approval`：不持 claim、不占 beat 前进位；批准后重新走 V14-EFF claim。**同会话至多一个未终态 mutating effect**。检查：G1 gate（等待期 beat 推进 + 并发第二 mutating 拒绝负例）。
 
-**V14-APPR-5**〔P0〕授权分层：会话级 grant 可覆盖 write/edit（grant 行记录世代与合同版本，绑定 proposal 模式范围）；bash 与一切例外走**逐次人批，默认拒**。检查：G1/G2 gate（grant 命中/越界各负例）。
+**V14-APPR-5 grant 字段全集与命中规则**〔P0〕grant 行字段冻结：`grant_id / granting_principal / session_id / workspace_id / tool_set / argument_schema / cwd 根 / contract_version / generation / issued_at / expires_at / revoked_at`。模式闭集 = 工具名 + 相对路径 glob。proposal 命中 grant 时逐项匹配并记 `grant_id`；**grant 命中也生成不可变 proposal，由 SQL 转 approved（principal 取授予者）**，每次命中仍单次消费。**bash 不接受 grant**（逐次人批默认拒）。签发/撤销/越界负例进 `test_approval`。检查：G1 gate（字段完备/签发/撤销/越界/命中生成 proposal/单次消费）。
 
-**V14-APPR-6**〔P0〕approver principal 由 DB 身份得出（连接/角色身份映射），写 events；客户端自报身份禁止。检查：G1 gate（principal 来源断言 + 自报负例）。
+**V14-APPR-6 principal（DB 认证，fail closed）**〔P0〕审批函数**不接受 principal 参数**。生产路径须有与实际 approver 一一对应的 **DB 认证 principal**；共享 service role 不得执行审批；无法映射即 fail closed（拒绝并留痕）。Chainlit 部署的身份映射 = 受信连接 / 角色属性。principal 写 events。检查：G1 gate（principal 映射断言 + service role 拒绝 + 无法映射 fail-closed 负例）。
 
-**V14-APPR-7**〔P0〕测试纪律：禁止直改审批状态表；approve/deny/expire 与 reconcile 一律走产品 SQL 命令。检查：G1 起全部审批相关 gate（source 断言无裸 DML 进审批表）。
+**V14-APPR-7 测试纪律**〔P0〕禁止直改审批/effect 状态表；approve/deny/expire/reconcile 一律走产品 SQL 命令；时钟注入仅经 APPR-3 的 test-only 入口。检查：G1 起全部审批相关 gate（source 断言无裸 DML）。
 
 ### 3.4 bash/glob/grep 执行面（G2，bash=闭集命令执行器）
 
-**V14-TOOL-4**〔P0〕bash 口岸默认为**闭集命令执行器**：枚举动词目录（固定命令集，如 run-test / build 一类），每个动词的 argv 模板与参数约束是合同 v2 的数据（库内目录行）；参数受合同约束（类型/取值域/长度），任意 shell 表达式**不是**输入面。加动词 = 合同面变更（走 §2.3 纪律）。任意 shell 整体移出 v14 范围（§9），待真隔离机制（容器级）存在的后续版本再开。围栏（工作区根约束、超时、输出上限）条款在合同 v2 冻结。检查：G2 gate（动词目录闭集、参数域负例、围栏负例：越界/超时/超限各至少一条）。
+**V14-TOOL-4 闭集命令执行器**〔P0〕执行方式 = `execve(动词目录固定可执行文件绝对路径 + 版本摘要, argv 数组)`——禁止 `shell=True`、禁止 `sh -c`、禁止任何字符串拼接执行。argv 段只有两种：目录固定字面量，或**类型化参数**（enum / int / bool / 相对路径闭集；路径拒绝对路径、`..`、NUL）。每个 verb 声明 `workspace_mode`：`read_only` | `mutating`（mutating 必须返回规范 diff 且全守 V14-EFF-3/4）；**未声明 workspace_mode 即拒绝执行**。**初始动词目录恰 = {run-test, build}**（目录内容进合同 v2 附录作为数据）。围栏：工作区根约束、超时、输出上限——**输出超限 = effect failed，不是截断成功**。必测负例：参数含 shell 元字符时，子进程 argv 逐字节等于该参数值，且被拒或仅作字面量使用。加动词 = 合同面变更（§2.3）。任意 shell 整体移出 v14 范围（§9）。检查：G2 gate（execve/无 shell source 断言、目录闭集、类型化参数域负例、元字符负例、围栏三负例、输出超限=failed）。
 
-**V14-TOOL-5**〔P0〕glob/grep 是只读口岸：错误闭集、围栏与既有 read 口岸同级（TP-WIRE / TP-FS 纪律），无审批环。检查：G2 gate（闭集与围栏负例）。
+**V14-TOOL-5**〔P0〕glob/grep 是只读口岸：**输入、结果与错误码闭集**，围栏与既有 read 口岸同级（TP-WIRE / TP-FS 纪律），无审批环。检查：G2 gate（闭集与围栏负例）。
 
 **V14-TOOL-6**〔P0〕权限落 govern / human route：bash（mutating 高危）逐次人批默认拒（V14-APPR-5）；审批请求与决定经 SQL 面留痕；human route 待审队列可被第二壳观察（UI 只是渲染，V14-ARCH-3）。检查：G2 gate（审批环四路径：默认拒/批过/驳回/超时）。
 
@@ -151,33 +182,45 @@ v2 bump 走法（父循环已裁）：
 
 > 注：父循环轮 1 目标原文写作「test_pi_parity.run_ring」——经核实 `run_ring` 不定义于 pi_parity，实际定义于上述两处；pi_parity 提供的是 normalized schema-v2 trace 与拍结构。本规范按核实结果表述。
 
-**V14-HARN-2**〔P0〕driver 语义：循环 = 「取 beat → 执行该拍的外部动作（若有）→ 落 events → advance」；终态判定在 SQL 面；外部动作执行前后守 V14-EFF 纪律。进程可随时被杀（INV-3）；可选 pg_cron 心跳拉起 driver 属于部署面，不改变语义（beat 推进幂等）。检查：G3 杀进程续跑 gate。
+**V14-HARN-2**〔P0〕driver 语义：循环 = 「取 beat → 执行该拍的外部动作（若有）→ 落 events → advance」；终态判定在 SQL 面；外部动作执行前后守 V14-EFF 纪律；worker/provider 以子进程拉起（INV-5 能力协议）。进程可随时被杀（INV-3）；可选 pg_cron 心跳拉起 driver 属于部署面，不改变语义（beat 推进幂等）。检查：G3 杀进程续跑 gate。
 
-### 4.2 事件流与 LISTEN/NOTIFY（通道 v14_wake）
+### 4.2 事件流与 LISTEN/NOTIFY（通道 v14_wake，终版算法）
 
-**V14-HARN-3**〔P0〕事件流权威 = events 表（只追加）。观察通道定名 **`v14_wake`**（不复用 v8 的 `v8_wait`；`v8/closeout/v8_closeout.sql:121` 仅证 NOTIFY 机制先例）。**payload 闭集 = `{session_id, seq 高水位}`**——NOTIFY 只作唤醒信号与高水位提示，不携带业务事实，事实一律回表读。观察连接是**独立 autocommit 连接**（与 driver 业务连接分离）。**补读算法（写死）**：醒来 → 读 `seq > last_seq` 的 events 按 seq 升序 → 处理 → 推进 last_seq → 循环直至空集；last_seq 只前进；通知丢失或合并不产生遗漏（回表是唯一事实源）。**负例（gate 必测）**：① 通知合并（同通道多条 NOTIFY 一次醒来，回表读全）；② 断线插入（观察连接中断重连后从 last_seq 回补，不漏不重）。检查：G3 `test_listen.py`（含两负例）。
+**V14-HARN-3**〔P0〕事件流权威 = events 表（只追加）。通知通道 **`v14_wake`**：`pg_notify` 由**插入 event 的同事务**发出（SQL 侧），**harness 禁止自行 NOTIFY**。观察者算法（写死）：
 
-### 4.3 双壳等价：比较面与投影算法（写死）
+1. 在**独立 autocommit 连接**上执行 `LISTEN v14_wake` 并 commit（完成订阅）；
+2. 从 `last_seq`（初始为 0/游标起点）做**初始补读**；
+3. 此后通知**仅作唤醒**：醒来即重查 `(session_id, seq) > last_seq` 的 events 按 seq 升序处理；
+4. 渲染按 `(session_id, seq)` **幂等**；**成功处理才推进 last_seq**（last_seq 只前进）；
+5. 通知丢失/合并不产生遗漏——回表是唯一事实源。
+
+payload 闭集 = `{session_id, seq 高水位}`，不携带业务事实。**负例（gate 必测）**：① 通知合并（多条 NOTIFY 一次醒来，回表读全）；② 断线插入（重连后从 last_seq 回补不漏不重）；③ 查询-订阅间隙（LISTEN commit 前产生的事件由初始补读覆盖）；④ 重连后无后续通知（静默期靠 last_seq 状态判定完备性，不依赖新通知）。检查：G3 `test_listen.py`（含四负例）。
+
+### 4.3 双壳等价：比较面与投影算法（库内 canonical，写死）
 
 **V14-HARN-4**〔P0〕INV-4 的完整算法：
 
-1. **同输入协议**：两壳各自**新会话、新工作区**，喂同输入序列；输入含批准——批准作为 SQL 命令序列经 **govern 入口**提交，无旁路（不直改表，V14-APPR-7）。
+1. **同输入协议**：两壳各自**新会话、新工作区**，喂同输入序列；输入含批准——批准作为 SQL 命令序列经 **govern 入口**提交，无旁路（V14-APPR-7）；**双壳使用同一测试 principal**；两 principal 越权负例另行单测（不进等价 gate）。
 2. **同入口**：两壳驱动**同一组 SQL 入口**（submit / approve / …）；seq 由 SQL 分配，客户端不造序。
-3. **投影**：events 按 `(session_id, seq)` 排序 → **代理键保结构 alpha-替换**（会话/事件/effect/judgment 等主键与外键列按首次出现顺序映射为 `$s1/$e1/$j1…`，同值同替换、跨行一致）→ **时间类列与固定键名表归一**（键名表冻结：`ts` / `wall_time` / `created_at` / `pid` / `lsn`，值替换为类型占位符）。
-4. **比较**：服务端比较——两投影的 `jsonb_build_object(...)::text` 逐行相等（在库内执行，非客户端字符串拼装）。
-5. **比较面封闭性**：新增排除项不属于「代理键 / 时间类键名表」两类时，**必须 bump 本规范**；偏差台账无权松动本 P0 比较面。
+3. **canonical 投影（库内唯一函数）**：投影函数在**库内**实现（递归 jsonb 遍历），禁止客户端拼串。归一规则：
+   - **代理键 allowlist（写死）**：`session_id / event_id / effect_id / judgment_id / proposal_id / attempt_id / grant_id` 及递归出现的同值——按首次出现顺序替换为 `$s1 / $e1 / $j1 …`，同值同替换、跨行一致；
+   - **volatile metadata 键表（与时间分开，写死）**：`ts / wall_time / created_at / pid / lsn / expires_at / started_at / finished_at / duration_ms / elapsed_ms` → 类型占位符；
+   - **workspace 根 → `$ws`**；事件内文件路径一律以**相对根形式**存储；
+   - **封闭性执法**：投影中出现未列名的 `*_at` / `*_ms` / 绝对路径 / 未识别 uuid → **gate 失败**，新增类别必须 bump 本规范（偏差台账无权松动）。
+4. **比较**：服务端比较——两投影的 `jsonb_build_object(...)::text` 逐行相等（在库内执行）。
+5. attempt 行不属于投影比较面（V14-EFF-6）；批准输入禁携带代理键字面量（V14-APPR-2）。
 
 检查：G3 `test_dual_shell.py`。
 
 **V14-HARN-5**〔P0〕psql demo 收窄为 **submit/observe demo**：一条纯 psql 路径演示「SQL 命令提交输入 + `LISTEN v14_wake` 观察事件流」，证明载体无关性；不宣称「全程 psql 驱动 agent 完成 mutating 任务」。demo 脚本入库（`v14/harness/`）。检查：G3 gate（psql 执行 demo 退出 0 + 事件断言）。
 
-**V14-HARN-6**〔P0〕harness 薄度执法（INV-1/INV-5 的 gate 细则）：扫描 `v14/harness/**/*.py`（排除 `tests/`、`workers/`）；决策点计数按 INV-5 闭集与上限；**import 黑名单**：判断编排模块、工具实现模块、litellm、目录策略模块——handler/driver 一律不得 import。worker 能力协议按 INV-5（禁 import 判断/advance/govern 面；回传仅 stdout/stderr/exit/diff）。检查：G3 `test_thin.py`。
+**V14-HARN-6**〔P0〕harness 薄度执法（INV-1/INV-5 的 gate 细则）：per-file 决策点计数（INV-5 上限表）；import 前缀黑名单（INV-5 六前缀）；worker 与 provider 能力协议断言（INV-5）。检查：G3 `test_thin.py`；G4 provider 能力 gate。
 
 ### 4.4 真 provider、多轮与 compaction（G4）
 
-**V14-HARN-7**〔P0〕DeepSeek 判断面产品化：真 provider 经既有 litellm 依赖接入，与 FakeLLM 实现同一 judgment 合同（同参数/同落库/同错误闭集）；调用经 V14-EFF-4 attempt 记账。测试分层：确定性层永远 FakeLLM（外部 IO 不进事务，AGENTS.md / v8 不变量 4）；真 API smoke 属 release evidence（§6 分类）。检查：G4 gate + release evidence 工件。
+**V14-HARN-7**〔P0〕DeepSeek 判断面产品化：provider 调用放 **`v14/provider/` 独立进程**——可 import litellm，禁开 DB 连接、禁 beat 循环、禁写工作区（INV-5 能力闭集）；回答由 driver 按 INV-1 第 3 类提交；与 FakeLLM 实现同一 judgment 合同（同参数/同落库/同错误闭集）；调用经 V14-EFF-6 attempt 记账（最多 2 次 attempt，第 3 次无 receipt → failed 且 attempt 行数 = 2）。测试分层：确定性层永远 FakeLLM（外部 IO 不进事务，AGENTS.md / v8 不变量 4）；真 API smoke 属 release evidence（§6 分类）。检查：G4 gate（能力闭集 + attempt 断言）+ release evidence 工件。
 
-**V14-HARN-8**〔P0〕多轮：跨 turn 的会话连续性（上下文携带、目标推进、终态收敛）由库内状态承担，harness 重启不丢轮次。检查：G4 多轮 gate（含一次中途 kill 的多轮续跑）。
+**V14-HARN-8**〔P0〕多轮：跨 turn 的会话连续性（上下文携带、目标推进、终态收敛）由库内状态承担，harness 重启不丢轮次。检查：G4 多轮 gate（含一次中途 kill 续跑，断言按 EFF-6 适用面）。
 
 **V14-HARN-9**〔P0〕compaction **只追加**：compact 产生新 summary 事件，旧事件一律保留；事实完整 = 可重放 compact 前全部历史（沿用 v8 compact 语义，`docs/designs/v8-dev.md` §3.3；触发与产物落库）。economy 只记判断行 provider usage **整数**（input/output tokens 等），不记派生指标。检查：G4 gate（compact 后重放断言 + economy 整数记账断言）。
 
@@ -185,7 +228,7 @@ v2 bump 走法（父循环已裁）：
 
 ### 5.1 任务形状
 
-**V14-BENCH-1**〔P0〕借 PiG 任务形状（已核实：`PiG/evals/tasks/<name>/task.toml`，字段 `prompt` / `check`（shell 判定命令）/ `protected`（禁改文件）+ `files/`（任务工作区）），四任务：`add-json-flag` / `fix-off-by-one` / `rename-function` / `slow-build`。借用形状（v14 自建镜像目录），不依赖 PiG 仓库运行时；判定 = `check` 命令退出 0 且 `protected` 文件字节不变。检查：G5 gate。
+**V14-BENCH-1**〔P0〕借 PiG 任务形状（已核实：`PiG/evals/tasks/<name>/task.toml`，字段 `prompt` / `check`（shell 判定命令）/ `protected`（禁改文件）+ `files/`（任务工作区）），四任务：`add-json-flag` / `fix-off-by-one` / `rename-function` / `slow-build`。借用形状（v14 自建镜像目录），不依赖 PiG 仓库运行时；判定 = `check` 命令退出 0 且 `protected` 文件字节不变；**`check` 只由评测器执行，不经 agent 的 bash 面**（防判定面与工具面混淆）。检查：G5 gate。
 
 **V14-BENCH-2**〔P0〕多轮任务：v14 自造**至少 1 个**多轮任务（多轮 = ≥2 个依序 prompt，前轮产物进后轮工作区；形状字段在 v14 任务目录冻结）。具体任务清单由 G5 计划列出，但「≥1 个多轮」是本规范 P0 义务，G5 不得豁免。检查：G5 gate。
 
@@ -219,40 +262,40 @@ v2 bump 走法（父循环已裁）：
 
 ### G1 工具面 v2（内核提交 K + 实现提交 S）
 
-范围：合同 v2 bump（§2.3）+ 效果协议（§3.1）+ write/edit 口岸与三步执行（§3.2）+ diff 协议（V14-TOOL-2）+ 审批状态机/principal/SQL 批准命令（§3.3 全部，自 G2 原计划**移入**）。
-提交集合（枚举，见 V14-PROC-3）：**K**（内核提交：合同 bump 文档 + v14 迁移 SQL + 允许名单）→ **S**（实现提交：口岸、目录行、gate）。
+范围：合同 v2 bump 与回填（§2.3）+ 效果协议（§3.1 全部）+ write/edit 口岸与三步执行（§3.2）+ diff 单格式（V14-TOOL-2）+ 审批协议全套（§3.3，含 grant 字段全集；自 G2 原计划**移入**）。
+提交集合（枚举，见 V14-PROC-3）：**K**（内核提交：合同 bump 文档 + v14 迁移 SQL（含 contract_version/generation 回填列）+ 允许名单）→ **S**（实现提交：口岸、目录行、gate）。
 gate 验收（写死）：
-- 〔P0〕`v14/tools/test_tools_v2.py`（required）exit 0：write/edit 幸福路径落 events 含 diff 载荷；三步执行各 claim 生命周期；拒绝路径工作区字节零变化；EFF 状态机合法转移集；intent 先于 IO。
-- 〔P0〕`v14/tools/test_approval.py`（required）exit 0：V14-APPR-1..7 全断言（摘要字段/单次消费 CAS/状态机全转移含注入时钟过期/等待期不持 claim/grant 分层/principal 来源/无裸 DML）。
-- 〔P0〕`v14/tools/test_contract_v2.py`（required）exit 0：contract-2 版本号已 bump；v1 条款字节零改动；混合世代条款存在；迁移含 `mutating` 列；`v13/**/*.sql` 零 diff。
+- 〔P0〕`v14/tools/test_tools_v2.py`（required）exit 0：EFF-1 转移表全路径 + 非法转移负例；intent 先于 IO；lease CAS reclaim；workspace 排他锁/基线重算/degraded 负例；write/edit 幸福路径 diff 单格式结构断言（创建/删除/二进制/symlink 拒绝）；三步执行 claim 生命周期；同会话单未终态 mutating；拒绝路径工作区字节零变化。
+- 〔P0〕`v14/tools/test_approval.py`（required）exit 0：V14-APPR-1..7 全断言（摘要字段/谓词定位非唯一负例/单次消费 CAS/状态机含 approved→consumed/生产无 now 参数 + test-only 注入/等待期不持 claim/grant 字段全集 + 签发/撤销/越界 + 命中生成 proposal 单次消费/principal 映射 fail-closed + service role 拒绝/无裸 DML）。
+- 〔P0〕`v14/tools/test_contract_v2.py`（required）exit 0：contract-2 已 bump；v1 条款字节零改动；回填列默认值与既有 request 回填；v1 排队请求走 v1 handler + v2 新建请求两路径；无法解析绑定拒绝创建负例；`v13/**/*.sql` 零 diff。
 - 〔P0〕v13 全量零回归（E4，required）。
 
 ### G2 执行面（只加 bash 策略与执行口岸）
 
 范围：闭集命令执行器 bash（§3.4）+ glob/grep 只读口岸 + govern/human route 审批环接线（审批状态机已在 G1）。
 gate 验收（写死）：
-- 〔P0〕`v14/exec/test_exec.py`（required）exit 0：动词目录闭集与参数域负例；glob/grep 闭集与围栏负例；bash 围栏（越界/超时/超限）负例；审批四路径（默认拒/批过/驳回/超时）events 与文件系统效果断言。
+- 〔P0〕`v14/exec/test_exec.py`（required）exit 0：execve/无 shell（source 断言）；目录恰 = {run-test, build}；workspace_mode 声明执法（未声明拒绝）；类型化参数域负例；shell 元字符 argv 逐字节负例；glob/grep 输入/结果/错误码闭集与围栏负例；bash 围栏（越界/超时/超限=failed）负例；审批四路径（默认拒/批过/驳回/超时）events 与文件系统效果断言。
 - 〔P0〕`v14/exec/test_govern_route.py`（required）exit 0：审批命令经 SQL 面、留痕 events、human route 队列可由第二壳观察。
 - 〔P0〕v13 全量零回归（E4）+ G1 gate 复跑绿。
 
 ### G3 harness MVP
 
-范围：beat driver 提炼（§4.1）+ Chainlit 窗 + `v14_wake` LISTEN/NOTIFY（§4.2）+ psql submit/observe demo（§4.3）+ 双壳等价 + 会话可弃（两杀点）+ 薄度执法。
+范围：beat driver 提炼（§4.1）+ Chainlit 窗 + `v14_wake` LISTEN/NOTIFY 终版（§4.2）+ psql submit/observe demo（§4.3）+ 双壳等价 + 会话可弃（两杀点）+ 薄度执法。
 gate 验收（写死）：
-- 〔P0〕`v14/harness/test_resume.py`（required）exit 0：**SIGKILL 进程组**实证杀（非模拟），两杀点窗口各覆盖——窗 1：write intent 已提交、rename 未发生 → resume → 幂等结算（V14-EFF-3）+ 命题 A/B 断言；窗 2：bash IO 中途 → resume → unknown + 人工 reconcile 走通（V14-EFF-5，只断言终态有定义）。
-- 〔P0〕`v14/harness/test_dual_shell.py`（required）exit 0：两壳（脚本壳 + Chainlit 壳——经 Chainlit 无头测试模式驱动**真实 handler 模块**，禁止为 gate 另写假 handler）按 V14-HARN-4 算法比较，逐行相等。
-- 〔P0〕`v14/harness/test_thin.py`（required）exit 0：决策点计数（INV-5 闭集与上限）+ import 黑名单 + worker 能力协议。
-- 〔P0〕`v14/harness/test_listen.py`（required）exit 0：v14_wake payload 闭集、独立 autocommit 连接、补读循环、通知合并与断线插入两负例、重连后 UI 历史从 events 重建。
+- 〔P0〕`v14/harness/test_resume.py`（required）exit 0：**SIGKILL 进程组**实证杀（非模拟），杀点为**确定性测试缝**：窗 1 = 阻塞在已提交 `started`、rename 之前；窗 2 = 阻塞在子进程 `execve` 之后、receipt 之前。进程组只含 driver 与其 worker/provider 子进程；数据库进程与测试控制器在组外。窗 1 → resume 三分法（V14-EFF-3）+ 命题 A/B 断言；窗 2 → unknown + 人工 reconcile 走通（V14-EFF-5，只断言终态有定义）。
+- 〔P0〕`v14/harness/test_dual_shell.py`（required）exit 0：两壳（脚本壳 + Chainlit 壳——经 Chainlit 无头测试模式驱动**真实 handler 模块**，禁止为 gate 另写假 handler；同一测试 principal）按 V14-HARN-4 算法比较，逐行相等；两 principal 越权负例另测。
+- 〔P0〕`v14/harness/test_thin.py`（required）exit 0：per-file 决策点计数（INV-5 上限表：driver ≤15 / handler ≤5 / 其余合计 0）+ import 前缀黑名单（六前缀）+ worker/provider 能力协议。
+- 〔P0〕`v14/harness/test_listen.py`（required）exit 0：v14_wake 同事务 notify、payload 闭集、独立 autocommit 连接、初始补读、补读循环、四负例（通知合并/断线插入/查询-订阅间隙/重连无后续通知）、重连后 UI 历史从 events 重建。
 - 〔P0〕psql submit/observe demo 脚本执行 exit 0。
 - 〔P0〕Chainlit 依赖进入 `pyproject.toml` 与 `uv.lock` 更新同笔，且当笔全量回归绿；v13 E4 复跑绿。
 - 〔P0〕`v14/regression/` sweep 上线（发现 `v14` 下全部 `test_*.py` 串行，required 零容忍、probe 照 skip 语义）。
 
 ### G4 真 provider
 
-范围：DeepSeek 判断面产品化 + 多轮 + compaction 只追加 + economy 整数记账（§4.4）。
+范围：DeepSeek 判断面产品化（provider 进程分离）+ 多轮 + compaction 只追加 + economy 整数记账（§4.4）。
 gate 验收（写死）：
-- 〔P0〕`v14/provider/test_deepseek.py`（required，FakeLLM 确定性部分）exit 0：同 judgment 合同双实现断言；attempt 记账含重复 attempt 场景。
-- 〔P0〕多轮 gate（required）exit 0：≥2 轮会话含一次中途 kill 续跑，命题 A/B 断言。
+- 〔P0〕`v14/provider/test_deepseek.py`（required，FakeLLM 确定性部分）exit 0：同 judgment 合同双实现断言；provider 进程能力闭集（可 litellm，禁 DB/beat/写盘）；attempt 记账——**第 3 次无 receipt 必须 failed 且 attempt 行数 = 2**；reconcile 产生新 judgment 世代。
+- 〔P0〕多轮 gate（required）exit 0：≥2 轮会话含一次中途 kill 续跑，断言按 V14-EFF-6 适用面（不宣称未提交 receipt 窗口 A/B 等价）。
 - 〔P0〕compaction/economy gate（required）exit 0：compact 后可重放 compact 前全部历史；判断行 usage 整数记账。
 - 〔P0〕**release evidence**：里程碑关闭前有一次真 DeepSeek smoke 工件入库——含模型 ID、usage、错误映射，且**无密钥**入库。
 - 〔P1〕真 API smoke 脚本（optional probe 语义：无凭证 = 2，如实呈报）。
@@ -261,7 +304,7 @@ gate 验收（写死）：
 
 范围：任务套件 + plumbing/live 两层 + 对照报告（§5）。
 gate 验收（写死）：
-- 〔P0〕`v14/bench/test_bench.py`（required）exit 0：四任务 + ≥1 多轮任务，plumbing 层全判定（check 命令退出 0 + protected 字节不变）。
+- 〔P0〕`v14/bench/test_bench.py`（required）exit 0：四任务 + ≥1 多轮任务，plumbing 层全判定（check 由评测器执行、退出 0 + protected 字节不变）。
 - 〔P0〕trace 一致性 gate（required）exit 0：v14 trace 与 pi_parity schema-v2 格式断言一致。
 - 〔P0〕对照报告工件存在且字段齐全（V14-BENCH-4 清单）。
 - 〔P0〕**release evidence**：每个「已完成对照项」至少一对 v14↔pi **实跑**记录，附全链 provenance（固定 commit / 模型 / 参数 / 初始 tree hash）；无凭证面按 SKIP 键呈报，不参与 exit 0。
@@ -293,7 +336,7 @@ gate 验收（写死）：
 1. 不做 pi 的进程模型 / TUI 复刻；不兼容 pi 插件生态与其 session 文件格式。
 2. 不实现 v10 内核规格；不回改 v8 / v10 / v13 冻结面（内核变更流程除外，§2.3）。
 3. 不引入 DSH Node host；P0C 按退役处理（§2.1），义务不转移。
-4. **不做任意 shell 执行**：G2 bash 是闭集命令执行器（枚举动词 + 合同约束参数）；任意 shell 待后续版本有真隔离机制（容器级）再开。
+4. **不做任意 shell 执行**：G2 bash 是闭集命令执行器（execve + 枚举动词 + 类型化参数）；任意 shell 待后续版本有真隔离机制（容器级）再开。
 5. 不在数据库事务内做任何外部 IO（v8 不变量 4，全文有效）。
 6. 不做 UI 富交互（只 submit + LISTEN 渲染；审批呈现之外的 UI 状态机一律不做）。
 7. 不做多 agent 编排 / RSI / 生态面（v8 P2/P3 范畴）。
@@ -304,13 +347,14 @@ gate 验收（写死）：
 | 引用 | 核实结果 |
 |---|---|
 | `run_ring` 位置 | `v13/pi_ports/test_pi_ports.py:678`（`run_ring(planes)`，多平面同会话）；`v13/read_tools/test_read_tools.py:980`（无参版）。**不在 pi_parity**（父循环轮 1 目标原文有误，已按 V14-HARN-1 修正表述） |
-| beat 拍结构 | `v13/pi_parity/test_pi_parity.py:66` `GOLDEN_SEQUENCE`（定义 66–71 行）；完整相位列表 = `judge / parse / advance / claim / tool / llm / finish`（两轮 tool 拍各自带工具名，llm/finish 前的 claim 相为 None；oracle P1 注：模型 assistant 输出是独立 canonical phase） |
+| beat 拍结构 | `v13/pi_parity/test_pi_parity.py:66` `GOLDEN_SEQUENCE`（定义 66–71 行）；完整相位列表 = `judge / parse / advance / claim / tool / llm / finish`；**llm（assistant 输出）是显式 canonical phase，非 claim kind**——pi_parity schema-v2 定案，已落为 INV-2 规范条款 |
 | 归一 trace 基建 | `v13/pi_parity/`：normalized schema-v2 trace 落 `traces/pg.jsonl`；`pig_driver/`（Go）、`piswift_driver/`（Swift）重放归一 transcript；工具链缺席诚实 `[SKIP]` |
 | E4 | `v13/read_tools/test_read_tools.py:65` 发现命令（`find v13 -name 'test_*.py' -not -path 'v13/read_tools/*'`）；`run_e4` :2019；串行零容忍；UV_FROZEN 见 TP-GATE-4 |
 | 口岸合同 | `docs/designs/v13-tool-ports.md` L5 版本 `v13/tool-port-contract-1` + bump 规则；TP-CAT-4 = L48（schema/加列须独立内核变更并 bump）；TP-INV-1..15；TP-ADMIT-1 十项准入 |
+| 合同版本头读取（G1 预检） | v13 gate 对该文档仅 `isfile`（`test_read_tools.py:1998`，G2）与 README 路径/条款针（`:1728`，E3 needle：含文档路径与 TP-WIRE-3/TP-FS-5/TP-DUCK-3，**不含版本串**）——不解析版本头，K 提交 bump 不触发 v13 红 |
 | beat 结算先例 | TP-HUB-2（complete→accepted→commit 顺序）；TP-HUB-4（tick 计数纪律） |
 | v8-P0C | `docs/plans/v8-p0c-compat-host-plan-2026-09-17.md`：§0.1 DSH=DeepSeek Harness；C2=§5.2 go/no-go；host 接线未交付（C0–C6 未完成） |
-| v10 硬缺口出处 | 父循环台账 `prompt-exports/loop-orchestrate-v14-runs.md:7`（「v10 硬缺口（grant 模型/插件世代）在 G1/G2 自然承接」）；grant/generation 交付佐证 `v8/README.md:9`（24/24 gate，2026-09-17）；「硬缺口」字面**不在** v10-dev.md 原文 |
+| v10 硬缺口出处 | 父循环台账 `prompt-exports/loop-orchestrate-v14-runs.md:7`；grant/generation 交付佐证 `v8/README.md:9`（24/24 gate，2026-09-17）；「硬缺口」字面**不在** v10-dev.md 原文 |
 | PiG 任务形状 | `PiG/evals/tasks/{add-json-flag,fix-off-by-one,rename-function,slow-build}/task.toml`：`prompt`/`check`/`protected` + `files/`（已抽读 add-json-flag 全文核实字段） |
 | NOTIFY 先例 | `v8/closeout/v8_closeout.sql:121`（`pg_notify('v8_wait', …)`）；v14 用独立通道 `v14_wake`，不复用 `v8_wait` |
 | reconcile 先例 | `v8/reconcile/`（既有 stage 目录；v14 人工 reconcile 语义援引其先例地位，不加载其 SQL） |
@@ -318,19 +362,20 @@ gate 验收（写死）：
 | govern/economy 面 | `v13/govern/`、`v13/economy/`、`v13/control/` 均为既有 stage（SQL+gate+README） |
 | compaction 语义 | `docs/designs/v8-dev.md` §3.3（seq、cancel、compact、repair） |
 
-## 附录 B. 轮 1 → 轮 2 修订对照（oracle 双裁 4+3 P0 落点）
+## 附录 B. 轮 2 → 轮 3 修订对照（oracle 双裁 4+5 P0 逐条裁决 A..M 落点）
 
-| # | 轮 1 发现（合并表述） | 轮 2 落点 |
+| # | 轮 2 裁决项 | 轮 3 落点 |
 |---|---|---|
-| 1 | 效果协议缺失（两 oracle P0 合并）：外部效果无状态机/幂等键/原子写/unknown 语义；INV-3 「终态不变」过强 | 新 §3.1 V14-EFF-1..5（状态机/effect_id/intent 幂等键/fsync+rename+基线哈希幂等重放/bash unknown 禁自动重试进人工 reconcile/provider attempt 记账）；INV-3 改双命题 + unknown 只承诺终态有定义；G3 杀点=SIGKILL 进程组两窗（§6 G3） |
-| 2 | INV-1/5 执法不可操作（两 oracle P0）：「无策略决策」无闭集、决策点无口径无上限 | INV-1 加执法语义闭集（harness 只提交标量三类；人批/模型回答同属外部判断数据面）；INV-5 口径闭集（7 节点，BoolOp 不计）+ 上限现在冻结（driver≤15 / handler≤5）+ 扫描路径与豁免边界（包路径+能力协议）；V14-HARN-6 import 黑名单 |
-| 3 | INV-4 投影算法缺失（两 oracle P0）：「逐字节」无算法、排除清单推给 stage 计划、比较在客户端 | V14-HARN-4 算法五步写死（新会话新工作区同输入含批准走 govern 入口/同 SQL 入口/seq SQL 分配/代理键 alpha-替换+冻结键名表/服务端 jsonb::text 比较）；新增排除项须 bump spec、台账无权松动 |
-| 4 | 审批协议不成形（codex P0-3 + grokBuild P1-1 合并，父循环升 G1） | 新 §3.3 V14-APPR-1..7（不可变 proposal 摘要字段冻结/单次消费 CAS 重验/状态机+注入 now/等待期不持 claim/grant 分层 bash 默认拒/principal 由 DB 身份/测试禁裸 DML）；V14-TOOL-3 三步执行；审批状态机+principal+SQL 批准命令移入 G1（G2 只加 bash 策略） |
-| 5 | gate 语义与提交面混乱（两 oracle P0/P1）：skip 与失败不分、release 工件无定义、G1 内核/实现混提交、schema 落点未裁 | §6.0 V14-GATE-C 三分类（required 0/1、probe 0/1/2、release evidence 里程碑关闭前须真工件：G4 DeepSeek smoke 含模型 ID/usage/错误映射/无密钥；G5 每完成项一对 v14↔pi 实跑+全链 provenance）+ 聚合断言失败优先；V14-GATE-K 加载=v13 累计+v14 迁移不加载 v8；G1 提交集合=K+S 枚举；schema 落点=v14 累计迁移 ADD COLUMN mutating（V14-SUP-3.3）；PROC-3 改枚举提交集合 |
-| 6a | P0C supersede 措辞含混（义务转移暗示） | §2.1 改「解除/退役」：tombstone + 义务未转移 + DSH host 关闭三句写死 |
-| 6b | LISTEN/NOTIFY 细节缺失（通道名/payload/补读/负例） | V14-HARN-3：通道 `v14_wake`、payload 闭集 {session_id, seq 高水位}、独立 autocommit 连接、补读算法写死、通知合并/断线插入两负例 |
-| 6c | psql demo 过宣称 / Chainlit 壳 gate 载体不明 | V14-HARN-5 收窄 submit/observe；双壳 gate 的 Chainlit 壳=无头测试模式驱动真实 handler |
-| 6d | compaction/economy 语义松 | V14-HARN-9 compaction 只追加（可重放 compact 前历史）；economy 只记判断行 provider usage 整数 |
-| 6e | G5 层级措辞 / 多轮强度 / 硬缺口出处 / 引用精度 / preflight | V14-BENCH-3 改 plumbing（P0）/live（release evidence，无凭证=SKIP 键不参与 exit 0）；V14-BENCH-2 ≥1 多轮升 P0；V14-SUP-2 改「父循环台账在 v10 冻结后识别」附台账 :7；附录 A 补 GOLDEN_SEQUENCE :66 与完整相位列表；ENV-1 钉 `==0.3.0rc2` |
-| 裁-A | 合同 v2 载体（oracle 分歧，父循环裁=就地 bump） | V14-SUP-3.1 就地 bump + v1 条款字节不动 + 新义务新 ID；3.2 混合世代语义（v1 请求走 v1 handler/禁降级/request 绑定 contract_version+generation） |
-| 裁-B | bash 安全边界（oracle 分歧，父循环裁=闭集命令执行器） | V14-TOOL-4 闭集动词执行器（argv 模板+参数域为合同数据，加动词=合同变更）；§9.4 任意 shell 移出范围待真隔离机制 |
+| A | 效果状态机（采 grokBuild 六态） | V14-EFF-1：六态闭集（删 approved/reconciled 态）；转移表写死（INSERT 即 planned 与批准同事务/deny-expire 不建行/planned→claimed 单条条件 UPDATE 同事务 proposal→consumed/claimed→started IO 前单独提交/started→终态仅带 receipt）；EFF-2 intent 全序键 (session_id,seq) + lease_owner/lease_until CAS reclaim；EFF-3 三分法含 EMPTY 哨兵 |
+| B | INV-3 收窄（采 codex 选项 2，provider at-least-once） | V14-EFF-6（新，codex 文本）：provider 不进 unknown、最多 2 attempt 用尽转 failed、attempt 行不入投影、reconcile 产生新 judgment 世代、A/B 等价仅限 FakeLLM 与已提交 receipt 路径、G4 kill gate 禁止宣称未提交窗口等价；INV-3 适用面引用 |
+| C | workspace 全序（采 codex P0-2） | V14-EFF-4：workspace_id、apply 前排他 claim、持锁重算基线 stale/fail 禁 rename、全 writer 同锁、不可变 workspace_effect_seq（resume/reconcile 复用）、命题 B 全序=seq 升序、外部写入检测→degraded 一句写死 |
+| D | INV-1 四类提交闭集（合并 grokBuild P0-2+codex P1-6） | INV-1 重写：四类（用户文本/审批决定/判断答案/工具回执 envelope 八字段）；仅登记 SQL 函数、禁裸 DML/pg_notify；driver opaque 转发；INV-5 worker 能力协议五条 + provider 进程能力闭集（v14/provider/ 可 litellm、禁 DB/beat/写盘、计入扫描） |
+| E | 投影闭集（合并 grokBuild P0-3+codex P1-5） | V14-HARN-4：库内唯一 canonical 投影函数（递归 jsonb，禁客户端拼串）；代理键 allowlist 七键写死；volatile 键表十键（与时间分开）；$ws、相对路径；未列名 *_at/*_ms/绝对路径/未识别 uuid→gate 失败须 bump；批准禁代理键字面量+谓词定位（APPR-2）；双壳同 principal+越权负例另测 |
+| F | bash 执行器（合并两家） | V14-TOOL-4：execve(固定绝对路径+版本摘要, argv 数组)、禁 shell=True/sh -c/拼接；argv 段=字面量或类型化参数（enum/int/bool/相对路径闭集，拒绝对路径/../NUL）；workspace_mode 三值未声明即拒；目录恰={run-test,build} 进合同附录；元字符 argv 逐字节负例；输出超限=failed |
+| G | now 注入（采 codex P0-5） | V14-APPR-3：生产不收调用方 now、不读调用方可写会话变量、effective_now=DB 时钟；仅测试角色经隔离 test-only 入口；CAS 同一 effective_now 同事务查 expires_at |
+| H | principal（采 codex P0-4） | V14-APPR-6：审批函数不接受 principal 参数；一一对应 DB 认证 principal；共享 service role 不得审批；无法映射 fail closed；Chainlit 身份=受信连接/角色属性 |
+| I | diff 单格式（采 codex 富版） | V14-TOOL-2：每 path {old_exists/old_sha256/new_exists/new_sha256/mode/payload 编码}；覆盖创建/删除/二进制/symlink；禁双格式；write=old 全空；EFF-3 补父目录 fsync、临时文件命名与清理、symlink 拒绝 |
+| J | 合同回填（合并） | V14-SUP-3.2/.3：contract_version text NOT NULL DEFAULT 'v13/tool-port-contract-1'、generation NOT NULL 默认 v13 世代常量、回填既有 request、trigger/wrapper 双入口、无法解析拒绝创建禁隐式降级、gate 覆盖 v1 排队+v2 新建两路径；版本头预检已核实（附录 A）：v13 只 isfile+README 针，不解析版本头 |
+| K | grant 字段全集（采 codex P1-7） | V14-APPR-5：十二字段全集；命中逐项匹配记 grant_id；命中生成不可变 proposal 由 SQL 转 approved（principal=授予者）仍单次消费；模式闭集=工具名+相对路径 glob；bash 不收 grant；签发/撤销/越界负例进 test_approval；APPR-4 同会话至多一个未终态 mutating + 游标停 await_approval |
+| L | LISTEN 终版（合并） | V14-HARN-3：LISTEN 独立 autocommit 连接并 commit→last_seq 初始补读→通知仅唤醒重查 >last_seq；pg_notify 由插 event 同事务发出、harness 禁自行 NOTIFY；渲染幂等、成功处理才推进 last_seq；四负例（合并/断线/查询-订阅间隙/重连无通知） |
+| M | 机械项 | INV-5 按文件上限（driver.py≤15/handler.py≤5/其余合计 0/新增须 bump）+ 六前缀黑名单写死；TOOL-5 改「输入、结果与错误码闭集」；G3 杀点=确定性测试缝（窗 1 started 未 rename/窗 2 execve 后 receipt 前）、进程组只含 driver+worker/provider；assistant 相位落死（INV-2 显式 canonical phase）；BENCH-1 check 只由评测器执行；输出超限=failed；G4 provider 第 3 次无 receipt=failed 且 attempts=2 |
