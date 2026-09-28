@@ -92,6 +92,7 @@ function emit(payload, code) {
 }
 
 async function main() {
+	fs.rmSync(TRACE_PATH, { force: true }); // stale artifacts must never survive a run
 	const storage = new MemoryStorage({ now: () => 100 });
 	const session = new StorageBackedSession(
 		{ id: "pi-parity-1", createdAt: 1, storageVersion: 1 },
@@ -101,7 +102,14 @@ async function main() {
 	const models = createModels();
 	models.setProvider(faux.provider);
 	// Three provider calls: read hello.txt -> read fib.py -> final answer.
-	faux.setResponses([decideResponse, decideResponse, decideResponse]);
+	// The wrapper counts invocations; the post-run contract check requires
+	// exactly 3 (two tool turns + one final turn).
+	let providerCalls = 0;
+	const counted = (context) => {
+		providerCalls += 1;
+		return decideResponse(context);
+	};
+	faux.setResponses([counted, counted, counted]);
 
 	const env = new NodeExecutionEnv({ cwd: FIXTURES });
 	const readTool = createReadTool();
@@ -263,6 +271,9 @@ async function main() {
 	if (!(run && run.ok && run.value && run.value.kind === "run" && run.value.status === "completed")) {
 		emit({ ok: false, error: "run_failed", detail: JSON.stringify(run && run.value) }, 4);
 	}
+	if (providerCalls !== 3) {
+		emit({ ok: false, error: "provider_calls", detail: `expected 3 provider calls, got ${providerCalls}` }, 5);
+	}
 
 	const finalEntry = [...entryOrder].reverse().find((id) => {
 		const entry = entryById.get(id);
@@ -272,7 +283,11 @@ async function main() {
 
 	// Post-run evidence resolution: message_end/tool_end fire before the
 	// corresponding entry_added commits, so pair steps to persisted entries
-	// only once the session tip is final.
+	// only once the session tip is final. The pairing is content-bound, not
+	// order-only: each persisted entry must carry the same payload the event
+	// stream recorded for its step (text digest, stopReason, tool calls;
+	// toolCallId + result digest for tool results). Any mismatch -> exit 5
+	// WITHOUT writing the trace (no degraded ok:true).
 	const assistantOrdinals = [];
 	const toolResultOrdinalByCallId = new Map();
 	entryOrder.forEach((id, index) => {
@@ -286,16 +301,51 @@ async function main() {
 		emit({ ok: false, error: "evidence_mismatch", detail: `assistant entries ${assistantOrdinals.length} != llm steps ${llmStepsInOrder.length}` }, 5);
 	}
 	llmStepsInOrder.forEach((step, index) => {
-		step.evidence = `session_entry:#${assistantOrdinals[index]}/assistant (MemoryStorage)`;
+		const ordinal = assistantOrdinals[index];
+		const message = entryById.get(entryOrder[ordinal]).message;
+		if (digest(textOfContent(message.content)) !== step.result_digest) {
+			emit({ ok: false, error: "evidence_payload", detail: `assistant entry #${ordinal} text digest != llm step seq ${step.seq}` }, 5);
+		}
+		if ((message.stopReason || "") !== (step.args.stopReason || "")) {
+			emit({ ok: false, error: "evidence_payload", detail: `assistant entry #${ordinal} stopReason != llm step seq ${step.seq}` }, 5);
+		}
+		const entryCalls = message.content
+			.filter((block) => block.type === "toolCall")
+			.map((call) => ({ name: call.name, path: call.arguments && call.arguments.path }));
+		if (JSON.stringify(entryCalls) !== JSON.stringify(step.args.toolCalls)) {
+			emit({ ok: false, error: "evidence_payload", detail: `assistant entry #${ordinal} toolCalls != llm step seq ${step.seq}` }, 5);
+		}
+		step.evidence = `session_entry:#${ordinal}/assistant (MemoryStorage)`;
 	});
 	for (const [callId, step] of toolStepByCallId) {
 		const ordinal = toolResultOrdinalByCallId.get(callId);
 		if (ordinal === undefined) emit({ ok: false, error: "evidence_mismatch", detail: `no toolResult entry for ${callId}` }, 5);
+		const message = entryById.get(entryOrder[ordinal]).message;
+		if (message.toolCallId !== callId) {
+			emit({ ok: false, error: "evidence_payload", detail: `toolResult entry #${ordinal} toolCallId != ${callId}` }, 5);
+		}
+		if (digest(textOfContent(message.content)) !== step.result_digest) {
+			emit({ ok: false, error: "evidence_payload", detail: `toolResult entry #${ordinal} digest != tool step seq ${step.seq}` }, 5);
+		}
 		step.evidence = `session_entry:#${ordinal}/toolResult (MemoryStorage)`;
 	}
 	const finishStep = steps.findLast((step) => step.phase === "finish");
 	if (finishStep) {
 		finishStep.evidence = `memory: run_end completed; session tip entry #${entryOrder.length - 1} (MemoryStorage)`;
+	}
+
+	// Final-answer cross-verification: the persisted final assistant entry
+	// must agree with the event stream (last llm step digest) AND with the
+	// deterministic contract over the persisted tool results.
+	const lastLlm = llmStepsInOrder[llmStepsInOrder.length - 1];
+	if (digest(finalText) !== lastLlm.result_digest) {
+		emit({ ok: false, error: "final_mismatch", detail: "final assistant entry text != event-stream llm digest" }, 5);
+	}
+	const persistedResults = ["call-0", "call-1"].map(
+		(id) => textOfContent(entryById.get(entryOrder[toolResultOrdinalByCallId.get(id)]).message.content),
+	);
+	if (finalText !== finalFromResults(persistedResults)) {
+		emit({ ok: false, error: "final_mismatch", detail: "final text != deterministic contract over persisted results" }, 5);
 	}
 
 	fs.mkdirSync(path.dirname(TRACE_PATH), { recursive: true });
@@ -306,7 +356,7 @@ async function main() {
 	await harness.close(BACKGROUND_CONTEXT);
 	await session.close(BACKGROUND_CONTEXT);
 
-	emit({ ok: true, trace: TRACE_PATH, steps: steps.length, final: finalText }, 0);
+	emit({ ok: true, trace: TRACE_PATH, steps: steps.length, final: finalText, providerCalls: providerCalls }, 0);
 }
 
 try {

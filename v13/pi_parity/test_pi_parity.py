@@ -70,7 +70,12 @@ GOLDEN_SEQUENCE = (
     + [("judge", None), ("parse", None), ("advance", None), ("finish", None)]
 )
 
-FROZEN_PREFIXES = ("v13/read_tools/", "v13/pi_ports/")
+FROZEN_PREFIXES = ("v13/read_tools/", "v13/pi_ports/", "v8/")
+
+# Stable guard baseline: the commit right before pi_parity's first commit.
+# HEAD^..HEAD would stop protecting Turn 2's work as soon as Turn 3 commits;
+# every commit from the baseline to HEAD is checked instead.
+PI_PARITY_BASE = "4436cd8"
 
 
 def check(label: str, condition: bool, detail: object = "") -> None:
@@ -139,16 +144,17 @@ def protected_dirty(paths: list[str]) -> list[str]:
 def run_guard() -> None:
     """Repo-hygiene guard (oracle P1: committed changes count too).
 
-    Same triple as pi_ports G2: working tree vs HEAD, HEAD vs HEAD^ (the last
-    commit must not have touched frozen faces either), and untracked files.
+    Triple check over the frozen faces: committed changes since the stable
+    baseline (PI_PARITY_BASE..HEAD), the dirty working tree, and untracked
+    files. v8/ is explicitly in the frozen pathspec.
     """
     load = (AGENT_ROOT / "v13" / "load.py").read_text()
     check("P0", "pi_parity" not in load, "load.py")
     names = []
     for argv in (
-        ["git", "diff", "--name-only", "HEAD", "--", "v13", "pyproject.toml", "uv.lock"],
-        ["git", "diff", "--name-only", "HEAD^", "HEAD", "--", "v13", "pyproject.toml", "uv.lock"],
-        ["git", "ls-files", "--others", "--exclude-standard", "--", "v13", "pyproject.toml", "uv.lock"],
+        ["git", "diff", "--name-only", "HEAD", "--", "v13", "v8", "pyproject.toml", "uv.lock"],
+        ["git", "diff", "--name-only", PI_PARITY_BASE, "HEAD", "--", "v13", "v8", "pyproject.toml", "uv.lock"],
+        ["git", "ls-files", "--others", "--exclude-standard", "--", "v13", "v8", "pyproject.toml", "uv.lock"],
     ):
         proc = subprocess.run(argv, cwd=AGENT_ROOT, capture_output=True, text=True)
         check("P0", proc.returncode == 0, (argv, proc.stderr))
@@ -556,6 +562,7 @@ def run_pg_side() -> str:
         )
         after_rev = q1(cur, "SELECT revision FROM v13_tools_meta WHERE singleton")
         check("P-catalog", q1(cur, "SELECT count(*) FROM tools") == base_count + 1, base_count)
+        check("P-catalog", after_rev == base_rev + 1, (base_rev, after_rev))
         conn.commit()
 
         cycles = len(EXPECTED_READS) + 2
@@ -863,7 +870,9 @@ def build_piswift_driver() -> list[str]:
     return [str(binary), "fixtures"]
 
 
-def run_driver(tag: str, argv: list[str]) -> None:
+def run_driver(tag: str, side: str, argv: list[str]) -> dict:
+    # Delete any stale trace first: the file must be rebuilt by THIS run.
+    (TRACE_DIR / f"{side}.jsonl").unlink(missing_ok=True)
     proc = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, timeout=180)
     if proc.returncode != 0:
         detail = (proc.stdout or "") + (proc.stderr or "")
@@ -873,6 +882,7 @@ def run_driver(tag: str, argv: list[str]) -> None:
         raise AssertionError(f"{tag} driver emitted no JSON summary")
     summary = json.loads(lines[-1])
     check(f"{tag}-run", summary.get("ok") is True, summary)
+    return summary
 
 
 def load_trace(tag: str, side: str) -> tuple[list[dict], dict]:
@@ -887,7 +897,7 @@ def load_trace(tag: str, side: str) -> tuple[list[dict], dict]:
     return steps, final_rec
 
 
-def run_framework_assertions(tag: str, side: str, expected_final: str, pg_tool_digests: list[str]) -> None:
+def run_framework_assertions(tag: str, side: str, expected_final: str, pg_tool_digests: list[str], summary: dict) -> None:
     steps, final_rec = load_trace(tag, side)
     seqs = [rec["seq"] for rec in steps]
     check(f"{tag}-seq", seqs == list(range(len(steps))), seqs)
@@ -919,6 +929,27 @@ def run_framework_assertions(tag: str, side: str, expected_final: str, pg_tool_d
         llm_steps[-1].get("result_digest") == digest(final_rec["final"]),
         llm_steps[-1],
     )
+    # llm contract: two toolUse turns (hello.txt then fib.py) + one stop turn.
+    check(
+        f"{tag}-llm-contract",
+        [(rec.get("args", {}).get("stopReason"), rec.get("args", {}).get("toolCalls")) for rec in llm_steps]
+        == [
+            ("toolUse", [{"name": "read", "path": EXPECTED_READS[0]}]),
+            ("toolUse", [{"name": "read", "path": EXPECTED_READS[1]}]),
+            ("stop", []),
+        ],
+        llm_steps,
+    )
+    # Provider contract: exactly three provider calls per driver.
+    check(f"{tag}-provider-calls", summary.get("providerCalls") == 3, summary)
+    # callId linkage: claims carry call-0/call-1 in cycle order, matching the
+    # llm toolCalls they execute.
+    claim_rows = [rec for rec in steps if rec["phase"] == "claim"]
+    check(
+        f"{tag}-callid-linkage",
+        [rec.get("args", {}).get("toolCallId") for rec in claim_rows] == [f"call-{i}" for i in range(len(EXPECTED_READS))],
+        claim_rows,
+    )
     finish_steps = [rec for rec in steps if rec["phase"] == "finish"]
     check(
         f"{tag}-finish",
@@ -949,7 +980,7 @@ def run_framework_assertions(tag: str, side: str, expected_final: str, pg_tool_d
 
 def assert_byte_stable(tag: str, side: str, argv: list[str]) -> None:
     first = (TRACE_DIR / f"{side}.jsonl").read_bytes()
-    run_driver(tag, argv)
+    run_driver(tag, side, argv)
     second = (TRACE_DIR / f"{side}.jsonl").read_bytes()
     check(f"{tag}-byte-stable", first == second, "driver output differs between runs")
 
@@ -968,8 +999,8 @@ def run_framework_sides(expected_final: str) -> None:
         planes.extend(node_skipped)
     else:
         pi_argv = ["node", "--experimental-strip-types", "pi_driver.mjs"]
-        run_driver("PI", pi_argv)
-        run_framework_assertions("PI", "pi", expected_final, digests_pg)
+        summary = run_driver("PI", "pi", pi_argv)
+        run_framework_assertions("PI", "pi", expected_final, digests_pg, summary)
         assert_byte_stable("PI", "pi", pi_argv)
 
     go_skipped = go_planes_absent()
@@ -981,8 +1012,8 @@ def run_framework_sides(expected_final: str) -> None:
         except ToolchainMissing as exc:
             planes.extend(exc.planes)
         else:
-            run_driver("PIG", pig_argv)
-            run_framework_assertions("PIG", "pig", expected_final, digests_pg)
+            summary = run_driver("PIG", "pig", pig_argv)
+            run_framework_assertions("PIG", "pig", expected_final, digests_pg, summary)
             assert_byte_stable("PIG", "pig", pig_argv)
 
     swift_skipped = swift_planes_absent()
@@ -994,12 +1025,14 @@ def run_framework_sides(expected_final: str) -> None:
         except ToolchainMissing as exc:
             planes.extend(exc.planes)
         else:
-            run_driver("PISWIFT", piswift_argv)
-            run_framework_assertions("PISWIFT", "piswift", expected_final, digests_pg)
+            summary = run_driver("PISWIFT", "piswift", piswift_argv)
+            run_framework_assertions("PISWIFT", "piswift", expected_final, digests_pg, summary)
             assert_byte_stable("PISWIFT", "piswift", piswift_argv)
 
     if planes:
         print(f"[SKIP] not_run/toolchain_absent planes={','.join(sorted(set(planes)))}")
+        if os.environ.get("PI_PARITY_REQUIRE_ALL") == "1":
+            raise AssertionError(f"PI_PARITY_REQUIRE_ALL=1 but planes absent: {sorted(set(planes))}")
 
 
 if __name__ == "__main__":

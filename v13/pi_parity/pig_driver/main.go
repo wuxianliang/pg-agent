@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/MichaelKinsy/PiG/agent"
@@ -72,6 +73,12 @@ type parityProvider struct {
 
 func (p *parityProvider) ID() string   { return "pig-parity" }
 func (p *parityProvider) Close() error { return nil }
+
+func (p *parityProvider) requests() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.request
+}
 
 func assistantMessage(content []ai.AssistantContentBlock, reason ai.StopReason) *ai.AssistantMessage {
 	return &ai.AssistantMessage{Content: content, Provider: "pig-parity", Model: "scripted", StopReason: reason}
@@ -150,7 +157,30 @@ func (t *readTool) Execute(_ context.Context, _ string, params json.RawMessage, 
 	if err := json.Unmarshal(params, &args); err != nil {
 		return agent.AgentToolResult{Content: "invalid params: " + err.Error(), IsError: true}, nil
 	}
-	joined := filepath.Join(t.root, filepath.FromSlash(args.Path))
+	// Root fence: Abs + EvalSymlinks + Rel containment + regular file. A
+	// naive filepath.Join would happily accept "../" escapes and symlinks
+	// out of the fixture root.
+	rootAbs, err := filepath.Abs(t.root)
+	if err != nil {
+		return agent.AgentToolResult{Content: "read failed: " + err.Error(), IsError: true}, nil
+	}
+	rootEval, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return agent.AgentToolResult{Content: "read failed: " + err.Error(), IsError: true}, nil
+	}
+	joined := filepath.Join(rootAbs, filepath.FromSlash(args.Path))
+	joinedEval, err := filepath.EvalSymlinks(joined)
+	if err != nil {
+		return agent.AgentToolResult{Content: "read failed: " + err.Error(), IsError: true}, nil
+	}
+	rel, err := filepath.Rel(rootEval, joinedEval)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return agent.AgentToolResult{Content: "read out of fence: " + args.Path, IsError: true}, nil
+	}
+	info, err := os.Stat(joinedEval)
+	if err != nil || !info.Mode().IsRegular() {
+		return agent.AgentToolResult{Content: "not a regular file: " + args.Path, IsError: true}, nil
+	}
 	data, err := os.ReadFile(joined)
 	if err != nil {
 		return agent.AgentToolResult{Content: "read failed: " + err.Error(), IsError: true}, nil
@@ -225,6 +255,30 @@ func assistantText(message *agent.AssistantMessage) string {
 	return text
 }
 
+func toolCallArgs(content []ai.AssistantContentBlock) []map[string]any {
+	calls := []map[string]any{}
+	for _, block := range content {
+		if call, ok := block.(ai.ToolCall); ok {
+			path := ""
+			if value, ok := call.Arguments["path"].(string); ok {
+				path = value
+			}
+			calls = append(calls, map[string]any{"name": call.Name, "path": path})
+		}
+	}
+	return calls
+}
+
+func toolResultText(result *agent.ToolResultMessage) string {
+	text := ""
+	for _, block := range result.Content {
+		if tc, ok := block.(ai.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	return text
+}
+
 func emit(obj map[string]any, code int) {
 	raw, err := json.Marshal(obj)
 	if err != nil {
@@ -239,22 +293,33 @@ func main() {
 	if len(os.Args) > 1 {
 		fixtures = os.Args[1]
 	}
+	os.Remove("traces/pig.jsonl") // stale artifacts must never survive a run
 
 	provider := &parityProvider{}
 	model := &ai.Model{ID: "scripted", DisplayName: "scripted", Provider: provider, Capabilities: ai.ModelCapabilities{ContextWindow: 8192}}
 
 	// OnMessagePersist is invoked exactly once per NEW message by the loop:
-	// the in-memory persistence channel backing the trace evidence.
+	// the in-memory persistence channel backing the trace evidence. The log
+	// captures each message's payload (text digest, stopReason, tool calls)
+	// so post-run evidence can be CONTENT-bound, not order-only.
 	var persistMu sync.Mutex
 	type persistEntry struct {
 		ordinal    int
 		role       string
 		toolCallID string
+		text       string
+		textDigest string
+		stopReason string
+		toolCalls  []map[string]any
 	}
 	persistLog := []persistEntry{}
 	onPersist := func(msg agent.AgentMessage) error {
 		role := "custom"
 		toolCallID := ""
+		text := ""
+		textDigest := ""
+		stopReason := ""
+		var toolCalls []map[string]any
 		switch {
 		case msg.System != nil:
 			role = "system"
@@ -262,12 +327,18 @@ func main() {
 			role = "user"
 		case msg.Assistant != nil:
 			role = "assistant"
+			text = assistantText(msg.Assistant)
+			textDigest = digest(text)
+			stopReason = string(msg.Assistant.StopReason)
+			toolCalls = toolCallArgs(msg.Assistant.Content)
 		case msg.ToolResult != nil:
 			role = "toolResult"
 			toolCallID = msg.ToolResult.ToolCallID
+			text = toolResultText(msg.ToolResult)
+			textDigest = digest(text)
 		}
 		persistMu.Lock()
-		persistLog = append(persistLog, persistEntry{ordinal: len(persistLog), role: role, toolCallID: toolCallID})
+		persistLog = append(persistLog, persistEntry{ordinal: len(persistLog), role: role, toolCallID: toolCallID, text: text, textDigest: textDigest, stopReason: stopReason, toolCalls: toolCalls})
 		persistMu.Unlock()
 		return nil
 	}
@@ -291,7 +362,7 @@ func main() {
 		OnMessagePersist: onPersist,
 	})
 
-	messages, err := agentInstance.Send(context.Background(), "Read hello.txt and fib.py, then state the key points of both files.")
+	_, err := agentInstance.Send(context.Background(), "Read hello.txt and fib.py, then state the key points of both files.")
 	close(eventCh)
 	<-consumerDone
 	if err != nil {
@@ -401,43 +472,75 @@ func main() {
 
 	// Post-run evidence resolution: MessageEndEvent fires before the message
 	// is persisted, so pair steps to OnMessagePersist ordinals once the run
-	// (and the persist log) is final.
+	// (and the persist log) is final. Pairing is content-bound: each persisted
+	// message must carry the same payload its event-stream step recorded.
+	// Mismatch -> exit 5 WITHOUT writing the trace.
+	if provider.requests() != 3 {
+		emit(map[string]any{"ok": false, "error": "provider_calls",
+			"detail": fmt.Sprintf("expected 3 provider calls, got %d", provider.requests())}, 5)
+	}
 	persistMu.Lock()
 	defer persistMu.Unlock()
-	assistantOrdinals := []int{}
-	toolOrdinalByCall := map[string]int{}
+	assistantPersists := []persistEntry{}
+	toolPersistByCall := map[string]persistEntry{}
 	for _, entry := range persistLog {
 		switch entry.role {
 		case "assistant":
-			assistantOrdinals = append(assistantOrdinals, entry.ordinal)
+			assistantPersists = append(assistantPersists, entry)
 		case "toolResult":
-			toolOrdinalByCall[entry.toolCallID] = entry.ordinal
+			toolPersistByCall[entry.toolCallID] = entry
 		}
 	}
-	if len(assistantOrdinals) != len(llmSteps) {
+	if len(assistantPersists) != len(llmSteps) {
 		emit(map[string]any{"ok": false, "error": "evidence_mismatch",
-			"detail": fmt.Sprintf("assistant persists %d != llm steps %d", len(assistantOrdinals), len(llmSteps))}, 5)
+			"detail": fmt.Sprintf("assistant persists %d != llm steps %d", len(assistantPersists), len(llmSteps))}, 5)
 	}
 	for index, step := range llmSteps {
-		step.Evidence = fmt.Sprintf("persist:#%d/assistant (OnMessagePersist)", assistantOrdinals[index])
+		entry := assistantPersists[index]
+		if entry.textDigest != step.ResultDigest {
+			emit(map[string]any{"ok": false, "error": "evidence_payload",
+				"detail": fmt.Sprintf("assistant persist #%d text digest != llm step seq %d", entry.ordinal, step.Seq)}, 5)
+		}
+		if entry.stopReason != step.Args["stopReason"] {
+			emit(map[string]any{"ok": false, "error": "evidence_payload",
+				"detail": fmt.Sprintf("assistant persist #%d stopReason != llm step seq %d", entry.ordinal, step.Seq)}, 5)
+		}
+		want, _ := json.Marshal(step.Args["toolCalls"])
+		got, _ := json.Marshal(entry.toolCalls)
+		if string(want) != string(got) {
+			emit(map[string]any{"ok": false, "error": "evidence_payload",
+				"detail": fmt.Sprintf("assistant persist #%d toolCalls != llm step seq %d", entry.ordinal, step.Seq)}, 5)
+		}
+		step.Evidence = fmt.Sprintf("persist:#%d/assistant (OnMessagePersist)", entry.ordinal)
 	}
 	for callID, step := range toolStepByCall {
-		ordinal, ok := toolOrdinalByCall[callID]
+		entry, ok := toolPersistByCall[callID]
 		if !ok {
 			emit(map[string]any{"ok": false, "error": "evidence_mismatch", "detail": "no toolResult persist for " + callID}, 5)
 		}
-		step.Evidence = fmt.Sprintf("persist:#%d/toolResult (OnMessagePersist)", ordinal)
+		if entry.textDigest != step.ResultDigest {
+			emit(map[string]any{"ok": false, "error": "evidence_payload",
+				"detail": fmt.Sprintf("toolResult persist #%d digest != tool step seq %d", entry.ordinal, step.Seq)}, 5)
+		}
+		step.Evidence = fmt.Sprintf("persist:#%d/toolResult (OnMessagePersist)", entry.ordinal)
 	}
 	if finishStep != nil {
 		finishStep.Evidence = fmt.Sprintf("memory: agent_end settled; %d messages persisted (OnMessagePersist)", len(persistLog))
 	}
 
-	finalText := ""
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Assistant != nil {
-			finalText = assistantText(messages[i].Assistant)
-			break
-		}
+	// Final answer FROM THE PERSISTED final assistant message, cross-checked
+	// against the event stream (last llm step digest) and the deterministic
+	// contract over the persisted tool results.
+	finalPersist := assistantPersists[len(assistantPersists)-1]
+	finalText := finalPersist.text
+	if digest(finalText) != llmSteps[len(llmSteps)-1].ResultDigest {
+		emit(map[string]any{"ok": false, "error": "final_mismatch",
+			"detail": "persisted final assistant text != event-stream llm digest"}, 5)
+	}
+	persistedResults := []string{toolPersistByCall["call-0"].text, toolPersistByCall["call-1"].text}
+	if finalText != finalFromResults(persistedResults) {
+		emit(map[string]any{"ok": false, "error": "final_mismatch",
+			"detail": "final text != deterministic contract over persisted results"}, 5)
 	}
 
 	if err := os.MkdirAll("traces", 0o755); err != nil {
@@ -459,5 +562,5 @@ func main() {
 		emit(map[string]any{"ok": false, "error": "encode_failed", "detail": err.Error()}, 6)
 	}
 
-	emit(map[string]any{"ok": true, "trace": "traces/pig.jsonl", "steps": len(b.steps), "final": finalText}, 0)
+	emit(map[string]any{"ok": true, "trace": "traces/pig.jsonl", "steps": len(b.steps), "final": finalText, "providerCalls": provider.requests()}, 0)
 }

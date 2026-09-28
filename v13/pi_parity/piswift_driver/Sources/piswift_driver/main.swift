@@ -78,7 +78,16 @@ func textOfBlocks(_ blocks: [ContentBlock]) -> String {
 
 // ─── scripted judgment (FauxResponseFactory over the transcript) ──────────────
 
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _n = 0
+    func bump() { lock.lock(); _n += 1; lock.unlock() }
+    var n: Int { lock.lock(); defer { lock.unlock() }; return _n }
+}
+let providerCalls = Counter()
+
 let judgment: FauxResponseFactory = { transcript, _, _, model in
+    providerCalls.bump()
     var results: [String] = []
     for message in transcript.messages {
         if case .toolResult(let result) = message {
@@ -205,6 +214,7 @@ final class TraceBuilder: @unchecked Sendable {
 // ─── main ─────────────────────────────────────────────────────────────────────
 
 let fixtures = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "fixtures"
+try? FileManager.default.removeItem(atPath: "traces/piswift.jsonl") // stale artifacts must never survive a run
 
 let faux = registerFauxProvider()
 faux.setResponses([.factory(judgment), .factory(judgment), .factory(judgment)])
@@ -232,7 +242,8 @@ let result = await createAgentSession(CreateAgentSessionOptions(
 ))
 
 if let fallback = result.modelFallbackMessage, !fallback.isEmpty {
-    FileHandle.standardError.write(Data("modelFallbackMessage: \(fallback)\n".utf8))
+    // Fail-closed: the faux-only parity contract admits no model fallback.
+    emit(["ok": false, "error": "model_fallback", "detail": fallback], code: 5)
 }
 
 let recorder = Recorder()
@@ -351,60 +362,146 @@ for event in recorder.events {
 
 // ─── post-run evidence resolution ─────────────────────────────────────────────
 
-var entries = recorder.entries
-if entries.isEmpty {
-    // In-memory sessions commit entries without always emitting entryAppended
-    // during the run; the post-run session manager log is the authoritative
-    // in-memory persistence record.
-    for (index, entry) in sessionManager.getEntries().enumerated() {
-        if case .message(let messageEntry) = entry {
-            var role = "other"
-            var toolCallId = ""
-            switch messageEntry.message {
-            case .system: role = "system"
-            case .user: role = "user"
-            case .assistant: role = "assistant"
-            case .toolResult(let result):
-                role = "toolResult"
-                toolCallId = result.toolCallId
-            case .custom: role = "custom"
+// Authoritative persistence record: the post-run session manager log. The
+// entryAppended events observed during the run are corroboration only (their
+// ordinals are observation order, not session order, and in-memory sessions
+// commit further entries at boundaries after the events stop).
+func jsonKey(_ obj: Any) -> String {
+    guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) else { return "" }
+    return String(data: data, encoding: .utf8) ?? ""
+}
+
+struct AuthFact {
+    let ordinal: Int
+    let role: String
+    let toolCallId: String
+    let text: String
+    let stopReason: String
+    let toolCalls: [[String: Any]]
+}
+
+let authoritative = sessionManager.getEntries()
+var authFacts: [AuthFact] = []
+for (index, entry) in authoritative.enumerated() {
+    guard case .message(let messageEntry) = entry else { continue }
+    var role = "other"
+    var toolCallId = ""
+    var text = ""
+    var stopReason = ""
+    var toolCalls: [[String: Any]] = []
+    switch messageEntry.message {
+    case .system: role = "system"
+    case .user: role = "user"
+    case .assistant(let assistant):
+        role = "assistant"
+        text = textOfBlocks(assistant.content)
+        stopReason = assistant.stopReason.rawValue
+        for block in assistant.content {
+            if case .toolCall(let call) = block {
+                var path = ""
+                if let pathValue = call.arguments["path"]?.value as? String { path = pathValue }
+                toolCalls.append(["name": call.name, "path": path])
             }
-            entries.append(EntryFact(ordinal: index, role: role, toolCallId: toolCallId))
+        }
+    case .toolResult(let result):
+        role = "toolResult"
+        toolCallId = result.toolCallId
+        text = textOfBlocks(result.content)
+    case .custom: role = "custom"
+    }
+    authFacts.append(AuthFact(ordinal: index, role: role, toolCallId: toolCallId, text: text, stopReason: stopReason, toolCalls: toolCalls))
+}
+
+// Corroboration: the event-observed message sequence must be an in-order
+// subsequence of the authoritative log (same roles, same toolCallIds).
+do {
+    var cursor = 0
+    for fact in recorder.entries {
+        var matched = false
+        while cursor < authFacts.count {
+            let candidate = authFacts[cursor]
+            cursor += 1
+            if candidate.role == fact.role && (fact.toolCallId.isEmpty || candidate.toolCallId == fact.toolCallId) {
+                matched = true
+                break
+            }
+        }
+        if !matched {
+            emit(["ok": false, "error": "entry_event_divergence",
+                  "detail": "observed \(fact.role)/\(fact.toolCallId) missing from session log"], code: 5)
         }
     }
 }
-let assistantOrdinals = entries.filter { $0.role == "assistant" }.map { $0.ordinal }
-var toolOrdinalByCall: [String: Int] = [:]
-for fact in entries where fact.role == "toolResult" {
-    toolOrdinalByCall[fact.toolCallId] = fact.ordinal
-}
 
-if assistantOrdinals.count == llmSeqs.count {
-    for (index, seq) in llmSeqs.enumerated() {
-        builder.setEvidence(seq, "session_entry:#\(assistantOrdinals[index])/assistant (SessionManager.inMemory)")
+let assistantFacts = authFacts.filter { $0.role == "assistant" }
+if assistantFacts.count != llmSeqs.count {
+    emit(["ok": false, "error": "evidence_mismatch",
+          "detail": "assistant entries \(assistantFacts.count) != llm steps \(llmSeqs.count)"], code: 5)
+}
+for (index, seq) in llmSeqs.enumerated() {
+    let fact = assistantFacts[index]
+    let step = builder.steps[seq]
+    let args = step["args"] as? [String: Any] ?? [:]
+    if digest(fact.text) != (step["result_digest"] as? String ?? "") {
+        emit(["ok": false, "error": "evidence_payload",
+              "detail": "assistant entry #\(fact.ordinal) text digest != llm step seq \(seq)"], code: 5)
     }
-} else {
-    // Honest degradation: no assistant entries were committed at boundaries.
-    for seq in llmSeqs {
-        builder.setEvidence(seq, "memory: message_end event (no boundary commit observed)")
+    if fact.stopReason != (args["stopReason"] as? String ?? "") {
+        emit(["ok": false, "error": "evidence_payload",
+              "detail": "assistant entry #\(fact.ordinal) stopReason != llm step seq \(seq)"], code: 5)
     }
+    if jsonKey(fact.toolCalls) != jsonKey(args["toolCalls"] ?? []) {
+        emit(["ok": false, "error": "evidence_payload",
+              "detail": "assistant entry #\(fact.ordinal) toolCalls != llm step seq \(seq)"], code: 5)
+    }
+    builder.setEvidence(seq, "session_entry:#\(fact.ordinal)/assistant (SessionManager.inMemory)")
 }
 for (callId, seq) in toolSeqByCall {
-    if let ordinal = toolOrdinalByCall[callId] {
-        builder.setEvidence(seq, "session_entry:#\(ordinal)/toolResult (SessionManager.inMemory)")
-    } else {
-        builder.setEvidence(seq, "memory: toolExecutionEnd event (no boundary commit observed)")
+    guard let fact = authFacts.first(where: { $0.role == "toolResult" && $0.toolCallId == callId }) else {
+        emit(["ok": false, "error": "evidence_mismatch", "detail": "no toolResult session entry for \(callId)"], code: 5)
     }
+    let step = builder.steps[seq]
+    if digest(fact.text) != (step["result_digest"] as? String ?? "") {
+        emit(["ok": false, "error": "evidence_payload",
+              "detail": "toolResult entry #\(fact.ordinal) digest != tool step seq \(seq)"], code: 5)
+    }
+    builder.setEvidence(seq, "session_entry:#\(fact.ordinal)/toolResult (SessionManager.inMemory)")
 }
 if let finish = finishSeq {
-    builder.setEvidence(finish, "memory: agent_end; \(entries.count) session entries committed (SessionManager.inMemory)")
+    builder.setEvidence(finish, "memory: agent_end; \(authoritative.count) session entries (SessionManager.getEntries)")
 }
 
-var finalText = ""
-for event in recorder.events.reversed() {
-    if case .agent(.messageEnd(let message)) = event, case .assistant(let assistant) = message {
-        finalText = textOfBlocks(assistant.content)
-        break
+// Provider contract: exactly three calls (two tool turns + one final turn).
+if providerCalls.n != 3 {
+    emit(["ok": false, "error": "provider_calls",
+          "detail": "expected 3 provider calls, got \(providerCalls.n)"], code: 5)
+}
+
+// Final answer FROM THE PERSISTED final assistant session entry,
+// cross-verified against the event stream and the deterministic contract.
+let finalText = assistantFacts.last!.text
+do {
+    var eventFinal = ""
+    for event in recorder.events.reversed() {
+        if case .agent(.messageEnd(let message)) = event, case .assistant(let assistant) = message {
+            eventFinal = textOfBlocks(assistant.content)
+            break
+        }
+    }
+    if digest(finalText) != digest(eventFinal) {
+        emit(["ok": false, "error": "final_mismatch",
+              "detail": "persisted final assistant text != event-stream assistant text"], code: 5)
+    }
+    var persistedResults: [String] = []
+    for callId in ["call-0", "call-1"] {
+        guard let fact = authFacts.first(where: { $0.role == "toolResult" && $0.toolCallId == callId }) else {
+            emit(["ok": false, "error": "final_mismatch", "detail": "missing toolResult entry for \(callId)"], code: 5)
+        }
+        persistedResults.append(fact.text)
+    }
+    if finalText != finalFromResults(persistedResults) {
+        emit(["ok": false, "error": "final_mismatch",
+              "detail": "final text != deterministic contract over persisted results"], code: 5)
     }
 }
 
@@ -439,8 +536,9 @@ emit([
     "trace": tracePath,
     "steps": builder.steps.count,
     "final": finalText,
-    "entriesCommitted": entries.count,
-    "entriesPostRun": sessionManager.getEntries().count,
+    "providerCalls": providerCalls.n,
+    "entriesCommitted": recorder.entries.count,
+    "entriesPostRun": authoritative.count,
     "sessionMessages": result.session.messages.count,
     "activeTools": result.session.getActiveToolNames(),
 ], code: 0)

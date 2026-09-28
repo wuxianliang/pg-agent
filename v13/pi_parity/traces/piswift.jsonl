@@ -12,5 +12,5 @@
 {"args":{"native":"turn_start"},"evidence":"memory: in-process session event","persisted":"memory","phase":"raw","result_digest":"","runtime":"piswift","seq":11,"tool":null}
 {"args":{"stopReason":"stop","toolCalls":[]},"evidence":"session_entry:#8\/assistant (SessionManager.inMemory)","persisted":"memory","phase":"llm","raw":["message_start","message_update"],"result_digest":"sha256:5cb9996bc1b6b1aa","runtime":"piswift","seq":12,"tool":null}
 {"args":{"native":"turn_end"},"evidence":"memory: in-process session event","persisted":"memory","phase":"raw","result_digest":"","runtime":"piswift","seq":13,"tool":null}
-{"args":{"status":"completed"},"evidence":"memory: agent_end; 7 session entries committed (SessionManager.inMemory)","persisted":"memory","phase":"finish","result_digest":"","runtime":"piswift","seq":14,"tool":null}
+{"args":{"status":"completed"},"evidence":"memory: agent_end; 9 session entries (SessionManager.getEntries)","persisted":"memory","phase":"finish","result_digest":"","runtime":"piswift","seq":14,"tool":null}
 {"final":"hello.txt sha256:43cb4c6532bacb4a is a three-line greeting file; fib.py sha256:251b6646b62ee66a defines recursive fib(n) with fib(10)=55; both files were read.","runtime":"piswift"}
