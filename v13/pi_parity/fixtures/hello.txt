@@ -1,0 +1,3 @@
+hello parity
+this file is read first
+greeting text for the agent

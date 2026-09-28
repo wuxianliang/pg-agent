@@ -1,0 +1,19 @@
+{"runtime": "pg", "seq": 0, "phase": "judge", "tool": null, "args": {"gate_action": "noul", "gate_off_topic": "noul", "risk": "score", "intent": "tool_action", "tool": "read_file", "stated::read_file::path": "noul", "param::read_file::path": "hello.txt"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 1, "phase": "parse", "tool": null, "args": {"remaining": 0}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 2, "phase": "advance", "tool": null, "args": {"status": "waiting"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 3, "phase": "claim", "tool": "read_file", "args": {"kind": "tool", "handler": "worker:read_file", "path": "hello.txt"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 4, "phase": "tool", "tool": "read_file", "args": {"path": "hello.txt"}, "result_digest": "sha256:43cb4c6532bacb4a", "persisted": "sql"}
+{"runtime": "pg", "seq": 5, "phase": "judge", "tool": null, "args": {"gate_action": "noul", "gate_off_topic": "noul", "risk": "score", "intent": "tool_action", "tool": "read_file", "stated::read_file::path": "noul", "param::read_file::path": "fib.py"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 6, "phase": "parse", "tool": null, "args": {"remaining": 0}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 7, "phase": "advance", "tool": null, "args": {"status": "waiting"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 8, "phase": "claim", "tool": "read_file", "args": {"kind": "tool", "handler": "worker:read_file", "path": "fib.py"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 9, "phase": "tool", "tool": "read_file", "args": {"path": "fib.py"}, "result_digest": "sha256:251b6646b62ee66a", "persisted": "sql"}
+{"runtime": "pg", "seq": 10, "phase": "judge", "tool": null, "args": {"gate_action": "noul", "gate_off_topic": "noul", "risk": "score", "intent": "llm_generate", "tool": "none"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 11, "phase": "parse", "tool": null, "args": {"remaining": 0}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 12, "phase": "advance", "tool": null, "args": {"status": "waiting"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 13, "phase": "claim", "tool": null, "args": {"kind": "llm"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 14, "phase": "judge", "tool": null, "args": {"gate_action": "noul", "gate_off_topic": "noul", "risk": "score", "intent": "llm_generate", "tool": "none"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 15, "phase": "parse", "tool": null, "args": {"remaining": 0}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 16, "phase": "advance", "tool": null, "args": {"status": "terminal"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "seq": 17, "phase": "finish", "tool": null, "args": {"session": "completed"}, "result_digest": "", "persisted": "sql"}
+{"runtime": "pg", "final": "hello.txt sha256:43cb4c6532bacb4a is a three-line greeting file; fib.py sha256:251b6646b62ee66a defines recursive fib(n) with fib(10)=55; both files were read."}
