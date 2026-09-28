@@ -41,3 +41,10 @@ v13/pi_ports/pig_port/read_pig
 v13/pi_ports/piswift_port/.build/
 v13/pi_ports/piswift_port/.swiftpm/
 .piswift-build/
+.piswift-build-parity/
+
+# v13/pi_parity driver build artifacts (frameworks stay external checkouts)
+v13/pi_parity/node_modules/
+v13/pi_parity/pig_driver/read_pig
+v13/pi_parity/piswift_driver/.build/
+v13/pi_parity/piswift_driver/.swiftpm/

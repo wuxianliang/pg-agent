@@ -1,19 +1,24 @@
 """pg-agent v13 seam ring vs pi/PiG/PiSwift scripted agent loops - parity gate.
 
-Turn 1 scope: the pg side walks the two-file read task (hello.txt + fib.py)
+Turn 2 scope: the pg side walks the two-file read task (hello.txt + fib.py)
 through the v13 seam ring with a fully deterministic scripted judge and drops
-a normalized trace at traces/pg.jsonl. The three framework sides land in
-Turn 2 and print honest [SKIP] lines here.
+a normalized schema-v2 trace (canonical phases incl. an explicit llm step,
+per-step persisted evidence ids asserted against the database) at
+traces/pg.jsonl. The three framework sides are driven by their own driver
+scripts and asserted here when their toolchains are present; absent toolchains
+print honest [SKIP] lines.
 
 Exit-code semantics: 0 = nothing failed (skips are reported as [SKIP] lines
 and never fake a pass); 1 = an assertion failed. E4 in
-v13/read_tools/test_read_tools.py sweeps this file with zero tolerance for
-nonzero exits, so the skip signaling must live in printed output only.
+v13/read_tools/test_read_tools.py sweeps this file serially with zero
+tolerance for nonzero exits, so the skip signaling must live in printed
+output only (recorded assumption: E4 executes v13 test_*.py one at a time).
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -22,6 +27,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 AGENT_ROOT = ROOT.parent.parent
 sys.path.insert(0, str(AGENT_ROOT))
+
+PI_SRC = Path("/Users/wxl/Projects/pi")
+PIG_ROOT = Path("/Users/wxl/Projects/PiG")
+PISWIFT_ROOT = Path("/Users/wxl/Projects/PiSwift")
+PISWIFT_BUILD = AGENT_ROOT / ".piswift-build-parity"
 
 FIXTURES = ROOT / "fixtures"
 TRACE_DIR = ROOT / "traces"
@@ -48,6 +58,19 @@ PARAM_SPEC = {
         },
     }
 }
+
+# Golden (phase, tool) sequence for the pg side under schema v2: two tool
+# cycles, one llm cycle, then the terminal beat. The llm phase is an explicit
+# canonical phase (oracle P1: the model's assistant output is a step of its
+# own, not merely claim kind=llm).
+GOLDEN_SEQUENCE = (
+    [("judge", None), ("parse", None), ("advance", None), ("claim", TOOL_NAME), ("tool", TOOL_NAME)]
+    * len(EXPECTED_READS)
+    + [("judge", None), ("parse", None), ("advance", None), ("claim", None), ("llm", None)]
+    + [("judge", None), ("parse", None), ("advance", None), ("finish", None)]
+)
+
+FROZEN_PREFIXES = ("v13/read_tools/", "v13/pi_ports/")
 
 
 def check(label: str, condition: bool, detail: object = "") -> None:
@@ -101,17 +124,37 @@ def read_handler(params: dict) -> str:
     return target.read_text(encoding="utf-8")
 
 
+def protected_dirty(paths: list[str]) -> list[str]:
+    bad = []
+    for name in paths:
+        if name in {"v13/load.py", "pyproject.toml", "uv.lock"} or (
+            name.startswith("v13/") and name.endswith(".sql")
+        ):
+            bad.append(name)
+        if name.startswith(FROZEN_PREFIXES):
+            bad.append(name)
+    return bad
+
+
 def run_guard() -> None:
+    """Repo-hygiene guard (oracle P1: committed changes count too).
+
+    Same triple as pi_ports G2: working tree vs HEAD, HEAD vs HEAD^ (the last
+    commit must not have touched frozen faces either), and untracked files.
+    """
     load = (AGENT_ROOT / "v13" / "load.py").read_text()
     check("P0", "pi_parity" not in load, "load.py")
-    frozen = [
-        "v13/load.py",
-        "v13/read_tools/test_read_tools.py",
-        "v13/pi_ports/test_pi_ports.py",
-    ]
-    argv = ["git", "diff", "--name-only", "HEAD", "--"] + frozen
-    proc = subprocess.run(argv, cwd=AGENT_ROOT, capture_output=True, text=True)
-    check("P0", proc.returncode == 0 and not proc.stdout.strip(), (argv, proc.stdout, proc.stderr))
+    names = []
+    for argv in (
+        ["git", "diff", "--name-only", "HEAD", "--", "v13", "pyproject.toml", "uv.lock"],
+        ["git", "diff", "--name-only", "HEAD^", "HEAD", "--", "v13", "pyproject.toml", "uv.lock"],
+        ["git", "ls-files", "--others", "--exclude-standard", "--", "v13", "pyproject.toml", "uv.lock"],
+    ):
+        proc = subprocess.run(argv, cwd=AGENT_ROOT, capture_output=True, text=True)
+        check("P0", proc.returncode == 0, (argv, proc.stderr))
+        names.extend(line for line in proc.stdout.splitlines() if line.strip())
+    bad = protected_dirty(names)
+    check("P0", not bad, bad)
 
 
 def run_pg_side() -> str:
@@ -123,7 +166,7 @@ def run_pg_side() -> str:
     steps: list[dict] = []
     ticks = {"n": 0}
 
-    def record(phase: str, *, tool=None, args=None, result_digest="", persisted="sql") -> None:
+    def record(phase: str, *, tool=None, args=None, result_digest="", evidence: str) -> None:
         steps.append({
             "runtime": RUNTIME,
             "seq": len(steps),
@@ -131,7 +174,8 @@ def run_pg_side() -> str:
             "tool": tool,
             "args": args or {},
             "result_digest": result_digest,
-            "persisted": persisted,
+            "persisted": "sql",
+            "evidence": evidence,
         })
 
     def q1(cur, sql, params=None):
@@ -211,6 +255,86 @@ def run_pg_side() -> str:
         conn.rollback()
         return rows
 
+    seen = {"calls": set(), "cache": set()}
+
+    def judgment_evidence() -> tuple[str, str]:
+        """Evidence for the judge/parse steps of the beat that just parsed.
+
+        judge  -> the judgment_calls row recorded for the asked batch, or an
+                  asserted cache-hit marker when the whole batch deduped.
+        parse  -> the judgment_cache rows written by the same call, or the
+                  same hit marker. Every claim is backed by a fresh SELECT.
+        """
+        cur = begin()
+        cur.execute("SELECT call_id::text FROM judgment_calls")
+        calls = {row[0] for row in cur.fetchall()}
+        cur.execute("SELECT request_hash FROM judgment_cache")
+        cache = {row[0] for row in cur.fetchall()}
+        conn.rollback()
+        new_calls = calls - seen["calls"]
+        new_cache = cache - seen["cache"]
+        seen["calls"] |= new_calls
+        seen["cache"] |= new_cache
+        if new_calls:
+            check("P-evidence", len(new_calls) == 1, sorted(new_calls))
+            call_id = next(iter(new_calls))
+            judge_ev = f"judgment_call:{call_id[:8]}"
+            parse_ev = f"judgment_cache:+{len(new_cache)}" if new_cache else "judgment_cache:0 new"
+            return judge_ev, parse_ev
+        check("P-evidence", len(cache) > 0, "dedupe hit but judgment_cache is empty")
+        return "judgment_cache_hit (dedupe)", "judgment_cache_hit (dedupe)"
+
+    route_log: list[tuple] = []
+
+    def route_evidence() -> str:
+        cur = begin()
+        cur.execute(
+            "SELECT seq, payload->>'action' FROM events "
+            "WHERE session_id=%s AND type='turn/route' ORDER BY seq",
+            (sid,),
+        )
+        rows = cur.fetchall()
+        conn.rollback()
+        fresh = rows[len(route_log):]
+        check("P-evidence", len(fresh) == 1, rows)
+        route_log.extend(fresh)
+        return f"event:{fresh[0][0]}/turn/route"
+
+    def effect_evidence(effect_id: str, expected_status: str) -> str:
+        cur = begin()
+        cur.execute("SELECT status FROM effects WHERE effect_id=%s", (effect_id,))
+        row = cur.fetchone()
+        conn.rollback()
+        check("P-evidence", row is not None and row[0] == expected_status, (effect_id, row))
+        return f"effect:{str(effect_id)[:8]}"
+
+    def result_event_evidence(claim, etype: str) -> tuple[str, str]:
+        cur = begin()
+        cur.execute(
+            "SELECT seq FROM events WHERE session_id=%s AND type=%s AND source_effect_id=%s",
+            (sid, etype, claim["effect_id"]),
+        )
+        rows = cur.fetchall()
+        cur.execute("SELECT status FROM effects WHERE effect_id=%s", (claim["effect_id"],))
+        status = cur.fetchone()[0]
+        conn.rollback()
+        check("P-evidence", len(rows) == 1 and status == "succeeded", (etype, rows, status))
+        ev = f"event:{rows[0][0]}/{etype}+effect:{str(claim['effect_id'])[:8]}"
+        return ev, f"event:{rows[0][0]}/{etype}"
+
+    def finish_evidence() -> str:
+        cur = begin()
+        cur.execute(
+            "SELECT seq FROM events WHERE session_id=%s AND type='turn/end' ORDER BY seq",
+            (sid,),
+        )
+        rows = cur.fetchall()
+        cur.execute("SELECT status FROM sessions WHERE session_id=%s", (sid,))
+        sess = cur.fetchone()[0]
+        conn.rollback()
+        check("P-evidence", len(rows) == 1 and sess == "completed", (rows, sess))
+        return f"event:{rows[0][0]}/turn/end+session:{sess}"
+
     def parse_fresh(session_id):
         pc = psycopg2.connect(server.get_uri(DB))
         pc.autocommit = False
@@ -233,9 +357,7 @@ def run_pg_side() -> str:
             ) from exc
         pc.commit()
         pc.close()
-        record("judge", args=judge_digest(over))
-        record("parse", args={"remaining": snap.get("remaining")})
-        return snap
+        return snap, over
 
     def complete(cur, claim, status, result):
         cur.execute(
@@ -253,8 +375,11 @@ def run_pg_side() -> str:
     def beat(session_id, expect_terminal=False):
         ticks["n"] += 1
         check("P-ticks", ticks["n"] <= 24, ticks["n"])
-        snap = parse_fresh(session_id)
+        snap, over = parse_fresh(session_id)
+        judge_ev, parse_ev = judgment_evidence()
+        record("judge", args=judge_digest(over), evidence=judge_ev)
         check("P-parse", int(snap["remaining"]) == 0, snap.get("remaining"))
+        record("parse", args={"remaining": snap.get("remaining")}, evidence=parse_ev)
         cur = begin()
         cur.execute("SET LOCAL lock_timeout='250ms'")
         cur.execute("SET LOCAL statement_timeout='5s'")
@@ -271,10 +396,10 @@ def run_pg_side() -> str:
                 f"advance: {exc.pgcode} {exc.diag.message_primary if exc.diag else exc}"
             ) from exc
         conn.commit()
-        record("advance", args={"status": status})
+        record("advance", args={"status": status}, evidence=route_evidence())
         if status == "terminal":
             check("P-advance", expect_terminal, status)
-            record("finish", args={"session": "completed"})
+            record("finish", args={"session": "completed"}, evidence=finish_evidence())
             return {"advance": status}
         check("P-advance", status == "waiting", status)
         cur = begin()
@@ -289,6 +414,7 @@ def run_pg_side() -> str:
         kind = claim["kind"]
         request = claim.get("request") or {}
         print(f"[beat] {kind} {request.get('handler') or request.get('reason')}")
+        claim_ev = effect_evidence(claim["effect_id"], "claimed")
         if kind == "tool":
             record(
                 "claim",
@@ -298,9 +424,10 @@ def run_pg_side() -> str:
                     "handler": request.get("handler"),
                     "path": (request.get("params") or {}).get("path"),
                 },
+                evidence=claim_ev,
             )
         else:
-            record("claim", args={"kind": kind})
+            record("claim", args={"kind": kind}, evidence=claim_ev)
         completed = False
         try:
             if kind == "tool":
@@ -313,12 +440,6 @@ def run_pg_side() -> str:
                 params = dict(request.get("params") or {})
                 payload = read_handler(params)
                 st = "succeeded"
-                record(
-                    "tool",
-                    tool=TOOL_NAME,
-                    args={"path": params.get("path")},
-                    result_digest=digest(payload),
-                )
             elif kind == "llm":
                 results = persisted_results()
                 check("P-llm-input", results == expected_texts, results)
@@ -340,6 +461,23 @@ def run_pg_side() -> str:
             check("P-complete", got == "accepted", got)
             conn.commit()
             completed = True
+            if kind == "tool":
+                _, tool_ev = result_event_evidence(claim, "tool/result")
+                record(
+                    "tool",
+                    tool=TOOL_NAME,
+                    args={"path": params.get("path")},
+                    result_digest=digest(payload),
+                    evidence=tool_ev,
+                )
+            elif kind == "llm":
+                llm_ev, _ = result_event_evidence(claim, "llm/message")
+                record(
+                    "llm",
+                    args={"kind": "llm", "model": payload["model"]},
+                    result_digest=digest(payload["text"]),
+                    evidence=llm_ev,
+                )
             if kind not in ("tool", "llm", "human"):
                 raise AssertionError(f"unexpected effect settled: {kind}")
             return {"advance": status, "claim": claim, "payload": payload, "status": st}
@@ -374,6 +512,8 @@ def run_pg_side() -> str:
         cur.fetchone()
         cur.execute("SELECT set_config('typesafe.model', 'fake-judge', false)")
         cur.fetchone()
+        # Runtime toggle, not schema: same pattern as read_tools (the row is
+        # restored by setup_db on the next run; recorded in README).
         cur.execute(
             "UPDATE tools SET enabled=false WHERE name='spawn_subsession' AND enabled"
         )
@@ -576,13 +716,27 @@ def run_trace_assertions(expected_final: str) -> None:
         digest((FIXTURES / name).read_text(encoding="utf-8")) for name in EXPECTED_READS
     ]
     check("P-trace", [rec.get("result_digest") for rec in tool_steps] == expected_digests, tool_steps)
-    phases = [rec["phase"] for rec in steps]
-    for phase in ("parse", "advance", "claim", "tool", "judge", "finish"):
-        check("P-trace", phase in phases, phases)
+    # Golden exact sequence (oracle P2): the full (phase, tool) list, not just
+    # coverage.
+    got_sequence = [(rec["phase"], rec.get("tool")) for rec in steps]
+    check("P-trace-golden", got_sequence == GOLDEN_SEQUENCE, got_sequence)
+    llm_steps = [rec for rec in steps if rec["phase"] == "llm"]
     check(
         "P-trace",
-        all(rec.get("persisted") in ("sql", "file", "memory") for rec in steps),
-        steps,
+        len(llm_steps) == 1 and llm_steps[0].get("result_digest") == digest(final_rec["final"]),
+        llm_steps,
+    )
+    # Persisted evidence chain (oracle P1): every step carries a non-empty
+    # evidence string and persisted="sql" only alongside it.
+    check(
+        "P-trace",
+        all(rec.get("evidence") for rec in steps),
+        [rec for rec in steps if not rec.get("evidence")],
+    )
+    check(
+        "P-trace",
+        all(rec.get("persisted") == "sql" for rec in steps),
+        [rec for rec in steps if rec.get("persisted") != "sql"],
     )
     seqs = [rec["seq"] for rec in steps]
     check("P-trace", seqs == list(range(len(steps))), seqs)
@@ -597,18 +751,255 @@ def main(argv: list[str]) -> int:
         run_guard()
         expected_final = run_pg_side()
         run_trace_assertions(expected_final)
+        run_framework_sides(expected_final)
     except AssertionError as exc:
         print(exc)
         failed = True
     if failed:
         return 1
-    for side, note in (
-        ("pi", "faux provider drive lands in Turn 2 (recon in README)"),
-        ("PiG", "scriptedProvider drive lands in Turn 2 (recon in README)"),
-        ("PiSwift", "createAgentSession + mock provider drive lands in Turn 2 (recon in README)"),
-    ):
-        print(f"[SKIP] {side}: {note}")
     return 0
+
+
+# ─── framework driver planes (pi / PiG / PiSwift) ─────────────────────────────
+
+FRAMEWORK_TOOL_SEQUENCE = ["llm", "claim", "tool", "llm", "claim", "tool", "llm", "finish"]
+ALLOWED_PHASES = {"judge", "parse", "advance", "claim", "tool", "llm", "finish", "raw"}
+
+
+def command_ok(argv: list[str]) -> bool:
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def node_planes_absent() -> list[str]:
+    planes = []
+    if not command_ok(["node", "--version"]):
+        planes.append("node")
+    if not (PI_SRC / "packages" / "agent" / "src" / "harness" / "agent-harness.ts").is_file():
+        planes.append("pi_checkout")
+    if not (ROOT / "node_modules" / "marked").is_dir():
+        planes.append("node_modules")
+    return planes
+
+
+def go_planes_absent() -> list[str]:
+    planes = []
+    if not command_ok(["go", "version"]):
+        planes.append("go")
+    if not (PIG_ROOT / "go.mod").is_file() or not (PIG_ROOT / "ai" / "types.go").is_file():
+        planes.append("pig_checkout")
+    return planes
+
+
+def swift_planes_absent() -> list[str]:
+    planes = []
+    if not command_ok(["swift", "--version"]):
+        planes.append("swift")
+    read_tool = PISWIFT_ROOT / "Sources" / "PiSwiftCodingAgent" / "Core" / "Tools" / "ReadTool.swift"
+    if not (PISWIFT_ROOT / "Package.swift").is_file() or not read_tool.is_file():
+        planes.append("piswift_checkout")
+    return planes
+
+
+class ToolchainMissing(Exception):
+    def __init__(self, planes: list[str], detail: str = "") -> None:
+        super().__init__(detail)
+        self.planes = planes
+
+
+def build_pig_driver() -> list[str]:
+    out = ROOT / "pig_driver" / "read_pig"
+    env = os.environ.copy()
+    env["GOWORK"] = "off"
+    env["GOTOOLCHAIN"] = "auto"
+    proc = subprocess.run(
+        ["go", "build", "-o", str(out), "."],
+        cwd=ROOT / "pig_driver",
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
+    )
+    if proc.returncode != 0:
+        err = (proc.stderr or "") + (proc.stdout or "")
+        lowered = err.lower()
+        if "download go" in lowered or "toolchain not available" in lowered:
+            raise ToolchainMissing(["go_toolchain"], err)
+        raise AssertionError(f"pi driver build (go): {err[-2000:]}")
+    return [str(out), "fixtures"]
+
+
+def build_piswift_driver() -> list[str]:
+    port = ROOT / "piswift_driver"
+    proc = subprocess.run(
+        ["swift", "build", "-c", "release", "--product", "piswift_driver", "--build-path", str(PISWIFT_BUILD)],
+        cwd=port,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if proc.returncode != 0:
+        err = (proc.stderr or "") + (proc.stdout or "")
+        lowered = err.lower()
+        if "unable to find" in lowered and "swift" in lowered:
+            raise ToolchainMissing(["swift"], err)
+        raise AssertionError(f"piswift driver build: {err[-2000:]}")
+    shown = subprocess.run(
+        ["swift", "build", "-c", "release", "--product", "piswift_driver", "--build-path", str(PISWIFT_BUILD), "--show-bin-path"],
+        cwd=port,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if shown.returncode != 0:
+        raise AssertionError(f"piswift bin path: {(shown.stderr or shown.stdout)[-1000:]}")
+    bin_dir = Path(shown.stdout.strip().splitlines()[-1])
+    binary = bin_dir / "piswift_driver"
+    if not binary.is_file():
+        raise AssertionError(f"piswift binary missing after build: {binary}")
+    return [str(binary), "fixtures"]
+
+
+def run_driver(tag: str, argv: list[str]) -> None:
+    proc = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, timeout=180)
+    if proc.returncode != 0:
+        detail = (proc.stdout or "") + (proc.stderr or "")
+        raise AssertionError(f"{tag} driver exit {proc.returncode}: {detail[-2000:]}")
+    lines = [line for line in (proc.stdout or "").splitlines() if line.startswith("{")]
+    if not lines:
+        raise AssertionError(f"{tag} driver emitted no JSON summary")
+    summary = json.loads(lines[-1])
+    check(f"{tag}-run", summary.get("ok") is True, summary)
+
+
+def load_trace(tag: str, side: str) -> tuple[list[dict], dict]:
+    path = TRACE_DIR / f"{side}.jsonl"
+    check(f"{tag}-trace-file", path.is_file(), path)
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    check(f"{tag}-trace", bool(records), path)
+    steps = [rec for rec in records if "phase" in rec]
+    final_rec = records[-1]
+    check(f"{tag}-trace", "final" in final_rec and "phase" not in final_rec, final_rec)
+    check(f"{tag}-trace", all(rec.get("runtime") == side for rec in records), path)
+    return steps, final_rec
+
+
+def run_framework_assertions(tag: str, side: str, expected_final: str, pg_tool_digests: list[str]) -> None:
+    steps, final_rec = load_trace(tag, side)
+    seqs = [rec["seq"] for rec in steps]
+    check(f"{tag}-seq", seqs == list(range(len(steps))), seqs)
+    check(
+        f"{tag}-phases",
+        all(rec["phase"] in ALLOWED_PHASES for rec in steps),
+        [rec["phase"] for rec in steps if rec["phase"] not in ALLOWED_PHASES],
+    )
+    # Canonical (non-raw) sequence: the frameworks have no judge/parse/
+    # advance natives, so their canonical story is tool cycle x2 + final llm.
+    canonical = [rec["phase"] for rec in steps if rec["phase"] != "raw"]
+    check(f"{tag}-canonical", canonical == FRAMEWORK_TOOL_SEQUENCE, canonical)
+    tool_steps = [rec for rec in steps if rec["phase"] == "tool"]
+    check(
+        f"{tag}-tools",
+        [(rec.get("tool"), rec.get("args", {}).get("path")) for rec in tool_steps]
+        == [("read", path) for path in EXPECTED_READS],
+        tool_steps,
+    )
+    check(
+        f"{tag}-digests",
+        [rec.get("result_digest") for rec in tool_steps] == pg_tool_digests,
+        tool_steps,
+    )
+    llm_steps = [rec for rec in steps if rec["phase"] == "llm"]
+    check(f"{tag}-llm", bool(llm_steps), steps)
+    check(
+        f"{tag}-llm-final",
+        llm_steps[-1].get("result_digest") == digest(final_rec["final"]),
+        llm_steps[-1],
+    )
+    finish_steps = [rec for rec in steps if rec["phase"] == "finish"]
+    check(
+        f"{tag}-finish",
+        len(finish_steps) == 1 and finish_steps[0].get("args", {}).get("status") == "completed",
+        finish_steps,
+    )
+    # Final-answer consistency across all four runtimes.
+    check(f"{tag}-final", final_rec["final"] == expected_final, final_rec)
+    # Persisted evidence chain: non-empty, resolved, honestly marked memory.
+    check(
+        f"{tag}-evidence",
+        all(rec.get("evidence") for rec in steps),
+        [rec for rec in steps if not rec.get("evidence")],
+    )
+    unresolved = [
+        rec
+        for rec in steps
+        if "pending" in (rec.get("evidence") or "") or "no boundary commit" in (rec.get("evidence") or "")
+    ]
+    check(f"{tag}-evidence-resolved", not unresolved, unresolved)
+    check(
+        f"{tag}-persisted",
+        all(rec.get("persisted") == "memory" for rec in steps),
+        [rec for rec in steps if rec.get("persisted") != "memory"],
+    )
+    print(f"[trace] {TRACE_DIR / (side + '.jsonl')} steps={len(steps)}")
+
+
+def assert_byte_stable(tag: str, side: str, argv: list[str]) -> None:
+    first = (TRACE_DIR / f"{side}.jsonl").read_bytes()
+    run_driver(tag, argv)
+    second = (TRACE_DIR / f"{side}.jsonl").read_bytes()
+    check(f"{tag}-byte-stable", first == second, "driver output differs between runs")
+
+
+def pg_tool_digests() -> list[str]:
+    steps, _ = load_trace("P", "pg")
+    return [rec["result_digest"] for rec in steps if rec["phase"] == "tool"]
+
+
+def run_framework_sides(expected_final: str) -> None:
+    digests_pg = pg_tool_digests()
+    planes: list[str] = []
+
+    node_skipped = node_planes_absent()
+    if node_skipped:
+        planes.extend(node_skipped)
+    else:
+        pi_argv = ["node", "--experimental-strip-types", "pi_driver.mjs"]
+        run_driver("PI", pi_argv)
+        run_framework_assertions("PI", "pi", expected_final, digests_pg)
+        assert_byte_stable("PI", "pi", pi_argv)
+
+    go_skipped = go_planes_absent()
+    if go_skipped:
+        planes.extend(go_skipped)
+    else:
+        try:
+            pig_argv = build_pig_driver()
+        except ToolchainMissing as exc:
+            planes.extend(exc.planes)
+        else:
+            run_driver("PIG", pig_argv)
+            run_framework_assertions("PIG", "pig", expected_final, digests_pg)
+            assert_byte_stable("PIG", "pig", pig_argv)
+
+    swift_skipped = swift_planes_absent()
+    if swift_skipped:
+        planes.extend(swift_skipped)
+    else:
+        try:
+            piswift_argv = build_piswift_driver()
+        except ToolchainMissing as exc:
+            planes.extend(exc.planes)
+        else:
+            run_driver("PISWIFT", piswift_argv)
+            run_framework_assertions("PISWIFT", "piswift", expected_final, digests_pg)
+            assert_byte_stable("PISWIFT", "piswift", piswift_argv)
+
+    if planes:
+        print(f"[SKIP] not_run/toolchain_absent planes={','.join(sorted(set(planes)))}")
 
 
 if __name__ == "__main__":

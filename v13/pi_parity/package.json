@@ -1,0 +1,21 @@
+{
+  "name": "v13-pi-parity",
+  "private": true,
+  "type": "module",
+  "description": "Runtime dependencies for loading the local pi checkout agent harness in the pi_parity driver. Not a published package. Same pin set as v13/pi_ports plus the agent package's own externals (diff/ignore/yaml).",
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.87.1",
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-tui": "0.87.1",
+    "@silvia-odwyer/photon-node": "0.3.4",
+    "chalk": "6.0.0",
+    "cross-spawn": "7.0.6",
+    "diff": "8.0.4",
+    "get-east-asian-width": "1.6.0",
+    "highlight.js": "10.7.3",
+    "ignore": "7.0.8",
+    "marked": "18.0.11",
+    "typebox": "1.3.27",
+    "yaml": "2.9.0"
+  }
+}

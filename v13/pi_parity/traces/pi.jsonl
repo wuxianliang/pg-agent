@@ -1,0 +1,21 @@
+{"runtime":"pi","seq":0,"phase":"raw","tool":null,"args":{"native":"lane_created"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":1,"phase":"raw","tool":null,"args":{"native":"run_start"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":2,"phase":"raw","tool":null,"args":{"native":"entry_added","entry":"user/message"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":3,"phase":"raw","tool":null,"args":{"native":"turn_start"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":4,"phase":"llm","tool":null,"args":{"stopReason":"toolUse","toolCalls":[{"name":"read","path":"hello.txt"}]},"result_digest":"sha256:e3b0c44298fc1c14","persisted":"memory","evidence":"session_entry:#1/assistant (MemoryStorage)","raw":["message_start","message_end:user","message_start","message_update"]}
+{"runtime":"pi","seq":5,"phase":"raw","tool":null,"args":{"native":"usage"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":6,"phase":"claim","tool":"read","args":{"kind":"tool","toolCallId":"call-0","path":"hello.txt"},"result_digest":"","persisted":"memory","evidence":"memory: dispatch tool_call:call-0","raw":["entry_added:assistant"]}
+{"runtime":"pi","seq":7,"phase":"tool","tool":"read","args":{"path":"hello.txt"},"result_digest":"sha256:43cb4c6532bacb4a","persisted":"memory","evidence":"session_entry:#2/toolResult (MemoryStorage)"}
+{"runtime":"pi","seq":8,"phase":"raw","tool":null,"args":{"native":"turn_end"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":9,"phase":"raw","tool":null,"args":{"native":"turn_start"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":10,"phase":"llm","tool":null,"args":{"stopReason":"toolUse","toolCalls":[{"name":"read","path":"fib.py"}]},"result_digest":"sha256:e3b0c44298fc1c14","persisted":"memory","evidence":"session_entry:#3/assistant (MemoryStorage)","raw":["message_start","message_end:toolResult","entry_added:toolResult","message_start","message_update"]}
+{"runtime":"pi","seq":11,"phase":"raw","tool":null,"args":{"native":"usage"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":12,"phase":"claim","tool":"read","args":{"kind":"tool","toolCallId":"call-1","path":"fib.py"},"result_digest":"","persisted":"memory","evidence":"memory: dispatch tool_call:call-1","raw":["entry_added:assistant"]}
+{"runtime":"pi","seq":13,"phase":"tool","tool":"read","args":{"path":"fib.py"},"result_digest":"sha256:251b6646b62ee66a","persisted":"memory","evidence":"session_entry:#4/toolResult (MemoryStorage)"}
+{"runtime":"pi","seq":14,"phase":"raw","tool":null,"args":{"native":"turn_end"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":15,"phase":"raw","tool":null,"args":{"native":"turn_start"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":16,"phase":"llm","tool":null,"args":{"stopReason":"stop","toolCalls":[]},"result_digest":"sha256:5cb9996bc1b6b1aa","persisted":"memory","evidence":"session_entry:#5/assistant (MemoryStorage)","raw":["message_start","message_end:toolResult","entry_added:toolResult","message_start","message_update"]}
+{"runtime":"pi","seq":17,"phase":"raw","tool":null,"args":{"native":"usage"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":18,"phase":"raw","tool":null,"args":{"native":"turn_end"},"result_digest":"","persisted":"memory","evidence":"memory: in-process harness event"}
+{"runtime":"pi","seq":19,"phase":"finish","tool":null,"args":{"status":"completed"},"result_digest":"","persisted":"memory","evidence":"memory: run_end completed; session tip entry #5 (MemoryStorage)","raw":["entry_added:assistant"]}
+{"runtime":"pi","final":"hello.txt sha256:43cb4c6532bacb4a is a three-line greeting file; fib.py sha256:251b6646b62ee66a defines recursive fib(n) with fib(10)=55; both files were read."}
