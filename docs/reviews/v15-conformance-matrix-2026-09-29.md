@@ -1,8 +1,8 @@
 # v15 覆盖矩阵（2026-09-29）
 
-记 stage 1–4 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
+记 stage 1–5 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
 
-状态来自实跑：`uv run python v15/protocol/test_protocol.py` 退出码 0；随后 `uv run python v15/schema/test_schema.py`、`uv run python v15/namespace/test_namespace.py`、`uv run python v15/config/test_config.py` 均退出码 0。
+状态来自实跑：`uv run python v15/repl/test_repl.py` 退出码 0。随后复跑 `v15/schema/test_schema.py`、`v15/namespace/test_namespace.py`、`v15/config/test_config.py`、`v15/protocol/test_protocol.py`，四道都是退出码 0。
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
@@ -34,4 +34,16 @@
 | 25 | §6.5 / §0.25 渲染 | ✅ | 同上 | 冻结段落与规格代码块逐字相同，含 `jaz.history` 措辞。`recursion_available = false` 时正文不出现 `bind_invoke`。scoped 名按字节序，隐藏名不出现，工具行带 description。无显式输入时 user 段为 `None`。截断按码点，不改 `message_id`；system 不截断；观测先受 `max_repl_output_length`，仍超限则从最旧观测收到标记，再截显式输入。不计算 digest |
 | 26 | V15-D04 未加引号探针 | ✅ | 同上 | `SELECT jaz.return('null'::jsonb)` 与 `SELECT jaz.raise('x')` 的解析器反应只打印到标准输出，不写入仓库文件，也不成为第二种规范拼写。分类器仍在执行前拒绝 |
 
-§2 的 `EXECUTE` 归属、§3 的 21 张表/PK/终态 CHECK、§11.1 的 invoke 清单断言，由 stage 1 gate 覆盖，不另立不变量编号。stage 2–4 不新增表。`v15_protocol.sql` 只有注释。stage 4 gate 之后复跑 stage 1–3，三道都是退出码 0。
+| 27 | §4.6.2 单语句事务与函数外 `search_path` | ✅ | `v15/repl/test_repl.py` | prepare 返回恰好四键，不改 `search_path`、不改角色。worker 在函数外 `SET LOCAL search_path` 后，scratch 里 `CREATE TABLE` / `INSERT` / `SELECT` 成功，属主是 `v15_repl`。`done` 语句重放 prepare 抛 `P1523` |
+| 28 | §4.6.2 / §17 scratch 权限 | ✅ | 同上 | 已提交状态下 `v15_repl` 没有 scratch 的 `USAGE`/`CREATE`。prepare 对普通语句授予这两项且无 `GRANT OPTION`，无表级 `GRANT`；`bind_invoke` 只授予 `USAGE`。complete 之后收回。兄弟 schema 没有 `USAGE`，建表被拒绝。`v15_repl` 不能调用 `set_config` |
+| 29 | §5.3 `assign` / `print` | ✅ | 同上 | `assign` 写入 `kind = var`。`print` 按调用顺序拼进 `capture`，中间无分隔符 |
+| 30 | §4.6.2 / §5.3 引号 `return` / `raise` | ✅ | 同上 | 成功调用只暂存 `return_value` 或 `invokes.error`（`V15_RAISE` / `P1529`），invoke 仍是 `leased`。`resume_stmt` 等于语句条数。后继保持 `pending`，不在 complete 里 skip |
+| 31 | §0.22 `V15_PRINT_AND_RETURN` | ✅ | 同上 | 已提交的 `print` 留下 `capture`。随后的 `return` 抛 `P1515`，不写 `return_value`，invoke 不终态，后继不 skip |
+| 32 | §5.3 / §12.3 工具 | ✅ | 同上 | `v15_register_tool` 拒绝非 STABLE handler（`P1537`）且不留行。调用期 handler 的 `current_user` 是 `v15_tool_<name>`，返回后模型语句仍是 `v15_repl` / `session_user = v15_worker`。`v15_repl` 没有 handler 的 `EXECUTE`。`external = true` 抛 `P1517`。handler 异常、写内核表、写 scratch 都是 `P1525`，不留工具属主的 scratch 表 |
+| 33 | §0.9 `jaz.bind_invoke` | ✅ | 同上 | 实执行抛 `P1503`，不插入子 invoke。prepare 只授 `USAGE` |
+| 34 | §4.6.2 超时与取消 | ✅ | 同上 | 长语句被另一条 `v15_worker` 连接 `pg_cancel_backend`。到进程截止的取消丢掉该连接，新事务 `v15_fail_statement` 记 `P1526`。截止前的取消保留 `57014`。被取消事务的 `exec_context` 回到语句开始之前。后继不 skip |
+| 35 | §0.7 已提交语句不重跑 | ✅ | 同上 | 杀连接后，已 `done` 的语句保持 `done`，重放 prepare 抛 `P1523`。未提交的 prepare 回到 `pending`。`exec_context` 回到上一笔已提交修订 |
+| 36 | §17 级联删除探针 | ✅ | 同上 | `v15_owner` 的 definer 创建 schema，`v15_repl` 在该 scratch 建表，definer `DROP SCHEMA … CASCADE` 后 schema 不存在。`v15_owner` 不是 `v15_repl` 的成员。函数体内没有 `SET ROLE`。不写后备路径 |
+| 37 | §4.1 租约与栅栏 | ✅ | 同上 | 栅栏不符且仍 `leased` 抛 `P1501`。owner 不符、再次 `begin_exec`、租约过期抛 `P1523` |
+
+§2 的 `EXECUTE` 归属、§3 的 21 张表/PK/终态 CHECK、§11.1 的 invoke 清单断言，由 stage 1 gate 覆盖，不另立不变量编号。stage 2–5 不新增表。`v15_protocol.sql` 只有注释。stage 5 不实现 `v15_finish_exec`，因此 complete / fail 不把后继标成 `skipped`；切点是 `resume_stmt`。`v15_on_phase` 桩仍返回 `proceed`，abort 关闭形状在 `v15_begin_exec` 里，本 gate 打不到。stage 5 gate 之后复跑 stage 1–4，四道都是退出码 0。
