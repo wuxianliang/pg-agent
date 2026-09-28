@@ -20,4 +20,4 @@ worker 在函数外执行 `SET LOCAL search_path` 与 `statement_timeout = timeo
 
 ## 本 stage 不证明
 
-`v15_finish_exec`、`v15_suspend_for_child`、`v15_settle_llm`。后继 `skipped` 只在 finish。`v15_on_phase` 桩不返回 `abort`，所以关闭形状没有被本 gate 打到。
+`v15_finish_exec`、`v15_suspend_for_child`、`v15_settle_llm`。后继 `skipped` 只在 finish。`v15_on_phase` 桩不返回 `abort`，所以关闭形状没有被本 gate 打到。`v15_repl_close_span` 在 stage 7 按 R-F5 把 `llm_query/exit` 的 phase `io` 改成 `{attempt_id}`；本 gate 不调用这条关闭。

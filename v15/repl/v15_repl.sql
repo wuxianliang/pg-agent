@@ -270,9 +270,29 @@ SET search_path = pg_catalog
 AS $fn$
 DECLARE
   v_ret jsonb;
+  v_io jsonb;
+  v_attempt uuid;
 BEGIN
   IF NOT v15.v15_span_open(p_invoke_id, p_span) THEN
     RETURN;
+  END IF;
+  IF p_span = 'llm_query' THEN
+    SELECT a.attempt_id INTO v_attempt
+    FROM v15.llm_attempts a
+    JOIN v15.llm_requests r ON r.request_id = a.request_id
+    WHERE r.invoke_id = p_invoke_id
+      AND r.iteration = p_iteration
+    ORDER BY a.n DESC
+    LIMIT 1;
+    v_io := pg_catalog.jsonb_build_object(
+      'attempt_id',
+      CASE
+        WHEN v_attempt IS NULL THEN 'null'::jsonb
+        ELSE pg_catalog.to_jsonb(v_attempt)
+      END
+    );
+  ELSE
+    v_io := pg_catalog.jsonb_build_object('outcome', p_outcome);
   END IF;
   PERFORM v15.v15_repl_event(
     p_invoke_id, 'span', p_span, 'exit', p_outcome,
@@ -284,7 +304,7 @@ BEGIN
     p_iteration,
     p_span,
     'exit',
-    pg_catalog.jsonb_build_object('outcome', p_outcome)
+    v_io
   );
   PERFORM v15.v15_repl_assert_phase(v_ret);
   IF v_ret->>'action' = 'abort' THEN

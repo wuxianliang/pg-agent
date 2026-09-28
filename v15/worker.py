@@ -1,0 +1,467 @@
+"""v15 worker loop. FakeLLM runs only between committed transactions."""
+from __future__ import annotations
+
+import hashlib
+import json
+import threading
+from urllib.parse import parse_qs, urlparse
+
+import psycopg2
+from psycopg2 import extensions as pgext
+from psycopg2 import sql
+from psycopg2.extras import Json
+
+from v15.protocol.render_prompt import render_system, truncate_base
+from v15.protocol.split_sql import SplitFailure, classify_statement, split_sql, sql_without_timeout_pragma
+
+RETRYABLE = frozenset({"40001", "40P01"})
+LEASE = "30 seconds"
+CAP = 256
+
+
+def retryable_sqlstate(sqlstate: str | None) -> bool:
+    return sqlstate in RETRYABLE
+
+
+def connect_worker(db_dsn: str):
+    parsed = urlparse(db_dsn)
+    qs = parse_qs(parsed.query)
+    host = (qs.get("host") or [None])[0]
+    dbname = parsed.path.lstrip("/") or (qs.get("dbname") or [None])[0]
+    if host and dbname:
+        conn = psycopg2.connect(host=host, dbname=dbname, user="v15_worker")
+    else:
+        conn = psycopg2.connect(db_dsn)
+    conn.autocommit = False
+    return conn
+
+
+def parse_json(value):
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def _element(text: str, kind: str, bind_name, arg_sql, reject_code) -> dict:
+    return {
+        "sql": text,
+        "sql_digest": hashlib.md5(text.encode("utf-8")).hexdigest(),
+        "kind": kind,
+        "bind_name": bind_name,
+        "arg_sql": arg_sql,
+        "reject_code": reject_code,
+    }
+
+
+def statement_payload(content: str) -> list[dict]:
+    split = split_sql(content)
+    if isinstance(split, SplitFailure):
+        return [
+            _element(split.sql, split.kind, split.bind_name, split.arg_sql, split.reject_code)
+        ]
+    out = []
+    for text in split:
+        classified = classify_statement(text)
+        out.append(
+            _element(
+                text,
+                classified.kind,
+                classified.bind_name,
+                classified.arg_sql,
+                classified.reject_code,
+            )
+        )
+    return out
+
+
+def error_of(exc: psycopg2.Error, *, timeout: bool) -> dict:
+    if timeout:
+        return {
+            "sqlstate": "P1526",
+            "code": "V15_STATEMENT_TIMEOUT",
+            "message": (str(exc).splitlines() or [""])[0][:1024],
+        }
+    code = exc.pgcode or "XX000"
+    line = (str(exc).splitlines() or [""])[0][:1024]
+    return {"sqlstate": code, "code": code, "message": line}
+
+
+def build_base(snap: dict) -> list[dict]:
+    bindings = snap["bindings"]
+    protocol = snap["resolved_config"]["protocol"]
+    messages = []
+    for row in snap["messages"]:
+        message_id = row["message_id"]
+        if message_id == "seed:system":
+            kind = "system"
+            content = render_system(
+                recursion_available=bool(snap["recursion_available"]),
+                bindings=bindings,
+            )
+        elif message_id == "seed:inputs":
+            kind = "input"
+            content = row["content"]
+        else:
+            kind = row["kind"]
+            content = row["content"]
+        messages.append(
+            {
+                "message_id": message_id,
+                "role": row["role"],
+                "kind": kind,
+                "content": content,
+            }
+        )
+    return truncate_base(messages, protocol)
+
+
+class Worker:
+    def __init__(self, db_dsn: str, fakellm, worker_id: str) -> None:
+        if not isinstance(worker_id, str) or not 1 <= len(worker_id) <= 200:
+            raise TypeError("worker_id")
+        self.db_dsn = db_dsn
+        self.fakellm = fakellm
+        self.worker_id = worker_id
+        self.conn = connect_worker(db_dsn)
+
+    def close(self) -> None:
+        if self.conn is not None and not self.conn.closed:
+            self.conn.close()
+
+    def _replace_conn(self) -> None:
+        if self.conn is not None and not self.conn.closed:
+            try:
+                self.conn.close()
+            except psycopg2.Error:
+                pass
+        self.conn = connect_worker(self.db_dsn)
+
+    def _begin(self, conn) -> None:
+        cur = conn.cursor()
+        cur.execute("SET LOCAL lock_timeout = '2s'")
+        cur.execute("SET LOCAL statement_timeout = '30s'")
+
+    def _run(self, fn):
+        while True:
+            try:
+                self._begin(self.conn)
+                result = fn(self.conn)
+                self.conn.commit()
+                return result
+            except psycopg2.Error as exc:
+                self.conn.rollback()
+                if retryable_sqlstate(exc.pgcode):
+                    continue
+                raise
+
+    def _fetch(self, conn, query: str, args=()):
+        cur = conn.cursor()
+        cur.execute(query, args)
+        row = cur.fetchone()
+        return None if row is None else row[0]
+
+    def reclaim(self) -> None:
+        self._run(lambda conn: self._fetch(conn, "SELECT v15.v15_reclaim_expired()"))
+
+    def next_runnable(self) -> list[str]:
+        def read(conn):
+            cur = conn.cursor()
+            cur.execute("SELECT v15.v15_next_runnable()")
+            return [str(row[0]) for row in cur.fetchall() if row[0] is not None]
+
+        return self._run(read)
+
+    def claim(self, invoke_id: str):
+        def read(conn):
+            return self._fetch(
+                conn,
+                "SELECT v15.v15_claim(%s, %s, %s::interval)",
+                (invoke_id, self.worker_id, LEASE),
+            )
+
+        fence = self._run(read)
+        return None if fence is None else int(fence)
+
+    def snapshot(self, invoke_id: str) -> dict:
+        raw = self._run(
+            lambda conn: self._fetch(
+                conn, "SELECT v15.v15_loop_snapshot(%s)", (invoke_id,)
+            )
+        )
+        return parse_json(raw)
+
+    def drive(self, invoke_id: str, fence: int) -> None:
+        while True:
+            snap = self.snapshot(invoke_id)
+            if snap["status"] != "leased" or snap["lease_owner"] != self.worker_id:
+                return
+            if int(snap["fence"]) != fence:
+                return
+            status = snap["iter_status"]
+            attempt = snap["attempt"]
+            if attempt and attempt.get("status") == "leased" and attempt.get("call_started"):
+                return
+            if status == "pending" or (
+                status == "llm" and not (attempt and attempt.get("status") == "leased")
+            ):
+                self._llm(invoke_id, fence, snap, attempt)
+                continue
+            if attempt and attempt.get("status") == "leased" and not attempt.get("call_started"):
+                self._mark_and_settle(invoke_id, fence, attempt)
+                continue
+            if status == "executing" and not snap["repl_exec_open"]:
+                self._run(
+                    lambda conn: self._fetch(
+                        conn,
+                        "SELECT v15.v15_begin_exec(%s, %s, %s)",
+                        (invoke_id, fence, self.worker_id),
+                    )
+                )
+                continue
+            if status == "executing" and snap["repl_exec_open"]:
+                if self._exec_until_boundary(invoke_id, fence, snap):
+                    self._finish(invoke_id, fence)
+                    return
+                continue
+            return
+
+    def _llm(self, invoke_id: str, fence: int, snap: dict, attempt) -> None:
+        if attempt and attempt.get("status") == "leased" and not attempt.get("call_started"):
+            self._mark_and_settle(invoke_id, fence, attempt)
+            return
+        base = build_base(snap)
+
+        def begin(conn):
+            return parse_json(
+                self._fetch(
+                    conn,
+                    "SELECT v15.v15_begin_llm(%s, %s, %s, %s)",
+                    (invoke_id, fence, self.worker_id, Json(base)),
+                )
+            )
+
+        opened = self._run(begin)
+        if opened["action"] != "proceed":
+            return
+        attempt = {
+            "attempt_id": opened["attempt_id"],
+            "n": opened["n"],
+            "fence": 1,
+            "logical_digest": opened["logical_digest"],
+            "request": opened["request"],
+            "call_started": False,
+            "status": "leased",
+        }
+        self._mark_and_settle(invoke_id, fence, attempt)
+
+    def _mark_and_settle(self, invoke_id: str, fence: int, attempt: dict) -> None:
+        attempt_id = str(attempt["attempt_id"])
+        attempt_fence = int(attempt["fence"])
+
+        def mark(conn):
+            self._fetch(
+                conn,
+                "SELECT v15.v15_mark_call_started(%s, %s, %s, %s)",
+                (attempt_id, attempt_fence, fence, self.worker_id),
+            )
+
+        self._run(mark)
+        if self.conn.get_transaction_status() != pgext.TRANSACTION_STATUS_IDLE:
+            raise RuntimeError("FakeLLM requires no open transaction")
+        response = self.fakellm.complete(
+            attempt["logical_digest"],
+            int(attempt["n"]),
+            attempt["request"],
+        )
+        payload = statement_payload(response["content"])
+
+        def settle(conn):
+            self._fetch(
+                conn,
+                "SELECT v15.v15_settle_llm(%s, %s, %s, %s, %s, %s)",
+                (
+                    attempt_id,
+                    attempt_fence,
+                    fence,
+                    self.worker_id,
+                    Json(response),
+                    Json(payload),
+                ),
+            )
+
+        self._run(settle)
+
+    def _finish(self, invoke_id: str, fence: int) -> None:
+        self._run(
+            lambda conn: self._fetch(
+                conn,
+                "SELECT v15.v15_finish_exec(%s, %s, %s)",
+                (invoke_id, fence, self.worker_id),
+            )
+        )
+
+    def _exec_until_boundary(self, invoke_id: str, fence: int, snap: dict) -> bool:
+        statements = snap["statements"]
+        if any(
+            row["kind"] in {"return", "raise"} and row["status"] == "done"
+            for row in statements
+        ):
+            return True
+        resume = int(snap["resume_stmt"])
+        current = next((row for row in statements if row["stmt_index"] == resume), None)
+        if current is None or current["status"] == "failed" or current["error"] is not None:
+            return True
+        if current["status"] != "pending":
+            return True
+        if current["kind"] == "bind_invoke":
+            raise RuntimeError("bind_invoke is stage 8")
+        self._execute_one(invoke_id, fence, current)
+        return False
+
+    def _execute_one(self, invoke_id: str, fence: int, stmt: dict) -> None:
+        index = int(stmt["stmt_index"])
+        text = sql_without_timeout_pragma(stmt["sql"])
+        while True:
+            fired = {"done": False, "hit": False}
+            timer = None
+            try:
+                self._begin(self.conn)
+                cur = self.conn.cursor()
+                cur.execute("SELECT pg_backend_pid()")
+                pid = cur.fetchone()[0]
+                cur.execute(
+                    "SELECT v15.v15_prepare_statement(%s, %s, %s, %s)",
+                    (invoke_id, fence, self.worker_id, index),
+                )
+                info = parse_json(cur.fetchone()[0])
+                timeout_ms = int(info["timeout_ms"])
+                timer = threading.Timer(
+                    timeout_ms / 1000.0,
+                    self._cancel,
+                    args=(pid, fired),
+                )
+                timer.daemon = True
+                timer.start()
+                cur.execute(
+                    sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(
+                        sql.Identifier(info["scratch_schema"])
+                    )
+                )
+                cur.execute(
+                    f"SET LOCAL statement_timeout = '{timeout_ms + 1000}ms'"
+                )
+                cur.execute("SAVEPOINT model_stmt")
+                cur.execute("SET LOCAL ROLE v15_repl")
+                try:
+                    cur.execute(text)
+                    if cur.description:
+                        cur.fetchall()
+                except psycopg2.Error as exc:
+                    if exc.pgcode == "57014":
+                        raise
+                    fired["done"] = True
+                    if timer is not None:
+                        timer.cancel()
+                    cur.execute("ROLLBACK TO SAVEPOINT model_stmt")
+                    cur.execute("RESET ROLE")
+                    cur.execute(
+                        """
+                        SELECT v15.v15_complete_statement(
+                          %s, %s, %s, %s, %s, 'failed', %s
+                        )
+                        """,
+                        (
+                            invoke_id,
+                            fence,
+                            self.worker_id,
+                            index,
+                            int(info["statement_fence"]),
+                            Json(error_of(exc, timeout=False)),
+                        ),
+                    )
+                    self.conn.commit()
+                    return
+                fired["done"] = True
+                if timer is not None:
+                    timer.cancel()
+                cur.execute("RESET ROLE")
+                cur.execute("RELEASE SAVEPOINT model_stmt")
+                cur.execute(
+                    """
+                    SELECT v15.v15_complete_statement(
+                      %s, %s, %s, %s, %s, 'done', NULL
+                    )
+                    """,
+                    (
+                        invoke_id,
+                        fence,
+                        self.worker_id,
+                        index,
+                        int(info["statement_fence"]),
+                    ),
+                )
+                self.conn.commit()
+                return
+            except psycopg2.Error as exc:
+                fired["done"] = True
+                if timer is not None:
+                    timer.cancel()
+                try:
+                    self.conn.rollback()
+                except psycopg2.Error:
+                    pass
+                if retryable_sqlstate(exc.pgcode):
+                    continue
+                if exc.pgcode == "57014" or fired["hit"]:
+                    self._replace_conn()
+                    timeout = fired["hit"] or True
+                    self._fail_cancelled(invoke_id, fence, index, exc, timeout=timeout)
+                    return
+                raise
+
+    def _cancel(self, pid: int, fired: dict) -> None:
+        if fired["done"]:
+            return
+        fired["hit"] = True
+        conn = connect_worker(self.db_dsn)
+        try:
+            conn.autocommit = True
+            conn.cursor().execute("SELECT pg_cancel_backend(%s)", (pid,))
+        finally:
+            conn.close()
+
+    def _fail_cancelled(self, invoke_id: str, fence: int, index: int, exc, *, timeout: bool) -> None:
+        err = error_of(exc, timeout=timeout)
+        self._run(
+            lambda conn: self._fetch(
+                conn,
+                "SELECT v15.v15_fail_statement(%s, %s, %s, %s, %s)",
+                (invoke_id, fence, self.worker_id, index, Json(err)),
+            )
+        )
+
+
+def run_until_quiescent(db_dsn: str, fakellm, worker_id: str) -> None:
+    worker = Worker(db_dsn, fakellm, worker_id)
+    try:
+        steps = 0
+        while True:
+            worker.reclaim()
+            ids = worker.next_runnable()
+            if not ids:
+                return
+            progressed = False
+            for invoke_id in ids:
+                fence = worker.claim(invoke_id)
+                if fence is None:
+                    continue
+                worker.drive(invoke_id, fence)
+                progressed = True
+                break
+            if not progressed:
+                return
+            steps += 1
+            if steps > CAP:
+                raise RuntimeError("quiescent cap")
+    finally:
+        worker.close()

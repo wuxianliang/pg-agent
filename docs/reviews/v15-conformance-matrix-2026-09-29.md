@@ -1,8 +1,8 @@
 # v15 覆盖矩阵（2026-09-29）
 
-记 stage 1–6 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
+记 stage 1–7 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。未列出的 §0 条目尚未有 gate。
 
-状态来自实跑：`uv run python v15/io/test_io.py` 退出码 0。随后复跑 `v15/schema/test_schema.py`、`v15/namespace/test_namespace.py`、`v15/config/test_config.py`、`v15/protocol/test_protocol.py`、`v15/repl/test_repl.py`。
+状态来自实跑：`uv run python v15/loop/test_loop.py` 退出码 0。随后复跑 stage 1–6 的 gate。
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
@@ -64,3 +64,15 @@
 | 51 | §4.10 租约收回 | ✅ | 同上 | 无过期 attempt 时返回 0。过期 invoke 的 `running` 语句回到 `pending`，fence 加 1，审计 `lease_reclaimed`。未过期调用无写入 |
 | 52 | §4.13 `40001` / `40P01` | ✅ | 同上 | 分类结果是整段重试，不是 `P1523`。不据此把 attempt 收成 `unknown` |
 | 53 | §12 FakeLLM | ✅ | 同上 | 同一 `(logical_digest, n)` 两次 `complete` 返回同一 jsonb。未登记键在 Python 里失败。实现不导入时钟、随机或套接字 |
+
+stage 7 不包含子 invoke。`v15_open_invoke` 在本 stage 落地，因为 loop 之前没有 open。`v15_on_phase` 桩仍返回 `proceed`。无父时终态直接关闭；有父时调用已有的 `v15_io_deliver_child`，不在本 stage 重写 §4.8。
+
+| 54 | §4.3 根 open | ✅ | `v15/loop/test_loop.py` | worker 传入已渲染的 system。open 后 `runnable`，种子 `seed:system`，四行 baseline，scratch 存在。空输入不写 `seed:inputs` |
+| 55 | §4.12 单 invoke 全链 | ✅ | 同上 | `run_until_quiescent` 从 open 扫到 `return` 的 `completed`。不依赖 `NOTIFY`。`v15_next_runnable` 按 `invoke_id` 稳定序，claim 顺序与扫描一致 |
+| 56 | §4.9 return / raise | ✅ | 同上 | return：历史 `repl_output` 为空，invoke `completed`，scratch 删除，span 先 `repl_exec/exit completed` 再 `invoke/complete` 与 `invoke/exit completed`。raise：`P1529`，不写 `invoke/complete`，`repl_exec/exit` 与 `invoke/exit` 为 `failed` |
+| 57 | §4.9 / R-G1 切点 | ✅ | 同上 | 成功 `return` 之后的 preclassified `failed` 变为 `skipped`。有序首错停在失败行，更后的 `pending` 被 skip，更前的 `done` 保留 |
+| 58 | §4.11 空消息 / 散文 / 切分失败 | ✅ | 同上 | 空消息消耗迭代，`repl_output` 为空，`repl_exec/exit` 为 `completed`，invoke 不终态。散文 `42601` 写入 `sqlstate` 与 `code`，走 continue。未闭合合成行 `V15_DIALECT`，attempt `settled`，同样 continue |
+| 59 | §4.9 continue 与历史时点 | ✅ | 同上 | `print` 之后当前轮不在 `repl_history`，也不出现在 `jaz.history`。finish 之后上一轮才入历史。失败 continue 的 `repl_exec/exit` 仍是 `completed` |
+| 60 | §9.1 exit 信封 | ✅ | 同上 | `v15_repl_fatal_expand` 的 `llm_query/exit` phase `io` 是 `{attempt_id}`（可为 JSON `null`）；事件 payload 仍含匹配的 `outcome`。`repl_exec/exit` 与 `invoke/exit` 的 phase `io` 是 `{outcome}`。settle 路径的 `llm_query/exit` 同样是 `{attempt_id}` |
+| 61 | §4.13 `40001` | ✅ | 同上 | worker 把 `40001` 整段重试，不改写成 `P1523`。`40P01` 同类，`55P03` 不是 |
+| 62 | §4.6.2 进程截止 | ✅ | 同上 | 短 pragma 的长语句被另一条连接取消，记 `P1526`，连接不复用 |
