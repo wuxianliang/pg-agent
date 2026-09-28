@@ -20,20 +20,21 @@
 
 ## 结论（先答问题）
 
-**结果一样；过程不一样。**
+**在本次确定性、单会话的两文件任务上，结果一样；过程不一样。**
 
 - **结果一样**：四侧终答文本逐字节全等；末次生成 digest 均为 `sha256:5cb9996bc1b6b1aa`（= 终答文本
   digest）；工具调用序列均为 read `hello.txt` → read `fib.py`，两文件内容 digest 四侧一致
-  （`sha256:43cb4c6532bacb4a` / `sha256:251b6646b62ee66a`）；三框架侧 provider 恰好调用 3 次；
+  （`sha256:43cb4c6532bacb4a` / `sha256:251b6646b62ee66a`；digest 记法一律为内容 utf-8 sha256 的 16-hex 前缀，下同）；三框架侧 provider 在本次脚本化 provider 合同下恰好调用 3 次；
   三框架驱动字节稳定（连跑两遍 trace 文件全等）。终审回归（见文末）全部 exit 0。
 - **过程不一样**（结构性差异，后文逐条给证据）：
   1. **步数不同**：pg 19 步 / pi 20 步 / pig 21 步 / piswift 15 步（step 数口径，非 JSONL 行数）；
-  2. **相位结构不同**：pg 每拍过 `judge,parse,advance` 三相位；框架侧规范相位只有
-     `llm,claim,tool(×2)+llm,finish`，其余全是 raw 事件行；
+  2. **相位结构不同**：pg 每拍过 `judge,parse,advance` 三相位；框架侧规范相位序列为
+     `[llm,claim,tool,llm,claim,tool,llm,finish]`，其余全是 raw 事件行；
   3. **判断点不对称**：pg 每拍产生独立判断事件（judge 步 ×4）；框架侧判断只发生在 provider 响应
      内部，从不产生独立判断事件；
-  4. **claim 语义不同**：pg claim=持久效果租约（effect 行，恢复可续）；框架 claim=工具分派开始
-     （纯事件流标记，无持久化语义）；
+  4. **claim 语义不同**：pg claim=持久效果租约（effect 行；本轮已验证持久化记录与 claim/effect
+     链接，未实测崩溃后的续租/重认领/续跑）；框架 claim=工具分派开始
+     （纯事件流标记，无持久化语义，本驱动会话在内存）；
   5. **持久化语义不同**：pg 每步 SQL 事件/效果行、证据可查；pi=MemoryStorage entry；pig=OnMessagePersist
      回调；piswift=SessionManager.inMemory 惰性边界提交；
   6. **原生事件词汇不同**：HarnessEvent vs AgentEvent(channel) vs AgentSessionEvent；
@@ -157,11 +158,11 @@ pg 侧无字节稳定断言——其 evidence 盐值（`judgment_call:<hex>`/`ef
 
 | 侧 | claim 是什么 | 证据 | 恢复语义 |
 |---|---|---|---|
-| pg | **持久效果租约**：`v13_claim` 认领一个 effect 行（工具 claim 带 `handler:"worker:read_file"`；终答生成同样先经 claim，pg:13 `kind:"llm"`） | claim 步 evidence=`effect:<hex>`（实查 effects 表）；工具行断言至 effects 表内容 | 效果行在库；崩溃后可从 DB 状态续（租约/效果可查可对账） |
-| pi/pig/piswift | **工具分派开始**：事件流标记工具即将执行（pi `tool_start`、pig `ToolExecutionStartEvent`、piswift `.toolExecutionStart`） | claim 步 evidence=`memory: dispatch tool_call:call-N`（无持久化载荷） | 无持久语义；会话在内存，进程失即失（见下条） |
+| pg | **持久效果租约**：`v13_claim` 认领一个 effect 行（工具 claim 带 `handler:"worker:read_file"`；终答生成同样先经 claim，pg:13 `kind:"llm"`） | claim 步 evidence=`effect:<hex>`（实查 effects 表）；工具行断言至 effects 表内容 | effect/event 行在 SQL；本轮已验证持久化记录与 claim/effect 链接，**未实测**崩溃后的续租/重认领/续跑 |
+| pi/pig/piswift | **工具分派开始**：事件流标记工具即将执行（pi `tool_start`、pig `ToolExecutionStartEvent`、piswift `.toolExecutionStart`） | claim 步 evidence=`memory: dispatch tool_call:call-N`（无持久化载荷） | 无持久语义；本驱动会话在内存（各框架接入持久 backend 的恢复边界未测） |
 
-pg 侧「生成也要先认领」（pg:13 claim kind=llm → pg:14 llm 效果）意味着**每一拍的效果都有租约链**；
-框架侧 claim 只伴随工具调用，生成步（llm）没有认领前奏。
+pg 侧「生成也要先认领」（pg:13 claim kind=llm → pg:14 llm 效果）意味着 **tool 与 llm 两类效果都有
+租约链（finish 拍无 claim）**；框架侧 claim 只伴随工具调用，生成步（llm）没有认领前奏。
 
 ### 4. 持久化语义
 
@@ -169,7 +170,7 @@ pg 侧「生成也要先认领」（pg:13 claim kind=llm → pg:14 llm 效果）
 |---|---|---|---|
 | pg | **每步 SQL 事件/效果行**（19 步全部 `persisted:"sql"`） | judge→`judgment_call:<hex>`/`judgment_cache:+11`、advance→`event:<n>/turn/route`、claim→`effect:<hex>`、tool→`event:<n>/tool/result`、llm→`event:<n>/llm/message+effect:<hex>`、finish→`event:<n>/turn/end+session:completed` | 直接查库；evidence 串逐相位给出可定位行 |
 | pi | `MemoryStorage` 会话 entry | `session_entry:#N/<kind> (MemoryStorage)`（assistant #1/#3/#5、toolResult #2/#4）；`entry_added` 在 `message_end` 之后才触发，故驱动 run 后按序配对+内容比对 | 进程内；会话文件形态存在（StorageBackedSession）但本驱动用内存 storage |
-| pig | `OnMessagePersist` 回调（每条新消息恰一次） | `persist:#N/assistant\|toolResult (OnMessagePersist)`（#1-#5）；finish 行自报 6 messages persisted | 回调是接持久层的钩子位；本驱动只记日志（agent 内存态） |
+| pig | `OnMessagePersist` 回调（每条新消息恰一次） | `persist:#N/assistant\|toolResult (OnMessagePersist)`（#1-#5）；finish 行自报 6 messages persisted——序数 #0 是 **user 任务消息**（ordinal 从 0 起，`main.go:341`；配对只取 assistant/toolResult，user 消息不绑定任何规范步，故无 evidence 行），即 6 = user 1 + agent 侧 5（assistant×3+toolResult×2） | 回调是接持久层的钩子位；本驱动只记日志（agent 内存态） |
 | piswift | `SessionManager.inMemory` 惰性边界提交 | `session_entry:#N/<kind> (SessionManager.inMemory)`；**证据序数一律以运行后 `getEntries()` 全量列表为准**（`main.swift:383`），`entryAppended` 事件序数仅旁证（观察序≠会话序，内存会话边界还会补提交） | 进程内；换持久 backend 需另接 SessionManager 实现 |
 
 序数空间的细节差也可见一斑：pi 的 agent 消息从 entry #1 起；piswift 的会话预置 system/用户条目，
