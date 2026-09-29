@@ -9,19 +9,19 @@
 | A2 | `plan_contract`；锁内绑定在 `plan_arm` | 状态机与锁内绑定已有。绑定窗仍未闭合 | `plan_arm` 退出码 0 的 `bind_once` / `reenable_binds_new_effect`。不声称并发窗已闭合 | exit_0 |
 | A3 | `plan_read` | 库存与前沿已在一次性库跑通。LIMIT 不是扫描硬顶。不声称派发门、产品角色、material 已扣 | `UV_FROZEN=1 uv run python v13/plan_read/test_plan_read.py` 退出码 0；库 `ll_plan_read_46262`（跑完已 DROP）；11 checks。断言 `inventory_33` 的 `rows_examined=32` | exit_0 |
 | A4 | `plan_contract` | 前奏零 INSERT；入口拒绝空 spec 并转发显式 version。不得声称 ingress 已等于 start-goal | 同上 | exit_0 |
-| B1 | `loop_driver` | 不得声称五出口已交付 | 无 | not_run |
-| B2 | `loop_driver` | 不得声称四层组装已交付 | 无 | not_run |
+| B1 | `loop_driver` | 五出口与判定顺序已在一次性库跑通；T0 结算 advance 在 complete 同事务（txid 对相等）；stopped 根 `failed` 非 null（含 false/0/文本）时零 advance，键缺失与 JSON null 放行。不得声称心跳已按计划选下一项（真链在 `real_chain`） | `UV_FROZEN=1 uv run python v13/loop_driver/test_loop_driver.py` 退出码 0；库 `ll_loop_driver_62098`（跑完已 DROP）；55 checks。断言 `exit_*`/`unit_*`/`t0_settlement_advance`/`complete_settle_same_txn`/`stopped_failed_snap{,_zero,_text,_null}`/`provider_requeue_one_advance`。stannum 环境注：STN3 并行线 09-30 03:23 换了 pgembed 的 stannum 产物；gate 在恢复 0.4.0 pin（dylib+control）后实跑，跑完已恢复 STN3 现场 | exit_0 |
+| B2 | `loop_driver` | 四层文本组装（assertion/assembly/judgment/workflow 有序四段，不合并单行，不写回）已跑通。模板数据在 `workflow_bind`，本 stage 用夹具文本，不调用 `v13_workflow_resolve` | 同上。断言 `four_layers`/`io_outside_txn`（layer_names 有序四段） | exit_0 |
 | B3 | 无目录 | 不实现。C/D 不得重开 | 无 SQL、无目录 | not_run |
 | B4 | Phase C | 不实现。gap 投影尚未存在 | 无 | not_run |
 | B5 | Phase C | 不实现。驱动器不是收据写者 | 无 | not_run |
-| B6 | `loop_driver` | 不得声称所有权表已交，更不得声称无人值守 | 无 | not_run |
+| B6 | `loop_driver` | 所有权表（README `## B6` 15 行，含 fourth-duty=none）与静态检查已交付。不授权无人值守；Phase C 声称前必须再交表 | 同上。断言 `b6_table_complete`/`static_check`/`no_recover_idle`/`no_direct_spawn`/`no_closed_set_leak`。claim 路径偏差见台账 L12/L13 | exit_0 |
 | C1 | `workflow_bind` | 不得声称政策行或解析器已交付 | 无 | not_run |
 | C2 | `workflow_bind` | 合同未交。子集不在 A | 无 | not_run |
 | C3 | `workflow_bind` / `real_chain` | 不得声称指针函数或生产调用已交付 | 无 | not_run |
 | C4 | `real_chain` | 不得声称摘录引用已交付。多 lane 不建 | 无 | not_run |
 | C5 | `loop_driver` | 不实现自动 skip | 无 | not_run |
 | C6 | Phase C | 不实现。V11 未读 | 无 | not_run |
-| C7 | `loop_driver` | 不得声称投影已交付 | 无 | not_run |
+| C7 | `loop_driver` | 投影（STABLE `v13_harness_result_project`，闭集 10 键、四值 `result_kind`、三值 `wait_reason`、散文/缺键失败不映射 reject）与驱动器映射已跑通。可选键名单已重读活体（行号在本目录 README）。不重复实现 allOf（由 `v13_complete` 内验证执法） | 同上。断言 `c7_four_kinds_project`/`c7_invalid_fail_no_reject`/`c7_wait_reason_absent_stays`/`c7_prose_missing_key_fail_no_complete`/`harness_project_served_archived` | exit_0 |
 | D1 | Phase C | 不实现 | 无 | not_run |
 | D2 | Phase C | 不实现 | 无 | not_run |
 | D3 | Phase C | 不实现。哈希句之前不得标绿 | 无 | not_run |
@@ -32,6 +32,6 @@
 | G4 | Phase C / D | 不实现。PC-4 不开工 | 无 | not_run |
 | plan_read gate | `v13/plan_read` | A3 库存与前沿零写。不声称 `v13_selected_todo` / `v13_plan_gate` 已交付 | 同上。断言：`zero_write`；`inventory_33`；`inventory_32`；`inventory_0`；`horizon_caps`；`gap_inserts_nothing`；`text_cap`；`empty_plan`；`child_reads_root_stream` | exit_0 |
 | plan_arm gate | `v13/plan_arm` | 唯一一份 `v13_advance` 替换已在一次性库跑通。不声称绑定窗已闭合，不声称产品角色 | `UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0；库 `ll_plan_arm_16921`（跑完已 DROP）；43 checks。断言名按 §7.3。结算扫描全部绑定行 | exit_0 |
-| loop_driver gate | `v13/loop_driver` | 无 | 无 | not_run |
+| loop_driver gate | `v13/loop_driver` | B1/B2/B6/C7 在一次性库跑通（三轮 Oracle 复审：首轮 P0×1 加一批 P1 全改；第二轮 codex 通过；第三轮三路通过后余项亦全改）。不声称真链端到端，不声称产品角色，不授权无人值守。Fake 绿不是产品可用 | `UV_FROZEN=1 uv run python v13/loop_driver/test_loop_driver.py` 退出码 0；库 `ll_loop_driver_62098`（跑完已 DROP）；55 checks。回归：`plan_contract` 93、`plan_read` 11、`plan_arm` 43 同日全绿 | exit_0 |
 | workflow_bind gate | `v13/workflow_bind` | 无 | 无 | not_run |
 | real_chain gate | `v13/real_chain` | 无 | 无 | not_run |
