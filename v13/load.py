@@ -44,6 +44,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "quota_window" / "v13_quota_window.sql",
     V13_ROOT / "attention" / "v13_attention.sql",
     V13_ROOT / "govern" / "v13_govern.sql",
+    V13_ROOT / "plan_contract" / "v13_plan_contract.sql",
 ]
 
 STAGE_THROUGH = {
@@ -76,6 +77,7 @@ STAGE_THROUGH = {
     "quota_window": 27,
     "attention": 28,
     "govern": 29,
+    "plan_contract": 30,
 }
 
 
