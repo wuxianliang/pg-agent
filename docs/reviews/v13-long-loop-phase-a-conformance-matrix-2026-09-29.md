@@ -5,8 +5,8 @@
 | 条目 | 目录 | 允许的声称 | 证据指针 | 状态 |
 |---|---|---|---|---|
 | plan_contract gate | `v13/plan_contract` | A1 写者、A2 状态机与绑定载荷、A4 前奏与入口已在一次性库跑通。不声称 advance 臂、绑定窗、产品角色、ingress 等于 start-goal | `UV_FROZEN=1 uv run python v13/plan_contract/test_plan_contract.py` 退出码 0；库 `ll_plan_contract_86792`（跑完已 DROP）；93 checks | exit_0 |
-| A1 | `plan_contract`；臂在 `plan_arm` | 写者与 `user/message` 水位已有。不声称计划门已接入 advance，不声称 `should_run` 被改过 | 同上。`plan_arm` 未跑 | exit_0 |
-| A2 | `plan_contract`；锁内绑定在 `plan_arm` | 状态机、绑定载荷、隔离与再启用形状已有。绑定窗未闭合 | 同上。`plan_arm` 未跑 | exit_0 |
+| A1 | `plan_contract`；臂在 `plan_arm` | 写者、水位、以及 advance 前缀已有。不声称 `should_run` 被改过，不声称绑定窗已闭合 | `plan_contract` 与 `plan_arm` 均退出码 0。`should_run` version 仍是 3 | exit_0 |
+| A2 | `plan_contract`；锁内绑定在 `plan_arm` | 状态机与锁内绑定已有。绑定窗仍未闭合 | `plan_arm` 退出码 0 的 `bind_once` / `reenable_binds_new_effect`。不声称并发窗已闭合 | exit_0 |
 | A3 | `plan_read` | 库存与前沿已在一次性库跑通。LIMIT 不是扫描硬顶。不声称派发门、产品角色、material 已扣 | `UV_FROZEN=1 uv run python v13/plan_read/test_plan_read.py` 退出码 0；库 `ll_plan_read_46262`（跑完已 DROP）；11 checks。断言 `inventory_33` 的 `rows_examined=32` | exit_0 |
 | A4 | `plan_contract` | 前奏零 INSERT；入口拒绝空 spec 并转发显式 version。不得声称 ingress 已等于 start-goal | 同上 | exit_0 |
 | B1 | `loop_driver` | 不得声称五出口已交付 | 无 | not_run |
@@ -31,7 +31,7 @@
 | G3 | Phase C | `v13_recover_idle` 未改 | 无 | not_run |
 | G4 | Phase C / D | 不实现。PC-4 不开工 | 无 | not_run |
 | plan_read gate | `v13/plan_read` | A3 库存与前沿零写。不声称 `v13_selected_todo` / `v13_plan_gate` 已交付 | 同上。断言：`zero_write`；`inventory_33`；`inventory_32`；`inventory_0`；`horizon_caps`；`gap_inserts_nothing`；`text_cap`；`empty_plan`；`child_reads_root_stream` | exit_0 |
-| plan_arm gate | `v13/plan_arm` | 无 | 无 | not_run |
+| plan_arm gate | `v13/plan_arm` | 唯一一份 `v13_advance` 替换已在一次性库跑通。不声称绑定窗已闭合，不声称产品角色 | `UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0；库 `ll_plan_arm_16921`（跑完已 DROP）；43 checks。断言名按 §7.3。结算扫描全部绑定行 | exit_0 |
 | loop_driver gate | `v13/loop_driver` | 无 | 无 | not_run |
 | workflow_bind gate | `v13/workflow_bind` | 无 | 无 | not_run |
 | real_chain gate | `v13/real_chain` | 无 | 无 | not_run |
