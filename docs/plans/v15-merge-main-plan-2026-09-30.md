@@ -138,4 +138,4 @@ git push origin integrate/v15-main-20260930:main        # 普通推送；禁 for
 - `uv lock --check` 0；demo 库全清；十道 v15 gate 退出码全 0（合并树串行实跑）。
 - v13 历史 gate（pi_ports G2 / pi_parity P0）：HEAD 钉死型清洁断言在当前 main 尖必红（其 HEAD^→HEAD 即含保护面改动），非本合并回归；合并对 v13/** 零改动，按可达性豁免。
 - demo：fake 0 / keyless 2 / harness 0 / 库清 / 八文件白名单。
-- merge SHA：见推送后记录提交。
+- merge SHA：db26c033d9a359305364737a6c1e876e5cb6e30c（推送后记录提交回填）。

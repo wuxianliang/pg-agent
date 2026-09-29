@@ -264,7 +264,7 @@ D27–D30 已写入规格与台账。D27 与 D29 由 provider gate 的线协议�
 
 ## Merge verification（2026-09-30）
 
-- 第一父：`origin/main` = `0b18d0a`（含此前待推的 2 个 v13 long-loop 提交，已先行独立推送）；第二父：`origin/rp/agent/3e700836-agent` = `4b45dd8`（`4eddbb4`/`890d3a1` 均为祖先）。merge-base `e915e92`。merge SHA：记录于推送后（本提交无法含自身 SHA）。
+- 第一父：`origin/main` = `0b18d0a`（含此前待推的 2 个 v13 long-loop 提交，已先行独立推送）；第二父：`origin/rp/agent/3e700836-agent` = `4b45dd8`（`4eddbb4`/`890d3a1` 均为祖先）。merge-base `e915e92`。merge SHA：db26c033d9a359305364737a6c1e876e5cb6e30c（记录于推送后）。
 - 冲突面：`git merge-tree` 预检零冲突；实际 `merge --no-ff --no-commit` 自动并入（根级交集仅 `.gitignore`，行区不相交）。`uv lock --check` 通过。
 - 十道 v15 gate（合并树上串行实跑）：schema/namespace/config/protocol/repl/io/loop/tree/govern/provider 全部退出码 0。
 - main 侧回归：main 侧 22 提交触及 v13/pi_ports、pi_parity、plan_arm、loop_driver 等。其历史 gate（`test_pi_ports.py` G2 / `test_pi_parity.py` P0）含 `HEAD^→HEAD` 仓库清洁断言，在当前 main 尖（0b18d0a 自身改动了 `v13/load.py`/`loop_driver.sql` 等保护面）于任何干净检出上必红——属钉死在各自里程碑提交形态的历史 gate，非本合并回归；本合并对 `v13/**` 零改动（`git diff --cached -- v13/` 为空），v13 行为不可达性退化。据此不重跑、按可达性论证豁免。
