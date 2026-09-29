@@ -605,7 +605,7 @@ provider 调用点的事务状态由 worker 的 `_assert_idle` 保证。驱动�
 ## Run record
 
 - 日期：2026-09-29
-- note：NOTE_V1（三次 note 预算用 0）
+- note：NOTE_V1；首次实跑通过，真实全链预算用 1/3，note 修改 0 次
 - 结果：`tail_ok relay_ok`
 - failure_class：无
 - 成本：$0.001257786
