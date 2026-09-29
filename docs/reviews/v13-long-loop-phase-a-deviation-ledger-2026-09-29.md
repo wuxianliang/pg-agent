@@ -11,4 +11,7 @@
 | L5 | 产品角色 / stannum / PC-4 / 产品库名 | 未关闭 | 超级用户夹具不是证明。新 SQL 不写 stannum GRANT |
 | L6 | 超级用户裸 INSERT | 已知洞，不是产品路径 | 形状合法的裸 INSERT 可绕过水位。不 REVOKE 旧授权。驱动器静态检查在 `loop_driver` |
 | L7 | 绑定窗 | 未关闭 | `plan_arm` 退出码 0 之前不得声称已闭合 |
-| L8 | Fake 绿 | 不是产品可用 | `plan_contract` 退出码 0 只证明本目录合同 |
+| L8 | Fake 绿 | 不是产品可用 | `plan_contract` 与 `plan_read` 退出码 0 只证明对应目录合同 |
+| L9 | 空库存 `omitted_complete` | 选择，未当偏差关闭 | 0 条的三个计数是 0。`omitted_count = 0` 时 `omitted_complete = true`，包括空库存；`= 1` 时为 false。不把「全 0」读成布尔 false |
+| L10 | gap 的未退役 | 选择，未当偏差关闭 | 当前成员里 `blocker` 且 status 不是 `done` 或 `dropped`。指向成员集外的 `successor`/`resume` 边也是 gap。父若要求 `done` 仍算缺口，停，不改成静默放行 |
+| L11 | `v13_selected_todo` / `v13_plan_gate` | 未关闭，按 §7.2 后置 | 本目录只交库存与前沿。派发读留给 `plan_arm`。本 stage 不声称这两个函数已交付 |
