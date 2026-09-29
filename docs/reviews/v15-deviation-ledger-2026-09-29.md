@@ -91,4 +91,4 @@ stage 10 追加 D27–D30，不把任何一行修回 jaz。D01–D26 的权威�
 
 ## Demo
 
-尾委托 demo 不新增 V15-D 行。它不修改渲染器、切分器、worker 或 provider。真实调用的计价、无幂等与思考文本仍由 D27–D30 覆盖。
+尾委托 demo 不新增 V15-D 行。它不修改渲染器、切分器、worker 或 provider。真实调用的计价、无幂等与思考文本仍由 D27–D30 覆盖。更深链 demo 不新增 V15-D，不修改渲染器、切分器、worker、provider、namespace。
