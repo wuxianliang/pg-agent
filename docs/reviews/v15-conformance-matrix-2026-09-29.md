@@ -200,11 +200,18 @@ stage 9 是合运行时。`v15_on_phase` 与四个治理 handler 同 oid 替换�
 
 ## stage 10 · SQL
 
-D27–D30 的句子在规格 §14 与偏差台账。本里程碑不声称 gate 证明了「线上无 temperature」或思考文本不进助手正文。那些行等适配器 gate。
+D27–D30 的句子在规格 §14 与偏差台账。线协议、计价与 `reasoning_content` 由 10.8–10.14 证明。
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
-| 10.1 | §0.0 gate 不开网络 | ✅ | `v15/provider/test_provider.py` | 进程内剥掉四枚凭据，并把 `urlopen` 罩成 `AssertionError("network")`。本 gate 不构造真实 provider |
+| 10.1 | §0.0 gate 不开网络 | ✅ | `v15/provider/test_provider.py` | 进程内剥掉四枚凭据。`urlopen` 罩成 `AssertionError("network")` 且计数为 0。断网点是默认 opener 构造，不是 `urlopen`。适配器只用注入传输 |
+| 10.8 | 价目 fail-closed | ✅ | 同上 | flash 两档精确到 `Decimal`。12:00 与 18:00 空闲。`deepseek-v4-pro`、未知模型、naive 时间返回 `None`，不是 0 |
+| 10.9 | 线上无 temperature / D27 | ✅ | 同上 | 捕获的 JSON 无 `temperature`、无 `top_p`、`stream` 为 false；`max_output_tokens` 成 `max_tokens`；消息序与 request 一致且无 `message_id` |
+| 10.10 | keyless 与凭据优先级 | ✅ | 同上 | 显式参数 > `DEEPSEEK_API_KEY` > `OPENAI_API_KEY` > `""`。import 不读 env。无 key 的 preflight 是 `credentials_absent`，传输计数 0 |
+| 10.11 | HTTP 分类 | ✅ | 同上 | 402/401/422/404/403/400/499 与 `content_filter`/`model_mismatch` reject。400 body-parse、429/503/timeout/URLError/3xx/非 200 2xx/usage_invalid/unpriced abandon。空串与 `length` settle。缺 usage 不以 0 settle |
+| 10.12 | NUL 与 Decimal settle | ✅ | 同上 | 先切分后替换。库内 content 与语句 sql 含六字符序列且不含 NUL，语句 `V15_VALUE_INVALID`，attempt `settled`。`Decimal("0.15")` 入库与之相等，不是二进制浮点 |
+| 10.13 | worker 回归 | ✅ | 同上 | FakeLLM 仍把 `SELECT jaz."return"(...)` 跑到 `completed`。KeyError 不 settle。脚本化重试只把第二次成本记入 `cost_used`。`max_io=1` 不插第二行 |
+| 10.14 | D29 reasoning | ✅ | 同上 | `reasoning_content` 不进 `content`，审计只有 `reasoning_chars` |
 | 10.2 | §4.5.5 unstarted | ✅ | 同上 | 不 mark。attempt `failed`，不计 call。invoke `failed`、`fatal = false`、`P1539`、`message = ''`。无助手消息，无语句，scratch 已删 |
 | 10.3 | §4.5.5 started reject | ✅ | 同上 | attempt `unknown`，按行上存放的预留计入 `calls_used`，`cost_used` 不增。invoke 同上 `P1539`。无助手消息。再调用抛 `P1502` |
 | 10.4 | §4.5.5 abandon | ✅ | 同上 | attempt `unknown`。invoke `runnable`，fence 加 1，租约空。`llm_query` span 仍开。retry 的 `new_attempt_id` 为 JSON null。`max_io_attempts = 1` 时不再插入新行，终态是 `V15_IO_EXHAUSTED` |
@@ -243,4 +250,4 @@ D27–D30 的句子在规格 §14 与偏差台账。本里程碑不声称 gate �
 | V15-D25 | `v15/protocol/test_protocol.py` | `DO` 被拒绝。语句内部的迭代只走 `WITH RECURSIVE` |
 | V15-D26 | `v15/govern/test_govern.py` | exit 上的 abort 回滚，outcome 行不留下。exit 只能写黑板 |
 
-D27–D30 已写入规格与台账。M1 的 provider gate 不证明线协议或计价，所以这里不给它们打 ✅。
+D27–D30 已写入规格与台账。D27 与 D29 由 provider gate 的线协议与 reasoning 断言证明。D28 与 D30 是记账口径，不在本 gate 里对发票。

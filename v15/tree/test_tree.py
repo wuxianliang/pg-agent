@@ -36,7 +36,7 @@ class Script:
         self.replies = list(replies)
         self.calls = []
 
-    def complete(self, logical_digest: str, n: int, request: dict) -> dict:
+    def complete(self, logical_digest: str, n: int, request: dict, llm_config=None) -> dict:
         self.calls.append((logical_digest, n, request))
         if not self.replies:
             raise StopScript("no reply")
@@ -609,7 +609,7 @@ def test_depth_guard(server, wconn, cur) -> None:
     open_invoke(wconn, iid)
 
     class Tighten(Script):
-        def complete(self, logical_digest, n, request):
+        def complete(self, logical_digest, n, request, llm_config=None):
             conn = connect(server)
             conn.autocommit = True
             try:
@@ -625,7 +625,7 @@ def test_depth_guard(server, wconn, cur) -> None:
                 )
             finally:
                 conn.close()
-            return super().complete(logical_digest, n, request)
+            return super().complete(logical_digest, n, request, llm_config)
 
     parent = "SELECT jaz.bind_invoke('out', '{}'::jsonb);"
     follow = "SELECT jaz.\"return\"('null'::jsonb);"

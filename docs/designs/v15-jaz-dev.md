@@ -1126,7 +1126,7 @@ v15_provider_abandon(p_attempt_id uuid, p_attempt_fence bigint, p_invoke_fence b
 
 `p_detail` 的键恰好是 `class`、`http_status`、`finish_reason`。多键或少键：`V15_VALUE_INVALID`。
 
-- `reject_started`：`class = http_status` 且 `http_status` 为 400..499 且不是 408 或 429，`finish_reason` 为 JSON null；或 `class = finish_reason` 且值恰好 `content_filter`，`http_status` 为 JSON null；或 `class = request_invalid` 且另两键为 JSON null。
+- `reject_started`：`class = http_status` 且 `http_status` 为 400..499 且不是 408 或 429，`finish_reason` 为 JSON null；或 `class = finish_reason` 且值恰好 `content_filter` 或 `model_mismatch`，`http_status` 为 JSON null；或 `class = request_invalid` 且另两键为 JSON null。
 - `abandon`：`class = transport` 且 `finish_reason` 为 null，`http_status` 为 null、3xx 或 400；或 `class = http_status` 且状态是 400、408、429 或 500..599，`finish_reason` 为 null；或 `class = finish_reason` 且值属于 `{insufficient_system_resource, aborted, other}`，`http_status` 为 null；或 `class` 属于 `{unpriced, usage_invalid}` 且另两键为 null。
 - `reject_unstarted` 的 `p_class` 属于 `{credentials_absent, model_not_allowlisted, model_missing, endpoint_rejected}`。
 

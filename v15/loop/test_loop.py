@@ -43,7 +43,7 @@ class Script:
         self.replies = list(replies)
         self.calls = []
 
-    def complete(self, logical_digest: str, n: int, request: dict) -> dict:
+    def complete(self, logical_digest: str, n: int, request: dict, llm_config=None) -> dict:
         self.calls.append((logical_digest, n, request))
         if not self.replies:
             raise StopScript("no reply")

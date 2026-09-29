@@ -270,7 +270,7 @@ BEGIN
      AND v_http NOT IN (408, 429)
      AND v_finish IS NULL)
     OR (v_class = 'finish_reason'
-        AND v_finish = 'content_filter'
+        AND v_finish IN ('content_filter', 'model_mismatch')
         AND v_http IS NULL)
     OR (v_class = 'request_invalid'
         AND v_http IS NULL
@@ -470,3 +470,25 @@ REVOKE ALL ON FUNCTION v15.v15_provider_abandon(uuid, bigint, bigint, text, json
 GRANT EXECUTE ON FUNCTION v15.v15_provider_reject_unstarted(uuid, bigint, bigint, text, text) TO v15_worker;
 GRANT EXECUTE ON FUNCTION v15.v15_provider_reject_started(uuid, bigint, bigint, text, jsonb) TO v15_worker;
 GRANT EXECUTE ON FUNCTION v15.v15_provider_abandon(uuid, bigint, bigint, text, jsonb) TO v15_worker;
+
+CREATE FUNCTION v15.v15_invoke_lease_seconds(p_invoke_id uuid) RETURNS numeric
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $fn$
+DECLARE
+  v_seconds numeric;
+BEGIN
+  PERFORM v15.v15_repl_require_worker();
+  SELECT EXTRACT(EPOCH FROM (i.lease_until - pg_catalog.clock_timestamp()))
+    INTO v_seconds
+  FROM v15.invokes i
+  WHERE i.invoke_id = p_invoke_id;
+  RETURN v_seconds;
+END;
+$fn$;
+
+ALTER FUNCTION v15.v15_invoke_lease_seconds(uuid) OWNER TO v15_owner;
+REVOKE ALL ON FUNCTION v15.v15_invoke_lease_seconds(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION v15.v15_invoke_lease_seconds(uuid) TO v15_worker;

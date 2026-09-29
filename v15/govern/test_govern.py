@@ -56,14 +56,14 @@ class ScriptLLM:
         self.inner = FakeLLM()
         self.calls = []
 
-    def complete(self, logical_digest: str, n: int, request: dict) -> dict:
+    def complete(self, logical_digest: str, n: int, request: dict, llm_config=None) -> dict:
         self.calls.append((logical_digest, n, request))
         key = (logical_digest, n)
         if key not in self.inner._script:
             if not self.replies:
                 raise AssertionError(f"script exhausted at n={n}")
             self.inner.register(logical_digest, n, {"content": self.replies.pop(0)})
-        return self.inner.complete(logical_digest, n, request)
+        return self.inner.complete(logical_digest, n, request, llm_config)
 
 
 def check(label: str, condition: bool, detail: object = "") -> None:

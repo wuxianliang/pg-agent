@@ -1,9 +1,18 @@
-"""v15 worker loop. FakeLLM runs only between committed transactions."""
+"""v15 worker loop. Provider calls run only between committed transactions.
+
+Three clocks stay apart. _begin statement_timeout is 30s and covers transfer
+SQL only. FakeLLM lease defaults to 30s so crash recovery stays short. A real
+provider timeout_s (120s) is a monotonic total deadline; that Worker's lease
+must be at least timeout_s + 60s so a slow success can still settle.
+"""
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
+import time
+from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 
 import psycopg2
@@ -13,9 +22,11 @@ from psycopg2.extras import Json
 
 from v15.protocol.render_prompt import render_inputs, render_system, truncate_base
 from v15.protocol.split_sql import SplitFailure, classify_statement, split_sql, sql_without_timeout_pragma
+from v15.provider.errors import ProviderPreflight, ProviderRejected, ProviderUncertain
 
 RETRYABLE = frozenset({"40001", "40P01"})
 LEASE = "30 seconds"
+_LEASE_RE = re.compile(r"(\d+(?:\.\d+)?)\s+seconds?")
 CAP = 256
 BIND_FAIL = {
     "P1503": "V15_INVOKE_FORM",
@@ -28,6 +39,54 @@ BIND_FAIL = {
 
 def retryable_sqlstate(sqlstate: str | None) -> bool:
     return sqlstate in RETRYABLE
+
+
+def _lease_seconds(lease: str) -> float | None:
+    matched = _LEASE_RE.fullmatch(lease.strip())
+    if matched is None:
+        return None
+    return float(matched.group(1))
+
+
+def _integral_token(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if value >= 1 else None
+    if isinstance(value, float) and value.is_integer() and 1 <= value <= 2147483647:
+        return int(value)
+    return None
+
+
+def normalize_llm(llm_config):
+    if not isinstance(llm_config, dict):
+        return llm_config
+    out = dict(llm_config)
+    if "max_output_tokens" in out:
+        normalized = _integral_token(out["max_output_tokens"])
+        if normalized is not None:
+            out["max_output_tokens"] = normalized
+    return out
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def response_arg(response: dict):
+    body = dict(response)
+    content = body.get("content")
+    if isinstance(content, str):
+        body["content"] = content.replace("\x00", "\\u0000")
+    cost = body.get("cost_usd")
+    if isinstance(cost, Decimal):
+        body.pop("cost_usd")
+        text = json.dumps(body, ensure_ascii=False)
+        cost_text = format(cost, "f")
+        if text == "{}":
+            return '{"cost_usd":' + cost_text + "}", True
+        return text[:-1] + ',"cost_usd":' + cost_text + "}", True
+    return body, False
 
 
 def connect_worker(db_dsn: str):
@@ -123,17 +182,28 @@ def build_base(snap: dict) -> list[dict]:
 
 
 class Worker:
-    def __init__(self, db_dsn: str, fakellm, worker_id: str) -> None:
+    def __init__(self, db_dsn: str, fakellm, worker_id: str, *, lease: str = LEASE) -> None:
         if not isinstance(worker_id, str) or not 1 <= len(worker_id) <= 200:
             raise TypeError("worker_id")
+        timeout_s = getattr(fakellm, "timeout_s", None)
+        if timeout_s is not None:
+            seconds = _lease_seconds(lease)
+            if seconds is None or seconds < float(timeout_s) + 60:
+                raise ValueError("lease")
         self.db_dsn = db_dsn
         self.fakellm = fakellm
         self.worker_id = worker_id
+        self.lease = lease
         self.conn = connect_worker(db_dsn)
 
     def close(self) -> None:
-        if self.conn is not None and not self.conn.closed:
-            self.conn.close()
+        try:
+            closer = getattr(self.fakellm, "close", None)
+            if closer is not None:
+                closer()
+        finally:
+            if self.conn is not None and not self.conn.closed:
+                self.conn.close()
 
     def _replace_conn(self) -> None:
         if self.conn is not None and not self.conn.closed:
@@ -183,7 +253,7 @@ class Worker:
             return self._fetch(
                 conn,
                 "SELECT v15.v15_claim(%s, %s, %s::interval)",
-                (invoke_id, self.worker_id, LEASE),
+                (invoke_id, self.worker_id, self.lease),
             )
 
         fence = self._run(read)
@@ -214,7 +284,7 @@ class Worker:
                 self._llm(invoke_id, fence, snap, attempt)
                 continue
             if attempt and attempt.get("status") == "leased" and not attempt.get("call_started"):
-                self._mark_and_settle(invoke_id, fence, attempt)
+                self._mark_and_settle(invoke_id, fence, attempt, snap["resolved_config"]["llm"])
                 continue
             if status == "executing" and not snap["repl_exec_open"]:
                 self._run(
@@ -234,7 +304,7 @@ class Worker:
 
     def _llm(self, invoke_id: str, fence: int, snap: dict, attempt) -> None:
         if attempt and attempt.get("status") == "leased" and not attempt.get("call_started"):
-            self._mark_and_settle(invoke_id, fence, attempt)
+            self._mark_and_settle(invoke_id, fence, attempt, snap["resolved_config"]["llm"])
             return
         base = build_base(snap)
 
@@ -259,11 +329,57 @@ class Worker:
             "call_started": False,
             "status": "leased",
         }
-        self._mark_and_settle(invoke_id, fence, attempt)
+        self._mark_and_settle(invoke_id, fence, attempt, snap["resolved_config"]["llm"])
 
-    def _mark_and_settle(self, invoke_id: str, fence: int, attempt: dict) -> None:
+    def _assert_idle(self) -> None:
+        if self.conn.get_transaction_status() != pgext.TRANSACTION_STATUS_IDLE:
+            raise RuntimeError("provider requires no open transaction")
+
+    def _run_provider(self, fn) -> None:
+        try:
+            self._run(fn)
+        except psycopg2.Error as exc:
+            if exc.pgcode == "P1502":
+                return
+            raise
+
+    def _lease_covers(self, invoke_id: str) -> bool:
+        timeout_s = getattr(self.fakellm, "timeout_s", None)
+        if timeout_s is None:
+            return True
+        remaining = self._run(
+            lambda conn: self._fetch(
+                conn,
+                "SELECT v15.v15_invoke_lease_seconds(%s)",
+                (invoke_id,),
+            )
+        )
+        if remaining is None:
+            return False
+        return float(remaining) >= float(timeout_s) + 60
+
+    def _mark_and_settle(self, invoke_id: str, fence: int, attempt: dict, llm_config) -> None:
+        provider = self.fakellm
+        llm_config = normalize_llm(llm_config)
         attempt_id = str(attempt["attempt_id"])
         attempt_fence = int(attempt["fence"])
+        if hasattr(provider, "preflight"):
+            preflight = provider.preflight(llm_config)
+            if preflight is not None:
+                self._run_provider(
+                    lambda conn: self._fetch(
+                        conn,
+                        "SELECT v15.v15_provider_reject_unstarted(%s, %s, %s, %s, %s)",
+                        (
+                            attempt_id,
+                            attempt_fence,
+                            fence,
+                            self.worker_id,
+                            preflight["class"],
+                        ),
+                    )
+                )
+                return
 
         def mark(conn):
             self._fetch(
@@ -273,28 +389,84 @@ class Worker:
             )
 
         self._run(mark)
-        if self.conn.get_transaction_status() != pgext.TRANSACTION_STATUS_IDLE:
-            raise RuntimeError("FakeLLM requires no open transaction")
-        response = self.fakellm.complete(
-            attempt["logical_digest"],
-            int(attempt["n"]),
-            attempt["request"],
-        )
-        payload = statement_payload(response["content"])
+        self._assert_idle()
+        if not self._lease_covers(invoke_id):
+            return
+        try:
+            response = provider.complete(
+                attempt["logical_digest"],
+                int(attempt["n"]),
+                attempt["request"],
+                llm_config,
+            )
+        except ProviderRejected as exc:
+            self._assert_idle()
+            self._run_provider(
+                lambda conn: self._fetch(
+                    conn,
+                    "SELECT v15.v15_provider_reject_started(%s, %s, %s, %s, %s)",
+                    (
+                        attempt_id,
+                        attempt_fence,
+                        fence,
+                        self.worker_id,
+                        Json(exc.detail),
+                    ),
+                )
+            )
+            return
+        except ProviderUncertain as exc:
+            self._assert_idle()
+            http_status = exc.detail.get("http_status")
+            self._run_provider(
+                lambda conn: self._fetch(
+                    conn,
+                    "SELECT v15.v15_provider_abandon(%s, %s, %s, %s, %s)",
+                    (
+                        attempt_id,
+                        attempt_fence,
+                        fence,
+                        self.worker_id,
+                        Json(exc.detail),
+                    ),
+                )
+            )
+            if http_status == 429:
+                _sleep(1)
+            return
+        except ProviderPreflight:
+            raise
+        raw = response["content"]
+        payload = statement_payload(raw)
+        encoded, as_text = response_arg(response)
 
         def settle(conn):
-            self._fetch(
-                conn,
-                "SELECT v15.v15_settle_llm(%s, %s, %s, %s, %s, %s)",
-                (
-                    attempt_id,
-                    attempt_fence,
-                    fence,
-                    self.worker_id,
-                    Json(response),
-                    Json(payload),
-                ),
-            )
+            if as_text:
+                self._fetch(
+                    conn,
+                    "SELECT v15.v15_settle_llm(%s, %s, %s, %s, %s::jsonb, %s)",
+                    (
+                        attempt_id,
+                        attempt_fence,
+                        fence,
+                        self.worker_id,
+                        encoded,
+                        Json(payload),
+                    ),
+                )
+            else:
+                self._fetch(
+                    conn,
+                    "SELECT v15.v15_settle_llm(%s, %s, %s, %s, %s, %s)",
+                    (
+                        attempt_id,
+                        attempt_fence,
+                        fence,
+                        self.worker_id,
+                        Json(encoded),
+                        Json(payload),
+                    ),
+                )
 
         self._run(settle)
 
@@ -618,8 +790,8 @@ class Worker:
         )
 
 
-def run_until_quiescent(db_dsn: str, fakellm, worker_id: str) -> None:
-    worker = Worker(db_dsn, fakellm, worker_id)
+def run_until_quiescent(db_dsn: str, fakellm, worker_id: str, *, lease: str = LEASE) -> None:
+    worker = Worker(db_dsn, fakellm, worker_id, lease=lease)
     try:
         steps = 0
         while True:

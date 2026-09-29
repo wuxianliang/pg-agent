@@ -31,7 +31,7 @@ class FakeLLM:
             raise TypeError("cost_usd")
         self._script[(digest, n)] = deepcopy(response)
 
-    def complete(self, logical_digest: str, n: int, request: dict) -> dict:
+    def complete(self, logical_digest: str, n: int, request: dict, llm_config=None) -> dict:
         if not isinstance(logical_digest, str) or type(n) is not int:
             raise TypeError("logical_digest and n")
         if not isinstance(request, dict):
