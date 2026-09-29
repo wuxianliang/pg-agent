@@ -601,3 +601,13 @@ provider 调用点的事务状态由 worker 的 `_assert_idle` 保证。驱动�
 - demo 先例：`demo_v13/`（README）、`docs/plans/v13-minimal-agent-loop-demo-2026-09-23.md`、`.gitignore:31-33`、`da4663e`
 - 断言先例：`v15/tree/test_tree.py` attempts helper
 - DeepSeek 事实：`docs/plans/v15-real-provider-deepseek-plan-2026-09-29.md` Background（模型名/计价/无幂等/并发限额）
+
+## Run record
+
+- 日期：2026-09-29
+- note：NOTE_V1（三次 note 预算用 0）
+- 结果：`tail_ok relay_ok`
+- failure_class：无
+- 成本：$0.001257786
+- 调用数：calls_used=3
+- codex 评审附注：报告模板断言明细块已随后补入驱动；本跑报告为旧模板，逐条断言由已评审的 assert_e2e 层合取得出。

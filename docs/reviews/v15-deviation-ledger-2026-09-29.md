@@ -88,3 +88,7 @@ stage 8 不新增偏差行。`test_tree.py` 覆盖保留清单里的同迭代 `j
 stage 9 不新增偏差行，也不把任何一行修回 jaz。`test_govern.py` 覆盖 D08 的效应闭集与 `V15_HOOK_ABORT`、D15 的预留失败不写效应、D21 的预留名回滚与非 baseline 异常隔离、D26 的 exit 不能 abort。五个可选 hook 的可观察意图也在这一 gate：更紧的迭代上限、池预留恰好一次、`budget_forcing:<ordinal>:<n>`、以及按 `recursion_available` 二选一的瞬态窗口警告。
 
 stage 10 追加 D27–D30，不把任何一行修回 jaz。D01–D26 的权威正文仍在规格 §14；本文件不重抄那 26 行当第二合同。M1 的 provider gate 证明的是 SQL 转移与 hook 归一，不证明 D27 的线协议或 D29 的思考文本。
+
+## Demo
+
+尾委托 demo 不新增 V15-D 行。它不修改渲染器、切分器、worker 或 provider。真实调用的计价、无幂等与思考文本仍由 D27–D30 覆盖。

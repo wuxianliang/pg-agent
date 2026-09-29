@@ -252,3 +252,9 @@ D27–D30 的句子在规格 §14 与偏差台账。线协议、计价与 `reaso
 | V15-D26 | `v15/govern/test_govern.py` | exit 上的 abort 回滚，outcome 行不留下。exit 只能写黑板 |
 
 D27–D30 已写入规格与台账。D27 与 D29 由 provider gate 的线协议与 reasoning 断言证明。D28 与 D30 是记账口径，不在本 gate 里对发票。
+
+## Demo evidence（不是 gate）
+
+| 跑次 | 模式 | 结果 | 落点 | 断言的行为 |
+|---|---|---|---|---|
+| 2026-09-29 NOTE_V1 | DEMO_MODE=real deepseek-flash lease 240s | tail_ok relay_ok | gitignored demo_v15/reports/（不入库） | 绑定迭代恰好两句且下一条 return 读到子 var；该迭代恰好一条 settled 且 max(n) 等于它；suspend 与 deliver 之间无 repl_exec exit；十道 gate 不导入该驱动。 |
