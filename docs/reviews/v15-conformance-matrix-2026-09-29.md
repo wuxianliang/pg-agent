@@ -1,6 +1,6 @@
 # v15 覆盖矩阵（2026-09-29）
 
-记 stage 1–9 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 8 为准。矩阵不是第二份合同。
+记 stage 1–10 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 9 为准。矩阵不是第二份合同。
 
 完整 `SQL_LOAD_ORDER`：
 
@@ -13,8 +13,9 @@
 7. `v15/loop/v15_loop.sql`
 8. `v15/tree/v15_tree.sql`
 9. `v15/govern/v15_govern.sql`
+10. `v15/provider/v15_provider.sql`
 
-合运行时是这九个文件都加载之后。`agent_v15_govern` 是这个库。更早的 `agent_v15_*` 库是前缀 gate，不是合运行时。
+合运行时是这十个文件都加载之后。`agent_v15_provider` 是这个库。`agent_v15_govern` 与更早的 `agent_v15_*` 库是前缀 gate，不是合运行时。
 
 状态来自实跑：`uv run python v15/govern/test_govern.py` 退出码 0。随后复跑 stage 1–8 的 gate，退出码都是 0。
 
@@ -195,6 +196,21 @@ stage 9 是合运行时。`v15_on_phase` 与四个治理 handler 同 oid 替换�
 | `V15_HANDLER_DIGEST` | `P1536` | 同上 | 体、GRANT、表权限任一漂移都在调用前失败 |
 | `V15_HANDLER_SHAPE` | `P1537` | `v15/repl/test_repl.py`、`v15/govern/test_govern.py` | 登记拒绝 IMMUTABLE、错 search_path、错 owner、表权限、C 语言 |
 | `V15_HOOK_ABORT` | `P1538` | `v15/govern/test_govern.py` | 保留码外的 abort，或规范化后不一致的 abort，顶层用这个码 |
+| `V15_PROVIDER_REJECTED` | `P1539` | `v15/provider/test_provider.py` | 预检或已开始的确定性拒绝提交为这个码，`fatal = false`，无助手消息。hook 带回它则归一为 `V15_HOOK_ABORT`，不因 `P1506` 被拒 |
+
+## stage 10 · SQL
+
+D27–D30 的句子在规格 §14 与偏差台账。本里程碑不声称 gate 证明了「线上无 temperature」或思考文本不进助手正文。那些行等适配器 gate。
+
+| # | 条文 | 状态 | 测试落点 | 断言的行为 |
+|---|---|---|---|---|
+| 10.1 | §0.0 gate 不开网络 | ✅ | `v15/provider/test_provider.py` | 进程内剥掉四枚凭据，并把 `urlopen` 罩成 `AssertionError("network")`。本 gate 不构造真实 provider |
+| 10.2 | §4.5.5 unstarted | ✅ | 同上 | 不 mark。attempt `failed`，不计 call。invoke `failed`、`fatal = false`、`P1539`、`message = ''`。无助手消息，无语句，scratch 已删 |
+| 10.3 | §4.5.5 started reject | ✅ | 同上 | attempt `unknown`，按行上存放的预留计入 `calls_used`，`cost_used` 不增。invoke 同上 `P1539`。无助手消息。再调用抛 `P1502` |
+| 10.4 | §4.5.5 abandon | ✅ | 同上 | attempt `unknown`。invoke `runnable`，fence 加 1，租约空。`llm_query` span 仍开。retry 的 `new_attempt_id` 为 JSON null。`max_io_attempts = 1` 时不再插入新行，终态是 `V15_IO_EXHAUSTED` |
+| 10.5 | §4.8 子送达 | ✅ | 同上 | 子保留 `V15_PROVIDER_REJECTED` / `P1539`。父语句 `V15_CHILD_ERROR` / `P1528`。父 `runnable`，不是 `aborted` |
+| 10.6 | §9.5 / §13 hook 归一 | ✅ | 同上 | hook 返回 `V15_PROVIDER_REJECTED`。阶段不抛 `P1506`。提交后的 invoke 是 `V15_HOOK_ABORT` / `P1538`，`fatal = false`，`message = ''` |
+| 10.7 | §15 前缀 | ✅ | 同上 | `files_through("govern")` 仍是前 9 个且末项为 govern SQL。完整列表长度为 10 且末项为 provider SQL |
 
 ## M3 · §14
 
@@ -226,3 +242,5 @@ stage 9 是合运行时。`v15_on_phase` 与四个治理 handler 同 oid 替换�
 | V15-D24 | `v15/repl/test_repl.py`、`v15/tree/test_tree.py` | bind 实参只授 `USAGE`。写记号和 scratch 写都是 `V15_INVOKE_FORM` |
 | V15-D25 | `v15/protocol/test_protocol.py` | `DO` 被拒绝。语句内部的迭代只走 `WITH RECURSIVE` |
 | V15-D26 | `v15/govern/test_govern.py` | exit 上的 abort 回滚，outcome 行不留下。exit 只能写黑板 |
+
+D27–D30 已写入规格与台账。M1 的 provider gate 不证明线协议或计价，所以这里不给它们打 ✅。

@@ -1,8 +1,8 @@
 # v15 偏差台账（2026-09-29）
 
-初版，从 `docs/designs/v15-jaz-dev.md` rev 8 §14 抄入。这些行是相对 jaz 参考运行时的有意差别。实现不得把它们修回参考运行时。本文件不是第二份行为合同。
+从 `docs/designs/v15-jaz-dev.md` §14 抄入。这些行是相对 jaz 参考运行时的有意差别。实现不得把它们修回参考运行时。本文件不是第二份行为合同。
 
-§14.1 在冻结稿里写到 **V15-D26**。任务说明停在 D25；台账按冻结稿把 D26 一并抄入，避免少一行。
+D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。
 
 ## 14.1 偏差
 
@@ -58,6 +58,14 @@
 
 **V15-D26。** jaz 允许 hook 在 exit 上 abort，从而改写已经决定的 outcome。v15 的 `invoke/exit`、`llm_query/exit` 与 `repl_exec/exit` 只允许 `blackboard_write`。outcome 行在调用阶段函数之前写入。exit 上的 abort 是 `V15_INVALID_EFFECT`，整笔回滚。可观察后果：exit hook 不能把 `completed` 改成 `failed`；它只能写下一次 phase 才看得见的黑板。
 
+**V15-D27。** jaz 会发送 `temperature`。v15 的 DeepSeek allowlist 模型不上送 `temperature` / `top_p`。值仍留在 `resolved_config`。实现不得把它们补进线协议来对齐 jaz。
+
+**V15-D28。** 供应商无幂等。unknown 之后的新 attempt 可能在供应商侧重复计费。`cost_used` 只含已 settle 的自算成本，可以低于发票，也可以因节假日按高峰估算而高于发票。`cost_used` 是估算值，`cost_limit` 是治理闸门，不是对账单。
+
+**V15-D29。** `reasoning_content` 不是助手程序，不进 `llm_messages.content`。思考文本不得被拼进 `content`。审计只可带 `reasoning_chars`，不带正文。
+
+**V15-D30。** 高峰只按上海时区周一至周五的两个半开窗口 `[09:00, 12:00)` 与 `[14:00, 18:00)` 估算，不含法定节假日。假日若落在周一至周五，按高峰计价，方向是多报，不少报。实现不得为了贴近发票而补节假日日历。
+
 ## 14.2 故意保留
 
 下列行为是论文性质或本版合同的目标，不是偏差。gate 必须证明它们仍然成立：
@@ -78,3 +86,5 @@ stage 5 不新增偏差行。`test_repl.py` 覆盖 D05 的同步工具调用、D
 stage 8 不新增偏差行。`test_tree.py` 覆盖保留清单里的同迭代 `jaz.var`、父不再次 LLM、scope 按值复制、以及 D02 / D06 / D10 / D11 / D15 的可观察后果。`context_window_warning` 的两套正文仍是 stage 9。
 
 stage 9 不新增偏差行，也不把任何一行修回 jaz。`test_govern.py` 覆盖 D08 的效应闭集与 `V15_HOOK_ABORT`、D15 的预留失败不写效应、D21 的预留名回滚与非 baseline 异常隔离、D26 的 exit 不能 abort。五个可选 hook 的可观察意图也在这一 gate：更紧的迭代上限、池预留恰好一次、`budget_forcing:<ordinal>:<n>`、以及按 `recursion_available` 二选一的瞬态窗口警告。
+
+stage 10 追加 D27–D30，不把任何一行修回 jaz。D01–D26 的权威正文仍在规格 §14；本文件不重抄那 26 行当第二合同。M1 的 provider gate 证明的是 SQL 转移与 hook 归一，不证明 D27 的线协议或 D29 的思考文本。
