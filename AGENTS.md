@@ -70,7 +70,9 @@ git push origin main
 
 ## 其他既有约定（勿违反）
 
-- **外部 IO 一律不进数据库事务**（v8 不变量 4）。测试用 FakeLLM / FakeTool，不调真实 provider。
+- **外部 IO 一律不进数据库事务**（v8 不变量 4）。测试用 FakeLLM / FakeTool，不调真实 provider。`v15/**/test_*.py` 仍然如此，不得打开网络套接字。真实套接字只允许两个入口，二者都不是 gate，也不是合运行时证明；调用当时不得有打开的数据库事务：
+  1. `v15/provider/smoke.py --real-provider-smoke`
+  2. 仓库根 `demo_v15/drive.py`，且环境变量 `DEMO_MODE=real`。已 force-add 的 8 个驱动源文件受跟踪；`.gitignore` 仍含 `/demo_v15/`，因此 `reports/`、`__pycache__/` 与此后新增文件仍被忽略。无 key 时驱动打印 `credentials_absent`、退出码 2，不构造 `DeepSeekProvider`，不调用 `complete`。`DEMO_MODE` 缺省为 `fake`。
 - 测试是独立可跑脚本（`uv run python ...`，退出码 0 = 通过），不是 pytest 套件。每个 stage 的 `setup_db.py` 会 DROP/CREATE 自己的库，并按 `v8/load.py` 的 `SQL_LOAD_ORDER` 累计加载全部已注册 SQL。
 - 规格原文是唯一权威（`docs/designs/v8-dev.md`），`docs/analysis/v8-impl-digest/` 只作入口摘要。任何改动 MUST NOT 破坏既有 gate。
 - `prompt-exports/`、`.pgdata/`、`.venv`、`/memory` 已在 `.gitignore` 中，不要提交。
