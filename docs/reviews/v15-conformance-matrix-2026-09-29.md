@@ -257,6 +257,6 @@ D27–D30 已写入规格与台账。D27 与 D29 由 provider gate 的线协议�
 
 | 跑次 | 模式 | 结果 | 落点 | 断言的行为 |
 |---|---|---|---|---|
-| 2026-09-29 NOTE_V1 | DEMO_MODE=real deepseek-flash lease 240s | tail_ok relay_ok | gitignored demo_v15/reports/（不入库） | 绑定迭代恰好两句且下一条 return 读到子 var；该迭代恰好一条 settled 且 max(n) 等于它；suspend 与 deliver 之间无 repl_exec exit；十道 gate 不导入该驱动。 |
+| 2026-09-29 NOTE_V1 | DEMO_MODE=real deepseek-flash lease 240s | tail_ok relay_ok | 驱动源码已入库（demo_v15/ 下 8 个文件）；reports/ 仍 gitignore、不入库 | 绑定迭代恰好两句且下一条 return 读到子 var；该迭代恰好一条 settled 且 max(n) 等于它；suspend 与 deliver 之间无 repl_exec exit；十道 gate 不导入该驱动。 |
 | 2026-09-29 CHAIN hops=8 | DEMO_MODE=real deepseek-flash lease 240s | tail_ok relay_ok | gitignore 的 demo_v15/reports/ | 链长 N=8 时每一环的绑定迭代恰好两句且下一条 return 读到子 var；该迭代恰好一条 settled；suspend 与 deliver 之间无 repl_exec/exit。十道 gate 不导入该驱动。 |
 | 2026-09-29 RECALL hops=5 | 同上 | tail_ok recall_soft_fail（token 列提取：叶搜了 llm_response，token 在 repl_output） | 同上 | 根 iteration 0 的 repl_output 持有 token；子 input 无 facts；叶语句含 jaz.prior_history(根 uuid)；根绑定迭代的 request 含瞬态 context_window_warning，且该行不在 llm_messages。 |

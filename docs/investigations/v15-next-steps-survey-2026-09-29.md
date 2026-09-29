@@ -8,7 +8,7 @@
 
 | 候选 | 一句话 | 规模 | 证据价值 | 风险 |
 |---|---|---|---|---|
-| A. 发布驱动源码 | force-add `demo_v15/` 8 文件 | 极小（一次提交） | 可复现性/展示 | 几乎无 |
+| A. 发布驱动源码 | 已执行：force-add `demo_v15/` 8 文件（`docs/plans/v15-publish-demo-driver-plan-2026-09-29.md`，提交说明 `v15: publish the tail-delegation demo driver`） | 极小（一次提交） | 可复现性/展示 | 几乎无 |
 | B. 更深链 demo | depth 5–8 尾委托链 + prior_history + 上下文告警 | 小 | 论文 StuLife 性质首验 | 中（成本可控） |
 | C. 多任务 demo | 同迭代扇出 + meta-agent 读 trace 自改 prompt（CSI 模式） | 中 | 唯一零覆盖机制 + 论文第二条性质 | 中高 |
 | D. v15 功能扩展 | ValidateReturn/ReturnType/回放/外部工具/扇出并行 | 中—大 | 能力补全 | 回放与并行高 |
@@ -17,16 +17,16 @@
 
 ## A. 发布驱动源码（force-add）
 
-**干什么**：按 `da4663e` 先例（3 文件 735 行、单行提交信息）force-add 8 个源文件：`demo_v15/{README.md,db.py,task.py,script.py,drive.py,assert_e2e.py,report.py,test_harness.py}`（共 2291 行）。**不 add** `reports/`（计划明令报告不入库）与 `__pycache__/`。
+**干什么**：按 `da4663e` 先例（3 文件 735 行、单行提交信息）force-add 8 个源文件：`demo_v15/{README.md,db.py,task.py,script.py,drive.py,assert_e2e.py,report.py,test_harness.py}`（共 2291 行）。**不 add** `reports/`（计划明令报告不入库）与 `__pycache__/`。行数以发布计划 Run record 的执行日重测值为准（本文的 2291/935 是 B 前参考值）。2026-09-29 已执行；与该段的文书修正在同一次提交；提交说明是 `v15: publish the tail-delegation demo driver`；树内不写自身 hash。
 
 **已验证的安全性**：无硬编码 key（key 只从进程环境读，`drive.py:73-75`）；`report.py:171-176` 已有 redact 机制且实测 `reports/` 零 key 命中；`test_harness.py` 的 keyless 子进程用例随源码入库后可直接复跑。
 
 **预期效果**：
 - demo 从「一次性本地证据」变成「任何人可复跑的仓库资产」——fake 路径零 key 零成本即可跑通全链断言（`DEMO_MODE=fake`），real 路径有 key 即可；
 - `assert_e2e.py`（935 行、13 条 §0.2 断言 + 22 级失败分类）成为 v15 语义的活文档；
-- 需要同步改三处文书：`.gitignore` 例外说明、AGENTS 入口句已就位（M1 已写 `demo_v15/drive.py`，发布后该句从「指向 gitignored 目录」变为「指向入库脚本」）、demo 计划的跟踪策略节补一行 Run record。
+- 已完成：`.gitignore` 保留 `/demo_v15/` 并加了注释；`AGENTS.md` 只替换「该目录在 `.gitignore`。」；demo 计划正文不改，文末是发布后记；本调查 A 项标为已执行。
 
-**建议**：做，且最先做（B/C 都会改驱动，改完一起发布更整洁——也可以 B 之后做）。
+**建议**：已做（2026-09-29），仍排在 B 之前。
 
 ---
 
@@ -99,7 +99,7 @@
 ## 推荐路线
 
 ```
-A（发布驱动）→ B（更深链）→ C1（扇出 gate+真栈）→ D1（ValidateReturn/ReturnType）
+A（发布驱动，已执行）→ B（更深链）→ C1（扇出 gate+真栈）→ D1（ValidateReturn/ReturnType）
                                           ↘ C2（CSI meta-agent）—— 与 D1 可并行
 D2（回放）按 CI 需求插队；D3（外部工具）等用例；D4（并行）搁置
 ```

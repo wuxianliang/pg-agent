@@ -31,6 +31,9 @@ prompt-exports/
 # Local v13 Chainlit demo workspace (never push; relocated out of v13/ 2026-09-25)
 /v13/demo/
 /demo_v13/
+# demo_v15 driver sources (8 files) are tracked via git add -f.
+# Keep this ignore: reports/, __pycache__/, and any new file stay untracked
+# until an explicit git add -f of that path. git status will not list them.
 /demo_v15/
 
 # Released-DuckDB plane for v13/read_tools (kernel freeze: not the repo venv)

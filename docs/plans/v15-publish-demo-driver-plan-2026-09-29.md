@@ -194,8 +194,8 @@ import 关系（探查实证 + AST 坐实，执行时以 AST 为准）：
 - `drive.py` 顶层能到达 `db`、`assert_e2e`、`report`、`script`、`task`、`v15.worker`。
 - `v15.provider.deepseek` 至少出现一次，且只出现在 `drive.py` 的函数体或更深节点里，不在 `Module.body` 的直接子节点上。顶层出现即失败（demo 计划要求 keyless 路径在 import 期不构造 provider；模块 import 本身虽不开 socket，顶层 import 仍算违反该入口约束）。
 - `assert_e2e.py` 能到达 `v15.protocol.split_sql` 或包路径 `v15.protocol`。
-- `test_harness.py` 顶层能到达 `db`、`drive`、`script`、`task`、`assert_e2e`。
-- `report.py`、`task.py` 的全部 import（含函数体内）只有 stdlib；`script.py` 允许 stdlib + 兄弟 `task`（实证：顶层 `from task import BIND_NAME, child_payload`）。
+- `test_harness.py` 顶层能到达 `server`、`db`、`drive`、`script`、`task`（B 后 harness 经 `drive.run` 返回结果 dict，不再直连 `assert_e2e`——实证零处该 import，属预期重构）。
+- `report.py` 的全部 import（含函数体内）只有 stdlib。`task.py` 允许 stdlib + 仓库 `v15.protocol.render_prompt`（B 的 sizer 实测 S 需要 render_system，顶层导入，实证 `task.py:8`）。`script.py` 允许 stdlib + 兄弟 `task` + 仓库 `v15.protocol.split_sql`（B 的分类闸 E1 修正需要，实证 `script.py:11`）。（B 后 AST 复核修正，2026-09-30。）
 
 不要为了闭包去 `import db` / `import drive`。模块级是否调用 `get_server()` 未在本会话核实；import 副作用可能建库。动态证明只走下面三条命令行入口。
 
@@ -457,26 +457,26 @@ git worktree add --detach <临时目录> HEAD
 
 执行到第 7 步时填实。提交进树之后不要为了补 hash 再做第二次提交。
 
-- 日期：
-- 父提交（B 完成后的分支尖，执行日核得）：
+- 日期：2026-09-30（本地；fake 报告戳 UTC `20260929T192238Z`）
+- 父提交（B 完成后的分支尖，执行日核得）：`890d3a15e888860068201e91990b3a2b055f8567`（uv.lock 独立提交；其父为 B 完成提交 `1d3d05b`）。`git fetch origin` 后 `git merge-base HEAD origin/main` = `e915e922728d5b2c56a2c428af58f3d1d48f22c0`
 - 提交说明：`v15: publish the tail-delegation demo driver`
 - 自身 hash：不写入。读取命令：`git log -1 --format=%H -- docs/plans/v15-publish-demo-driver-plan-2026-09-29.md`
-- Python：`sys.version` 一行
-- 行数：合计 / `assert_e2e.py`（`splitlines`）；若与 `wc -l` 不同，写明原因
-- README 改前 sha256（等于就地基线）与改后 sha256：
-- 其余 7 文件 sha256（等于就地基线，提交前复核）：
-- AST：通过。顶层 import 根：`db` …；`drive.py` 中 deepseek 所在函数：
-- fake：退出码、摘要行、`calls_used` 在 latest 报告中的写法
-- keyless：退出码、摘要行、当时 `pg_database` 无两库
-- harness：退出码
-- drop 之后两库 0 行：
-- reports 扫描：已扫且无命中（目录存在为常态——M2/B 产物）
-- uv.lock 处置：还原 / 独立提交（写明哪个）
-- B 完成提交：
+- Python：`3.12.11 (main, Sep 18 2025, 19:41:45) [Clang 20.1.4 ]`
+- 行数：合计 3239 / `assert_e2e.py` 1384（`splitlines`）；与 `wc -l` 相同。各文件：README 23、db 293、task 299、script 122、drive 652、assert_e2e 1384、report 216、test_harness 250
+- README 改前 sha256（等于就地基线）与改后 sha256：`1b71b0f65300a496ec88de9a56dfc72a045db25f581180d6626e6185410ae436` / `ef459a5dd754fa27beb37c3b7a046ac8db9436dfb8c4afb0bdc1447928104073`
+- 其余 7 文件 sha256（等于就地基线，提交前复核）：db `f94f41d5d203b65c9c9623d2eec3e0205a6470881dc4eaa78133f3800995b42d`；task `6760e831eea662f48e14ddf90bdd0b252874c8e391b36ab2775a5fbe7d97e059`；script `e5cd94029513daf46e72a066dd3a301b2b73bde63871f91fbf9723f106da27d1`；drive `7ea1acf08b3769cf0f759968f3a2a0dd23c5538ee3ddddac22d687e87ff33a1e`；assert_e2e `52efd2cb1a9fe3a7df129a3f57b7c0f0a71d2bf3fa05971cffe7cb12556a26d9`；report `e0a9d0df02d5fc4708631bec1360664c63cc4f5d67929045bd2b318b24310622`；test_harness `66da959424bbec0cf53b82bf99f680fc111441c226eccbac549c4fbc5713f9db`
+- AST：通过（修正后断言，退出码 0）。顶层 import 根：db `__future__ re sys uuid pathlib psycopg2 server v15.load v15.provider.support v15.worker task`；task `__future__ json re secrets v15.protocol.render_prompt`；script `__future__ json sys pathlib v15.protocol.split_sql task`；drive `__future__ contextlib io json os secrets sys uuid pathlib psycopg2 server v15.protocol.render_prompt v15.provider.support v15.worker db assert_e2e report script task`；assert_e2e `__future__ json re sys decimal pathlib v15.protocol.split_sql task`；report `__future__ json datetime pathlib`；test_harness `__future__ os subprocess sys pathlib server db drive script task`。`drive.py` 中 deepseek 所在函数：`build_real_provider`
+- fake：退出码 0；stdout 首行 `tail_ok relay_ok`（次行是忽略目录里的报告路径）；latest 报告 `- calls_used: 8`
+- keyless：退出码 2；stdout 恰好 `credentials_absent`；当时 `pg_database` 无 `agent_demo_v15` 与 `agent_demo_v15_harness`
+- harness：退出码 0
+- drop 之后两库 0 行：是（`--drop-only` 与 `--drop-only agent_demo_v15_harness` 均退出码 0；另用同一 CLI 删了 harness 自建的 `agent_demo_v15_bound`，三名查询均为 0 行）
+- reports 扫描：已扫且无命中（35 个文件；目录存在为常态——M2/B 产物）
+- uv.lock 处置：独立提交 `890d3a15e888860068201e91990b3a2b055f8567`（还原后 `uv lock --check` 退出码 1；`uv lock` 仅一行 sqlalchemy `>=2,<2.1`；提交后再 check 退出码 0）。不进本次暂存
+- B 完成提交：`1d3d05b2125177df0c0dbed400720074887574b8`
 - 十道 gate：未跑（发布 diff 无 v15/ py/sql）。本提交说明不声称 gate 通过
-- 推送后承诺：立即起草合并 main 计划（§3.9；本字段在暂存前填承诺句即可，非事后事实）
+- 推送后承诺：立即起草「v15 线并入 main」的合并计划（§3.9；起点即上列 merge-base）。本字段在暂存前填承诺句，非事后事实
 - `DEMO_MODE=real` 有 key：未跑
-- 脱离工作树：通过，或降级（写下起不来的错误类别，不含 DSN）
+- 脱离工作树：未执行。步骤 10 交回主 agent；本记录在提交前填写，不声称通过
 
 ## References
 
