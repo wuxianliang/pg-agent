@@ -51,7 +51,7 @@
 
 `v15_open_invoke` 要求 `session_user = v15_worker`。`p_user` 函数体不读。`seed:inputs` 由 `v15_loop_compose_inputs` 从 `kind=input AND show_in_prompt` 拼出，名字按 UTF-8 字节序。子的显式输入只来自 `bind_invoke` 实参 jsonb 的键；父的 input **不**复制。复制的是 `kind=scope` 以及 `kind=tool AND provenance=scope`。`render_system` 的 scoped 块**不写** scope/var 的 jsonb 值。因此任务散文必须是根的 `kind=input`，子要看见它，只能由模型放进 child jsonb，或由以后的 hook `input_adds` 注入。`p_child_user` 同样是死参。
 
-`support.open_invoke` 把 inputs 写成 `'[]'`，默认 `SEED_SCOPE`（fake 模型），ceilings 固定。`seed_flash_profile` 是全仓唯一的 `deepseek-flash` 种子（`FLASH_PROFILE=…a2`，`FLASH_SCOPE=…b2`），各 stage `setup_db` 都不调用。不 seed 则 real preflight 为 `model_missing`。带 inputs 的开根先例是 `test_tree.open_invoke`。
+`support.open_invoke` 把 inputs 写成 `'[]'`，默认 `SEED_SCOPE`（fake 模型），ceilings 固定。`seed_flash_profile` 是全仓唯一的 `deepseek-flash` 种子（`FLASH_PROFILE=…a2`，`FLASH_SCOPE=…b2`），各 stage `setup_db` 都不调用。不 seed 则 open 的 resolve 以 `V15_VALUE_INVALID`/P1524 失败（`preflight` 不读库，见 Background 评审 (c)）。带 inputs 的开根先例是 `test_tree.open_invoke`。
 
 子配置走 `v15_resolve_child_config(父 scope, NULL, depth)`，整棵树同一 `llm.model`。`recursion_available = (depth < effective max_depth)`。`depth > max` 出生即 `V15_RECURSION_EXCEEDED`。调用方 ceilings 只能收紧，放宽是 `P1505`。清单默认 `10 / 8 / 3 / 30000`。
 
@@ -116,7 +116,7 @@ AGENTS.md 现在写死唯一真实套接字入口是 `v15/provider/smoke.py --re
 `NOTE_V1`（一段、无分号、无撇号、无规范 SQL、绑定名固定为 `down`；含一句「引号是语法不是值的一部分」——`v15_loop_compose_inputs` 按 `value::text` 渲染，模型若把引号字符抄进子 jsonb 会造成 relay 值不等而 `tail_ok` 仍可成立，评审 §4）：
 
 ```text
-Copy this note to the child unchanged as the note input. The quotes around a value are syntax and are not part of the value. You are the hop given by role. hops counts the hops left, including you. seal is the leaf seal; pass it down unchanged. When hops is greater than 1, delegate to one child bound as down and return that child result unchanged. The child input object must have note (this same text), hops (your hops minus one), role (mid when you are root, otherwise leaf), and seal (unchanged). When hops is 1, do not delegate; return a JSON object with keys seal and hops, using your seal and hops 1. A literal JSON return while hops is greater than 1 is wrong. No markdown. No prose.
+Copy this note to the child unchanged as the note input. The quotes around a value are syntax and are not part of the value. You are the hop given by role. hops counts the hops left, including you. seal is the leaf seal. Pass it down unchanged. When hops is greater than 1, delegate to one child bound as down and return that child result unchanged. The child input object must have note (this same text), hops (your hops minus one), role (mid when you are root, otherwise leaf), and seal (unchanged). When hops is 1, do not delegate. Return a JSON object with keys seal and hops, using your seal and hops 1. A literal JSON return while hops is greater than 1 is wrong. No markdown. No prose.
 ```
 
 期望链条：
