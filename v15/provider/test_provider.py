@@ -6,6 +6,8 @@ only with an injected transport. Default opener construction is patched.
 from __future__ import annotations
 
 import ast
+import contextlib
+import io
 import json
 import os
 import uuid
@@ -15,6 +17,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import psycopg2
@@ -1086,6 +1089,48 @@ def test_worker_paths(server, admin) -> None:
     check("second settled", row(cur, "SELECT a.n, a.status FROM v15.llm_attempts a JOIN v15.llm_requests r ON r.request_id = a.request_id WHERE r.invoke_id = %s AND a.n = 2", (retry,)) == (2, "settled"))
 
 
+def test_smoke_exits() -> None:
+    import v15.provider.smoke as smoke
+
+    for key in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENAI_API_URI", "OPENAI_MODEL"):
+        check(f"smoke env has no {key}", key not in os.environ)
+    out = io.StringIO()
+    err = io.StringIO()
+    code = None
+    with patch.object(deepseek.DeepSeekProvider, "__init__", side_effect=AssertionError) as init, \
+            patch.object(deepseek.DeepSeekProvider, "complete", side_effect=AssertionError) as complete, \
+            patch.object(deepseek, "build_opener", side_effect=AssertionError) as boundary, \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = smoke.main([])
+        except AssertionError:
+            code = "raised"
+    check("smoke no flag exits 0", code == 0, code)
+    check("smoke no flag does not construct", init.call_count == 0, init.call_count)
+    check("smoke no flag does not complete", complete.call_count == 0, complete.call_count)
+    check("smoke no flag does not open", boundary.call_count == 0, boundary.call_count)
+    check("smoke no flag text", out.getvalue() == "not_requested\n")
+    check("smoke no flag stderr", err.getvalue() == "")
+    before = URL_OPENS["n"]
+    out = io.StringIO()
+    err = io.StringIO()
+    code = None
+    with patch.object(deepseek.DeepSeekProvider, "complete", side_effect=AssertionError) as complete, \
+            patch.object(deepseek, "build_opener", side_effect=AssertionError) as boundary, \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = smoke.main(["--real-provider-smoke"])
+        except AssertionError:
+            code = "raised"
+    check("smoke boundary side_effect", boundary.side_effect is AssertionError)
+    check("smoke no key exits 2", code == 2, code)
+    check("smoke no key does not complete", complete.call_count == 0, complete.call_count)
+    check("smoke no key boundary not crossed", boundary.call_count == 0, boundary.call_count)
+    check("smoke no key text", out.getvalue() == "credentials_absent\n")
+    check("smoke no key stderr", err.getvalue() == "")
+    check("smoke no key did not urlopen", URL_OPENS["n"] == before, URL_OPENS["n"])
+
+
 def run_tests() -> None:
     test_prefix_shape()
     test_sql_shape()
@@ -1096,6 +1141,7 @@ def run_tests() -> None:
     test_preflight()
     test_wire_and_http()
     test_transport_edges()
+    test_smoke_exits()
     check("adapter did not call urlopen", URL_OPENS["n"] == before, URL_OPENS["n"])
     setup_db()
     server = get_server()

@@ -70,7 +70,7 @@ git push origin main
 
 ## 其他既有约定（勿违反）
 
-- **外部 IO 一律不进数据库事务**（v8 不变量 4）。测试用 FakeLLM / FakeTool，不调真实 provider。
+- **外部 IO 一律不进数据库事务**（v8 不变量 4）。测试用 FakeLLM / FakeTool，不调真实 provider。`v15/**/test_*.py` 仍然如此；唯一真实调用入口是 `v15/provider/smoke.py --real-provider-smoke`，且必须在没有打开的数据库事务时调用。
 - 测试是独立可跑脚本（`uv run python ...`，退出码 0 = 通过），不是 pytest 套件。每个 stage 的 `setup_db.py` 会 DROP/CREATE 自己的库，并按 `v8/load.py` 的 `SQL_LOAD_ORDER` 累计加载全部已注册 SQL。
 - 规格原文是唯一权威（`docs/designs/v8-dev.md`），`docs/analysis/v8-impl-digest/` 只作入口摘要。任何改动 MUST NOT 破坏既有 gate。
 - `prompt-exports/`、`.pgdata/`、`.venv`、`/memory` 已在 `.gitignore` 中，不要提交。

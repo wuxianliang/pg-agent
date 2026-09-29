@@ -200,7 +200,7 @@ stage 9 是合运行时。`v15_on_phase` 与四个治理 handler 同 oid 替换�
 
 ## stage 10 · SQL
 
-D27–D30 的句子在规格 §14 与偏差台账。线协议、计价与 `reasoning_content` 由 10.8–10.14 证明。
+D27–D30 的句子在规格 §14 与偏差台账。线协议、计价与 `reasoning_content` 由 10.8–10.14 证明。冒烟脚本不是 gate，由 10.15 证明。
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
@@ -218,6 +218,7 @@ D27–D30 的句子在规格 §14 与偏差台账。线协议、计价与 `reaso
 | 10.5 | §4.8 子送达 | ✅ | 同上 | 子保留 `V15_PROVIDER_REJECTED` / `P1539`。父语句 `V15_CHILD_ERROR` / `P1528`。父 `runnable`，不是 `aborted` |
 | 10.6 | §9.5 / §13 hook 归一 | ✅ | 同上 | hook 返回 `V15_PROVIDER_REJECTED`。阶段不抛 `P1506`。提交后的 invoke 是 `V15_HOOK_ABORT` / `P1538`，`fatal = false`，`message = ''` |
 | 10.7 | §15 前缀 | ✅ | 同上 | `files_through("govern")` 仍是前 9 个且末项为 govern SQL。完整列表长度为 10 且末项为 provider SQL |
+| 10.15 | 冒烟脚本不是 gate | ✅ | 同上 | `smoke.py` 不是 `test_*.py`，不是合运行时证明。无 flag 打印 `not_requested` 退出 0，不构造适配器。`--real-provider-smoke` 无 key 打印 `credentials_absent` 退出 2，不调用 `complete`。默认传输边界 `side_effect=AssertionError`，这两条不触网 |
 
 ## M3 · §14
 
