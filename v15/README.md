@@ -23,4 +23,6 @@ env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL \
 
 前缀 gate 仍是 `uv run python v15/<stage>/test_<stage>.py`。退出码 0 为通过。`agent_v15_provider` 是这十个文件都加载的库。`agent_v15_govern` 与 `agent_v15_tree` 之类仍是前缀库，不是合运行时。`setup_db.py` 会删掉每一个 `agent_v15_` 库，所以 gate 要串行跑。
 
+`demo_v15/` 不是 gate。库名避开 `agent_v15_` 前缀。留着 `agent_demo_v15` 会让下一次 v15 gate 的 setup 在 `DROP ROLE v15_owner` 处失败（须先 `demo_v15/db.py --drop-only`）。
+
 覆盖矩阵：`docs/reviews/v15-conformance-matrix-2026-09-29.md`。行为以 `docs/designs/v15-jaz-dev.md` rev 9 为准。

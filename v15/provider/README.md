@@ -21,4 +21,4 @@ Gate 构造 `DeepSeekProvider` 时只注入传输，并把默认 opener 构造�
 
 stdout/stderr 不打印 content、reasoning、key、`Authorization`。uv 会经 `UV_ENV_FILE` 注入 `.env`；要验证无 key 退出码，必须 `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI UV_NO_ENV_FILE=1`。有 key 的真连不在 gate 里。
 
-手工全链（真实 Worker + 数据库）支持，但不属于冒烟：`Worker(dsn, DeepSeekProvider(), id, lease="180 seconds")`。当时不得有打开的数据库事务。运行者自担该库被模型 SQL 写入的后果。恰好 180s 的租约过不了发起前的剩余租约检查，要留出余量。
+手工全链（真实 Worker + 数据库）不是冒烟，也不是 gate。冒烟脚本仍然不建库。正规全链入口是 `demo_v15/drive.py`（`DEMO_MODE=real`），库名 `agent_demo_v15`；真连 `base_url` 钉死官方端点 `https://api.deepseek.com/v1`，不读 `OPENAI_API_URI`。示例租约 `"240 seconds"`：`Worker(dsn, DeepSeekProvider(), id, lease="240 seconds")`。当时不得有打开的数据库事务。运行者自担该库被模型 SQL 写入的后果。恰好 180s 的租约过不了发起前的剩余租约检查，要留出余量。
