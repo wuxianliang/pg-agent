@@ -578,7 +578,7 @@ hops=3 与 5 把 `--hops` 换成对应值。Done when：三次都退出码 0，`
 - harness：退出码 0（六 fixture）
 - keyless：退出码 2，当时无 demo 库
 - B1 real：NOTE_CHAIN_V1，修订 0，预算 0/3，stdout `tail_ok relay_ok`，退出码 0，`failure_class` 无，`calls_used=8`，成本 $0.006382194。八节点；七条 §0.2 边全绿（bind/return 两句、settled=1、max_n=1、var_eq、suspend<deliver 且 repl_exits=0）。depth-8 叶 `recursion_available=false` 完成。每跳 input_chars 2732/2731。报告 `demo_v15/reports/e2e_report-20260929T185451Z.md`（gitignore，不入库）。
-- B2 real：NOTE_RECALL_V1，修订 0，预算 0/3（`tail_ok` 即停），stdout `tail_ok recall_soft_fail`，退出码 0，`failure_class` 无，`calls_used=7`，成本 $0.005388552。`recall_ok` 为假：仅 `token_mismatch`——叶调用 `jaz.prior_history(根 uuid)` 读到历史（助手预览），提取子查询搜了 `llm_response`，token 在 `repl_output`（回报 `token=null`，上交后 `relay_flags=relay_value_mismatch`；结构 13 条全真，四条委托边全绿，`facts` 零泄漏）。警告只在根的绑定迭代（`warning_ok=True`，根 sends 3858/4697，非根最大 3142，非根告警 0）。报告 `demo_v15/reports/e2e_report-20260929T185538Z.md`（gitignore，不入库）。
+- B2 real：NOTE_RECALL_V1，修订 0，预算 0/3（`tail_ok` 即停），stdout `tail_ok recall_soft_fail`，退出码 0，`failure_class` 无，`calls_used=7`（= N+1 的 6 次 + 叶先做了一次只查历史的 `SELECT * FROM jaz.prior_history(...)` 探针迭代、finish 为 continue——报告助手预览第一条即它；非 unknown 重试）。成本 $0.005388552。`recall_ok` 为假：仅 `token_mismatch`——叶调用 `jaz.prior_history(根 uuid)` 读到历史（助手预览），提取子查询搜了 `llm_response`，token 在 `repl_output`（回报 `token=null`，上交后 `relay_flags=relay_value_mismatch`；结构 13 条全真，四条委托边全绿，`facts` 零泄漏）。警告只在根的绑定迭代（`warning_ok=True`，根 sends 3858/4697，非根最大 3142，非根告警 0）。报告 `demo_v15/reports/e2e_report-20260929T185538Z.md`（gitignore，不入库）。
 - `DEMO_MODE=real` 有 key 的额外调用：无（无应急 4096，无 uncertain 重跑；不计入三次）。B1+B2 合计 $0.011770746，调用 8+7。
 - 十道 gate：未跑（无 `v15` py/sql 变化）
 - 发布：未做。交给 `v15-publish-demo-driver-plan`，基线不再是 `calls_used=3`
