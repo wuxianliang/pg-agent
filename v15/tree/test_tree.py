@@ -406,9 +406,34 @@ def test_same_iteration_fanout(server, wconn, cur) -> None:
         parse_json(row[1]) == {"a": child_a_value, "b": child_b_value},
         row[1],
     )
-    check("bind a done", stmt(cur, iid, 0)[0] == "done")
-    check("bind b done", stmt(cur, iid, 1)[0] == "done")
-    check("return done same iteration", stmt(cur, iid, 2)[0] == "done")
+    row0, row1, row2 = (
+        one(cur, "SELECT status, kind, bind_name FROM v15.statements WHERE invoke_id = %s AND stmt_index = 0", (iid,)),
+        one(cur, "SELECT status, kind, bind_name FROM v15.statements WHERE invoke_id = %s AND stmt_index = 1", (iid,)),
+        one(cur, "SELECT status, kind, bind_name FROM v15.statements WHERE invoke_id = %s AND stmt_index = 2", (iid,)),
+    )
+    check("stmt 0 is bind a done", row0 == ("done", "bind_invoke", "a"), row0)
+    check("stmt 1 is bind b done", row1 == ("done", "bind_invoke", "b"), row1)
+    check("stmt 2 is return done", row2 == ("done", "return", None), row2)
+    kid_iters_a = one(
+        cur,
+        """
+        SELECT count(*), max(iteration),
+               bool_or(iteration = 0 AND result_kind = 'return')
+        FROM v15.iterations WHERE invoke_id = %s
+        """,
+        (kid_a,),
+    )
+    kid_iters_b = one(
+        cur,
+        """
+        SELECT count(*), max(iteration),
+               bool_or(iteration = 0 AND result_kind = 'return')
+        FROM v15.iterations WHERE invoke_id = %s
+        """,
+        (kid_b,),
+    )
+    check("child a single return iteration", kid_iters_a == (1, 0, True), kid_iters_a)
+    check("child b single return iteration", kid_iters_b == (1, 0, True), kid_iters_b)
     iters = one(
         cur,
         """
@@ -450,6 +475,11 @@ def test_same_iteration_fanout(server, wconn, cur) -> None:
         (iid,),
     )
     spans = cur.fetchall()
+    check(
+        "repl_exec span exactly enter/send/complete/exit",
+        [(row[2]) for row in spans] == ["enter", "send", "complete", "exit"],
+        spans,
+    )
     for name in ("a", "b"):
         suspend_seq = one(
             cur,
