@@ -49,6 +49,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "plan_arm" / "v13_plan_arm.sql",
     V13_ROOT / "loop_driver" / "v13_loop_driver.sql",
     V13_ROOT / "workflow_bind" / "v13_workflow_bind.sql",
+    V13_ROOT / "real_chain" / "v13_real_chain.sql",
 ]
 
 STAGE_THROUGH = {
@@ -86,6 +87,7 @@ STAGE_THROUGH = {
     "plan_arm": 32,
     "loop_driver": 33,
     "workflow_bind": 34,
+    "real_chain": 35,
 }
 
 

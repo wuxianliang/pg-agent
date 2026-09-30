@@ -17,21 +17,21 @@
 | B6 | `loop_driver` | 所有权表（README `## B6` 15 行，含 fourth-duty=none）与静态检查已交付。不授权无人值守；Phase C 声称前必须再交表 | 同上。断言 `b6_table_complete`/`static_check`/`no_recover_idle`/`no_direct_spawn`/`no_closed_set_leak`。claim 路径偏差见台账 L12/L13 | exit_0 |
 | C1 | `workflow_bind` | 政策行 `workflow_template` version 1 与 STABLE 解析器已交付。返回四段文本，不合并单行。不声称 `judgment_templates` 被复用 | `UV_FROZEN=1 uv run python v13/workflow_bind/test_workflow_bind.py` 退出码 0；库 `ll_workflow_bind_47316`（跑完已 DROP）；8 checks。断言 `resolve_v1` / `judgment_templates_untouched` | exit_0 |
 | C2 | `workflow_bind` | 合同在同一政策行（labels / allowed_tools / parent_tools / chain）。子集交付不在本行（Phase B）。explore 仍 RAISE。不 UPDATE tools | 同上。断言 `label_does_not_open_explore` / `no_tool_flag_update` | exit_0 |
-| C3 | `workflow_bind` / `real_chain` | 函数 `v13_child_pointer` 已交付。生产调用者不在本行，留在 `real_chain`。不改 `v13_session_log` | 同上。断言 `one_pointer` / `pointer_not_transcript` / `session_log_unchanged` / `root_waterline_unchanged` | exit_0 |
-| C4 | `real_chain` | 不得声称摘录引用已交付。多 lane 不建 | 无 | not_run |
+| C3 | `workflow_bind` / `real_chain` | 函数 `v13_child_pointer` 已交付。生产调用者是 `v13/real_chain/chain.py`，只在创建子会话的 advance 提交之后调用，不 INSERT。不改 `v13_session_log` | `workflow_bind` 断言 `one_pointer` / `pointer_not_transcript` / `session_log_unchanged` / `root_waterline_unchanged`。生产调用见 `real_chain` 断言 `one_child_pointer` | exit_0 |
+| C4 | `real_chain` | 首期部分：有界摘录经已有非 harness `v13_complete` 落在 `effects.result`，持久引用是该 `effect_id`。不是 `prompt-exports/`。不是新的 artifact 写者。多 lane 不建。G1 仍未交付 | `UV_FROZEN=1 uv run python v13/real_chain/test_real_chain.py` 退出码 0；库 `ll_real_chain_37745_34afa7`（跑完已 DROP）；24 checks。断言 `excerpt_on_effect_not_prompt_exports` / `plan_artifact_not_committed_via_complete`。落点重读仍在 `v13/acl/v13_acl.sql:411` | exit_0 |
 | C5 | `loop_driver` | 不实现自动 skip | 无 | not_run |
 | C6 | Phase C | 不实现。V11 未读 | 无 | not_run |
 | C7 | `loop_driver` | 投影（STABLE `v13_harness_result_project`，闭集 10 键、四值 `result_kind`、三值 `wait_reason`、散文/缺键失败不映射 reject）与驱动器映射已跑通。可选键名单已重读活体（行号在本目录 README）。不重复实现 allOf（由 `v13_complete` 内验证执法） | 同上。断言 `c7_four_kinds_project`/`c7_invalid_fail_no_reject`/`c7_wait_reason_absent_stays`/`c7_prose_missing_key_fail_no_complete`/`harness_project_served_archived` | exit_0 |
 | D1 | Phase C | 不实现 | 无 | not_run |
 | D2 | Phase C | 不实现 | 无 | not_run |
 | D3 | Phase C | 不实现。哈希句之前不得标绿 | 无 | not_run |
-| G1 | Phase B | 不交付 | 无 | not_run |
-| G2 `fake_exit_0` | `real_chain` | 不得声称 Fake 门已绿 | 无 | not_run |
-| G2 `real_authorized_exit_0` | `real_chain` | 不得声称真实验收已跑。本行与 Fake 行分开 | 无 | not_run |
+| G1 | Phase B | 未交付。真链只注册并接线 `read_pi` / `read_file_swift` / `read_file_py` / `read_duck`，不是完整工具面 | 无 | not_run |
+| G2 `fake_exit_0` | `real_chain` | Fake 门已在一次性库跑通。不是产品可用。与 `real_authorized_exit_0` 分开 | `UV_FROZEN=1 uv run python v13/real_chain/test_real_chain.py` 退出码 0；库 `ll_real_chain_37745_34afa7`（跑完已 DROP）；24 checks | exit_0 |
+| G2 `real_authorized_exit_0` | `real_chain` | 不得声称真实验收已跑。本行与 Fake 行分开。授权信号只有 `V13_REAL_PROVIDER_AUTHORIZATION=1`，本里程碑不设置 | 无 | not_run |
 | G3 | Phase C | `v13_recover_idle` 未改 | 无 | not_run |
 | G4 | Phase C / D | 不实现。PC-4 不开工 | 无 | not_run |
 | plan_read gate | `v13/plan_read` | A3 库存与前沿零写。不声称 `v13_selected_todo` / `v13_plan_gate` 已交付 | 同上。断言：`zero_write`；`inventory_33`；`inventory_32`；`inventory_0`；`horizon_caps`；`gap_inserts_nothing`；`text_cap`；`empty_plan`；`child_reads_root_stream` | exit_0 |
 | plan_arm gate | `v13/plan_arm` | 唯一一份 `v13_advance` 替换已在一次性库跑通。不声称绑定窗已闭合，不声称产品角色 | `UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0；库 `ll_plan_arm_16921`（跑完已 DROP）；43 checks。断言名按 §7.3。结算扫描全部绑定行 | exit_0 |
 | loop_driver gate | `v13/loop_driver` | B1/B2/B6/C7 在一次性库跑通（三轮 Oracle 复审：首轮 P0×1 加一批 P1 全改；第二轮 codex 通过；第三轮三路通过后余项亦全改）。不声称真链端到端，不声称产品角色，不授权无人值守。Fake 绿不是产品可用 | `UV_FROZEN=1 uv run python v13/loop_driver/test_loop_driver.py` 退出码 0；库 `ll_loop_driver_62098`（跑完已 DROP）；55 checks。回归：`plan_contract` 93、`plan_read` 11、`plan_arm` 43 同日全绿 | exit_0 |
 | workflow_bind gate | `v13/workflow_bind` | C1/C2/C3 在一次性库跑通。不声称工具子集、explore 已改、生产调用已接、产品角色。Fake 绿不是产品可用 | `UV_FROZEN=1 uv run python v13/workflow_bind/test_workflow_bind.py` 退出码 0；库 `ll_workflow_bind_47316`（跑完已 DROP）；8 checks。回归：`plan_contract` 93、`plan_read` 11、`plan_arm` 43、`loop_driver` 55 同日全绿 | exit_0 |
-| real_chain gate | `v13/real_chain` | 无 | 无 | not_run |
+| real_chain gate | `v13/real_chain` | 第 4 节序列、G2 Fake 门、read 注册、C4 首期摘录、解析器与指针的生产调用已在一次性库跑通。不声称产品可用，不声称真实 provider 验收，不交付 G1，不建多 lane，不授权无人值守 | `UV_FROZEN=1 uv run python v13/real_chain/test_real_chain.py` 退出码 0；库 `ll_real_chain_37745_34afa7`（跑完已 DROP）；24 checks。同日回归均退出码 0：`plan_contract` 93（`ll_plan_contract_37547`）、`plan_read` 11（`ll_plan_read_37515`）、`plan_arm` 43（`ll_plan_arm_37589`）、`loop_driver` 55（`ll_loop_driver_37643`）、`workflow_bind` 8（`ll_workflow_bind_37692`） | exit_0 |
