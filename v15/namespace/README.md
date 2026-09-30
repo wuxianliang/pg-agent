@@ -2,7 +2,7 @@
 
 Gate: `uv run python v15/namespace/test_namespace.py`（退出码 0 = 通过）
 
-库名 `agent_v15_namespace`。这是前缀 gate 库，不是合运行时。合运行时只在 `SQL_LOAD_ORDER` 十个文件都加载之后。
+库名 `agent_v15_namespace`。这是前缀 gate 库，不是合运行时。合运行时只在 `SQL_LOAD_ORDER` 十一个文件都加载之后。
 
 `setup_db.py` 先删掉每一个 `starts_with(datname, 'agent_v15_')` 的库（含 stage 1 的 `agent_v15_schema`），再重建集群角色，然后 `CREATE DATABASE` 并 `load_stage(..., "namespace")`。角色语句不在 SQL 文件里。加载结束后 `v15_bootstrap` 改为 `NOLOGIN`。
 

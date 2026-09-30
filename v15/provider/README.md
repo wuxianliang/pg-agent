@@ -2,7 +2,7 @@
 
 Gate: `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v15/provider/test_provider.py`（退出码 0 = 通过）。
 
-本 stage 只追加 `v15/provider/v15_provider.sql`，不新增表。`files_through("govern")` 仍是前缀 gate；十个 SQL 文件全部加载后，`agent_v15_provider` 才是合运行时，`agent_v15_govern` 只是前缀库。
+本 stage 只追加 `v15/provider/v15_provider.sql`，不新增表。`files_through("govern")` 仍是前缀 gate；`files_through("provider")` 是十个文件，末项是 provider。合运行时是十一个文件都加载之后，库名 `agent_v15_return_hooks`。`agent_v15_provider` 与 `agent_v15_govern` 都是前缀库。
 
 Gate 构造 `DeepSeekProvider` 时只注入传输，并把默认 opener 构造罩成 `AssertionError`。不跟随重定向，不走环境代理，不调 `urlopen`。冒烟脚本不是 gate。
 

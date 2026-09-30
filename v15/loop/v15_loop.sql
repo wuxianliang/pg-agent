@@ -18,6 +18,7 @@ AS $fn$
     CASE p_code
       WHEN 'V15_SCOPE_CONFLICT' THEN 'P1509'
       WHEN 'V15_RAISE' THEN 'P1529'
+      WHEN 'V15_VALIDATION_FAILED' THEN 'P1540'
       WHEN 'V15_VALUE_INVALID' THEN 'P1524'
       WHEN 'V15_INVALID_EFFECT' THEN 'P1506'
       ELSE NULL
@@ -676,7 +677,13 @@ AS $fn$
 DECLARE
   v_i integer;
   v_id text;
+  v_parts text[];
+  v_hook text;
+  v_ord integer;
+  v_n bigint;
+  v_cur bigint;
   v_key text;
+  v_seen jsonb := '{}'::jsonb;
   v_bumped boolean := false;
 BEGIN
   IF p_messages IS NULL OR pg_catalog.jsonb_typeof(p_messages) <> 'array' THEN
@@ -684,10 +691,49 @@ BEGIN
   END IF;
   FOR v_i IN 0 .. pg_catalog.jsonb_array_length(p_messages) - 1 LOOP
     v_id := p_messages -> v_i ->> 'id';
-    IF v_id IS NULL OR v_id !~ '^budget_forcing:[0-9]+:[0-9]+$' THEN
+    IF v_id IS NULL THEN
       CONTINUE;
     END IF;
-    v_key := pg_catalog.regexp_replace(v_id, ':[0-9]+$', '');
+    v_parts := pg_catalog.regexp_match(
+      v_id, '^([a-z][a-z0-9_]{0,53}):([0-9]+):([0-9]+)$'
+    );
+    IF v_parts IS NULL THEN
+      CONTINUE;
+    END IF;
+    v_hook := v_parts[1];
+    IF v_hook <> ALL (ARRAY['budget_forcing', 'return_type', 'validate_return']::text[])
+       AND NOT pg_catalog.starts_with(v_hook, 'validate_return_') THEN
+      CONTINUE;
+    END IF;
+    IF v_seen ? v_id THEN
+      CONTINUE;
+    END IF;
+    BEGIN
+      v_ord := v_parts[2]::integer;
+      v_n := v_parts[3]::bigint;
+    EXCEPTION
+      WHEN numeric_value_out_of_range THEN
+        CONTINUE;
+    END;
+    IF NOT EXISTS (
+      SELECT 1
+      FROM v15.invoke_hooks h
+      JOIN v15.hook_defs d ON d.hook_def_id = h.hook_def_id
+      WHERE h.invoke_id = p_invoke_id
+        AND h.ordinal = v_ord
+        AND d.hook_key = v_hook
+    ) THEN
+      RAISE EXCEPTION 'V15_INVALID_TRANSITION' USING ERRCODE = 'P1523';
+    END IF;
+    v_seen := v_seen || pg_catalog.jsonb_build_object(v_id, true);
+    v_key := v_hook || ':' || v_ord::text;
+    SELECT c.n INTO v_cur
+    FROM v15.hook_counters c
+    WHERE c.invoke_id = p_invoke_id
+      AND c.counter_key = v_key;
+    IF FOUND AND v_cur >= 9223372036854775807 THEN
+      RAISE EXCEPTION 'V15_VALUE_INVALID' USING ERRCODE = 'P1524';
+    END IF;
     INSERT INTO v15.hook_counters (invoke_id, counter_key, n)
     VALUES (p_invoke_id, v_key, 1)
     ON CONFLICT (invoke_id, counter_key) DO UPDATE
@@ -868,6 +914,24 @@ BEGIN
       );
       v_kind := 'continue';
       v_inv.return_value := NULL;
+    ELSIF v_kind = 'return'
+          AND v_ret -> 'exec_result' ->> 'result_kind' = 'raise'
+          AND v_ret -> 'exec_result' -> 'return_value' = 'null'::jsonb
+          AND v_capture = ''
+          AND v_ret #>> '{exec_result,error,code}' = 'V15_VALIDATION_FAILED' THEN
+      v_err := v15.v15_loop_error(
+        v_ret #>> '{exec_result,error,code}',
+        v_ret #>> '{exec_result,error,message}'
+      );
+      UPDATE v15.invokes i
+      SET return_value = NULL,
+          error = v_err,
+          revision = i.revision + 1,
+          updated_at = pg_catalog.clock_timestamp()
+      WHERE i.invoke_id = p_invoke_id;
+      v_inv.return_value := NULL;
+      v_inv.error := v_err;
+      v_kind := 'raise';
     ELSE
       RAISE EXCEPTION 'V15_INVALID_EFFECT' USING ERRCODE = 'P1506';
     END IF;

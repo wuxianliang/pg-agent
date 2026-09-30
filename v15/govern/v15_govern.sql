@@ -41,7 +41,8 @@ AS $fn$
     'V15_EFFECT_CONFLICT',
     'V15_HANDLER_DIGEST',
     'V15_HANDLER_SHAPE',
-    'V15_HOOK_ABORT'
+    'V15_HOOK_ABORT',
+    'V15_VALIDATION_FAILED'
   )
 $fn$;
 
@@ -295,11 +296,28 @@ BEGIN
     IF NOT v15.v15_govern_exact_keys(
          p_ret->'exec_result', ARRAY['error', 'result_kind', 'return_value']
        )
-       OR p_ret #>> '{exec_result,result_kind}' IS DISTINCT FROM 'continue'
        OR p_ret->'exec_result'->'return_value' IS DISTINCT FROM 'null'::jsonb
-       OR p_ret->'exec_result'->'error' IS DISTINCT FROM 'null'::jsonb
+       OR p_span IS DISTINCT FROM 'repl_exec'
+       OR p_phase IS DISTINCT FROM 'complete'
        OR p_io->>'result_kind' IS DISTINCT FROM 'return'
        OR p_io->>'capture' IS DISTINCT FROM '' THEN
+      RAISE EXCEPTION 'V15_INVALID_EFFECT' USING ERRCODE = 'P1506';
+    END IF;
+    IF p_ret #>> '{exec_result,result_kind}' = 'continue' THEN
+      IF p_ret->'exec_result'->'error' IS DISTINCT FROM 'null'::jsonb THEN
+        RAISE EXCEPTION 'V15_INVALID_EFFECT' USING ERRCODE = 'P1506';
+      END IF;
+    ELSIF p_ret #>> '{exec_result,result_kind}' = 'raise' THEN
+      IF NOT v15.v15_govern_exact_keys(
+           p_ret->'exec_result'->'error', ARRAY['code', 'message']
+         )
+         OR pg_catalog.jsonb_typeof(p_ret #> '{exec_result,error,code}') <> 'string'
+         OR pg_catalog.jsonb_typeof(p_ret #> '{exec_result,error,message}') <> 'string'
+         OR p_ret #>> '{exec_result,error,code}' IS DISTINCT FROM 'V15_VALIDATION_FAILED'
+         OR pg_catalog.char_length(p_ret #>> '{exec_result,error,message}') > 1024 THEN
+        RAISE EXCEPTION 'V15_INVALID_EFFECT' USING ERRCODE = 'P1506';
+      END IF;
+    ELSE
       RAISE EXCEPTION 'V15_INVALID_EFFECT' USING ERRCODE = 'P1506';
     END IF;
   END IF;
@@ -960,6 +978,8 @@ DECLARE
   v_idrops jsonb := '{}'::jsonb;
   v_boards jsonb := '[]'::jsonb;
   v_exec jsonb;
+  v_raise boolean := false;
+  v_continue_ords jsonb := '[]'::jsonb;
   v_budget jsonb;
   v_disable boolean := false;
   v_out jsonb;
@@ -1276,10 +1296,29 @@ BEGIN
       END LOOP;
     END IF;
     IF v_ret ? 'exec_result' AND v_ret->'exec_result' IS DISTINCT FROM 'null'::jsonb THEN
-      IF v_exec IS NOT NULL AND v_exec IS DISTINCT FROM v_ret->'exec_result' THEN
+      IF v_ret #>> '{exec_result,result_kind}' = 'raise' THEN
+        IF v_exec IS NOT NULL
+           AND v_exec->>'result_kind' = 'raise'
+           AND v_exec IS DISTINCT FROM v_ret->'exec_result' THEN
+          RAISE EXCEPTION 'V15_EFFECT_CONFLICT' USING ERRCODE = 'P1535';
+        END IF;
+        v_exec := v_ret->'exec_result';
+        v_raise := true;
+      ELSIF v_ret #>> '{exec_result,result_kind}' = 'continue' THEN
+        IF v_exec IS NOT NULL
+           AND v_exec->>'result_kind' = 'continue'
+           AND v_exec IS DISTINCT FROM v_ret->'exec_result' THEN
+          RAISE EXCEPTION 'V15_EFFECT_CONFLICT' USING ERRCODE = 'P1535';
+        END IF;
+        IF NOT v_raise THEN
+          v_exec := v_ret->'exec_result';
+        END IF;
+        v_continue_ords := v_continue_ords || pg_catalog.jsonb_build_array(v_hook.ordinal);
+      ELSIF v_exec IS NOT NULL AND v_exec IS DISTINCT FROM v_ret->'exec_result' THEN
         RAISE EXCEPTION 'V15_EFFECT_CONFLICT' USING ERRCODE = 'P1535';
+      ELSE
+        v_exec := v_ret->'exec_result';
       END IF;
-      v_exec := v_ret->'exec_result';
     END IF;
     IF v_ret ? 'budget' AND v_ret->'budget' IS DISTINCT FROM 'null'::jsonb THEN
       IF v_budget IS NOT NULL AND v_budget IS DISTINCT FROM v_ret->'budget' THEN
@@ -1292,6 +1331,14 @@ BEGIN
       v_disable := true;
     END IF;
   END LOOP;
+  IF v_raise THEN
+    SELECT coalesce(pg_catalog.jsonb_agg(e.value), '[]'::jsonb)
+      INTO v_msg_acc
+    FROM pg_catalog.jsonb_array_elements(v_msg_acc) AS e(value)
+    WHERE NOT (
+      v_continue_ords @> pg_catalog.jsonb_build_array((e.value->>'ord')::integer)
+    );
+  END IF;
   IF EXISTS (
     SELECT 1
     FROM pg_catalog.jsonb_object_keys(v_drops) AS d(key)

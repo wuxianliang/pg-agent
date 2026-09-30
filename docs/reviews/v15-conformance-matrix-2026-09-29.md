@@ -1,6 +1,6 @@
 # v15 覆盖矩阵（2026-09-29）
 
-记 stage 1–10 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 9 为准。矩阵不是第二份合同。
+记 stage 1–10 gate 已经断言的条目，以及 stage 11 的 M1 骨架。行为以 `docs/designs/v15-jaz-dev.md` rev 10 为准。矩阵不是第二份合同。
 
 完整 `SQL_LOAD_ORDER`：
 
@@ -14,10 +14,11 @@
 8. `v15/tree/v15_tree.sql`
 9. `v15/govern/v15_govern.sql`
 10. `v15/provider/v15_provider.sql`
+11. `v15/return_hooks/v15_return_hooks.sql`
 
-合运行时是这十个文件都加载之后。`agent_v15_provider` 是这个库。`agent_v15_govern` 与更早的 `agent_v15_*` 库是前缀 gate，不是合运行时。
+合运行时是这十一个文件都加载之后。`agent_v15_return_hooks` 是这个库。`agent_v15_provider`、`agent_v15_govern` 与更早的 `agent_v15_*` 库是前缀 gate，不是合运行时。
 
-状态来自实跑：`uv run python v15/govern/test_govern.py` 退出码 0。随后复跑 stage 1–8 的 gate，退出码都是 0。
+状态来自实跑：`uv run python v15/govern/test_govern.py` 退出码 0。随后复跑 stage 1–8 的 gate，退出码都是 0。M1 串行复跑 schema→return_hooks 十一道 gate，退出码都是 0。
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
@@ -219,6 +220,19 @@ D27–D30 的句子在规格 §14 与偏差台账。线协议、计价与 `reaso
 | 10.6 | §9.5 / §13 hook 归一 | ✅ | 同上 | hook 返回 `V15_PROVIDER_REJECTED`。阶段不抛 `P1506`。提交后的 invoke 是 `V15_HOOK_ABORT` / `P1538`，`fatal = false`，`message = ''` |
 | 10.7 | §15 前缀 | ✅ | 同上 | `files_through("govern")` 仍是前 9 个且末项为 govern SQL。完整列表长度为 10 且末项为 provider SQL |
 | 10.15 | 冒烟脚本不是 gate | ✅ | 同上 | `smoke.py` 不是 `test_*.py`，不是合运行时证明。无 flag 打印 `not_requested` 退出 0，不构造适配器。`--real-provider-smoke` 无 key 打印 `credentials_absent` 退出 2，不调用 `complete`。默认传输边界 `side_effect=AssertionError`，这两条不触网 |
+
+## stage 11 · return_hooks（M1 骨架）
+
+M1 只证明加载序、`P1540`、计数 id 泛化、return→raise 消费，以及 raise 压过 continue。封闭 DSL helper、ReturnType handler 与 ValidateReturn 注册面留给后续里程碑，本表不把它们写成 PASS。
+
+| # | 条文 | 状态 | 测试落点 | 断言的行为 |
+|---|---|---|---|---|
+| 11.1 | §15 十一文件 | ✅ | `v15/return_hooks/test_return_hooks.py` | `files_through("govern")` 9 项且末项 govern；`files_through("provider")` 10 项且末项 provider；完整列表 11 项且末项 return_hooks |
+| 11.2 | §18 `v15_on_phase` oid | ✅ | 同上 | 库内 `v15_on_phase` 恰好一个 oid |
+| 11.3 | §9.4 return→raise | ✅ | 同上 | `call_phase` 接受 `V15_VALIDATION_FAILED` 的 raise；错码与超 1024 的 message 是 `P1506` |
+| 11.4 | §9.5 raise 压过 continue | ✅ | 同上 | 同相位 continue 的持久消息不进入返回值，也不写入 `llm_messages`。两个不等的 raise 仍是 `P1535` |
+| 11.5 | §4.9 计数泛化 | ✅ | 同上 | 重复的 `budget_forcing:<ordinal>:<n>` 只 bump 一次。`return_type:prompt:<n>` 不 bump、不抛 `P1516`。不存在的 ordinal 是 `P1523` |
+| 11.6 | §4.9 finish return→raise | ✅ | 同上 | finish 后 invoke `failed`、`fatal=false`、`return_value` 为 SQL NULL、`error` 为 `V15_VALIDATION_FAILED` / `P1540`。历史 `repl_exception` 同码。无 `invoke/complete`。语句保持 `return`/`done`。不 bump |
 
 ## M3 · §14
 

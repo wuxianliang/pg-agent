@@ -1221,3 +1221,11 @@ P1540 和新 `hook_defs` row 不是旧十 stage 的兼容数据。rollback 必�
 - 调查：`docs/investigations/v15-next-steps-survey-2026-09-29.md` §D1
 - rev 9 修订先例：`v15/provider/v15_provider.sql`（映射 CREATE OR REPLACE）+ spec 文档头
 - budget_forcing 全链：`v15_govern.sql:841-846`、`v15_loop.sql:665-705/853-872`、`test_govern.py:983-1033`
+
+## Run record
+
+### M1（2026-09-30）
+
+步骤 1–6 已落地：stage 11 骨架、`P1540`（loop CASE + known_code 双体，`v15_io_sqlstate` 不动）、`v15_loop_accept_forcing` 不改名的计数泛化、`v15_govern_check_return` 放行 return→raise、`v15_finish_exec` 消费该分支并同步 `v_inv.return_value` / `v_inv.error`、`v15_on_phase` raise 压过 continue。规格升 rev 10。
+
+十一道 gate 串行实跑，退出码都是 0：schema、namespace、config、protocol、repl、io、loop、tree、govern、provider、return_hooks。budget_forcing 既有断言未放宽。
