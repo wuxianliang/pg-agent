@@ -158,3 +158,33 @@ Key measured assertions (`test_replay.py`):
 
 Stop conditions did not fire. Item 2 (commit/push) deferred.
 
+### Run record (D2 final-fix, 2026-10-01)
+
+P1: `export_trace` now `SELECT v15.v15_replay_export(%s)::text` then Decimal `_parse` (JSONB float typecaster bypassed). `dumps` is a recursive serializer (dict/list/str/int/bool/None/Decimal only); placeholder replacement abandoned.
+
+P2: `validate_trace` runs `bindings[*].value` and `blackboard[*].value` through `_json_value`. SQL path / binding name / blackboard key `ORDER BY … COLLATE "C"`; Python sorts/compares via `encode("utf-8")`. `export_trace` docstring + `v15/README.md` stage 12: caller must have no uncommitted work on the connection.
+
+Follow-up (not this turn):
+- `drop_cost` can drop same-named keys at any nesting
+- path/export recursion has no cycle detection
+
+Serial `uv run python v15/<stage>/test_<stage>.py` then smoke. `setup_db.py` drops every `agent_v15_` DB; gates were not overlapped.
+
+| gate | command | exit |
+|---|---|---|
+| schema | `uv run python v15/schema/test_schema.py` | 0 |
+| namespace | `uv run python v15/namespace/test_namespace.py` | 0 |
+| config | `uv run python v15/config/test_config.py` | 0 |
+| protocol | `uv run python v15/protocol/test_protocol.py` | 0 |
+| repl | `uv run python v15/repl/test_repl.py` | 0 |
+| io | `uv run python v15/io/test_io.py` | 0 |
+| loop | `uv run python v15/loop/test_loop.py` | 0 |
+| tree | `uv run python v15/tree/test_tree.py` | 0 |
+| govern | `uv run python v15/govern/test_govern.py` | 0 |
+| provider | `uv run python v15/provider/test_provider.py` | 0 |
+| return_hooks | `uv run python v15/return_hooks/test_return_hooks.py` | 0 |
+| replay | `uv run python v15/replay/test_replay.py` | 0 |
+| smoke | `uv run python v15/provider/smoke.py` | 0 |
+
+Measured this turn: high-precision `cost_used` `0.123456789012345678901234567890` survives export→write→load; `\x1eDEC0\x1e` string + Decimal coexist; object/float `_json_value` negatives; mixed-case bindings export `['Z', 'a']`. Smoke printed `not_requested` (no `--real-provider-smoke`).
+

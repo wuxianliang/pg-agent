@@ -54,26 +54,50 @@ def _parse(value: str) -> Any:
 
 
 def dumps(value: Any, *, indent: int | None = None) -> str:
-    placeholders: list[str] = []
+    """Serialize Trace JSON. Decimal tokens are produced only here, never via placeholder replace."""
 
-    def conv(obj):
+    def encode(obj: Any, level: int) -> str:
         if isinstance(obj, dict):
-            return {k: conv(v) for k, v in obj.items()}
+            if not obj:
+                return "{}"
+            items: list[tuple[str, str]] = []
+            for key, item in obj.items():
+                if not isinstance(key, str):
+                    raise TypeError("dict key")
+                items.append((json.dumps(key, ensure_ascii=False), encode(item, level + 1)))
+            if indent is None:
+                return "{" + ",".join(k + ":" + v for k, v in items) + "}"
+            pad = " " * (indent * (level + 1))
+            close = " " * (indent * level)
+            inner = ",\n".join(pad + k + ": " + v for k, v in items)
+            return "{\n" + inner + "\n" + close + "}"
         if isinstance(obj, list):
-            return [conv(v) for v in obj]
+            if not obj:
+                return "[]"
+            encoded = [encode(item, level + 1) for item in obj]
+            if indent is None:
+                return "[" + ",".join(encoded) + "]"
+            pad = " " * (indent * (level + 1))
+            close = " " * (indent * level)
+            inner = ",\n".join(pad + item for item in encoded)
+            return "[\n" + inner + "\n" + close + "]"
+        if isinstance(obj, str):
+            return json.dumps(obj, ensure_ascii=False)
+        if obj is None:
+            return "null"
+        if isinstance(obj, bool):
+            return "true" if obj else "false"
+        if type(obj) is int:
+            return str(obj)
         if isinstance(obj, Decimal):
             if not obj.is_finite():
                 raise TypeError("non-finite Decimal")
             if obj == obj.to_integral_value():
-                return int(obj)
-            placeholders.append(format(obj, "f"))
-            return f"\x1eDEC{len(placeholders) - 1}\x1e"
-        return obj
+                return str(int(obj))
+            return format(obj, "f")
+        raise TypeError(f"unsupported {type(obj).__name__}")
 
-    text = json.dumps(conv(value), ensure_ascii=False, indent=indent)
-    for i, lit in enumerate(placeholders):
-        text = text.replace(json.dumps(f"\x1eDEC{i}\x1e"), lit)
-    return text
+    return encode(value, 0)
 
 
 def _expect_keys(obj: Any, keys: tuple[str, ...], label: str) -> dict:
@@ -261,22 +285,24 @@ def _validate_trace(trace: Any) -> dict:
         for bind in inv["bindings"]:
             bind = _expect_keys(bind, BIND_KEYS, "binding")
             name = _as_str(bind["name"], "binding name")
-            if prev_name is not None and name <= prev_name:
+            if prev_name is not None and name.encode("utf-8") <= prev_name.encode("utf-8"):
                 raise TraceInvalid("binding order")
             prev_name = name
             _closed(bind["kind"], BIND_KIND, "binding kind")
             _closed(bind["provenance"], BIND_PROVENANCE, "provenance")
             _as_str_or_none(bind["tool_name"], "tool_name")
+            _json_value(bind["value"], "binding value")
         if not isinstance(inv["blackboard"], list):
             raise TraceInvalid("blackboard")
         prev_key = None
         for row in inv["blackboard"]:
             row = _expect_keys(row, BOARD_KEYS, "blackboard")
             board_key = _as_str(row["key"], "blackboard key")
-            if prev_key is not None and board_key <= prev_key:
+            if prev_key is not None and board_key.encode("utf-8") <= prev_key.encode("utf-8"):
                 raise TraceInvalid("blackboard order")
             prev_key = board_key
-    if paths != sorted(paths):
+            _json_value(row["value"], "blackboard value")
+    if paths != sorted(paths, key=lambda s: s.encode("utf-8")):
         raise TraceInvalid("invoke path order")
     return obj
 
@@ -303,17 +329,14 @@ def write_trace(path: str | Path, trace: dict) -> None:
 
 
 def export_trace(conn, root: str) -> dict:
+    """Export Trace v1 at REPEATABLE READ. Caller must have no uncommitted work on the connection; this function starts with conn.rollback()."""
     conn.rollback()
     cur = conn.cursor()
     cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-    cur.execute("SELECT v15.v15_replay_export(%s)", (root,))
+    cur.execute("SELECT v15.v15_replay_export(%s)::text", (root,))
     raw = cur.fetchone()[0]
     conn.commit()
-    if isinstance(raw, str):
-        obj = _parse(raw)
-    else:
-        obj = _parse(dumps(raw))
-    return validate_trace(obj)
+    return validate_trace(_parse(raw))
 
 
 def index_frames(trace: dict) -> dict[tuple[str, int], dict]:

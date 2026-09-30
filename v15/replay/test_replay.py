@@ -475,6 +475,44 @@ def test_trace_local() -> None:
     check("recorded_cost_usd 1.25 is json number", '"recorded_cost_usd":1.25' in compact)
     check("cost not quoted str", '"recorded_cost_usd":"1.25"' not in compact)
 
+    sentinel = "\x1eDEC0\x1e"
+    colliding = sample_trace(invokes=[sample_invoke(
+        return_value=sentinel,
+        steps=[sample_step(recorded_cost_usd=Decimal("1.25"), response_content=sentinel)],
+    )])
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "collide.json"
+        write_trace(path, colliding)
+        loaded = load_trace(path)
+        check("placeholder string preserved", loaded["invokes"][0]["return_value"] == sentinel)
+        check(
+            "decimal beside placeholder string",
+            loaded["invokes"][0]["steps"][0]["recorded_cost_usd"] == Decimal("1.25"),
+        )
+        check("placeholder write/load projection", projection(colliding) == projection(loaded))
+
+    bind_bad = {"name": "x", "kind": "var", "provenance": "repl", "tool_name": None, "value": object()}
+    try:
+        validate_trace(sample_trace(invokes=[sample_invoke(bindings=[bind_bad])]))
+        raise AssertionError("object value")
+    except TraceInvalid:
+        check("unsupported binding value object rejected", True)
+    try:
+        validate_trace(sample_trace(invokes=[sample_invoke(blackboard=[{"key": "k", "value": 1.25}])]))
+        raise AssertionError("float value")
+    except TraceInvalid:
+        check("float blackboard value rejected", True)
+
+    bind_z = {"name": "Z", "kind": "var", "provenance": "repl", "tool_name": None, "value": 1}
+    bind_a = {"name": "a", "kind": "var", "provenance": "repl", "tool_name": None, "value": 2}
+    validate_trace(sample_trace(invokes=[sample_invoke(bindings=[bind_z, bind_a])]))
+    check("mixed-case binding byte order accepted", True)
+    try:
+        validate_trace(sample_trace(invokes=[sample_invoke(bindings=[bind_a, bind_z])]))
+        raise AssertionError("binding order")
+    except TraceInvalid:
+        check("mixed-case binding reverse rejected", True)
+
 
 
 def test_sqlstate_superset(cur) -> None:
@@ -1131,6 +1169,54 @@ def test_missing_frame_via_driver(server) -> None:
         w.close()
 
 
+PREC = Decimal("0.123456789012345678901234567890")
+
+
+def test_export_precision_and_byte_order(server, admin, worker) -> None:
+    park_open(admin.cursor())
+    admin.commit()
+    pool_id = make_pool(admin.cursor())
+    admin.commit()
+    root = str(uuid.uuid4())
+    open_invoke(worker, root, pool_id)
+    run_until_quiescent(server.get_uri(DB), RecordingLLM([paid(RET)]), OWNER)
+    acur = admin.cursor()
+    acur.execute(
+        "UPDATE v15.budget_pools SET cost_used = %s WHERE pool_id = %s",
+        (PREC, pool_id),
+    )
+    acur.execute(
+        """
+        INSERT INTO v15.bindings (
+          invoke_id, name, kind, value, tool_id, show_in_prompt, provenance
+        ) VALUES
+          (%s, 'Z', 'var', '1'::jsonb, NULL, false, 'repl'),
+          (%s, 'a', 'var', '2'::jsonb, NULL, false, 'repl')
+        """,
+        (root, root),
+    )
+    admin.commit()
+    exported = export_trace(worker, root)
+    worker.commit()
+    check(
+        "high-precision cost_used export",
+        exported["pool_outcome"]["cost_used"] == PREC,
+        exported["pool_outcome"]["cost_used"],
+    )
+    names = [b["name"] for b in exported["invokes"][0]["bindings"]]
+    check("mixed-case binding export byte order", names == ["Z", "a"], names)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "precise.json"
+        write_trace(path, exported)
+        loaded = load_trace(path)
+        check("export write/load projection", projection(exported) == projection(loaded))
+        check(
+            "loaded high-precision cost_used",
+            loaded["pool_outcome"]["cost_used"] == PREC,
+            loaded["pool_outcome"]["cost_used"],
+        )
+
+
 def test_bind_name_slash_path(server, admin, worker) -> None:
     park_open(admin.cursor())
     admin.commit()
@@ -1199,6 +1285,7 @@ def main() -> int:
         admin.autocommit = False
         worker.autocommit = False
         test_bind_name_slash_path(server, admin, worker)
+        test_export_precision_and_byte_order(server, admin, worker)
     finally:
         worker.close()
         admin.close()

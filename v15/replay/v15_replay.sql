@@ -401,7 +401,7 @@ BEGIN
            i.return_value
     FROM v15.invokes i
     WHERE i.invoke_id = ANY (v_ids)
-    ORDER BY v15.v15_replay_invoke_path(i.invoke_id)
+    ORDER BY v15.v15_replay_invoke_path(i.invoke_id) COLLATE "C"
   LOOP
     SELECT coalesce(jsonb_agg(step ORDER BY (step->>'iteration')::integer), '[]'::jsonb)
       INTO v_steps
@@ -447,14 +447,14 @@ BEGIN
         'provenance', b.provenance,
         'tool_name', t.name,
         'value', b.value
-      ) ORDER BY b.name
+      ) ORDER BY b.name COLLATE "C"
     ), '[]'::jsonb)
       INTO v_bindings
     FROM v15.bindings b
     LEFT JOIN v15.tool_catalog t ON t.tool_id = b.tool_id
     WHERE b.invoke_id = v_id;
     SELECT coalesce(jsonb_agg(
-      jsonb_build_object('key', bb.key, 'value', bb.value) ORDER BY bb.key
+      jsonb_build_object('key', bb.key, 'value', bb.value) ORDER BY bb.key COLLATE "C"
     ), '[]'::jsonb)
       INTO v_board
     FROM v15.blackboard bb
