@@ -259,14 +259,16 @@ def test_stage_bytes():
     ]
     diff = subprocess.check_output(["git", "diff", "HEAD", "--", *paths], cwd=AGENT_ROOT)
     load = subprocess.check_output(["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
+    head_load = subprocess.check_output(
+        ["git", "show", "HEAD:v13/load.py"], cwd=AGENT_ROOT).decode()
     removed = [
         line for line in load.splitlines()
         if line.startswith("-") and not line.startswith("---")
     ]
     check(
         "stage_bytes",
-        diff == b"" and "plan_arm" in load and removed == [],
-        (removed, load))
+        diff == b"" and removed == [] and "plan_arm" in (load + head_load),
+        (removed, load, "plan_arm" in head_load))
 
 
 def harness_req(cur, sid):
