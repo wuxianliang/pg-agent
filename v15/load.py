@@ -26,6 +26,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V15_ROOT / "govern" / "v15_govern.sql",
     V15_ROOT / "provider" / "v15_provider.sql",
     V15_ROOT / "return_hooks" / "v15_return_hooks.sql",
+    V15_ROOT / "replay" / "v15_replay.sql",
 ]
 
 STAGE_THROUGH = {
@@ -40,6 +41,7 @@ STAGE_THROUGH = {
     "govern": 9,
     "provider": 10,
     "return_hooks": 11,
+    "replay": 12,
 }
 
 

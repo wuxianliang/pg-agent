@@ -17,7 +17,7 @@ AGENT_ROOT = ROOT.parent.parent
 sys.path.insert(0, str(AGENT_ROOT))
 
 from server import get_server
-from v15.load import SQL_LOAD_ORDER, files_through
+from v15.load import files_through
 from v15.protocol.render_prompt import render_system
 from v15.return_hooks.setup_db import DB, main as setup_db
 from v15.worker import run_until_quiescent
@@ -314,10 +314,10 @@ def test_load_order() -> None:
         "provider prefix has ten files",
         len(provider) == 10 and provider[-1].name == "v15_provider.sql" and provider[:9] == govern,
     )
-    check("full load has eleven files", len(SQL_LOAD_ORDER) == 11 and len(full) == 11)
+    check("return_hooks prefix has eleven files", len(full) == 11)
     check("full load ends at return_hooks", full[-1].name == "v15_return_hooks.sql")
     check("full load keeps provider prefix", full[:10] == provider)
-    check("stage through return_hooks", files_through("return_hooks") == SQL_LOAD_ORDER)
+    check("stage through return_hooks", files_through("return_hooks") == full)
 
 
 def test_one_dispatcher(cur) -> None:

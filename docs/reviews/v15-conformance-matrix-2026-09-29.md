@@ -1,6 +1,6 @@
 # v15 覆盖矩阵（2026-09-29）
 
-记 stage 1–11 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 10 为准。矩阵不是第二份合同。
+记 stage 1–12 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 10 为准。矩阵不是第二份合同。
 
 完整 `SQL_LOAD_ORDER`：
 
@@ -15,8 +15,9 @@
 9. `v15/govern/v15_govern.sql`
 10. `v15/provider/v15_provider.sql`
 11. `v15/return_hooks/v15_return_hooks.sql`
+12. `v15/replay/v15_replay.sql`
 
-合运行时是这十一个文件都加载之后。`agent_v15_return_hooks` 是这个库。`agent_v15_provider`、`agent_v15_govern` 与更早的 `agent_v15_*` 库是前缀 gate，不是合运行时。
+合运行时是这十二个文件都加载之后。`agent_v15_replay` 是这个库。`agent_v15_return_hooks`、`agent_v15_provider`、`agent_v15_govern` 与更早的 `agent_v15_*` 库是前缀 gate，不是合运行时。
 
 状态来自实跑：`uv run python v15/govern/test_govern.py` 退出码 0。随后复跑 stage 1–8 的 gate，退出码都是 0。M1 串行复跑 schema→return_hooks 十一道 gate，退出码都是 0。
 
@@ -229,7 +230,7 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
-| 11.1 | §15 十一文件 | ✅ | `v15/return_hooks/test_return_hooks.py` | `files_through("govern")` 9 项且末项 govern；`files_through("provider")` 10 项且末项 provider；完整列表 11 项且末项 return_hooks |
+| 11.1 | §15 十一文件前缀 | ✅ | `v15/return_hooks/test_return_hooks.py` | `files_through("govern")` 9 项且末项 govern；`files_through("provider")` 10 项且末项 provider；`files_through("return_hooks")` 11 项且末项 return_hooks。原 317（`len(SQL_LOAD_ORDER)==11`）与 320（`files_through("return_hooks")==SQL_LOAD_ORDER`）已按 D1 先例改为前缀形，不是放宽；全局十二文件形状改由 `v15/replay/test_replay.py` 断言 |
 | 11.2 | §18 `v15_on_phase` oid | ✅ | 同上 | 库内 `v15_on_phase` 恰好一个 oid |
 | 11.3 | §9.4 return→raise | ✅ | 同上 | `call_phase` 接受 `V15_VALIDATION_FAILED` 的 raise；错码与超 1024 的 message 是 `P1506` |
 | 11.4 | §9.5 raise 压过 continue | ✅ | 同上 | 同相位 continue 的持久消息不进入返回值，也不写入 `llm_messages`。胜者自己的持久消息留下。两个不等的 raise 取 ordinal 最小的那条，不是 `P1535`。两个 `max_failures=0` 且 message 不同的 validator 终态是 `P1540`。真实 `budget_forcing:<ordinal>:<n>` 与 raise 同相位时，finish 后该计数仍为 0 |
@@ -246,6 +247,19 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 | 11.15 | §13 known-code | ✅ | 同上 | `v15_govern_known_code('V15_VALIDATION_FAILED')` 为 true。错 owner 登记仍是 `P1537` |
 | 11.16 | §10.2 effect builder | ✅ | 同上 | helper 直测：仅 SQL `true` 绕过；`p_valid` NULL、畸形 counter、溢出 ordinal、非 counted family 都 raise，不生成 continue。缺席 counter 视为 0 |
 | 11.17 | §9.3 family GRANT | ✅ | 同上 | `v15_register_hook` 登记 `validate_return_*` 后，不手工 `GRANT` 也能发出 rejection |
+
+## stage 12 · replay
+
+合运行时迁到十二文件。不启用 `supply_llm_response`。摘要复用 `logical_digest`。无新表。
+
+| # | 条文 | 状态 | 测试落点 | 断言的行为 |
+|---|---|---|---|---|
+| 12.1 | §15 十二文件 | ✅ | `v15/replay/test_replay.py` | `len(SQL_LOAD_ORDER)==12`，末项 `v15_replay.sql`，`files_through("replay")==SQL_LOAD_ORDER`，前 11 项等于 `files_through("return_hooks")` |
+| 12.2 | §13 `P1541`/`P1542` | ✅ | 同上 | 同事务坏摘要 → `P1541` 零残留；缺帧 → `P1542` 零残留。非 32hex → `P1524`。settled 后再 assert → `P1502`。两码不是 invoke 终态，不入 §9.5 |
+| 12.3 | §9.4 效应闭集 | ✅ | 同上 | 重放库里 hook 发 `supply_llm_response` 仍 `P1506`。不走该效应供给助手正文 |
+| 12.4 | 轨迹导出/重放 | ✅ | 同上 | 双库录制→重放。投影逐字段（含 span `llm_query` enter/send/complete/exit、无 `provider_rejected`、attempt `settled`/`n=1`、`calls_used` 相等、cost 全 0 且 `recorded_cost_usd≠0`、同摘要双节点按 `(path, iteration)` 供给、父绑定 `provenance=delivery`）。同 fixture 二次重放幂等。空 statements 迭代可导出重放。剩帧失败 |
+| 12.5 | 导出资格 | ✅ | 同上 | 未终态 / `n≠1` / 两池 → `P1523`/`P1524`。坏 JSON、版本、重复坐标在驱动侧本地拒绝 |
+| 12.6 | 授权 | ✅ | 同上 | worker 不能 SELECT 基表。repl/PUBLIC 不能执行 replay RPC。函数 owner/`search_path`/grants 符合合同 |
 
 ## M3 · §14
 

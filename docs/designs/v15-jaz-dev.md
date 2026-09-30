@@ -12,6 +12,7 @@
 本修订吸收 R-G1–R-G2，来源 `docs/references/v15-rev8-rulings.md`。
 本修订把真实 provider 定为 worker 侧 opt-in。attempt 终态集合不变。新增 `V15_PROVIDER_REJECTED` / `P1539`。`llm` 键集不变。
 本修订追加 `V15_VALIDATION_FAILED` / `P1540`。`repl_exec/complete` 可以把候选 `return` 改成 `continue`，或改成带该码的 `raise`。计数接受函数不改名。`v15_io_sqlstate` 不映射这个码。
+本修订追加 D2 轨迹回放：`V15_REPLAY_DIVERGED` / `P1541` 与 `V15_REPLAY_MISSING` / `P1542`。二者是回滚类异常，不是 invoke 终态码，不进入 §9.5 四个可保留 abort 码。合运行时是十二个文件全部加载的库，库名 `agent_v15_replay`。不启用 `supply_llm_response`。摘要复用 `llm_requests.logical_digest`。
 
 **权威。** 本文是 v15 实现与 gate 的唯一行为权威。K1–K6、两轮 oracle 的 R1–R5（`docs/references/v15-oracle-round1.md`、`docs/references/v15-oracle-round2.md`，裁定组 `54BBD0FD-1DC4-44CE-9500-E4BF8C6B0E8B`）、rev 2 的 R-A1–R-A29、rev 3 的 R-B1–R-B19 以及 rev 4 的 R-C1–R-C18 rev 5 的 R-D1–R-D22 rev 6 的 R-E1–R-E10 以及 rev 7 的 R-F1–R-F6、rev 8 的 R-G1–R-G2 只作为来源保留。裁定已全部吸收进本文，本文是唯一权威。论文的两条性质，以及「外部 I/O 不在数据库事务内；unknown 不是成功」这条 v8 规则，同为权威。jaz 的 Python REPL 沙箱、Jinja 模板、`__history__` 的属性措辞、`jaz-evals` 提示词、v8 的 `sessions` / `effect_requests` / 插件世代、v13 的 stage 布局，都不是 v15 行为权威（完整非权威清单在 §16）。
 
@@ -108,7 +109,7 @@ scratch 内、且只有这些形式，`kind` 为 `plain`、`reject_code` 为空�
 
 整段切分失败时不产生部分语句列表。worker 仍结算，且只结算一条合成的失败语句（§3.3），然后迭代 `Continue`。响应正文里的 NUL 不能进入 PostgreSQL `text`：存入前把每个 NUL 换成六字符序列 `\u0000`，该条 `reject_code` 为 `V15_VALUE_INVALID`。
 
-19. **SQLSTATE。** 每个 `V15_*` 条件恰好一个 sqlstate，自 `P1501` 起连续分配，无空号，无同义名。本修订止于 `P1540`（`V15_VALIDATION_FAILED`），共 40 行。硬顶为 `P1548`。`P1541`–`P1548` 未分配，不得预占。gate MUST 按 `sqlstate` 分类。本族 MUST NOT 使用 `P0001`。码表在 §13。`P15` 是否被本安装占用，以仓库钉住的 PG 18.4 errcode 快照在设计时核对；运行时 gate 只断言 `server_version_num` 与这些自定义码能够 `RAISE`（§17）。
+19. **SQLSTATE。** 每个 `V15_*` 条件恰好一个 sqlstate，自 `P1501` 起连续分配，无空号，无同义名。本修订止于 `P1542`（`V15_REPLAY_MISSING`），共 42 行。硬顶为 `P1548`。`P1543`–`P1548` 未分配，不得预占。gate MUST 按 `sqlstate` 分类。本族 MUST NOT 使用 `P0001`。码表在 §13。`P15` 是否被本安装占用，以仓库钉住的 PG 18.4 errcode 快照在设计时核对；运行时 gate 只断言 `server_version_num` 与这些自定义码能够 `RAISE`（§17）。
 
 20. **身份。** 内核转移的授权谓词是 `session_user = v15_worker`。转移函数为 `SECURITY DEFINER` 时，体内 `current_user` 是 `v15_owner`，MUST NOT 用来识别 worker。任何 `SECURITY DEFINER` 函数体内 MUST NOT 执行 `SET ROLE`、`RESET ROLE` 或 `SET SESSION AUTHORIZATION`。PostgreSQL 在这类函数内拒绝角色切换；合同也不把切换当作实现手段。模型语句执行时 `current_user` MUST 为 `v15_repl`。这个 `SET LOCAL ROLE v15_repl` 只允许出现在 worker 事务的顶层，位于转移函数返回之后、模型语句之前，然后在语句之后 `RESET ROLE`。`jaz` 包装 MUST 拒绝 `current_user` 不是 `v15_repl` 的调用。清单写入与 hook / tool 登记 MUST 只接受 bootstrap 装载身份。
 
@@ -2221,7 +2222,7 @@ FakeTool 不是 Python。测试需要工具时，在该测试库里创建 `SECUR
 
 ## 13. 错误码表
 
-本表是唯一码源：40 行，`P1501` 至 `P1540`，无空号，无同义名。硬顶 `P1548`。`P1541`–`P1548` 未分配，不得预占。每个 `RAISE` 使用表中的 `ERRCODE`。本族不得使用 `P0001`（§0.19）。`error` jsonb 的 `sqlstate` 与 `code` 必须来自同一行。回滚类、提交类、语句失败以本表的「分类」列为权威；§4.1 不再另列穷尽清单。
+本表是唯一码源：42 行，`P1501` 至 `P1542`，无空号，无同义名。硬顶 `P1548`。`P1543`–`P1548` 未分配，不得预占。每个 `RAISE` 使用表中的 `ERRCODE`。本族不得使用 `P0001`（§0.19）。`error` jsonb 的 `sqlstate` 与 `code` 必须来自同一行。回滚类、提交类、语句失败以本表的「分类」列为权威；§4.1 不再另列穷尽清单。
 
 hook abort 可原样写入已提交 `error` 的码，闭集为 `{V15_IO_EXHAUSTED, V15_BUDGET_EXHAUSTED, V15_RECURSION_EXCEEDED, V15_ITERATION_EXCEEDED}`。其他任何码一律归一为 `V15_HOOK_ABORT`。多个 abort 规范化之后仍不一致，同样使用 `V15_HOOK_ABORT`（§9.5）。
 
@@ -2277,8 +2278,10 @@ PostgreSQL 自己的 sqlstate（例如散文的 `42601`、权限不足的 `42501
 | `V15_HOOK_ABORT` | `P1538` | 形状合法的 hook abort 所带的码不在 `{V15_IO_EXHAUSTED, V15_BUDGET_EXHAUSTED, V15_RECURSION_EXCEEDED, V15_ITERATION_EXCEEDED}` 内，或数个 abort 规范化之后的码仍不相同（§0.12、§9.5）。`fatal` 为 §9.5 归一后的或。不得用来包装预留名或未知键 | 提交类 |
 | `V15_PROVIDER_REJECTED` | `P1539` | 适配器预检拒绝，或已开始的确定性 provider 拒绝（§4.5.5） | 提交类，`fatal = false` |
 | `V15_VALIDATION_FAILED` | `P1540` | validation hook 在容忍次数耗尽后，将候选 return 改写为带 validation error 的 raise | 提交类，`fatal = false` |
+| `V15_REPLAY_DIVERGED` | `P1541` | 回放时 `logical_digest` 或坐标/终局与 trace 不一致 | 回滚类。非 invoke 终态码，不进入 §9.5 abort 可保留闭集 |
+| `V15_REPLAY_MISSING` | `P1542` | 库已进入真实 LLM 尝试而 trace 无该坐标帧 | 回滚类。非 invoke 终态码，不进入 §9.5 abort 可保留闭集 |
 
-`V15_PROVIDER_REJECTED` 与 `V15_VALIDATION_FAILED` 都不进入 hook abort 可保留闭集。hook 若把它们放进 `abort.error.code`，仍归一成 `V15_HOOK_ABORT`（§9.5）。未知名字仍是 `V15_INVALID_EFFECT`，不走这条归一。
+`V15_PROVIDER_REJECTED`、`V15_VALIDATION_FAILED`、`V15_REPLAY_DIVERGED` 与 `V15_REPLAY_MISSING` 都不进入 hook abort 可保留闭集。hook 若把它们放进 `abort.error.code`，仍归一成 `V15_HOOK_ABORT`（§9.5）。未知名字仍是 `V15_INVALID_EFFECT`，不走这条归一。
 
 `V15_CHILD_ERROR`、`V15_RAISE` 与作为提交结果的 `V15_HOOK_ABORT`，其 sqlstate 写进 jsonb，不要求该语句事务里有同名异常。gate 读 jsonb 的 `sqlstate` 字段。
 
@@ -2352,6 +2355,8 @@ PostgreSQL 自己的 sqlstate（例如散文的 `42601`、权限不足的 `42501
 
 **V15-D32。** spec 键名限制为 `^[A-Za-z_][A-Za-z0-9_]{0,62}$`，嵌套深度 ≤ 8。`jsonb` 的 `number` 不区分整数与浮点。enum 通过性按数值相等，展示按 `elem::text`。对象渲染的 required 按数组序，可选键按 UTF-8 字节序，项之间是 `, `。
 
+D2 轨迹回放不启用 `supply_llm_response`，摘要复用 `logical_digest`。不另开偏差编号。
+
 ### 14.2 故意保留
 
 下列行为是论文性质或本版合同的目标，不是偏差。gate 必须证明它们仍然成立：
@@ -2367,7 +2372,7 @@ PostgreSQL 自己的 sqlstate（例如散文的 `42601`、权限不足的 `42501
 
 ## 15. Stage/Gate 计划
 
-十一个 stage 按此顺序追加。合运行时是十一个 SQL 文件都加载之后（§0.0）。前缀库只用于该 stage 的 gate。`agent_v15_govern` 与 `agent_v15_provider` 都是前缀。stage 1 之后可以增加函数、视图、授权、目录种子 DML，以及 §18 点名的 `CREATE OR REPLACE`。不得再增加表。
+十二个 stage 按此顺序追加。合运行时是十二个 SQL 文件都加载之后（§0.0）。前缀库只用于该 stage 的 gate。`agent_v15_govern` 与 `agent_v15_provider` 都是前缀。stage 1 之后可以增加函数、视图、授权、目录种子 DML，以及 §18 点名的 `CREATE OR REPLACE`。不得再增加表。
 
 | # | 目录 | SQL | gate | 证明 |
 |---|---|---|---|---|
@@ -2381,11 +2386,12 @@ PostgreSQL 自己的 sqlstate（例如散文的 `42601`、权限不足的 `42501
 | 8 | `v15/tree` | `v15_tree.sql` | `test_tree.py` | §4.7 先写父的 bind-wait 再跑子 open。§4.8 的结构送达：子 `completed` 绑定、子 `failed` 时父语句 `V15_CHILD_ERROR`、名字冲突 `V15_DELIVERY_CONFLICT`。内核深度守卫的非 fatal 送达也在这里。子 `fatal = true` 的祖先展开只用 §9.6 的桩预留把子收成 `aborted`，不用 hook。断言终态 invoke 没有 `running` 语句（§4.8）。同迭代 `jaz.var`、父不再次 LLM、等待期间 `repl_exec` 不 `exit`。不含 hook 返回的 fatal，不含 hook 在 `invoke/enter` 上的 abort |
 | 9 | `v15/govern` | `v15_govern.sql` | `test_govern.py` | 同一 oid 上的 dispatcher、预留先于效应、§9 的合成与代际、§10 的九个 handler、两套窗口警告、`budget_forcing:<ordinal>:<n>`、§11 的池与双摘要。hook 返回的 `fatal = true`，以及子在 `invoke/enter` 上因 hook abort 而在同一事务送达，只在本 stage 断言。回滚类冲突不留行 |
 | 10 | `v15/provider` | `v15_provider.sql` | `test_provider.py` | 三转移、`P1539`、计价 fail-closed 的 SQL 形状、keyless、不执行模型 SQL 的冒烟辅助退出码。不加表。hook 带回 `V15_PROVIDER_REJECTED` 仍归一为 `V15_HOOK_ABORT` 并提交，不因 `P1506` 被拒 |
-| 11 | `v15/return_hooks` | `v15_return_hooks.sql` | `test_return_hooks.py` | 十一文件加载序、`P1540`、计数 id 泛化、return→raise、raise 压过 continue，以及 cap 时 raise 取 ordinal 最小。不加表。ReturnType handler 与 effect builder 不在 M1 |
+| 11 | `v15/return_hooks` | `v15_return_hooks.sql` | `test_return_hooks.py` | 十一文件前缀、`P1540`、计数 id 泛化、return→raise、raise 压过 continue，以及 cap 时 raise 取 ordinal 最小。不加表。ReturnType handler 与 effect builder 不在 M1 |
+| 12 | `v15/replay` | `v15_replay.sql` | `test_replay.py` | 十二文件装载序、轨迹导出/重放、`P1541`/`P1542`、`supply_llm_response` 仍 `P1506`。不加表。摘要复用 `logical_digest` |
 
 `v15/protocol/v15_protocol.sql` 只有注释，声明切分与渲染不在库内。加载它必须成功，且不得创建表。
 
-`v15/load.py` 照 `v13/load.py` 的形状：`SQL_LOAD_ORDER` 是上表十一个文件，只许在末尾追加；`STAGE_THROUGH` 把目录名映到 `1..11`；`files_through` 取前缀；`load_stage` 按前缀执行，遇到 `ERROR` 或 `FATAL` 即失败。SQL 是普通 `CREATE`，不用 `IF NOT EXISTS`。角色语句不得放进这些文件。
+`v15/load.py` 照 `v13/load.py` 的形状：`SQL_LOAD_ORDER` 是上表十二个文件，只许在末尾追加；`STAGE_THROUGH` 把目录名映到 `1..12`；`files_through` 取前缀；`load_stage` 按前缀执行，遇到 `ERROR` 或 `FATAL` 即失败。SQL 是普通 `CREATE`，不用 `IF NOT EXISTS`。角色语句不得放进这些文件。
 
 gate 串行运行。每个 stage 的 `setup_db.py` 以集群超级用户执行，并且在加载任何 SQL 之前跑引导段：
 
@@ -2463,7 +2469,7 @@ worker 只有一份：`v15/worker.py` 的 `run_until_quiescent`。行为循环�
 
 **实参求值。** 不设立 `V15_INVOKE_EXPR_WRITE`，也不把事务改成 `READ ONLY`（V15-D24）。gate 断言：`arg_sql` 里的 `INSERT` 或 `jaz.assign` 失败，码为 `V15_INVOKE_FORM` 或 PostgreSQL 权限码；字符串、注释与 dollar-quote 之外、`(` 前标识符匹配 `nextval`/`setval`/`currval`（含 `pg_catalog.` 限定）为 `V15_INVOKE_FORM`；`invokes` 里没有子行；prepare 没有发出表级 `GRANT`。worker 对 `SELECT (<arg_sql>)` 的任何错误必须回到保存点并提交 `failed`，该语句不得留在 `pending`（§4.7）。
 
-**`P15` 探针。** 设计时把 PostgreSQL 18.4 的 `src/backend/utils/errcodes.txt` 中已分配的 sqlstate 钉在仓库文件 `v15/errcodes-pinned.txt`，文件首行是 `postgres 18.4`。本修订的结论是：该类文件里没有 `P15` 前缀，因此 §13 使用 `P1501`–`P1540`。实现者在第一次让 gate 断言 sqlstate 之前，必须用官方 18.4 源码核对这份钉文件。若钉文件里出现任一 `P15` 码，就停止：先把 §13 整表重排到空闲前缀上，仍然连续、无空号、不超过 48 行，然后才允许断言 sqlstate。
+**`P15` 探针。** 设计时把 PostgreSQL 18.4 的 `src/backend/utils/errcodes.txt` 中已分配的 sqlstate 钉在仓库文件 `v15/errcodes-pinned.txt`，文件首行是 `postgres 18.4`。本修订的结论是：该类文件里没有 `P15` 前缀，因此 §13 使用 `P1501`–`P1542`。实现者在第一次让 gate 断言 sqlstate 之前，必须用官方 18.4 源码核对这份钉文件。若钉文件里出现任一 `P15` 码，就停止：先把 §13 整表重排到空闲前缀上，仍然连续、无空号、不超过 48 行，然后才允许断言 sqlstate。
 
 运行时 gate 不读取服务器上的 `errcodes.txt`。它们断言 `server_version_num = 180004`，并且对 §13 的每一个码执行一次 `RAISE`，捕获到的 sqlstate 与表中相同。安装包里没有源码树时，这个运行时检查仍然够用。
 
@@ -2483,7 +2489,7 @@ worker 只有一份：`v15/worker.py` 的 `run_until_quiescent`。行为循环�
 
 任何 `SECURITY DEFINER` 函数的函数体都不得包含 `SET ROLE`、`RESET ROLE` 或 `SET SESSION AUTHORIZATION`。模型语句前后的角色切换只出现在 worker 事务的顶层。终态删除的常规路径是 schema 属主直接 `DROP SCHEMA … CASCADE`。
 
-前缀加载是 gate 脚手架，不是交付运行时（§0.0）。`README` 与矩阵不得把 `agent_v15_loop`、`agent_v15_govern` 或 `agent_v15_provider` 写成合运行时。合运行时只指十一个文件全部加载的库，库名 `agent_v15_return_hooks`。`SQL_LOAD_ORDER` 只许在末尾追加。角色的删除与重建只在 `setup_db.py` 的引导段，不进入 `SQL_LOAD_ORDER`。会加载 govern SQL 的引导段必须创建 `v15_hook_return_type`。引导段必须先删掉每一个 `starts_with(datname, 'agent_v15_')` 的库，再重建角色（§15）。gate 串行运行。
+前缀加载是 gate 脚手架，不是交付运行时（§0.0）。`README` 与矩阵不得把 `agent_v15_loop`、`agent_v15_govern`、`agent_v15_provider` 或 `agent_v15_return_hooks` 写成合运行时。合运行时只指十二个文件全部加载的库，库名 `agent_v15_replay`。`SQL_LOAD_ORDER` 只许在末尾追加。角色的删除与重建只在 `setup_db.py` 的引导段，不进入 `SQL_LOAD_ORDER`。会加载 govern SQL 的引导段必须创建 `v15_hook_return_type`。引导段必须先删掉每一个 `starts_with(datname, 'agent_v15_')` 的库，再重建角色（§15）。gate 串行运行。
 
 stage 10 的 `v15/provider/v15_provider.sql` 只许 `CREATE OR REPLACE` 下面两只映射，签名与 oid 不变，不得 `DROP FUNCTION`：
 
@@ -2492,7 +2498,9 @@ stage 10 的 `v15/provider/v15_provider.sql` 只许 `CREATE OR REPLACE` 下面�
 
 `V15_VALIDATION_FAILED` → `P1540` 只追加在 `v15_loop_sqlstate` 的 CASE。不替换 `v15_repl_sqlstate`。非 fatal 送达写死父码 `V15_CHILD_ERROR`，不查子码映射。这两只拒绝的 `fatal` 恒为 false，不走 fatal 展开的白名单。provider 文件不得 `CREATE`、`REPLACE` 或 `DROP` `v15_on_phase` 与四个治理 handler。
 
-错误码只许从表尾追加，追加之后仍不得超过 `P1548`，且不得与已有行同义。本修订的最后一行是 `P1540`。`P1541`–`P1548` 空着，不得预占。§17 的钉文件若显示 `P15` 被占用，整表一起重排，禁止留下空号，也禁止 gate 在重排提交之前断言 sqlstate。
+stage 12 的 `v15/replay/v15_replay.sql` 只许 `CREATE OR REPLACE` 下面两只映射，签名与 oid 不变，不得 `DROP FUNCTION`：以 provider 替换体为基线，追加 `V15_REPLAY_DIVERGED` → `P1541` 与 `V15_REPLAY_MISSING` → `P1542`。`v15_govern_known_code` 同步追加这两名。不把 `V15_VALIDATION_FAILED` 写入 `v15_io_sqlstate`。replay 文件不得 `CREATE`、`REPLACE` 或 `DROP` `v15_on_phase` 与四个治理 handler。
+
+错误码只许从表尾追加，追加之后仍不得超过 `P1548`，且不得与已有行同义。本修订的最后一行是 `P1542`。`P1543`–`P1548` 空着，不得预占。§17 的钉文件若显示 `P15` 被占用，整表一起重排，禁止留下空号，也禁止 gate 在重排提交之前断言 sqlstate。
 
 文档头的修订说明在行为修订时追加一行，不另起平行规格。本文件现在的修订号是 rev 10。
 

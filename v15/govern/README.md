@@ -2,7 +2,7 @@
 
 Gate: `uv run python v15/govern/test_govern.py`（退出码 0 = 通过）
 
-库名 `agent_v15_govern`。`setup_db.py` 先加载到 tree，记下 `v15_on_phase` 与四个治理 handler 的 oid，再执行 `v15_govern.sql`，断言 oid 未变。这九个文件只是 govern 前缀；合运行时是十一个文件都加载之后。
+库名 `agent_v15_govern`。`setup_db.py` 先加载到 tree，记下 `v15_on_phase` 与四个治理 handler 的 oid，再执行 `v15_govern.sql`，断言 oid 未变。这九个文件只是 govern 前缀；合运行时是十二个文件都加载之后。
 
 ## 内容
 
