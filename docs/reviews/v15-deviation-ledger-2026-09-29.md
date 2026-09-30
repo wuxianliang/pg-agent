@@ -2,7 +2,7 @@
 
 从 `docs/designs/v15-jaz-dev.md` §14 抄入。这些行是相对 jaz 参考运行时的有意差别。实现不得把它们修回参考运行时。本文件不是第二份行为合同。
 
-D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。D31–D32 是 rev 10 追加。M2 的 `v15/return_hooks/test_return_hooks.py` 已覆盖封闭 DSL helper、ReturnType handler 与 ValidateReturn 注册协议。M2 评审修正后：形状校验对非字符串 `type` 显式 `false`；effect builder 仅显式 `true` 绕过，畸形 counter/ordinal fail-closed；cap 时多个 raise 取 ordinal 最小。D2 轨迹回放不启用 `supply_llm_response`，摘要复用 `logical_digest`。
+D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。D31–D32 是 rev 10 追加。M2 的 `v15/return_hooks/test_return_hooks.py` 已覆盖封闭 DSL helper、ReturnType handler 与 ValidateReturn 注册协议。M2 评审修正后：形状校验对非字符串 `type` 显式 `false`；effect builder 仅显式 `true` 绕过，畸形 counter/ordinal fail-closed；cap 时多个 raise 取 ordinal 最小。
 
 ## 14.1 偏差
 

@@ -4,8 +4,10 @@ Run: uv run python v15/replay/test_replay.py  (exit 0 = pass)
 """
 from __future__ import annotations
 
+import copy
 import json
 import sys
+import tempfile
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -22,9 +24,18 @@ sys.path.insert(0, str(AGENT_ROOT))
 from server import get_server
 from v15.load import SQL_LOAD_ORDER, files_through, load_stage
 from v15.protocol.render_prompt import render_system
-from v15.replay.replay import ReplayLLM
+from v15.replay.replay import ReplayAttemptShape, ReplayLLM
 from v15.replay.setup_db import DB, main as setup_db
-from v15.replay.trace import DIGEST_SCHEME, TraceInvalid, export_trace, load_trace, projection, validate_trace
+from v15.replay.trace import (
+    DIGEST_SCHEME,
+    TraceInvalid,
+    dumps,
+    export_trace,
+    load_trace,
+    projection,
+    validate_trace,
+    write_trace,
+)
 from v15.worker import run_until_quiescent
 
 SCOPE = "00000000-0000-4000-8000-0000000000b1"
@@ -33,6 +44,7 @@ PLAY = "agent_v15_replay_play"
 PLAY2 = "agent_v15_replay_play2"
 COST = Decimal("1.25")
 RET = "SELECT jaz.\"return\"('{\"ok\":true}'::jsonb);"
+RAISE_SQL = "SELECT jaz.\"raise\"('boom');"
 RET_A = "SELECT jaz.\"return\"('{\"who\":\"a\"}'::jsonb);"
 RET_B = "SELECT jaz.\"return\"('{\"who\":\"b\"}'::jsonb);"
 BIND_ONE = (
@@ -51,6 +63,38 @@ TABLES = {
     "repl_history", "bindings", "exec_context", "invoke_events",
     "hook_defs", "invoke_hooks", "blackboard", "hook_counters", "tool_grants",
 }
+DUMMY_DSN = "host=/no/such/replay-socket dbname=replay_no_connect"
+
+
+def one_step_trace(**step_over) -> dict:
+    step = {
+        "iteration": 0,
+        "result_kind": "return",
+        "logical_digest": "a" * 32,
+        "response_content": "SELECT 1;",
+        "recorded_cost_usd": Decimal("1.25"),
+        "statements": [],
+        "repl_output": "",
+        "repl_exception_code": None,
+    }
+    step.update(step_over)
+    return {
+        "version": 1,
+        "digest_scheme": DIGEST_SCHEME,
+        "pool": {"calls_limit": Decimal(40), "cost_limit": Decimal("100.5")},
+        "pool_outcome": {"calls_used": Decimal("4E1"), "cost_used": Decimal("1.25")},
+        "invokes": [{
+            "path": "",
+            "depth": 1,
+            "status": "completed",
+            "fatal": False,
+            "error_code": None,
+            "return_value": {"ok": True},
+            "steps": [step],
+            "bindings": [],
+            "blackboard": [],
+        }],
+    }
 
 
 class RecordingLLM:
@@ -65,6 +109,49 @@ class RecordingLLM:
 
 def paid(content: str) -> dict:
     return {"content": content, "cost_usd": COST}
+
+
+def sample_step(**over) -> dict:
+    step = {
+        "iteration": 0,
+        "result_kind": "return",
+        "logical_digest": "a" * 32,
+        "response_content": "SELECT 1;",
+        "recorded_cost_usd": "0",
+        "statements": [],
+        "repl_output": "",
+        "repl_exception_code": None,
+    }
+    step.update(over)
+    return step
+
+
+def sample_invoke(**over) -> dict:
+    inv = {
+        "path": "",
+        "depth": 1,
+        "status": "completed",
+        "fatal": False,
+        "error_code": None,
+        "return_value": {"ok": True},
+        "steps": [sample_step()],
+        "bindings": [],
+        "blackboard": [],
+    }
+    inv.update(over)
+    return inv
+
+
+def sample_trace(**over) -> dict:
+    trace = {
+        "version": 1,
+        "digest_scheme": DIGEST_SCHEME,
+        "pool": {"calls_limit": Decimal("40.0"), "cost_limit": Decimal("1.25")},
+        "pool_outcome": {"calls_used": Decimal(1), "cost_used": Decimal("1.25")},
+        "invokes": [sample_invoke()],
+    }
+    trace.update(over)
+    return trace
 
 
 def check(label: str, condition: bool, detail: object = "") -> None:
@@ -214,6 +301,20 @@ def spans(cur, invoke_id: str) -> list[tuple]:
     return cur.fetchall()
 
 
+def llm_query_groups(cur, invoke_id: str) -> list[list[str]]:
+    cur.execute(
+        """
+        SELECT phase
+        FROM v15.invoke_events
+        WHERE invoke_id = %s AND event_class = 'span' AND span = 'llm_query'
+        ORDER BY seq
+        """,
+        (invoke_id,),
+    )
+    phases = [row[0] for row in cur.fetchall()]
+    return [phases[i:i + 4] for i in range(0, len(phases), 4)] if phases else []
+
+
 def park_open(cur) -> None:
     cur.execute(
         """
@@ -255,24 +356,125 @@ def test_trace_local() -> None:
         raise AssertionError("bad version")
     except TraceInvalid:
         check("bad version is local", True)
-    step = {
-        "iteration": 0, "result_kind": "return", "logical_digest": "a" * 32,
-        "response_content": "SELECT 1;", "recorded_cost_usd": "0",
-        "statements": [], "repl_output": "", "repl_exception_code": None,
-    }
-    dup = {
-        "version": 1, "digest_scheme": DIGEST_SCHEME, "pool": None, "pool_outcome": None,
-        "invokes": [{
-            "path": "", "depth": 1, "status": "completed", "fatal": False,
-            "error_code": None, "return_value": {"ok": True},
-            "steps": [dict(step), dict(step)], "bindings": [], "blackboard": [],
-        }],
-    }
+    dup = sample_trace(
+        pool=None, pool_outcome=None,
+        invokes=[sample_invoke(steps=[sample_step(), sample_step()])],
+    )
     try:
         validate_trace(dup)
         raise AssertionError("duplicate")
     except TraceInvalid as exc:
         check("duplicate coordinate is local", "duplicate" in str(exc))
+
+    src = sample_trace()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "trace.json"
+        write_trace(path, src)
+        loaded = load_trace(path)
+        check("write/load projection", projection(src) == projection(loaded))
+        text = path.read_text()
+        check("calls_limit json int", '"calls_limit": 40' in text)
+        check("cost_limit json number", '"cost_limit": 1.25' in text)
+        check("cost_used json number", '"cost_used": 1.25' in text)
+
+    bind = {"name": "a", "kind": "var", "provenance": "repl", "tool_name": None, "value": 1}
+    try:
+        validate_trace(sample_trace(invokes=[sample_invoke(bindings=[bind, dict(bind)])]))
+        raise AssertionError("dup bind")
+    except TraceInvalid:
+        check("duplicate binding names rejected", True)
+    board = {"key": "k", "value": 1}
+    try:
+        validate_trace(sample_trace(invokes=[sample_invoke(blackboard=[board, dict(board)])]))
+        raise AssertionError("dup board")
+    except TraceInvalid:
+        check("duplicate blackboard keys rejected", True)
+    bad_stmt = {
+        "stmt_index": Decimal("1.5"),
+        "sql_digest": "b" * 32,
+        "kind": "plain",
+        "status": "done",
+        "bind_name": None,
+    }
+    try:
+        validate_trace(sample_trace(invokes=[sample_invoke(steps=[sample_step(statements=[bad_stmt])])]))
+        raise AssertionError("stmt_index")
+    except TraceInvalid:
+        check("non-integer stmt_index rejected", True)
+    validate_trace(sample_trace(invokes=[sample_invoke(steps=[
+        sample_step(logical_digest=None, response_content=None, result_kind="continue"),
+    ])]))
+    check("empty digest null body legal", True)
+
+    import v15.replay.replay as replay_mod
+    connected = {"n": 0}
+    orig = replay_mod.connect_worker
+
+    def boom(*_a, **_k):
+        connected["n"] += 1
+        raise AssertionError("opened DB connection")
+
+    replay_mod.connect_worker = boom
+    try:
+        extra = sample_trace(invokes=[dict(sample_invoke(), extra_key=1)])
+        try:
+            ReplayLLM("dsn", OWNER, extra)
+            raise AssertionError("extra key")
+        except TraceInvalid:
+            check("closed-set keys before connect", connected["n"] == 0, connected)
+        typed = sample_trace(invokes=[sample_invoke(depth="1")])
+        try:
+            ReplayLLM("dsn", OWNER, typed)
+            raise AssertionError("bad type")
+        except TraceInvalid:
+            check("field type before connect", connected["n"] == 0, connected)
+        llm = ReplayLLM("dsn", OWNER, sample_trace())
+        try:
+            llm.complete("a" * 32, 2, {"attempt_id": str(uuid.uuid4())})
+            raise AssertionError("n!=1")
+        except ReplayAttemptShape:
+            check("n!=1 is local ReplayAttemptShape", connected["n"] == 0, connected)
+        try:
+            llm.complete("a" * 32, 1, {})
+            raise AssertionError("missing attempt_id")
+        except ReplayAttemptShape:
+            check("missing attempt_id is local ReplayAttemptShape", connected["n"] == 0, connected)
+    finally:
+        replay_mod.connect_worker = orig
+
+    typed = sample_trace(invokes=[sample_invoke(status="leased")])
+    try:
+        validate_trace(typed)
+        raise AssertionError("status closed set")
+    except TraceInvalid:
+        check("status closed set is local", True)
+    typed = sample_trace(invokes=[sample_invoke(fatal=1)])
+    try:
+        validate_trace(typed)
+        raise AssertionError("fatal type")
+    except TraceInvalid:
+        check("fatal type error is local", True)
+    slash = sample_trace(invokes=[sample_invoke(steps=[sample_step(statements=[{
+        "stmt_index": 0,
+        "sql_digest": "b" * 32,
+        "kind": "bind_invoke",
+        "status": "done",
+        "bind_name": "kid/x",
+    }])])])
+    try:
+        validate_trace(slash)
+        raise AssertionError("slash bind_name")
+    except TraceInvalid:
+        check("slash bind_name is local", True)
+    try:
+        validate_trace(sample_trace(invokes=[sample_invoke(steps=[sample_step(response_content=None)])]))
+        raise AssertionError("digest body")
+    except TraceInvalid:
+        check("non-empty digest requires str body", True)
+    compact = dumps(one_step_trace()).replace(" ", "").replace("\n", "")
+    check("recorded_cost_usd 1.25 is json number", '"recorded_cost_usd":1.25' in compact)
+    check("cost not quoted str", '"recorded_cost_usd":"1.25"' not in compact)
+
 
 
 def test_sqlstate_superset(cur) -> None:
@@ -365,7 +567,7 @@ def test_acl(admin, worker) -> None:
         worker.rollback()
 
 
-def test_same_txn_guards(admin, worker) -> None:
+def test_same_txn_guards(server, admin, worker) -> None:
     iid = str(uuid.uuid4())
     open_invoke(worker, iid)
     wcur = worker.cursor()
@@ -410,10 +612,38 @@ def test_same_txn_guards(admin, worker) -> None:
         wcur.execute("SELECT v15.v15_replay_missing(%s, %s)", (attempt, OWNER))
         raise AssertionError("missing")
     except psycopg2.Error as exc:
-        check("missing P1542", exc.pgcode == "P1542", exc.pgcode)
+        check("same-txn direct v15_replay_missing P1542", exc.pgcode == "P1542", exc.pgcode)
     worker.rollback()
     acur.execute("SELECT count(*) FROM v15.llm_attempts WHERE attempt_id = %s", (attempt,))
     check("P1542 rolled back attempt", acur.fetchone()[0] == 0)
+    acur.execute("SELECT status FROM v15.invokes WHERE invoke_id = %s", (iid,))
+    check("P1542 left invoke unclaimed", acur.fetchone()[0] == "runnable")
+    acur.execute("SELECT count(*) FROM v15.llm_requests WHERE invoke_id = %s", (iid,))
+    check("P1542 rolled back request", acur.fetchone()[0] == 0)
+    admin.commit()
+
+    iid = str(uuid.uuid4())
+    open_invoke(worker, iid)
+    wcur = worker.cursor()
+    wcur.execute("SELECT v15.v15_claim(%s, %s, '30 seconds'::interval)", (iid, OWNER))
+    fence = wcur.fetchone()[0]
+    wcur.execute(
+        "SELECT v15.v15_begin_llm(%s, %s, %s, %s::jsonb)",
+        (iid, fence, OWNER, json.dumps(base_messages())),
+    )
+    opened = parse_json(wcur.fetchone()[0])
+    worker.commit()
+    missing_trace = sample_trace(
+        pool=None, pool_outcome=None,
+        invokes=[sample_invoke(steps=[sample_step(logical_digest=None, response_content=None, result_kind="continue")])],
+    )
+    llm = ReplayLLM(server.get_uri(DB), OWNER, missing_trace)
+    try:
+        llm.complete(opened["logical_digest"], 1, {"attempt_id": opened["attempt_id"]})
+        raise AssertionError("missing frame")
+    except psycopg2.Error as exc:
+        check("driver missing frame is P1542 not local shape", exc.pgcode == "P1542", exc.pgcode)
+    park_open(admin.cursor())
     admin.commit()
 
     iid = str(uuid.uuid4())
@@ -475,6 +705,45 @@ def test_settled_second_begin_and_export(server, admin, worker) -> None:
     )
     worker.rollback()
     acur.execute(
+        "UPDATE v15.llm_requests SET status = 'open' WHERE invoke_id = %s",
+        (iid,),
+    )
+    admin.commit()
+    fails(
+        worker.cursor(), "SELECT v15.v15_replay_export(%s)", (iid,),
+        "P1523", "export open request P1523",
+    )
+    worker.rollback()
+    acur.execute(
+        "UPDATE v15.llm_requests SET status = 'settled' WHERE invoke_id = %s",
+        (iid,),
+    )
+    acur.execute(
+        """
+        UPDATE v15.llm_attempts a
+        SET status = 'unknown'
+        FROM v15.llm_requests r
+        WHERE a.request_id = r.request_id AND r.invoke_id = %s
+        """,
+        (iid,),
+    )
+    admin.commit()
+    fails(
+        worker.cursor(), "SELECT v15.v15_replay_export(%s)", (iid,),
+        "P1523", "export non-settled attempt P1523",
+    )
+    worker.rollback()
+    acur.execute(
+        """
+        UPDATE v15.llm_attempts a
+        SET status = 'settled'
+        FROM v15.llm_requests r
+        WHERE a.request_id = r.request_id AND r.invoke_id = %s
+        """,
+        (iid,),
+    )
+    admin.commit()
+    acur.execute(
         """
         SELECT a.request_id, a.lease_owner, a.pool_id, a.reserved_calls, a.reserved_cost, a.request, a.response
         FROM v15.llm_attempts a JOIN v15.llm_requests r ON r.request_id = a.request_id
@@ -496,7 +765,7 @@ def test_settled_second_begin_and_export(server, admin, worker) -> None:
     admin.commit()
     fails(
         worker.cursor(), "SELECT v15.v15_replay_export(%s)", (iid,),
-        "P1523", "export n<>1 P1523",
+        "P1523", "export multi-attempt n<>1 P1523",
     )
     worker.rollback()
     acur.execute("DELETE FROM v15.llm_attempts WHERE attempt_id = %s", (extra,))
@@ -514,13 +783,27 @@ def test_supply_still_reserved(admin, worker) -> None:
         iid,
     )
     admin.commit()
-    fails(
-        admin.cursor(),
-        "SELECT v15.v15_on_phase(%s, 0, 'invoke', 'complete', %s::jsonb)",
-        (iid, json.dumps({"outcome": "completed"})),
-        "P1506",
-        "supply_llm_response still P1506",
-    )
+    phases = [
+        ("invoke", "complete", {"outcome": "completed"}),
+        ("llm_query", "enter", {"iteration": 0, "next_attempt_n": 1}),
+        ("llm_query", "send", {
+            "iteration": 0,
+            "logical_digest": "a" * 32,
+            "input_chars": 0,
+            "enter_messages": None,
+            "enter_overlay": None,
+        }),
+        ("llm_query", "complete", {"attempt_id": str(uuid.uuid4())}),
+        ("llm_query", "exit", {"attempt_id": None}),
+    ]
+    for span, phase, io in phases:
+        fails(
+            admin.cursor(),
+            "SELECT v15.v15_on_phase(%s, 0, %s, %s, %s::jsonb)",
+            (iid, span, phase, json.dumps(io)),
+            "P1506",
+            f"supply_llm_response {span}/{phase} P1506",
+        )
     admin.rollback()
 
 
@@ -558,15 +841,25 @@ def test_happy_and_idempotent(server) -> None:
             (root,),
         )
         rows = acur.fetchall()
-        check("attempts settled n=1", all(r == (1, "settled", True, True, COST) or r[0] == 1 and r[1] == "settled" for r in rows), rows)
+        check("attempts settled n=1", all(r == (1, "settled", True, True, COST) for r in rows), rows)
         acur.execute(
             "SELECT provenance FROM v15.bindings WHERE invoke_id = %s AND name = 'kid'",
             (root,),
         )
         check("parent binding provenance delivery", acur.fetchone()[0] == "delivery")
-        llm_spans = spans(acur, root)
-        phases = [p for _, p, _ in llm_spans]
-        check("llm_query enter/send/complete/exit", "enter" in phases and "send" in phases and "complete" in phases and "exit" in phases, llm_spans)
+        acur.execute("SELECT invoke_id FROM v15.invokes WHERE parent_invoke_id = %s", (root,))
+        child = acur.fetchone()[0]
+        for iid, label in ((root, "root"), (child, "child")):
+            groups = llm_query_groups(acur, iid)
+            check(
+                f"{label} llm_query enter-send-complete-exit per iteration",
+                bool(groups) and all(g == ["enter", "send", "complete", "exit"] for g in groups),
+                groups,
+            )
+        root_inv = next(inv for inv in rec_trace["invokes"] if inv["path"] == "")
+        check("completed status independent", root_inv["status"] == "completed")
+        check("completed return_value independent", root_inv["return_value"] == {"ok": True})
+        check("completed error_code independent", root_inv["error_code"] is None)
         acur.execute(
             "SELECT count(*) FROM v15.invoke_events WHERE payload->>'class' = 'provider_rejected' OR payload->>'op' ILIKE '%provider_rejected%'"
         )
@@ -605,6 +898,10 @@ def test_happy_and_idempotent(server) -> None:
         check("replay cost_used is 0", play_cost == 0, play_cost)
         kids = [inv for inv in play_trace["invokes"] if inv["path"] != ""]
         check("one child", len(kids) == 1, [k["path"] for k in kids])
+        play_root = next(inv for inv in play_trace["invokes"] if inv["path"] == "")
+        check("replay completed status independent", play_root["status"] == "completed")
+        check("replay completed return_value independent", play_root["return_value"] == {"ok": True})
+        check("replay completed error_code independent", play_root["error_code"] is None)
         play_admin.commit()
     finally:
         play_worker.close()
@@ -759,7 +1056,8 @@ def test_leftover_frames(server) -> None:
     extra = dict(trace["invokes"][0]["steps"][0])
     extra["iteration"] = 9
     extra["logical_digest"] = "c" * 32
-    padded = json.loads(json.dumps(trace, default=str))
+    extra["response_content"] = "SELECT leftover;"
+    padded = copy.deepcopy(trace)
     padded["invokes"][0]["steps"].append(extra)
     play = "agent_v15_replay_left"
     create_loaded_db(server, play)
@@ -773,6 +1071,83 @@ def test_leftover_frames(server) -> None:
         check("leftover frame detected", left == [("", 9)], left)
     finally:
         w.close()
+
+
+def test_failed_terminal_expected(server) -> None:
+    admin = connect(server)
+    worker = connect(server, "v15_worker")
+    try:
+        admin.autocommit = False
+        worker.autocommit = False
+        park_open(admin.cursor())
+        admin.commit()
+        root = str(uuid.uuid4())
+        open_invoke(worker, root)
+        run_until_quiescent(server.get_uri(DB), RecordingLLM([paid(RAISE_SQL)]), OWNER)
+        trace = export_trace(worker, root)
+        worker.commit()
+        inv = trace["invokes"][0]
+        check("failed status independent", inv["status"] == "failed")
+        check("failed error_code independent", inv["error_code"] == "V15_RAISE")
+        check("failed return_value independent", inv["return_value"] is None)
+        check("failed fatal independent", inv["fatal"] is False)
+    finally:
+        worker.close()
+        admin.close()
+
+
+def test_missing_frame_via_driver(server) -> None:
+    admin = connect(server)
+    worker = connect(server, "v15_worker")
+    try:
+        admin.autocommit = False
+        worker.autocommit = False
+        park_open(admin.cursor())
+        admin.commit()
+        root = str(uuid.uuid4())
+        open_invoke(worker, root)
+        run_until_quiescent(server.get_uri(DB), RecordingLLM([paid(RET)]), OWNER)
+        trace = export_trace(worker, root)
+        worker.commit()
+    finally:
+        worker.close()
+        admin.close()
+    stripped = copy.deepcopy(trace)
+    stripped["invokes"][0]["steps"] = []
+    play = "agent_v15_replay_miss"
+    create_loaded_db(server, play)
+    llm = ReplayLLM(server.get_uri(play), OWNER, stripped)
+    w = connect(server, "v15_worker", play)
+    try:
+        w.autocommit = False
+        open_invoke(w, root)
+        try:
+            run_until_quiescent(server.get_uri(play), llm, OWNER)
+            raised = None
+        except psycopg2.Error as exc:
+            raised = exc
+        check("driver missing frame P1542", raised is not None and raised.pgcode == "P1542", raised)
+    finally:
+        w.close()
+
+
+def test_bind_name_slash_path(server, admin, worker) -> None:
+    park_open(admin.cursor())
+    admin.commit()
+    root = str(uuid.uuid4())
+    open_invoke(worker, root)
+    run_until_quiescent(server.get_uri(DB), RecordingLLM([paid(BIND_ONE), paid(RET)]), OWNER)
+    acur = admin.cursor()
+    acur.execute(
+        "UPDATE v15.statements SET bind_name = 'kid/x' WHERE invoke_id = %s AND bind_name = 'kid'",
+        (root,),
+    )
+    admin.commit()
+    fails(
+        worker.cursor(), "SELECT v15.v15_replay_export(%s)", (root,),
+        "P1524", "slash bind_name P1524",
+    )
+    worker.rollback()
 
 
 def main() -> int:
@@ -789,7 +1164,7 @@ def main() -> int:
         admin.commit()
         test_no_new_tables(admin.cursor())
         test_acl(admin, worker)
-        test_same_txn_guards(admin, worker)
+        test_same_txn_guards(server, admin, worker)
         test_supply_still_reserved(admin, worker)
     finally:
         worker.close()
@@ -816,6 +1191,17 @@ def main() -> int:
         admin.close()
     test_extra_hook_diverges(server)
     test_leftover_frames(server)
+    test_failed_terminal_expected(server)
+    test_missing_frame_via_driver(server)
+    admin = connect(server)
+    worker = connect(server, "v15_worker")
+    try:
+        admin.autocommit = False
+        worker.autocommit = False
+        test_bind_name_slash_path(server, admin, worker)
+    finally:
+        worker.close()
+        admin.close()
     admin = connect(server)
     worker = connect(server, "v15_worker")
     try:

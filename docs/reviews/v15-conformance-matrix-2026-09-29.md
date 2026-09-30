@@ -255,10 +255,10 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
 | 12.1 | §15 十二文件 | ✅ | `v15/replay/test_replay.py` | `len(SQL_LOAD_ORDER)==12`，末项 `v15_replay.sql`，`files_through("replay")==SQL_LOAD_ORDER`，前 11 项等于 `files_through("return_hooks")` |
-| 12.2 | §13 `P1541`/`P1542` | ✅ | 同上 | 同事务坏摘要 → `P1541` 零残留；缺帧 → `P1542` 零残留。非 32hex → `P1524`。settled 后再 assert → `P1502`。两码不是 invoke 终态，不入 §9.5 |
-| 12.3 | §9.4 效应闭集 | ✅ | 同上 | 重放库里 hook 发 `supply_llm_response` 仍 `P1506`。不走该效应供给助手正文 |
-| 12.4 | 轨迹导出/重放 | ✅ | 同上 | 双库录制→重放。投影逐字段（含 span `llm_query` enter/send/complete/exit、无 `provider_rejected`、attempt `settled`/`n=1`、`calls_used` 相等、cost 全 0 且 `recorded_cost_usd≠0`、同摘要双节点按 `(path, iteration)` 供给、父绑定 `provenance=delivery`）。同 fixture 二次重放幂等。空 statements 迭代可导出重放。剩帧失败 |
-| 12.5 | 导出资格 | ✅ | 同上 | 未终态 / `n≠1` / 两池 → `P1523`/`P1524`。坏 JSON、版本、重复坐标在驱动侧本地拒绝 |
+| 12.2 | §13 `P1541`/`P1542` | ✅ | 同上 | 同事务坏摘要 → `P1541` 零残留；同事务直调 `v15_replay_missing` → `P1542` 零残留。合法 leased attempt 缺 `(path,iteration)` 帧 → `P1542`。缺 `attempt_id` 或 `n≠1` 由驱动本地拒绝、不进 SQL。非 32hex → `P1524`。settled 后再 assert → `P1502`。两码不是 invoke 终态，不入 §9.5 |
+| 12.3 | §9.4 效应闭集 | ✅ | 同上 | 重放库里 hook 发 `supply_llm_response` 在 `invoke/complete`、`llm_query` enter/send/complete/exit 仍 `P1506`。不走该效应供给助手正文 |
+| 12.4 | 轨迹导出/重放 | ✅ | 同上 | 双库录制→重放。投影逐字段（含 span `llm_query` 按迭代 enter→send→complete→exit、含子 invoke、无 `provider_rejected`、attempt `(n,status,call_started,calls_charged,cost_usd)` 全等、`calls_used` 相等、cost 全 0 且 `recorded_cost_usd≠0`、同摘要双节点按 `(path, iteration)` 供给、父绑定 `provenance=delivery`）。终局独立预期：completed 的 status/return_value/error_code，failed 的 `V15_RAISE`。`write_trace`→`load_trace` Decimal 往返（含 `calls_limit=40` 与非整数 cost）。同 fixture 二次重放幂等。空 statements 迭代可导出重放。剩帧失败 |
+| 12.5 | 导出资格 | ✅ | 同上 | 未终态 / open request / 非 settled attempt / `n≠1` / 两池 → `P1523`/`P1524`。坏 JSON、版本、重复坐标、键闭集/字段类型在驱动侧于建连前本地拒绝。`bind_name` 含 `/` 或 `:` → `P1524`/`TraceInvalid` |
 | 12.6 | 授权 | ✅ | 同上 | worker 不能 SELECT 基表。repl/PUBLIC 不能执行 replay RPC。函数 owner/`search_path`/grants 符合合同 |
 
 ## M3 · §14

@@ -113,6 +113,9 @@ BEGIN
   IF v_bind IS NULL OR pg_catalog.char_length(v_bind) < 1 THEN
     RAISE EXCEPTION 'V15_INVALID_TRANSITION' USING ERRCODE = 'P1523';
   END IF;
+  IF v_bind ~ '[/:]' THEN
+    RAISE EXCEPTION 'V15_VALUE_INVALID' USING ERRCODE = 'P1524';
+  END IF;
   RETURN v_parent_path || '/' || v_iter::text || ':' || v_stmt::text || ':' || v_bind;
 END;
 $fn$;

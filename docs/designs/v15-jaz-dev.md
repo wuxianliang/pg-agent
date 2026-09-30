@@ -2278,7 +2278,7 @@ PostgreSQL 自己的 sqlstate（例如散文的 `42601`、权限不足的 `42501
 | `V15_HOOK_ABORT` | `P1538` | 形状合法的 hook abort 所带的码不在 `{V15_IO_EXHAUSTED, V15_BUDGET_EXHAUSTED, V15_RECURSION_EXCEEDED, V15_ITERATION_EXCEEDED}` 内，或数个 abort 规范化之后的码仍不相同（§0.12、§9.5）。`fatal` 为 §9.5 归一后的或。不得用来包装预留名或未知键 | 提交类 |
 | `V15_PROVIDER_REJECTED` | `P1539` | 适配器预检拒绝，或已开始的确定性 provider 拒绝（§4.5.5） | 提交类，`fatal = false` |
 | `V15_VALIDATION_FAILED` | `P1540` | validation hook 在容忍次数耗尽后，将候选 return 改写为带 validation error 的 raise | 提交类，`fatal = false` |
-| `V15_REPLAY_DIVERGED` | `P1541` | 回放时 `logical_digest` 或坐标/终局与 trace 不一致 | 回滚类。非 invoke 终态码，不进入 §9.5 abort 可保留闭集 |
+| `V15_REPLAY_DIVERGED` | `P1541` | 锁定后 `logical_digest` 不一致。缺帧是 `P1542`；终局不一致由驱动投影比较 | 回滚类。非 invoke 终态码，不进入 §9.5 abort 可保留闭集 |
 | `V15_REPLAY_MISSING` | `P1542` | 库已进入真实 LLM 尝试而 trace 无该坐标帧 | 回滚类。非 invoke 终态码，不进入 §9.5 abort 可保留闭集 |
 
 `V15_PROVIDER_REJECTED`、`V15_VALIDATION_FAILED`、`V15_REPLAY_DIVERGED` 与 `V15_REPLAY_MISSING` 都不进入 hook abort 可保留闭集。hook 若把它们放进 `abort.error.code`，仍归一成 `V15_HOOK_ABORT`（§9.5）。未知名字仍是 `V15_INVALID_EFFECT`，不走这条归一。
