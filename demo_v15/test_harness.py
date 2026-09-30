@@ -20,6 +20,7 @@ from task import (
     HopsInvalid,
     NoteInvalid,
     ScenarioInvalid,
+    fanout_fragments,
     note_for,
     solve_n,
     validate_hops,
@@ -162,12 +163,64 @@ def recall_case() -> None:
     check("recall limit", result.get("protocol_limit") == 9000, result.get("protocol_limit"))
 
 
+def fanout_case() -> None:
+    result = _run("fanout", 1)
+    check("fanout calls", result["cost"]["calls_used"] == 3, result["cost"])
+    check("fanout nodes", len(result["nodes"]) == 3, len(result["nodes"]))
+    check("fanout hops", result.get("hops") == 1, result.get("hops"))
+    check("fanout scenario", result.get("scenario") == "fanout", result.get("scenario"))
+    root = _node(result, 1)
+    leaves = [node for node in result["nodes"] if node["depth"] == 2]
+    check("fanout two leaves", len(leaves) == 2, len(leaves))
+    check("fanout parent attempts", root["attempt_count"] == 1, root["attempt_count"])
+    check("fanout settled", root["settled_on_bind_iteration"] == 1, root)
+    check(
+        "fanout three statements",
+        root["statement_count_on_bind_iteration"] == 3,
+        root["statement_count_on_bind_iteration"],
+    )
+    frag_a, frag_b = fanout_fragments(root["inputs"]["seal"])
+    check("fanout fragments differ", frag_a != frag_b, (frag_a, frag_b))
+    check(
+        "fanout root fragments",
+        root["inputs"].get("seal_a") == frag_a and root["inputs"].get("seal_b") == frag_b,
+        root["inputs"],
+    )
+    by_seal = {leaf["inputs"]["seal"]: leaf for leaf in leaves}
+    check("fanout leaf seals", set(by_seal) == {frag_a, frag_b}, set(by_seal))
+    check(
+        "fanout leaf returns",
+        by_seal[frag_a]["return_value"] == {"fragment": frag_a}
+        and by_seal[frag_b]["return_value"] == {"fragment": frag_b},
+        {seal: leaf["return_value"] for seal, leaf in by_seal.items()},
+    )
+    check(
+        "fanout parent return",
+        root["return_value"] == {"a": {"fragment": frag_a}, "b": {"fragment": frag_b}},
+        root["return_value"],
+    )
+    check("fanout hooks", result.get("hook_count") == 0, result.get("hook_count"))
+    names = {item["name"]: item["ok"] for item in result.get("assertions") or []}
+    for name in (
+        "fanout_two_children",
+        "fanout_parent_one_settled",
+        "fanout_var_a_and_b",
+        "fanout_deliver_a_before_b",
+        "fanout_no_repl_exit",
+        "fanout_iteration_three_statements",
+    ):
+        check(f"fanout {name}", names.get(name) is True, names)
+
+
 def bounds() -> None:
     server = get_server()
     drop_database(server, BOUND_DB)
     cases = (
         ("hops_invalid", {"hops": 2}),
         ("hops_invalid", {"hops": 9}),
+        ("hops_invalid", {"scenario": "fanout", "hops": 2}),
+        ("hops_invalid", {"scenario": "fanout", "hops": 3}),
+        ("hops_invalid", {"scenario": "fanout", "hops": 8}),
         ("scenario_invalid", {"scenario": "nope"}),
         ("note_invalid", {"note": "has;semicolon"}),
     )
@@ -185,6 +238,21 @@ def bounds() -> None:
         raise SystemExit("FAIL hops 9 accepted")
     except HopsInvalid:
         pass
+    try:
+        validate_hops(2, "fanout")
+        raise SystemExit("FAIL fanout hops 2 accepted")
+    except HopsInvalid:
+        pass
+    try:
+        validate_hops(8, "fanout")
+        raise SystemExit("FAIL fanout hops 8 accepted")
+    except HopsInvalid:
+        pass
+    check("fanout hops 1", validate_hops(1, "fanout") == 1)
+    try:
+        validate_scenario("fanout")
+    except ScenarioInvalid:
+        raise SystemExit("FAIL fanout scenario rejected")
     try:
         validate_scenario("nope")
         raise SystemExit("FAIL scenario accepted")
@@ -233,11 +301,13 @@ def main() -> int:
         chain_cases()
         continue_case()
         recall_case()
+        fanout_case()
         print("bounds hops/scenario/note exit=2")
         print("sizer fixed=3400 solved fixed=4000 rejected")
         print("chain 3/5/8 tail_ok relay_ok")
         print("continue-then-tail calls_used=6")
         print("recall tail_ok relay_ok recall_ok")
+        print("fanout hops=1 tail_ok relay_ok")
         print("keyless exit=2")
         return 0
     finally:

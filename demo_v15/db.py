@@ -31,6 +31,7 @@ HOOK_ROLES = (
     "v15_hook_budget_pool",
     "v15_hook_budget_forcing",
     "v15_hook_context_window_warning",
+    "v15_hook_return_type",
 )
 _ROLE_SQL = {
     "v15_bootstrap": "LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT",

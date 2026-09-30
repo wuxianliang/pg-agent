@@ -1,6 +1,6 @@
 # demo_v15
 
-Headless chain and far-recall driver. Not a gate. The eight driver sources in this directory are tracked. `/demo_v15/` remains in `.gitignore`, so `reports/`, `__pycache__/`, and any file added later stay ignored until `git add -f` on that path.
+Headless chain, far-recall, and same-iteration fanout driver. Not a gate. The eight driver sources in this directory are tracked. `/demo_v15/` remains in `.gitignore`, so `reports/`, `__pycache__/`, and any file added later stay ignored until `git add -f` on that path.
 
 ```bash
 uv run python demo_v15/db.py
@@ -12,13 +12,16 @@ env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL \
   UV_NO_ENV_FILE=1 DEMO_MODE=fake \
   uv run python demo_v15/drive.py --scenario recall --hops 5
 env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL \
+  UV_NO_ENV_FILE=1 DEMO_MODE=fake \
+  uv run python demo_v15/drive.py --scenario fanout
+env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL \
   UV_NO_ENV_FILE=1 \
   uv run python demo_v15/test_harness.py
 ```
 
-`DEMO_MODE` defaults to `fake`. No arguments means `--scenario chain --hops 8`. `chain` allows hops 3–8 (default 8). `recall` allows hops 5–8 (default 5). Real mode needs a key in the environment (`source ~/.zshrc` in a non-interactive shell). Do not put a key in `.env` or the database. Real mode pins `base_url=https://api.deepseek.com/v1` and does not read `OPENAI_API_URI`.
+`DEMO_MODE` defaults to `fake`. No arguments means `--scenario chain --hops 8`. `chain` allows hops 3–8 (default 8). `recall` allows hops 5–8 (default 5). `fanout` allows only hops 1 (default 1): one root plus two leaves, not a chain. Real mode needs a key in the environment (`source ~/.zshrc` in a non-interactive shell). Do not put a key in `.env` or the database. Real mode pins `base_url=https://api.deepseek.com/v1` and does not read `OPENAI_API_URI`.
 
-Exit 0 is `tail_ok relay_ok` for chain, or `tail_ok relay_ok recall_ok` for recall (real soft-fail is also 0: `tail_ok relay_soft_fail` or `tail_ok recall_soft_fail`). Exit 1 keeps `agent_demo_v15` and prints the drop command. Exit 2 is `credentials_absent`, `mode_invalid`, `note_invalid`, `seal_invalid`, `hops_invalid`, `scenario_invalid`, or `facts_unsized`, and does not create the database.
+Exit 0 is `tail_ok relay_ok` for chain and fanout, or `tail_ok relay_ok recall_ok` for recall (real soft-fail is also 0: `tail_ok relay_soft_fail` or `tail_ok recall_soft_fail`). Exit 1 keeps `agent_demo_v15` and prints the drop command. Exit 2 is `credentials_absent`, `mode_invalid`, `note_invalid`, `seal_invalid`, `hops_invalid`, `scenario_invalid`, or `facts_unsized`, and does not create the database.
 
 Leaving `agent_demo_v15` in place makes the next v15 stage setup fail at `DROP ROLE v15_owner` after it has already dropped `agent_v15_*`. Run `--drop-only` first. Reports under `demo_v15/reports/` are not tracked.
 

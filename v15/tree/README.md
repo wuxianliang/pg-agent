@@ -10,7 +10,7 @@ Gate: `uv run python v15/tree/test_tree.py`（退出码 0 = 通过）
 
 `v15_suspend_for_child` 是子 invoke 的唯一插入路径。顺序是 §4.7：先插入子行，立刻把父写成 bind-wait，然后才跑深度守卫与 `invoke/enter`。子 open 复用 `v15_loop_close_open`、`v15_loop_compose_inputs`、`v15_loop_install_hook`、`v15_resolve_child_config` 与已有的 `v15_io_deliver_child` / `v15_repl_fatal_expand`。没有改 `v15_open_invoke` 的签名。
 
-worker 认出 `bind_invoke` 后不执行 `jaz.bind_invoke`。它只授过的 `USAGE` 上求值已存放的 `arg_sql`，用父 scope 快照和子 inputs 预渲染子种子，再调用 suspend。五码和求值错误回到保存点并提交 `failed`。挂起成功后回到扫描，不给父再发一次 LLM。
+worker 认出 `bind_invoke` 后不执行 `jaz.bind_invoke`。它只授过的 `USAGE` 上求值已存放的 `arg_sql`，用父 scope 快照和子 inputs 预渲染子种子，再调用 suspend。五码和求值错误回到保存点并提交 `failed`。挂起成功后回到扫描，不给父再发一次 LLM。同迭代连续双 bind（一次父回复里 a 然后 b，再 `return` 读两个 var）由 `test_same_iteration_fanout` 覆盖。
 
 ## 本 stage 不证明
 

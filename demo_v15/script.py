@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT))
 
 from v15.protocol.split_sql import SplitFailure, classify_statement, split_sql
 
-from task import BIND_NAME, PRINT_SQL, child_payload, role_for
+from task import BIND_NAME, PRINT_SQL, child_payload, fanout_fragments, role_for
 
 
 class ScriptExhausted(Exception):
@@ -91,6 +91,21 @@ def happy_recall(note: str, seal: str, hops: int, root_id: str, token: str) -> l
     return [PRINT_SQL, *tails, leaf_recall(seal, root_id)]
 
 
+def happy_fanout(note: str, seal: str, hops: int, root_id: str) -> list[str]:
+    del hops
+    frag_a, frag_b = fanout_fragments(seal)
+    payload_a = child_payload(note, 1, "leaf", frag_a, root_id)
+    payload_b = child_payload(note, 1, "leaf", frag_b, root_id)
+    root = (
+        f"SELECT jaz.bind_invoke('a', {sql_jsonb(payload_a)});\n"
+        f"SELECT jaz.bind_invoke('b', {sql_jsonb(payload_b)});\n"
+        f"SELECT jaz.\"return\"(jsonb_build_object('a', jaz.var('a'), 'b', jaz.var('b')));"
+    )
+    child_a = f"SELECT jaz.\"return\"({sql_jsonb({'fragment': frag_a})});"
+    child_b = f"SELECT jaz.\"return\"({sql_jsonb({'fragment': frag_b})});"
+    return [root, child_a, child_b]
+
+
 def continue_then_tail(note: str, seal: str, hops: int, root_id: str) -> list[str]:
     return ["SELECT 1;", *happy_chain(note, seal, hops, root_id)]
 
@@ -104,6 +119,8 @@ def expected_kinds(scenario: str, hops: int, *, continued: bool = False) -> list
         return [*tails, leaf]
     if scenario == "recall":
         return [["print"], *tails, leaf]
+    if scenario == "fanout":
+        return [["bind_invoke", "bind_invoke", "return"], ["return"], ["return"]]
     raise ScriptGate(scenario)
 
 

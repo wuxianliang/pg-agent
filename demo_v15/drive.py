@@ -1,4 +1,4 @@
-"""Headless chain and recall driver. DeepSeek is imported only on the real path."""
+"""Headless chain, recall, and fanout driver. DeepSeek is imported only on the real path."""
 from __future__ import annotations
 
 import contextlib
@@ -32,6 +32,7 @@ from script import (
     expected_kinds,
     gate,
     happy_chain,
+    happy_fanout,
     happy_recall,
 )
 from task import (
@@ -301,6 +302,8 @@ def _script(scenario: str, note: str, seal: str, hops: int, root_id: str, token:
     if replies is None:
         if scenario == "recall":
             replies = happy_recall(note, seal, hops, root_id, token or "")
+        elif scenario == "fanout":
+            replies = happy_fanout(note, seal, hops, root_id)
         else:
             replies = happy_chain(note, seal, hops, root_id)
     continued = scenario == "chain" and bool(replies) and replies[0].strip() == "SELECT 1;"
@@ -409,7 +412,7 @@ def run(
         "sizer": sized,
     }
     hidden = secrets_of(environ)
-    inputs = root_inputs(seal, note, hops, root_id, facts)
+    inputs = root_inputs(seal, note, hops, root_id, facts, scenario=scenario)
     server = None
     pool_id = None
     provider = None
@@ -602,7 +605,7 @@ def parse_args(argv: list[str]) -> dict | str:
         else:
             return "scenario_invalid"
         index += 1
-    if scenario not in {"chain", "recall"}:
+    if scenario not in {"chain", "recall", "fanout"}:
         return "scenario_invalid"
     if hops is None:
         hops = default_hops(scenario)

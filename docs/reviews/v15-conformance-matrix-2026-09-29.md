@@ -96,6 +96,7 @@ stage 7 不包含子 invoke。`v15_open_invoke` 在本 stage 落地，因为 loo
 stage 8 是树。fatal 只走桩预留耗尽。`invoke/enter` abort 的同事务送达是把桩临时改成返回 `abort`，不是 hook。hook 产生的 fatal 与 enter abort 仍是 stage 9。
 
 | 63 | §0.2 / §4.8 同迭代消费 | ✅ | `v15/tree/test_tree.py` | 父一次回复里 `bind_invoke` 后的下一条 `jaz.var` 读到子结果并 `return`。父迭代仍是 0，`llm_attempts` 仍是 1。等待期间父 `repl_exec` 没有 `exit` |
+| 63a | §0.2 / §4.8 同迭代双 bind 扇出 | ✅ | `v15/tree/test_tree.py` `test_same_iteration_fanout` | 父一次回复里连续 `bind_invoke('a')`、`bind_invoke('b')`，再 `return` 读两个 var。三次 LLM（1 父 + 2 子）。父迭代 0、`attempts` 1、该迭代恰好一条 settled。每个子恰好一条 settled。a 的 deliver seq 小于 b。两对 suspend/deliver 之间都无 `repl_exec` exit。父 `return_value` 合并两个子 `return_value` |
 | 64 | §4.7 先 bind-wait 再子 open | ✅ | 同上 | 挂起审计在送达之前。子停在 `runnable` 时父是 `suspended`、无租约，`v15_claim` 返回 NULL，扫描不返回父 |
 | 65 | §4.8 三分支 | ✅ | 同上 | 子 `completed` 写 `kind = var`。子 `raise` 时父语句是 `V15_CHILD_ERROR`（`P1528`）、剩余语句 `skipped`、迭代 `continue`，子行保留 `V15_RAISE`。名字被 scope 占用是 `V15_DELIVERY_CONFLICT`（`P1527`），子仍 `completed`，不覆盖 scope |
 | 66 | §0.11 / §4.8 fatal 展开 | ✅ | 同上 | 子孙的桩预留耗尽把父、子、孙都收成 `aborted`、`fatal = true`、`V15_BUDGET_EXHAUSTED`。链上原来 `running` 的 bind 语句失败，更晚语句 `skipped`。没有 `running` 残留。父语句不是 `V15_CHILD_ERROR` |
@@ -285,6 +286,7 @@ D27–D30 已写入规格与台账。D27 与 D29 由 provider gate 的线协议�
 | 2026-09-29 NOTE_V1 | DEMO_MODE=real deepseek-flash lease 240s | tail_ok relay_ok | 驱动源码已入库（demo_v15/ 下 8 个文件）；reports/ 仍 gitignore、不入库 | 绑定迭代恰好两句且下一条 return 读到子 var；该迭代恰好一条 settled 且 max(n) 等于它；suspend 与 deliver 之间无 repl_exec exit；十道 gate 不导入该驱动。 |
 | 2026-09-29 CHAIN hops=8 | DEMO_MODE=real deepseek-flash lease 240s | tail_ok relay_ok | gitignore 的 demo_v15/reports/ | 链长 N=8 时每一环的绑定迭代恰好两句且下一条 return 读到子 var；该迭代恰好一条 settled；suspend 与 deliver 之间无 repl_exec/exit。十道 gate 不导入该驱动。 |
 | 2026-09-29 RECALL hops=5 | 同上 | tail_ok recall_soft_fail（token 列提取：叶搜了 llm_response，token 在 repl_output） | 同上 | 根 iteration 0 的 repl_output 持有 token；子 input 无 facts；叶语句含 jaz.prior_history(根 uuid)；根绑定迭代的 request 含瞬态 context_window_warning，且该行不在 llm_messages。 |
+| 2026-09-30 FANOUT hops=1 | DEMO_MODE=real deepseek-flash lease 240s | tail_ok relay_ok | gitignore 的 `demo_v15/reports/e2e_report-20260930T134701Z.md` | 结构：父一次迭代、连续双 bind a/b、每个子一条 settled、父该迭代一条 settled、a 的 deliver seq 小于 b、两对 suspend/deliver 之间均无 repl_exec exit、父 return 合并两 var。fake 同场景亦退出 0。 |
 
 
 ## Merge verification（2026-09-30）

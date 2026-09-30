@@ -38,6 +38,20 @@ NOTE_RECALL_V1 = (
     "hops, and token. Use your seal, hops 1, and the 16 hex digits after token= "
     "in that history text. Do not invent the token. No markdown. No prose."
 )
+NOTE_FANOUT_V1 = (
+    "Copy this note to each child unchanged as the note input. The quotes around "
+    "a value are syntax and are not part of the value. You are the hop given by "
+    "role. hops is 1 for every invoke. seal is the parent seal. root_id is the "
+    "root invoke id. seal_a and seal_b are two different six hex fragments. "
+    "When role is root, in a single reply bind two children named a and b and "
+    "return a JSON object with keys a and b, using each child result. Child a "
+    "inputs must have note (this same text), hops 1, role leaf, root_id "
+    "unchanged, and seal set to seal_a. Child b inputs must have note (this "
+    "same text), hops 1, role leaf, root_id unchanged, and seal set to seal_b. "
+    "When role is leaf, do not bind a child. Return a JSON object with key "
+    "fragment set to your seal. A JSON object at the root before both children "
+    "finish is wrong. No markdown. No prose."
+)
 PRINT_SQL = "SELECT jaz.print((jaz.var('facts') #>> '{}'));"
 FACTS_PREFIX = "token=" + ("0" * 16) + " "
 SYSTEM_CHARS = 1855
@@ -54,6 +68,17 @@ _BANNED = frozenset(";\"'\\")
 _SHARED_PHRASES = ("down", "root_id", "No markdown", "No prose")
 _CHAIN_PHRASE = "keys seal and hops"
 _RECALL_PHRASES = ("jaz.prior_history", "facts", "token=")
+_FANOUT_PHRASES = (
+    "two children",
+    "named a and b",
+    "seal_a",
+    "seal_b",
+    "fragment",
+    "single reply",
+    "root_id",
+    "No markdown",
+    "No prose",
+)
 _PLACEHOLDER_SEAL = "abcdef"
 _PLACEHOLDER_ROOT = "00000000-0000-0000-0000-000000000000"
 
@@ -102,6 +127,8 @@ def note_for(scenario: str) -> str:
         return NOTE_CHAIN_V1
     if scenario == "recall":
         return NOTE_RECALL_V1
+    if scenario == "fanout":
+        return NOTE_FANOUT_V1
     raise ScenarioInvalid(scenario)
 
 
@@ -110,6 +137,8 @@ def note_revision(scenario: str) -> str:
         return "NOTE_CHAIN_V1"
     if scenario == "recall":
         return "NOTE_RECALL_V1"
+    if scenario == "fanout":
+        return "NOTE_FANOUT_V1"
     raise ScenarioInvalid(scenario)
 
 
@@ -118,6 +147,8 @@ def default_hops(scenario: str) -> int:
         return 8
     if scenario == "recall":
         return 5
+    if scenario == "fanout":
+        return 1
     raise ScenarioInvalid(scenario)
 
 
@@ -134,14 +165,19 @@ def role_sequence(hops: int) -> list[str]:
 
 
 def validate_scenario(scenario: str) -> str:
-    if scenario not in {"chain", "recall"}:
+    if scenario not in {"chain", "recall", "fanout"}:
         raise ScenarioInvalid(scenario)
     return scenario
 
 
 def validate_hops(value: object, scenario: str = "chain") -> int:
     validate_scenario(scenario)
-    lo, hi = (3, 8) if scenario == "chain" else (5, 8)
+    if scenario == "chain":
+        lo, hi = 3, 8
+    elif scenario == "recall":
+        lo, hi = 5, 8
+    else:
+        lo, hi = 1, 1
     if type(value) is not int or value < lo or value > hi:
         raise HopsInvalid(value)
     return value
@@ -161,11 +197,15 @@ def validate_note(note: str, scenario: str | None = None) -> None:
     if scenario is None:
         return
     validate_scenario(scenario)
-    missing = [phrase for phrase in _SHARED_PHRASES if phrase not in note]
-    if scenario == "chain" and _CHAIN_PHRASE not in note:
-        missing.append(_CHAIN_PHRASE)
-    if scenario == "recall":
-        missing.extend(phrase for phrase in _RECALL_PHRASES if phrase not in note)
+    missing = []
+    if scenario in {"chain", "recall"}:
+        missing = [phrase for phrase in _SHARED_PHRASES if phrase not in note]
+        if scenario == "chain" and _CHAIN_PHRASE not in note:
+            missing.append(_CHAIN_PHRASE)
+        if scenario == "recall":
+            missing.extend(phrase for phrase in _RECALL_PHRASES if phrase not in note)
+    elif scenario == "fanout":
+        missing = [phrase for phrase in _FANOUT_PHRASES if phrase not in note]
     if missing:
         raise NoteInvalid("phrase")
 
@@ -173,11 +213,18 @@ def validate_note(note: str, scenario: str | None = None) -> None:
 def check_canonical_notes() -> None:
     validate_note(NOTE_CHAIN_V1, "chain")
     validate_note(NOTE_RECALL_V1, "recall")
+    validate_note(NOTE_FANOUT_V1, "fanout")
 
 
 def validate_seal(seal: str) -> None:
     if not isinstance(seal, str) or SEAL_RE.fullmatch(seal) is None:
         raise SealInvalid(seal)
+
+
+def fanout_fragments(seal: str) -> tuple[str, str]:
+    validate_seal(seal)
+    other = format(int(seal, 16) ^ 0xFFFFFF, "06x")
+    return seal, other
 
 
 def system_chars() -> int:
@@ -284,6 +331,8 @@ def root_inputs(
     hops: int,
     root_id: str,
     facts: str | None = None,
+    *,
+    scenario: str = "chain",
 ) -> list[dict]:
     validate_note(note)
     validate_seal(seal)
@@ -296,4 +345,8 @@ def root_inputs(
     ]
     if facts is not None:
         rows.append(input_binding("facts", facts))
+    if scenario == "fanout":
+        frag_a, frag_b = fanout_fragments(seal)
+        rows.append(input_binding("seal_a", frag_a))
+        rows.append(input_binding("seal_b", frag_b))
     return rows
