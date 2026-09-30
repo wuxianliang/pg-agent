@@ -1,6 +1,6 @@
 # v15 覆盖矩阵（2026-09-29）
 
-记 stage 1–12 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 10 为准。矩阵不是第二份合同。
+记 stage 1–13 gate 已经断言的条目。行为以 `docs/designs/v15-jaz-dev.md` rev 11 为准。矩阵不是第二份合同。
 
 完整 `SQL_LOAD_ORDER`：
 
@@ -16,8 +16,9 @@
 10. `v15/provider/v15_provider.sql`
 11. `v15/return_hooks/v15_return_hooks.sql`
 12. `v15/replay/v15_replay.sql`
+13. `v15/tools/v15_tools.sql`
 
-合运行时是这十二个文件都加载之后。`agent_v15_replay` 是这个库。`agent_v15_return_hooks`、`agent_v15_provider`、`agent_v15_govern` 与更早的 `agent_v15_*` 库是前缀 gate，不是合运行时。
+合运行时是这十三个文件都加载之后。`agent_v15_tools` 是这个库。`agent_v15_replay`、`agent_v15_return_hooks`、`agent_v15_provider`、`agent_v15_govern` 与更早的 `agent_v15_*` 库是前缀 gate，不是合运行时。
 
 状态来自实跑：`uv run python v15/govern/test_govern.py` 退出码 0。随后复跑 stage 1–8 的 gate，退出码都是 0。M1 串行复跑 schema→return_hooks 十一道 gate，退出码都是 0。
 
@@ -230,7 +231,7 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
-| 11.1 | §15 十一文件前缀 | ✅ | `v15/return_hooks/test_return_hooks.py` | `files_through("govern")` 9 项且末项 govern；`files_through("provider")` 10 项且末项 provider；`files_through("return_hooks")` 11 项且末项 return_hooks。原 317（`len(SQL_LOAD_ORDER)==11`）与 320（`files_through("return_hooks")==SQL_LOAD_ORDER`）已按 D1 先例改为前缀形，不是放宽；全局十二文件形状改由 `v15/replay/test_replay.py` 断言 |
+| 11.1 | §15 十一文件前缀 | ✅ | `v15/return_hooks/test_return_hooks.py` | `files_through("govern")` 9 项且末项 govern；`files_through("provider")` 10 项且末项 provider；`files_through("return_hooks")` 11 项且末项 return_hooks。原 317（`len(SQL_LOAD_ORDER)==11`）与 320（`files_through("return_hooks")==SQL_LOAD_ORDER`）已按 D1 先例改为前缀形，不是放宽；全局十三文件形状改由 `v15/tools/test_tools.py` 断言 |
 | 11.2 | §18 `v15_on_phase` oid | ✅ | 同上 | 库内 `v15_on_phase` 恰好一个 oid |
 | 11.3 | §9.4 return→raise | ✅ | 同上 | `call_phase` 接受 `V15_VALIDATION_FAILED` 的 raise；错码与超 1024 的 message 是 `P1506` |
 | 11.4 | §9.5 raise 压过 continue | ✅ | 同上 | 同相位 continue 的持久消息不进入返回值，也不写入 `llm_messages`。胜者自己的持久消息留下。两个不等的 raise 取 ordinal 最小的那条，不是 `P1535`。两个 `max_failures=0` 且 message 不同的 validator 终态是 `P1540`。真实 `budget_forcing:<ordinal>:<n>` 与 raise 同相位时，finish 后该计数仍为 0 |
@@ -250,16 +251,30 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 
 ## stage 12 · replay
 
-合运行时迁到十二文件。不启用 `supply_llm_response`。摘要复用 `logical_digest`。无新表。
+合运行时迁到十二文件时的前缀。不启用 `supply_llm_response`。摘要复用 `logical_digest`。无新表。全局十三文件形状改由 stage 13 断言。
 
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
-| 12.1 | §15 十二文件 | ✅ | `v15/replay/test_replay.py` | `len(SQL_LOAD_ORDER)==12`，末项 `v15_replay.sql`，`files_through("replay")==SQL_LOAD_ORDER`，前 11 项等于 `files_through("return_hooks")` |
+| 12.1 | §15 十二文件前缀 | ✅ | `v15/replay/test_replay.py` | `len(files_through("replay"))==12`，末项 `v15_replay.sql`，`files_through("replay")==SQL_LOAD_ORDER[:12]`，前 11 项等于 `files_through("return_hooks")`。原 `len(SQL_LOAD_ORDER)==12` 与 `files_through("replay")==SQL_LOAD_ORDER` 已按 D1 先例改为前缀形，不是放宽 |
 | 12.2 | §13 `P1541`/`P1542` | ✅ | 同上 | 同事务坏摘要 → `P1541` 零残留；同事务直调 `v15_replay_missing` → `P1542` 零残留。合法 leased attempt 缺 `(path,iteration)` 帧 → `P1542`。缺 `attempt_id` 或 `n≠1` 由驱动本地拒绝、不进 SQL。非 32hex → `P1524`。settled 后再 assert → `P1502`。两码不是 invoke 终态，不入 §9.5 |
 | 12.3 | §9.4 效应闭集 | ✅ | 同上 | 重放库里 hook 发 `supply_llm_response` 在 `invoke/complete`、`llm_query` enter/send/complete/exit 仍 `P1506`。不走该效应供给助手正文 |
 | 12.4 | 轨迹导出/重放 | ✅ | 同上 | 双库录制→重放。投影逐字段（含 span `llm_query` 按迭代 enter→send→complete→exit、含子 invoke、无 `provider_rejected`、attempt `(n,status,call_started,calls_charged,cost_usd)` 全等、`calls_used` 相等、cost 全 0 且 `recorded_cost_usd≠0`、同摘要双节点按 `(path, iteration)` 供给、父绑定 `provenance=delivery`）。终局独立预期：completed 的 status/return_value/error_code，failed 的 `V15_RAISE`。`write_trace`→`load_trace` Decimal 往返（含 `calls_limit=40` 与非整数 cost）。池 `cost_used` 高精 `Decimal("0.123456789012345678901234567890")` 经 `export_trace`（`::text`）→`write_trace`→`load_trace` 投影相等。字面 `\x1eDEC0\x1e` 与 Decimal 字段共存往返不变（无 placeholder 替换）。同 fixture 二次重放幂等。空 statements 迭代可导出重放。剩帧失败 |
 | 12.5 | 导出资格 | ✅ | 同上 | 未终态 / open request / 非 settled attempt / `n≠1` / 两池 → `P1523`/`P1524`。坏 JSON、版本、重复坐标、键闭集/字段类型在驱动侧于建连前本地拒绝。`bindings[*].value` / `blackboard[*].value` 走 `_json_value`（unsupported object 与 float 本地拒绝）。invokes path、binding name、blackboard key 按 UTF-8 字节序（SQL `ORDER BY … COLLATE "C"`；Python `encode("utf-8")`）；大小写混合绑定 `Z` 先于 `a` 导出往返。`bind_name` 含 `/` 或 `:` → `P1524`/`TraceInvalid` |
 | 12.6 | 授权 | ✅ | 同上 | worker 不能 SELECT 基表。repl/PUBLIC 不能执行 replay RPC。函数 owner/`search_path`/grants 符合合同 |
+
+## stage 13 · tools
+
+合运行时迁到十三个文件。库名 `agent_v15_tools`。本修订是「其后不得加表」的唯一例外：`tool_requests` 与 `tool_attempts`。`tool_wait` 不是 `suspended`。三码止于 `P1545`。
+
+| # | 条文 | 状态 | 测试落点 | 断言的行为 |
+|---|---|---|---|---|
+| 13.1 | §15 十三文件 | ✅ | `v15/tools/test_tools.py` | `len(SQL_LOAD_ORDER)==13`，末项 `v15_tools.sql`，`files_through("tools")==SQL_LOAD_ORDER`，前 12 项等于 `files_through("replay")` |
+| 13.2 | §3.16 / §4 `tool_wait` | ✅ | 同上 | 规范 `bind_tool` 后 invoke 为 `tool_wait`，不是 `suspended`；无子 invoke、无树边；`v15_claim` 对 `tool_wait` 返回 NULL；`v15_next_runnable` 不返回该行 |
+| 13.3 | §6.2 `bind_tool` | ✅ | 同上 | 规范形式识别七键 payload。字面量/注释/dollar-quote 内的名字不分类。`arg_sql` 含 `INSERT` 为 `V15_INVOKE_FORM`。六键 `bind_tool` 存语句 `P1524`。直接执行 `jaz.bind_tool` 为 `V15_INVOKE_FORM` |
+| 13.4 | §13 `P1543`/`P1544`/`P1545` | ✅ | 同上 | `external=false` 的 `bind_tool` → `P1543`（`V15_TOOL_BINDING`）。FakeTool `{"ok":false}` → `P1544`（`V15_TOOL_FAILED`），不写 binding。`n` 将越 `governance_io` → `P1545`（`V15_TOOL_EXHAUSTED`），不插该 attempt。同步 `jaz.tool` 对 `external=true` 仍 `P1517`，`tool_attempts=0` |
+| 13.5 | §3.7 送达 | ✅ | 同上 | 成功：`kind=var`、`provenance=delivery`、`show_in_prompt=true`，同迭代可读，该迭代 `llm_requests` 仍 1。名字被 `scope` 占用则 FakeTool 仍被调、attempt `settled`、binding 不改、语句 `P1527` |
+| 13.6 | §4.14 回收与 FakeTool | ✅ | 同上 | 未 mark 过期 → attempt `failed` 不计 calls；已 mark 过期 → `unknown` 计 1；invoke 仍 `tool_wait`。FakeTool 只在 `call_started` 提交后、会话无打开事务时调用。gate 与 FakeTool 不建 socket |
+| 13.7 | 导出拒绝 | ✅ | 同上 | 含 `bind_tool` / `tool_wait` 的树 `v15_replay_export` → `P1524`，不产文件。旧 replay 夹具仍过 |
 
 ## M3 · §14
 
@@ -291,8 +306,9 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 | V15-D24 | `v15/repl/test_repl.py`、`v15/tree/test_tree.py` | bind 实参只授 `USAGE`。写记号和 scratch 写都是 `V15_INVOKE_FORM` |
 | V15-D25 | `v15/protocol/test_protocol.py` | `DO` 被拒绝。语句内部的迭代只走 `WITH RECURSIVE` |
 | V15-D26 | `v15/govern/test_govern.py` | exit 上的 abort 回滚，outcome 行不留下。exit 只能写黑板 |
+| V15-D33 | `v15/tools/test_tools.py` | `bind_tool` 仅 `external=true` 异步延续；同步 `jaz.tool` 仍 `V15_EXTERNAL_TOOL`、不写 `tool_attempts`；D14 回收不插 attempt；FakeTool 在 `call_started` 提交之后 |
 
-D27–D30 已写入规格与台账。D27 与 D29 由 provider gate 的线协议与 reasoning 断言证明。D28 与 D30 是记账口径，不在本 gate 里对发票。
+D27–D30 已写入规格与台账。D27 与 D29 由 provider gate 的线协议与 reasoning 断言证明。D28 与 D30 是记账口径，不在本 gate 里对发票。D31–D32 已写入规格与台账。D05 原文不改；异步延续的后继是 D33。
 
 ## Demo evidence（不是 gate）
 

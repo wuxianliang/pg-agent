@@ -29,6 +29,7 @@ _RESERVED_NAMES = frozenset(
         "var",
         "tool",
         "bind_invoke",
+        "bind_tool",
         "prior_history",
         "exec_context",
         "invoke_id",
@@ -36,6 +37,7 @@ _RESERVED_NAMES = frozenset(
     }
 )
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,53}$")
 _DDL_PREFIXES = (
     ("create", "function"),
     ("create", "procedure"),
@@ -127,6 +129,21 @@ class Classification(NamedTuple):
     bind_name: str | None
     arg_sql: str | None
     reject_code: str | None
+    tool_name: str | None = None
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Classification):
+            return tuple.__eq__(self, other)
+        if isinstance(other, tuple):
+            core = (self.kind, self.bind_name, self.arg_sql, self.reject_code)
+            if len(other) == 4:
+                return core == other
+            if len(other) == 5:
+                return (*core, self.tool_name) == other
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return tuple.__hash__(self)
 
 
 def split_sql(source: str) -> list[str] | SplitFailure:
@@ -417,6 +434,8 @@ def _match_canonical(sql: str, sig: list[Tok]) -> Classification | None:
     interior = sig[5:close]
     open_end = sig[4].end
     close_start = sig[close].start
+    if func == "bind_tool":
+        return _match_tool(sql, interior, close_start)
     if func in {"bind_invoke", "assign"}:
         return _match_two_arg(sql, func, interior, open_end, close_start)
     return _match_one_arg(sql, func, interior, open_end, close_start)
@@ -460,6 +479,39 @@ def _match_two_arg(
     if func == "bind_invoke" and _arg_has_write(arg_sql):
         return Classification("bind_invoke", name, arg_sql, "V15_INVOKE_FORM")
     return Classification(func, name, arg_sql, None)
+
+
+def _match_tool(
+    sql: str,
+    interior: list[Tok],
+    close_start: int,
+) -> Classification:
+    commas = _top_commas(interior)
+    if len(commas) != 2:
+        return Classification("plain", None, None, "V15_INVOKE_FORM")
+    first_comma, second_comma = commas
+    before = [t for t in interior if t.end <= first_comma.start]
+    middle = [
+        t for t in interior if t.start >= first_comma.end and t.end <= second_comma.start
+    ]
+    after = [t for t in interior if t.start >= second_comma.end]
+    if (
+        len(before) != 1
+        or before[0].kind != "string"
+        or before[0].style != "std"
+        or len(middle) != 1
+        or middle[0].kind != "string"
+        or middle[0].style != "std"
+        or not after
+    ):
+        return Classification("plain", None, None, "V15_INVOKE_FORM")
+    name = before[0].content or ""
+    tool_name = middle[0].content or ""
+    if not _valid_bind_name(name) or not _valid_tool_name(tool_name):
+        return Classification("plain", None, None, "V15_INVOKE_FORM")
+    arg_sql = sql[second_comma.end : close_start]
+    reject = "V15_INVOKE_FORM" if _arg_has_write(arg_sql) else None
+    return Classification("bind_tool", name, arg_sql, reject, tool_name)
 
 
 def _top_commas(interior: list[Tok]) -> list[Tok]:
@@ -547,9 +599,19 @@ def _has_control_name(sig: list[Tok]) -> bool:
 
 
 def _is_control_func(tok: Tok) -> bool:
-    if tok.kind == "ident" and tok.text.casefold() in {"bind_invoke", "return", "raise"}:
+    if tok.kind == "ident" and tok.text.casefold() in {
+        "bind_invoke",
+        "bind_tool",
+        "return",
+        "raise",
+    }:
         return True
-    if tok.kind == "qident" and tok.content in {"return", "raise", "bind_invoke"}:
+    if tok.kind == "qident" and tok.content in {
+        "return",
+        "raise",
+        "bind_invoke",
+        "bind_tool",
+    }:
         return True
     return False
 
@@ -557,13 +619,14 @@ def _is_control_func(tok: Tok) -> bool:
 def _canonical_func(tok: Tok) -> str | None:
     if tok.kind == "ident":
         name = tok.text.casefold()
-        if name in {"bind_invoke", "print", "assign"}:
+        if name in {"bind_invoke", "bind_tool", "print", "assign"}:
             return name
         return None
     if tok.kind == "qident" and tok.content in {
         "return",
         "raise",
         "bind_invoke",
+        "bind_tool",
         "print",
         "assign",
     }:
@@ -600,6 +663,10 @@ def _valid_bind_name(name: str) -> bool:
         and _IDENT_RE.fullmatch(name) is not None
         and name not in _RESERVED_NAMES
     )
+
+
+def _valid_tool_name(name: str) -> bool:
+    return _TOOL_NAME_RE.fullmatch(name) is not None
 
 
 def _first_line(sql: str) -> str:

@@ -167,6 +167,7 @@ P2: `validate_trace` runs `bindings[*].value` and `blackboard[*].value` through 
 Follow-up (not this turn):
 - `drop_cost` can drop same-named keys at any nesting
 - path/export recursion has no cycle detection
+- replay 不含工具帧：含 `bind_tool` / `tool_wait` 的导出是 `P1524`
 
 Serial `uv run python v15/<stage>/test_<stage>.py` then smoke. `setup_db.py` drops every `agent_v15_` DB; gates were not overlapped.
 

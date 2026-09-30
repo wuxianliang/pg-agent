@@ -20,6 +20,7 @@ from psycopg2 import extensions as pgext
 from psycopg2 import sql
 from psycopg2.extras import Json
 
+from v15.fake_tool import FakeTool
 from v15.protocol.render_prompt import render_inputs, render_system, truncate_base
 from v15.protocol.split_sql import SplitFailure, classify_statement, split_sql, sql_without_timeout_pragma
 from v15.provider.errors import ProviderPreflight, ProviderRejected, ProviderUncertain
@@ -108,8 +109,8 @@ def parse_json(value):
     return value
 
 
-def _element(text: str, kind: str, bind_name, arg_sql, reject_code) -> dict:
-    return {
+def _element(text: str, kind: str, bind_name, arg_sql, reject_code, tool_name=None) -> dict:
+    elem = {
         "sql": text,
         "sql_digest": hashlib.md5(text.encode("utf-8")).hexdigest(),
         "kind": kind,
@@ -117,13 +118,23 @@ def _element(text: str, kind: str, bind_name, arg_sql, reject_code) -> dict:
         "arg_sql": arg_sql,
         "reject_code": reject_code,
     }
+    if kind == "bind_tool":
+        elem["tool_name"] = tool_name
+    return elem
 
 
 def statement_payload(content: str) -> list[dict]:
     split = split_sql(content)
     if isinstance(split, SplitFailure):
         return [
-            _element(split.sql, split.kind, split.bind_name, split.arg_sql, split.reject_code)
+            _element(
+                split.sql,
+                split.kind,
+                split.bind_name,
+                split.arg_sql,
+                split.reject_code,
+                split.tool_name if getattr(split, "kind", None) == "bind_tool" else None,
+            )
         ]
     out = []
     for text in split:
@@ -135,9 +146,20 @@ def statement_payload(content: str) -> list[dict]:
                 classified.bind_name,
                 classified.arg_sql,
                 classified.reject_code,
+                classified.tool_name if classified.kind == "bind_tool" else None,
             )
         )
     return out
+
+
+def _tool_result_shape(result) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result == {"ok": False}:
+        return True
+    if result.get("ok") is True and set(result.keys()) == {"ok", "value"}:
+        return True
+    return False
 
 
 def error_of(exc: psycopg2.Error, *, timeout: bool) -> dict:
@@ -182,7 +204,15 @@ def build_base(snap: dict) -> list[dict]:
 
 
 class Worker:
-    def __init__(self, db_dsn: str, fakellm, worker_id: str, *, lease: str = LEASE) -> None:
+    def __init__(
+        self,
+        db_dsn: str,
+        fakellm,
+        worker_id: str,
+        *,
+        lease: str = LEASE,
+        faketool=None,
+    ) -> None:
         if not isinstance(worker_id, str) or not 1 <= len(worker_id) <= 200:
             raise TypeError("worker_id")
         timeout_s = getattr(fakellm, "timeout_s", None)
@@ -192,9 +222,11 @@ class Worker:
                 raise ValueError("lease")
         self.db_dsn = db_dsn
         self.fakellm = fakellm
+        self.faketool = FakeTool() if faketool is None else faketool
         self.worker_id = worker_id
         self.lease = lease
         self.conn = connect_worker(db_dsn)
+        self._has_next_tool = None
 
     def close(self) -> None:
         try:
@@ -247,6 +279,75 @@ class Worker:
             return [str(row[0]) for row in cur.fetchall() if row[0] is not None]
 
         return self._run(read)
+
+    def next_tool(self) -> list[str]:
+        if self._has_next_tool is False:
+            return []
+
+        def read(conn):
+            cur = conn.cursor()
+            cur.execute("SELECT v15.v15_next_tool()")
+            return [str(row[0]) for row in cur.fetchall() if row[0] is not None]
+
+        try:
+            ids = self._run(read)
+        except psycopg2.Error as exc:
+            if exc.pgcode == "42883":
+                self._has_next_tool = False
+                return []
+            raise
+        self._has_next_tool = True
+        return ids
+
+    def drive_tools(self, faketool=None) -> None:
+        tool = self.faketool if faketool is None else faketool
+        for invoke_id in self.next_tool():
+            self._run_one_tool(invoke_id, tool)
+
+    def _run_one_tool(self, invoke_id: str, tool) -> None:
+        def begin(conn):
+            return parse_json(
+                self._fetch(
+                    conn,
+                    "SELECT v15.v15_begin_tool(%s, %s, %s::interval)",
+                    (invoke_id, self.worker_id, self.lease),
+                )
+            )
+
+        opened = self._run(begin)
+        if opened.get("action") != "proceed":
+            return
+        attempt_id = str(opened["attempt_id"])
+
+        def mark(conn):
+            self._fetch(
+                conn,
+                "SELECT v15.v15_mark_tool_started(%s, 1, %s)",
+                (attempt_id, self.worker_id),
+            )
+
+        self._run(mark)
+        self._assert_idle()
+        try:
+            result = tool.call(opened["tool_name"], opened.get("args"))
+        except Exception:
+            result = {"ok": False}
+        if not _tool_result_shape(result):
+            result = {"ok": False}
+
+        def settle(conn):
+            self._fetch(
+                conn,
+                "SELECT v15.v15_settle_tool(%s, 1, %s, %s)",
+                (attempt_id, self.worker_id, Json(result)),
+            )
+
+        try:
+            self._run(settle)
+        except psycopg2.Error as exc:
+            if exc.pgcode == "P1502":
+                return
+            raise
 
     def claim(self, invoke_id: str):
         def read(conn):
@@ -495,6 +596,9 @@ class Worker:
         if current["kind"] == "bind_invoke":
             self._bind_invoke(invoke_id, fence, index=int(current["stmt_index"]))
             return False
+        if current["kind"] == "bind_tool":
+            self._bind_tool(invoke_id, fence, current, snap)
+            return False
         self._execute_one(invoke_id, fence, current)
         return False
 
@@ -667,6 +771,125 @@ class Worker:
                     return
                 raise
 
+    def _bind_tool(self, invoke_id: str, fence: int, stmt: dict, snap: dict) -> None:
+        index = int(stmt["stmt_index"])
+        iteration = int(snap["iteration"])
+        classified = classify_statement(stmt["sql"])
+        arg_sql = classified.arg_sql
+        limit = int(snap["resolved_config"]["protocol"]["max_invoke_input_length"])
+        while True:
+            fired = {"done": False, "hit": False}
+            timer = None
+            try:
+                self._begin(self.conn)
+                cur = self.conn.cursor()
+                cur.execute("SELECT pg_backend_pid()")
+                pid = cur.fetchone()[0]
+                cur.execute(
+                    "SELECT v15.v15_prepare_statement(%s, %s, %s, %s)",
+                    (invoke_id, fence, self.worker_id, index),
+                )
+                info = parse_json(cur.fetchone()[0])
+                timeout_ms = int(info["timeout_ms"])
+                timer = threading.Timer(
+                    timeout_ms / 1000.0,
+                    self._cancel,
+                    args=(pid, fired),
+                )
+                timer.daemon = True
+                timer.start()
+                cur.execute(
+                    sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(
+                        sql.Identifier(info["scratch_schema"])
+                    )
+                )
+                cur.execute(
+                    f"SET LOCAL statement_timeout = '{timeout_ms + 1000}ms'"
+                )
+                cur.execute("SAVEPOINT model_stmt")
+                if not arg_sql:
+                    fired["done"] = True
+                    timer.cancel()
+                    self._complete_failed(
+                        cur, invoke_id, fence, index, info, self._value_invalid()
+                    )
+                    self.conn.commit()
+                    return
+                cur.execute("SET LOCAL ROLE v15_repl")
+                phase = "eval"
+                try:
+                    cur.execute(f"SELECT ({arg_sql})")
+                    rows = cur.fetchall() if cur.description else []
+                    value = rows[0][0] if len(rows) == 1 else None
+                    if isinstance(value, str):
+                        try:
+                            value = json.loads(value)
+                        except json.JSONDecodeError:
+                            value = None
+                    if len(rows) != 1 or not isinstance(value, dict):
+                        fired["done"] = True
+                        timer.cancel()
+                        self._complete_failed(
+                            cur, invoke_id, fence, index, info, self._value_invalid()
+                        )
+                        self.conn.commit()
+                        return
+                    cur.execute("RESET ROLE")
+                    cur.execute("SELECT char_length((%s::jsonb)::text)", (Json(value),))
+                    if int(cur.fetchone()[0]) > limit:
+                        fired["done"] = True
+                        timer.cancel()
+                        self._complete_failed(
+                            cur, invoke_id, fence, index, info, self._value_invalid()
+                        )
+                        self.conn.commit()
+                        return
+                    phase = "suspend"
+                    cur.execute(
+                        """
+                        SELECT v15.v15_suspend_for_tool(%s, %s, %s, %s, %s)
+                        """,
+                        (
+                            invoke_id,
+                            iteration,
+                            index,
+                            self.worker_id,
+                            Json(value),
+                        ),
+                    )
+                    outcome = parse_json(cur.fetchone()[0])
+                except psycopg2.Error as exc:
+                    if exc.pgcode == "57014":
+                        raise
+                    if phase == "suspend" and exc.pgcode not in BIND_FAIL:
+                        raise
+                    fired["done"] = True
+                    timer.cancel()
+                    self._complete_failed(
+                        cur, invoke_id, fence, index, info, self._bind_error(exc)
+                    )
+                    self.conn.commit()
+                    return
+                fired["done"] = True
+                timer.cancel()
+                self.conn.commit()
+                return
+            except psycopg2.Error as exc:
+                fired["done"] = True
+                if timer is not None:
+                    timer.cancel()
+                try:
+                    self.conn.rollback()
+                except psycopg2.Error:
+                    pass
+                if retryable_sqlstate(exc.pgcode):
+                    continue
+                if exc.pgcode == "57014" or fired["hit"]:
+                    self._replace_conn()
+                    self._fail_cancelled(invoke_id, fence, index, exc, timeout=True)
+                    return
+                raise
+
     def _execute_one(self, invoke_id: str, fence: int, stmt: dict) -> None:
         index = int(stmt["stmt_index"])
         text = sql_without_timeout_pragma(stmt["sql"])
@@ -790,12 +1013,20 @@ class Worker:
         )
 
 
-def run_until_quiescent(db_dsn: str, fakellm, worker_id: str, *, lease: str = LEASE) -> None:
-    worker = Worker(db_dsn, fakellm, worker_id, lease=lease)
+def run_until_quiescent(
+    db_dsn: str,
+    fakellm,
+    worker_id: str,
+    *,
+    lease: str = LEASE,
+    faketool=None,
+) -> None:
+    worker = Worker(db_dsn, fakellm, worker_id, lease=lease, faketool=faketool)
     try:
         steps = 0
         while True:
             worker.reclaim()
+            worker.drive_tools()
             ids = worker.next_runnable()
             if not ids:
                 return

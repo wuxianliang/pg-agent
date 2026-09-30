@@ -2,7 +2,7 @@
 
 本文是 pg-agent v15 的行为合同：在 PostgreSQL 内实现 JAZ 的 invoke 状态机。模型书写受约束的 SQL 语句列表；worker 只在事务外做 LLM I/O，并做语句切分；每一次权威转移都是 SQL。
 
-**设计修订。** rev 10。
+**设计修订。** rev 11。
 
 **修订说明。** 本修订吸收 R-B1–R-B19：`SECURITY DEFINER` 函数体内禁止切换角色；scratch 只授予 schema 权限，终态由属主直接 `DROP SCHEMA … CASCADE`；工具改为 `v15_tool_<name>` 的 definer；`v15_reclaim_expired()` 同时收回没有存活 attempt 的过期 invoke 租约；子 invoke 的每一次提交类终态都在同一事务送达。
 本修订吸收 R-C1–R-C18，来源 `docs/references/v15-rev4-rulings.md`。
@@ -13,6 +13,7 @@
 本修订把真实 provider 定为 worker 侧 opt-in。attempt 终态集合不变。新增 `V15_PROVIDER_REJECTED` / `P1539`。`llm` 键集不变。
 本修订追加 `V15_VALIDATION_FAILED` / `P1540`。`repl_exec/complete` 可以把候选 `return` 改成 `continue`，或改成带该码的 `raise`。计数接受函数不改名。`v15_io_sqlstate` 不映射这个码。
 本修订追加 D2 轨迹回放：`V15_REPLAY_DIVERGED` / `P1541` 与 `V15_REPLAY_MISSING` / `P1542`。二者是回滚类异常，不是 invoke 终态码，不进入 §9.5 四个可保留 abort 码。合运行时是十二个文件全部加载的库，库名 `agent_v15_replay`。不启用 `supply_llm_response`。摘要复用 `llm_requests.logical_digest`。
+本修订追加 stage 13 外部工具延续：`bind_tool` / `tool_wait`、`tool_requests` 与 `tool_attempts`（本修订对「其后 stage 不得加表」的**唯一例外**），以及 `V15_TOOL_BINDING` / `P1543`、`V15_TOOL_FAILED` / `P1544`、`V15_TOOL_EXHAUSTED` / `P1545`。合运行时迁到十三个文件，库名 `agent_v15_tools`。`P1546`–`P1548` 仍未分配。
 
 **权威。** 本文是 v15 实现与 gate 的唯一行为权威。K1–K6、两轮 oracle 的 R1–R5（`docs/references/v15-oracle-round1.md`、`docs/references/v15-oracle-round2.md`，裁定组 `54BBD0FD-1DC4-44CE-9500-E4BF8C6B0E8B`）、rev 2 的 R-A1–R-A29、rev 3 的 R-B1–R-B19 以及 rev 4 的 R-C1–R-C18 rev 5 的 R-D1–R-D22 rev 6 的 R-E1–R-E10 以及 rev 7 的 R-F1–R-F6、rev 8 的 R-G1–R-G2 只作为来源保留。裁定已全部吸收进本文，本文是唯一权威。论文的两条性质，以及「外部 I/O 不在数据库事务内；unknown 不是成功」这条 v8 规则，同为权威。jaz 的 Python REPL 沙箱、Jinja 模板、`__history__` 的属性措辞、`jaz-evals` 提示词、v8 的 `sessions` / `effect_requests` / 插件世代、v13 的 stage 布局，都不是 v15 行为权威（完整非权威清单在 §16）。
 
@@ -109,7 +110,7 @@ scratch 内、且只有这些形式，`kind` 为 `plain`、`reject_code` 为空�
 
 整段切分失败时不产生部分语句列表。worker 仍结算，且只结算一条合成的失败语句（§3.3），然后迭代 `Continue`。响应正文里的 NUL 不能进入 PostgreSQL `text`：存入前把每个 NUL 换成六字符序列 `\u0000`，该条 `reject_code` 为 `V15_VALUE_INVALID`。
 
-19. **SQLSTATE。** 每个 `V15_*` 条件恰好一个 sqlstate，自 `P1501` 起连续分配，无空号，无同义名。本修订止于 `P1542`（`V15_REPLAY_MISSING`），共 42 行。硬顶为 `P1548`。`P1543`–`P1548` 未分配，不得预占。gate MUST 按 `sqlstate` 分类。本族 MUST NOT 使用 `P0001`。码表在 §13。`P15` 是否被本安装占用，以仓库钉住的 PG 18.4 errcode 快照在设计时核对；运行时 gate 只断言 `server_version_num` 与这些自定义码能够 `RAISE`（§17）。
+19. **SQLSTATE。** 每个 `V15_*` 条件恰好一个 sqlstate，自 `P1501` 起连续分配，无空号，无同义名。本修订止于 `P1545`（`V15_TOOL_EXHAUSTED`），共 45 行。硬顶为 `P1548`。`P1546`–`P1548` 未分配，不得预占。gate MUST 按 `sqlstate` 分类。本族 MUST NOT 使用 `P0001`。码表在 §13。`P15` 是否被本安装占用，以仓库钉住的 PG 18.4 errcode 快照在设计时核对；运行时 gate 只断言 `server_version_num` 与这些自定义码能够 `RAISE`（§17）。
 
 20. **身份。** 内核转移的授权谓词是 `session_user = v15_worker`。转移函数为 `SECURITY DEFINER` 时，体内 `current_user` 是 `v15_owner`，MUST NOT 用来识别 worker。任何 `SECURITY DEFINER` 函数体内 MUST NOT 执行 `SET ROLE`、`RESET ROLE` 或 `SET SESSION AUTHORIZATION`。PostgreSQL 在这类函数内拒绝角色切换；合同也不把切换当作实现手段。模型语句执行时 `current_user` MUST 为 `v15_repl`。这个 `SET LOCAL ROLE v15_repl` 只允许出现在 worker 事务的顶层，位于转移函数返回之后、模型语句之前，然后在语句之后 `RESET ROLE`。`jaz` 包装 MUST 拒绝 `current_user` 不是 `v15_repl` 的调用。清单写入与 hook / tool 登记 MUST 只接受 bootstrap 装载身份。
 
@@ -139,7 +140,9 @@ scratch 内、且只有这些形式，`kind` 为 `plain`、`reject_code` 为空�
 
 29. **工具在语句内同步执行。** 模型面签名是 `jaz.tool(name text, args jsonb) returns jsonb`。目录里的 handler 是 `SECURITY DEFINER`，签名 `(jsonb) returns jsonb`，owner 为 `NOLOGIN` 角色 `v15_tool_<name>`。`name` 匹配 `^[a-z][a-z0-9_]{0,53}$`，以便角色名不超过 63 字节。handler 是纯函数：只根据 `args` 返回 jsonb，MUST NOT 写 scratch 或内核表。登记检查与 hook 相同（`STABLE`、SQL 或 plpgsql、`search_path=pg_catalog` 单元素、owner 对内核表无权限），并 `REVOKE ALL ON FUNCTION … FROM PUBLIC`，`GRANT EXECUTE … TO v15_owner`，没有其他被授权者，没有 `GRANT OPTION`，运行时不再 `GRANT`。
 
-`v15.jaz_tool` 是 `SECURITY DEFINER`、属主 `v15_owner`。它核对 binding、`tool_grants` 与 §3.11 的摘要（含规范化 `proacl`），并重查 owner 对内核表无权限，然后按 oid 调用 handler。handler 自己的 definer 上下文使 `current_user` 成为 `v15_tool_<name>`。这条路径没有 `SET ROLE`，也没有临时 `GRANT`。调用返回后，模型语句的 `current_user` MUST 仍是 `v15_repl`。`tool_catalog.external = true` MUST 抛出 `V15_EXTERNAL_TOOL`。v15 核心没有以 `bind_name` 挂起的异步工具。
+`v15.jaz_tool` 是 `SECURITY DEFINER`、属主 `v15_owner`。它核对 binding、`tool_grants` 与 §3.11 的摘要（含规范化 `proacl`），并重查 owner 对内核表无权限，然后按 oid 调用 handler。handler 自己的 definer 上下文使 `current_user` 成为 `v15_tool_<name>`。这条路径没有 `SET ROLE`，也没有临时 `GRANT`。调用返回后，模型语句的 `current_user` MUST 仍是 `v15_repl`。`tool_catalog.external = true` MUST 抛出 `V15_EXTERNAL_TOOL`。同步路径不插 `tool_attempts`。
+
+异步延续只走规范 `jaz.bind_tool`（§6.2），且仅 `external = true`。worker 认出该语句，在 D24 路径求值 `arg_sql` 后调用 `v15_suspend_for_tool`：invoke 进入 `tool_wait`（不是 `suspended`），无子 invoke、无树边。FakeTool 只在 `call_started` 已提交、会话无打开事务时运行（§4.14）。`external = false` 的 `bind_tool` 是 `V15_TOOL_BINDING`。`jaz.bind_tool` 被实际执行时仍抛 `V15_INVOKE_FORM`。
 
 ## 1. 语义目标与架构总览
 
@@ -251,6 +254,7 @@ v15_finish_exec
 | `v15_repl` | `NOLOGIN` | 不是 `v15_worker` 的成员 | 模型语句的 `current_user`。可 `EXECUTE` `jaz` 的包装，以及 `v15.jaz_*` 与 `v15_current_scratch_schema()`。无内核 DML，无 `TEMP`。拥有自己在 scratch 里创建的对象 |
 | `v15_hook_<name>` | `NOLOGIN` | 无任何成员 | 单个已登记 hook 的 owner。对内核表无 grant |
 | `v15_tool_<name>` | `NOLOGIN` | 无任何成员 | 单个已登记 tool 的 owner。对内核表无 grant。调用时由该函数自己的 definer 成为 `current_user` |
+| `v15_tool_fake_search` | `NOLOGIN` | 无任何成员 | stage 13 种子角色。catalog 名 `fake_search`、`external = true`。handler 只抛 `V15_EXTERNAL_TOOL`。不登录 |
 
 `GRANT v15_repl TO v15_worker` 是 `INHERIT FALSE, SET TRUE`。没有 `GRANT v15_repl TO v15_owner`。`v15_repl` 不能 `SET ROLE v15_worker`。因为 `session_user` 在模型语句期间仍是 `v15_worker`，顶层 `RESET ROLE` 会回到 worker；这是拒绝 `DO` 的原因（不变量 18）。已提交的权限不把 scratch 的 `USAGE` 或 `CREATE` 授给 `v15_repl`。
 
@@ -265,6 +269,7 @@ v15_finish_exec
 | 内核表 DML | 装载 | 是 | 无直接 grant | 否 | 否 | 否 |
 | 调用 `v15_*` 转移 | 装载 | 体内是 `v15_owner`，不得当作 worker | 是，且 `session_user` 必须是 `v15_worker` | 否 | 否 | 否 |
 | FakeLLM | 否 | 否 | 是，且当时无打开的事务，且本次进程刚刚提交了 `call_started` | 否 | 否 | 否 |
+| FakeTool | 否 | 否 | 是，且当时无打开的事务，且本次进程刚刚提交了工具 `call_started` | 否 | 否 | 否 |
 | 模型语句 | 否 | 否 | 仅在事务顶层 `SET LOCAL ROLE v15_repl` 之后的那一条 | 是 | 否 | 否 |
 | 函数体内 `SET ROLE` / `RESET ROLE` | 否 | 否 | 否 | 否 | 否 | 否 |
 | 写 `exec_context`、清单、`tool_grants`、`hook_defs` | 装载 | 是 | 否 | 否 | 否 | 否 |
@@ -290,9 +295,11 @@ v15_finish_exec
 
 工具调用不改变这条角色顺序。`v15.jaz_tool` 在 `v15_owner` 的 definer 上下文里按 oid 调用 tool 函数；进入 handler 后 `current_user` 是 `v15_tool_<name>`，返回后模型语句仍是 `v15_repl`。已提交的权限表里，`v15_repl` 没有 handler 的 `EXECUTE`。`v15.jaz_tool` 与 `v15.jaz_prior_history` 的 `EXECUTE` 只授给 `v15_repl`（§5.1），不授给 `v15_worker`。handler 的 `EXECUTE` 仍只在 `v15_owner`。
 
+`v15_suspend_for_tool`、`v15_begin_tool`、`v15_mark_tool_started`、`v15_settle_tool`、`v15_next_tool` 的 `EXECUTE` 只授给 `v15_worker`。`jaz.bind_tool` 包装的 `EXECUTE` 只授给 `v15_repl`；函数体无论谁调用都抛 `V15_INVOKE_FORM`，不插 request。
+
 ## 3. 数据模型
 
-下列 21 张表都在 stage 1 创建。其后的 stage 可以增加函数、视图、授权、目录种子 DML，以及 §18 点名的那一次 `v15_on_phase` 与治理 handler 体的 `CREATE OR REPLACE`。不得再增加表。可变控制行带 `revision bigint NOT NULL DEFAULT 0`，每次权威更新加 1。blackboard 的 UPSERT、`hook_counters`、`llm_attempts`、`llm_requests`、`iterations`、`statements`，以及 §4.10 的全部修理 `UPDATE`，一律在同一条语句里 `revision = revision + 1`。`INSERT` 使用默认 0。时间列都是 `timestamptz`。
+下列 21 张表都在 stage 1 创建。其后的 stage 可以增加函数、视图、授权、目录种子 DML，以及 §18 点名的那一次 `v15_on_phase` 与治理 handler 体的 `CREATE OR REPLACE`。**不得再增加表。** 本修订的唯一例外：stage 13 追加 `tool_requests` 与 `tool_attempts`（§3.16），表数 21→23。其后的 stage 仍不得加表。可变控制行带 `revision bigint NOT NULL DEFAULT 0`，每次权威更新加 1。blackboard 的 UPSERT、`hook_counters`、`llm_attempts`、`llm_requests`、`iterations`、`statements`、`tool_requests`、`tool_attempts`，以及 §4.10 的全部修理 `UPDATE`，一律在同一条语句里 `revision = revision + 1`。`INSERT` 使用默认 0。时间列都是 `timestamptz`。
 
 ### 3.1 `invokes`
 
@@ -307,7 +314,7 @@ invokes(
   depth                  int  NOT NULL CHECK (depth >= 1),
   status                 text NOT NULL CHECK (status IN
                            ('pending','runnable','leased','suspended',
-                            'completed','failed','aborted')),
+                            'tool_wait','completed','failed','aborted')),
   return_value           jsonb NULL,
   error                  jsonb NULL,
   fatal                  boolean NOT NULL DEFAULT false,
@@ -379,8 +386,10 @@ statements(
   sql              text NOT NULL,
   sql_digest       text NOT NULL,
   kind             text NOT NULL CHECK (kind IN
-                     ('plain','bind_invoke','return','raise','print','assign')),
+                     ('plain','bind_invoke','return','raise','print','assign',
+                      'bind_tool')),
   bind_name        text NULL,
+  tool_name        text NULL,
   arg_sql          text NULL,
   status           text NOT NULL CHECK (status IN
                      ('pending','running','done','failed','skipped')),
@@ -394,11 +403,11 @@ statements(
 )
 ```
 
-结算入参的每个元素是 `{sql, sql_digest, kind, bind_name, arg_sql, reject_code}`。`sql_digest` 必须等于对存放文本 `sql` 的 `md5`。`sql` 不得含 NUL。`reject_code` 不是表列。`error_sqlstate` 恒等于 `error->>'sqlstate'`；`error` 为空则该列为空。行一旦写入，可执行谓词是 `status = 'pending' AND error IS NULL`。运行路径不得再读 `reject_code`。
+结算入参的每个元素，旧 6 kind 仍是 `{sql, sql_digest, kind, bind_name, arg_sql, reject_code}`（六键）。`kind = bind_tool` 恰好七键，多 `tool_name`，匹配 `^[a-z][a-z0-9_]{0,53}$`。`sql_digest` 必须等于对存放文本 `sql` 的 `md5`。`sql` 不得含 NUL。`reject_code` 不是表列。`error_sqlstate` 恒等于 `error->>'sqlstate'`；`error` 为空则该列为空。行一旦写入，可执行谓词是 `status = 'pending' AND error IS NULL`。运行路径不得再读 `reject_code`。`tool_name` 当且仅当 `kind = bind_tool` 非空。
 
 `arg_sql` 是分类器抽出的实参表达式文本，不是整句。`kind` 为 `bind_invoke`、`assign`、`print`、`return`、`raise` 且表达式抽得出来时写入；否则为 SQL NULL。入参里规范 `bind_invoke` 且 `reject_code` 为空时，写入行的 `arg_sql` 与 `bind_name` MUST NOT NULL，并且 `status = pending`、`error` 为空。`v15_suspend_for_child` 只读已存放的 `arg_sql`，求值结果由 worker 作为 jsonb 传入。
 
-`kind = bind_invoke` 时 `bind_name` 非空。子 invoke 只由 `v15_suspend_for_child` 写入 `child_invoke_id`。`done` 与 `skipped` 不再执行。`failed` 表示该语句不会执行：要么结算已经拒绝它，要么语句事务已回滚。迭代是否结束不由这一列表示。入参 `reject_code` 非空的行在结算时就是 `failed`，`error` 非空且 `error.code` 等于该码。settle 不提前把后续下标改成 `skipped`。skip 只发生在执行边界，或 `return` / `raise` 终端完成（§4.5.3、§4.6.2、§4.9）。
+`kind = bind_invoke` 时 `bind_name` 非空。`kind = bind_tool` 时 `bind_name` 与 `tool_name` 都非空；`child_invoke_id` 保持 NULL。子 invoke 只由 `v15_suspend_for_child` 写入 `child_invoke_id`。`done` 与 `skipped` 不再执行。`failed` 表示该语句不会执行：要么结算已经拒绝它，要么语句事务已回滚。迭代是否结束不由这一列表示。入参 `reject_code` 非空的行在结算时就是 `failed`，`error` 非空且 `error.code` 等于该码。settle 不提前把后续下标改成 `skipped`。skip 只发生在执行边界，或 `return` / `raise` 终端完成（§4.5.3、§4.6.2、§4.9）。
 
 整段无法切分时，这一次结算恰好一行：`kind = plain`，`bind_name` 与 `arg_sql` 为空，`status = failed`。不含 NUL 的未闭合引号、注释或 dollar-quote，`sql` 为原文，`error.code = V15_DIALECT`。含 NUL 时，先把每个 NUL 换成六字符 `\u0000`，再计算摘要并存放，`error.code = V15_VALUE_INVALID`，不再另报未闭合。这一行不执行。
 
@@ -554,9 +563,9 @@ bindings(
 )
 ```
 
-`name` 是匹配 `^[A-Za-z_][A-Za-z0-9_]*$` 的标识符，并且不是保留框架名（保留名表在 §5）。`kind = tool` 当且仅当 `tool_id` 非空。同一 `(invoke_id, name)` 只有一种 `kind`。子 open 复制 `kind = scope` 的行；不复制 `kind = input`。`jaz.assign` 与子结果绑定写入 `kind = var`，`provenance` 分别为 `repl` 与 `delivery`。这些 `var` 行不向孙 invoke 传播。
+`name` 是匹配 `^[A-Za-z_][A-Za-z0-9_]*$` 的标识符，并且不是保留框架名（保留名表在 §5）。`kind = tool` 当且仅当 `tool_id` 非空。同一 `(invoke_id, name)` 只有一种 `kind`。子 open 复制 `kind = scope` 的行；不复制 `kind = input`。`jaz.assign` 与子结果绑定写入 `kind = var`，`provenance` 分别为 `repl` 与 `delivery`。`bind_tool` 成功送达同样写入或更新 `kind = var`，`provenance = delivery`，`show_in_prompt = true`。这些 `var` 行不向孙 invoke 传播。
 
-子 `completed` 时，若 `bind_name` 已被 `input`、`scope` 或 `tool` 占用，不覆盖该行。父走非 fatal 收束，父语句的 `error.code` 是 `V15_DELIVERY_CONFLICT`，子保持 `completed`。除此之外，子以 `failed` 结束时，父语句的码一律是 `V15_CHILD_ERROR`，即使子行自己的码是 `V15_RECURSION_EXCEEDED`、`V15_ITERATION_EXCEEDED`、`V15_IO_EXHAUSTED`、`V15_RAISE` 或 `V15_HOOK_ABORT`。`V15_CHILD_ERROR` 不写回子行。
+子 `completed` 时，若 `bind_name` 已被 `input`、`scope` 或 `tool` 占用，不覆盖该行。父走非 fatal 收束，父语句的 `error.code` 是 `V15_DELIVERY_CONFLICT`，子保持 `completed`。`bind_tool` 成功结算时若同名已被 `input`、`scope` 或 `tool` 占用：attempt 仍 `settled`（已计 calls）、request `settled`、binding 不改，语句 `V15_DELIVERY_CONFLICT`，非 fatal 收束。除此之外，子以 `failed` 结束时，父语句的码一律是 `V15_CHILD_ERROR`，即使子行自己的码是 `V15_RECURSION_EXCEEDED`、`V15_ITERATION_EXCEEDED`、`V15_IO_EXHAUSTED`、`V15_RAISE` 或 `V15_HOOK_ABORT`。`V15_CHILD_ERROR` 不写回子行。
 
 ### 3.8 `exec_context`
 
@@ -755,6 +764,52 @@ handler 为 `SECURITY DEFINER`，`prosecdef` 为真，签名 `(jsonb) returns js
 
 `jaz.prior_history(uuid)` 与 `jaz.var` 在 `jaz` 中是 `VOLATILE` 的 invoker 包装。对应的 `VOLATILE`、`SECURITY DEFINER` 体在 `v15`，同样只认 `exec_context`。
 
+### 3.16 `tool_requests` 与 `tool_attempts`（异步工具段）
+
+本小节是 §3 表数例外所追加的两张表。它们不进 invoke 树：无 `parent_invoke_id` 边、无深度变化、不建 scratch、不跑子 open、不调 `v15_on_phase`。
+
+```text
+tool_requests(
+  request_id   uuid PRIMARY KEY,
+  invoke_id    uuid NOT NULL,
+  iteration    int  NOT NULL CHECK (iteration >= 0),
+  stmt_index   int  NOT NULL CHECK (stmt_index >= 0),
+  tool_id      uuid NOT NULL REFERENCES tool_catalog(tool_id),
+  bind_name    text NOT NULL,
+  args         jsonb NOT NULL,
+  args_digest  text NOT NULL,
+  status       text NOT NULL CHECK (status IN
+                 ('open','settled','failed','exhausted')),
+  revision     bigint NOT NULL DEFAULT 0,
+  UNIQUE (invoke_id, iteration, stmt_index),
+  FOREIGN KEY (invoke_id, iteration)
+    REFERENCES iterations(invoke_id, iteration)
+)
+
+tool_attempts(
+  attempt_id      uuid PRIMARY KEY,
+  request_id      uuid NOT NULL REFERENCES tool_requests(request_id),
+  n               int  NOT NULL CHECK (n >= 1),
+  status          text NOT NULL CHECK (status IN
+                    ('leased','settled','failed','unknown')),
+  fence           bigint NOT NULL CHECK (fence >= 1),
+  lease_owner     text NULL,
+  lease_until     timestamptz NULL,
+  pool_id         uuid NULL REFERENCES budget_pools(pool_id),
+  reserved_calls  int NOT NULL DEFAULT 1 CHECK (reserved_calls >= 1),
+  reserved_cost   numeric NOT NULL DEFAULT 0 CHECK (reserved_cost >= 0),
+  call_started    boolean NOT NULL DEFAULT false,
+  calls_charged   boolean NOT NULL DEFAULT false,
+  result          jsonb NULL,
+  revision        bigint NOT NULL DEFAULT 0,
+  UNIQUE (request_id, n)
+)
+```
+
+`args_digest = md5(args::text)`。`args` 必须是 jsonb 对象。同一 request 至多一行 `leased`。`n` 从 1 连续，与 LLM request 的 `n` 各自计数，上限看 `governance_io`。`fence` 插入时为 1。不接受 FakeTool 上报 cost。
+
+`tool_wait` 不变量：恰一条 `running` 的 `bind_tool` 语句（`child_invoke_id` NULL、`stmt_index` 等于 open request）、恰一条 `open` request、`leased` attempt ≤ 1、无 `suspended` 子等待、无其他 `running` 语句、`repl_exec` 已 enter 无 exit。
+
 ## 4. 状态机与转移合同
 
 本节把 §1.2 的控制链落成事务。每个转移是 `v15` 内的一个 `VOLATILE`、`SECURITY DEFINER`、`search_path = pg_catalog` 函数，`EXECUTE` 只授给 `v15_worker`。函数体内不得 `COMMIT`、`ROLLBACK`、打开另一条会话，也不得 `SET ROLE`、`RESET ROLE` 或 `SET SESSION AUTHORIZATION`（§0.20）。worker 把一次转移包在一个显式事务里，函数正常返回后 `COMMIT`。模型语句的保存点由 worker 在事务顶层设置（§4.6），不由内核函数设置。`SET LOCAL ROLE v15_repl` 与配对的 `RESET ROLE` 也只出现在事务顶层。
@@ -822,13 +877,15 @@ attempt 已是 `unknown`、`failed` 或 `settled` 时，先抛 `V15_ATTEMPT_NOT_
 (open 事务内) pending ──提交──► runnable
 runnable ──claim──► leased
 leased ──挂起且子未终态──► suspended
+leased ──挂起且等外部工具──► tool_wait
 suspended ──送达：子成功，或子非 fatal 失败，或名字冲突的非 fatal 收束──► runnable
+tool_wait ──工具送达成功，或非 fatal 工具收束──► runnable
 leased ──finish return──► completed
 leased ──finish raise，或非 fatal 的上限中止──► failed
-leased 或 suspended ──fatal──► aborted
+leased 或 suspended 或 tool_wait ──fatal──► aborted
 ```
 
-`completed` / `failed` / `aborted` 没有出边。`suspended` 不可 claim（§0.10）。
+`completed` / `failed` / `aborted` 没有出边。`suspended` 与 `tool_wait` 都不可 claim（§0.10）。`tool_wait` 不是 `suspended`：无子 invoke，扫描与 claim 都把它当不可调度。
 
 **iteration 状态。**
 
@@ -933,6 +990,28 @@ v15_reclaim_expired() returns int
 v15_span_open(p_invoke_id uuid, p_span text) returns boolean
 
 v15_next_runnable() returns setof uuid
+
+v15_suspend_for_tool(
+  p_invoke_id uuid,
+  p_iteration int,
+  p_stmt_index int,
+  p_owner text,
+  p_args jsonb
+) returns jsonb
+
+v15_next_tool() returns setof uuid
+
+v15_begin_tool(
+  p_invoke_id uuid, p_owner text, p_lease interval
+) returns jsonb
+
+v15_mark_tool_started(
+  p_attempt_id uuid, p_fence bigint, p_owner text
+) returns void
+
+v15_settle_tool(
+  p_attempt_id uuid, p_fence bigint, p_owner text, p_result jsonb
+) returns void
 ```
 
 `v15_claim` 未抢到时返回 SQL NULL，不是异常。`v15_begin_llm` 成功插入时返回的 jsonb 至少含 `attempt_id`、`request`、`logical_digest`、`input_chars`、`n`、`action`。`action` 为 `proceed`。提交类结束、没有新 attempt 时，`attempt_id` 为 JSON `null`，`action` 为 `abort`，并含布尔 `fatal` 与文本 `code`。worker 只把 `action = proceed` 的返回值交给后续的 mark 与 FakeLLM。
@@ -973,7 +1052,7 @@ v15_next_runnable() returns setof uuid
 
 一个事务。
 
-**前置。** `session_user` 为 worker。目标行 `status = runnable`，且 `lease_owner` 为空或 `lease_until <= clock_timestamp()`。用 `SELECT … FOR UPDATE SKIP LOCKED` 锁这一行。锁不到或状态不对：返回 SQL NULL，无写入、无事件。`suspended`、未过期的 `leased`、以及终态都走这条路径，不抛错。`SKIP LOCKED` 不等待，因而不吃满 `lock_timeout`。
+**前置。** `session_user` 为 worker。目标行 `status = runnable`，且 `lease_owner` 为空或 `lease_until <= clock_timestamp()`。用 `SELECT … FOR UPDATE SKIP LOCKED` 锁这一行。锁不到或状态不对：返回 SQL NULL，无写入、无事件。`suspended`、`tool_wait`、未过期的 `leased`、以及终态都走这条路径，不抛错。`SKIP LOCKED` 不等待，因而不吃满 `lock_timeout`。
 
 **写入。** `fence := fence + 1`，`status = leased`，`lease_owner = p_owner`，`lease_until = clock_timestamp() + p_lease`，`revision` 加 1，`updated_at` 刷新。不修改迭代与语句。
 
@@ -1339,19 +1418,21 @@ continue 另写 `audit` `{"op":"continue","next_iteration":n}`。`error` 对象�
 
 `v15_run_until_quiescent` 是 Python，不是 SQL 函数（§0.4）。每一轮：
 
-1. `v15_reclaim_expired()`。没有参数。
-2. `v15_next_runnable()`。只读。不返回 `suspended`，也不返回仍为 `leased` 的行。
-3. 对返回的 id 按结果顺序 `v15_claim`。NULL 表示没抢到，跳过。claim 返回的 fence 与当初传入的 `p_owner` 是后续转移的出示值。
-4. 持有租约之后只做下列之一。每一次调用都传同一个 `p_owner`：
+1. `v15_reclaim_expired()`。没有参数。先把 `tool_wait` invoke 一并入锁种子；工具 attempt 的 unknown/failed 记账与 LLM 同态。
+2. `v15_next_tool()`。只读。只返回 `tool_wait` 且有 open request、无 leased attempt 的 `invoke_id`。对每个 id：`v15_begin_tool` **提交** → 非 `proceed` 则下一个 → `v15_mark_tool_started` **提交** → 会话无打开事务时 `FakeTool.call(tool_name, args)`（Python 异常收成 `{"ok":false}`，不得逃出循环、不得留 leased 到超时）→ `v15_settle_tool` **提交**。
+3. `v15_next_runnable()`。只读。正向过滤 `status = 'runnable'`。不返回 `suspended` 或 `tool_wait`，也不返回仍为 `leased` 的行。
+4. 对返回的 id 按结果顺序 `v15_claim`。NULL 表示没抢到，跳过。claim 返回的 fence 与当初传入的 `p_owner` 是后续转移的出示值。
+5. 持有租约之后只做下列之一。每一次调用都传同一个 `p_owner`：
    - 迭代 `pending`，或迭代 `llm` 且没有 `leased` attempt：渲染 base（重试路径的渲染结果会被 SQL 忽略），`v15_begin_llm`。返回 `abort` 则不得调用 FakeLLM。返回 `proceed` 则 `v15_mark_call_started`，`COMMIT` 之后、会话中没有打开的事务时，才 `FakeLLM.complete(logical_digest, n, request)`。摘要与 `n` 用函数返回值。
    - 看见 `call_started = true`，且不是本进程刚刚提交的那一次 mark：停在该 invoke 上，留给过期回收。不得补叫 FakeLLM，也不得结算。
    - 迭代 `executing` 且 `repl_exec` 未打开：`v15_begin_exec`。
    - 迭代 `executing` 且 span 已打开：从 `resume_stmt` 起，只取可执行谓词成立的语句。不再 `enter`。
    - 下一条是 `kind = bind_invoke` 且可执行：§4.7。成功挂起后本 invoke 不再继续，回到第 1 步。子深度更大，扫描会先拿到子。
-5. 挂起路径上，`SELECT (<arg_sql>)` 的任何错误按 §4.7 收成该语句的 `failed` 并 `COMMIT`。不得让这条 `bind_invoke` 留在 `pending`。
-6. 语句事务提交后：若本 worker 已不再持有租约，或迭代已不是 `executing`，或 `repl_exec` span 未打开，回到第 1 步。停止只看当前执行边界上的错误，不看更后的 preclassified `failed`。边界是 `failed`，或没有剩余可执行语句，或成功的 `return` / `raise` 已结束本轮时，worker 只调用 `v15_finish_exec`，不自己改写语句行。skip 收敛只在该函数内完成（§4.9）。finish 的 continue 把 invoke 放回 `runnable`，下一轮重新 claim，颁发新栅栏。
+   - 下一条是 `kind = bind_tool` 且可执行：§4.14。成功挂起后本 invoke 为 `tool_wait`，fence 不加，回到第 1 步。reject 则语句已 failed、invoke 仍 leased，同迭代继续，不 skip_after、不关 `repl_exec`。
+6. 挂起路径上，`SELECT (<arg_sql>)` 的任何错误按 §4.7 / §4.14 收成该语句的 `failed` 并 `COMMIT`。不得让这条 `bind_invoke` 或 `bind_tool` 留在 `pending`。
+7. 语句事务提交后：若本 worker 已不再持有租约，或迭代已不是 `executing`，或 `repl_exec` span 未打开，回到第 1 步。停止只看当前执行边界上的错误，不看更后的 preclassified `failed`。边界是 `failed`，或没有剩余可执行语句，或成功的 `return` / `raise` 已结束本轮时，worker 只调用 `v15_finish_exec`，不自己改写语句行。skip 收敛只在该函数内完成（§4.9）。finish 的 continue 把 invoke 放回 `runnable`，下一轮重新 claim，颁发新栅栏。
 
-`NOTIFY` 可以少，可以重。少了就靠第 2 步扫回；多了不得第二次 apply（§0.23）。
+`NOTIFY` 可以少，可以重。少了就靠第 3 步扫回；多了不得第二次 apply（§0.23）。
 
 ### 4.13 乱序、重复与丢失
 
@@ -1374,6 +1455,26 @@ continue 另写 `audit` `{"op":"continue","next_iteration":n}`。`error` 对象�
 | `COMMIT` 返回 `40001` 或 `40P01` | 事务未提交。worker 整段重试，不改写 sqlstate |
 | 事务内 `55P03` | `V15_INVALID_TRANSITION` |
 | 挂起路径上 `SELECT (<arg_sql>)` 的错误未被捕获 | 视为 worker 违反 §4.7。语句会留在 `pending` 上并被无限重试 |
+| 对 `tool_wait` 调用 `v15_claim` | 返回 NULL，行不变 |
+| 对 `tool_wait` 或 `running` 的 `bind_tool` 调用 `v15_io_reclaim_invoke` | `V15_INVALID_TRANSITION`，不得打回 pending 丢 request |
+| 未 mark 的工具 attempt 过期 | 行 `failed`，不计 calls；invoke 仍 `tool_wait`；审计 `op=tool_retry` |
+| 已 mark 的工具 attempt 过期 | 行 `unknown`，计 1 call；invoke 仍 `tool_wait`；再 begin `n=2` |
+| 工具 attempt 已终态时再 `v15_settle_tool` | `V15_ATTEMPT_NOT_SETTLEABLE`，不写 binding |
+
+### 4.14 `tool_wait` 与 `v15_suspend_for_tool`
+
+与 `bind_invoke` 平行、不进 invoke 树。规范语句 `SELECT jaz.bind_tool('<bind_ident>', '<tool_name>', <jsonb-expr>);`。worker 不调用该 SQL 函数；`jaz` 包装下函数体存在，被真正执行即抛 `V15_INVOKE_FORM`、不插 request。
+
+实参求值走 D24 同路：prepare 后以 `v15_repl` 求 `arg_sql`；写记号/会写的 `jaz.*` → `V15_INVOKE_FORM` 不挂起；结果文本超 `protocol.max_invoke_input_length` → `V15_VALUE_INVALID` 不挂起（复用现成上限，不开新配置键）。prepare 对 `bind_tool` 只授 scratch `USAGE`，不授 `CREATE`。
+
+`v15_suspend_for_tool` 返回闭集：
+
+- `{"action":"wait","request_id"}`：插 open request、语句 `running`、迭代 `suspended`、invoke `tool_wait`、清租约、**fence 不变**、revision+1、审计 `op=tool_suspend`。不插 attempt、不预留池、不发 span。
+- `{"action":"reject","code":...}`：语句 `failed` + `v15_io_error`，不插 request，invoke 仍 leased，同迭代继续下一条，不 skip_after、不关 `repl_exec`。
+
+reject 校验序：语句 pending 或 running 且 kind=`bind_tool` → invoke leased+holder → `tool_name` 在 catalog → 本 invoke 有 `bindings.kind=tool` 且 name=`tool_name` 且有 `tool_grants` 行 → **external=true**。缺 catalog/binding/grant = `V15_TOOL_UNAUTHORIZED`。`external=false` = `V15_TOOL_BINDING`。
+
+成功送达：request settled；binding 不存在则插 `kind=var` / `provenance=delivery` / `show_in_prompt=true`；已存在且 kind=var 则更新；语句 done、迭代 executing、`resume_stmt+1`、invoke runnable、fence 不变、审计 `op=deliver`；不写 `repl_history`；同迭代剩余语句继续。`ok=false` → `V15_TOOL_FAILED`；耗尽 → `V15_TOOL_EXHAUSTED`；名字被占 → `V15_DELIVERY_CONFLICT`。后三种走非 fatal 收束（skip_after、观测、下一迭代 pending、关 `repl_exec` failed、invoke runnable、审计 `op=tool_failed`）。不调 `v15_on_phase`，不写新 span 名。
 
 ## 5. 模型面 SQL API
 
@@ -1466,6 +1567,12 @@ jaz.bind_invoke(name text, args jsonb) returns jsonb
 无论谁调用、无论语句 `kind` 是什么，都抛 `V15_INVOKE_FORM`，不插入子 invoke（§0.9）。子 invoke 只由 `v15_suspend_for_child` 插入。返回类型存在，只为了让规范语句在类型上是 `SELECT`。函数没有成功返回。
 
 ```text
+jaz.bind_tool(bind_name text, tool_name text, args jsonb) returns jsonb
+```
+
+无论谁调用、无论语句 `kind` 是什么，都抛 `V15_INVOKE_FORM`，不插 `tool_requests`。异步挂起只由 `v15_suspend_for_tool` 完成。`EXECUTE` 只授给 `v15_repl`。
+
+```text
 jaz.prior_history(ancestor uuid) returns table (
   iteration int,
   llm_response text,
@@ -1521,30 +1628,31 @@ jaz.prior_history(ancestor uuid) returns table (
 
 ### 6.2 规范形式与分类
 
-`classify_statement(sql: str) -> (kind, bind_name, arg_sql, reject_code)`。`kind` 是 §3.3 的枚举。`reject_code` 为空表示可以执行。否则 worker 不执行该条，settle 把它存成 `failed` 且 `error` 非空。存放之后，可执行谓词不再看 `reject_code`。
+`classify_statement(sql: str) -> (kind, bind_name, arg_sql, reject_code)`。`kind` 是 §3.3 的枚举。`reject_code` 为空表示可以执行。否则 worker 不执行该条，settle 把它存成 `failed` 且 `error` 非空。存放之后，可执行谓词不再看 `reject_code`。`bind_tool` 另有 `tool_name`。
 
 关键字与未加引号的 `jaz` 大小写不敏感。空白在记号之间可多可少。规范形式是**单独一条** `SELECT`，实参列表之外没有尾随记号：
 
 ```text
 SELECT jaz.bind_invoke('<ident>', <jsonb-expr>);
+SELECT jaz.bind_tool('<bind_ident>', '<tool_name>', <jsonb-expr>);
 SELECT jaz."return"(<jsonb-expr>);
 SELECT jaz."raise"(<text-expr>);
 SELECT jaz.print(<text-expr>);
 SELECT jaz.assign('<ident>', <jsonb-expr>);
 ```
 
-引号内必须正好是小写 `return` 与 `raise`。`"RETURN"`、未加引号的 `return` / `raise` / `RETURN` / `RAISE` 都不是规范形式。
+引号内必须正好是小写 `return` 与 `raise`。`"RETURN"`、未加引号的 `return` / `raise` / `RETURN` / `RAISE` 都不是规范形式。`<tool_name>` 是标准字符串字面量，匹配 `^[a-z][a-z0-9_]{0,53}$`。
 
 `<ident>` 只允许标准字符串字面量（`'` … `'`，`''` 转义），内容符合 §5.2，且不是保留字。`E''`、`U&''`、dollar-quote、表达式，都不是这个位置的合法写法。`<jsonb-expr>` 与 `<text-expr>` 是一条表达式：分类器只检查括号、字符串、注释与 dollar-quote 之下的顶层逗号个数，不解释表达式的类型。抽出来的表达式文本原样写入 `arg_sql`。规范控制语句抽不出表达式时，`reject_code = V15_INVOKE_FORM`。
 
-同一套词法还要扫描 `bind_invoke` 的 `arg_sql`。在字符串、注释与 dollar-quote 之外若出现记号 `INSERT`、`UPDATE`、`DELETE`、`MERGE`、`TRUNCATE`、`COPY` 或 `INTO`，整条的 `reject_code = V15_INVOKE_FORM`。同一记号流还拒绝 `(` 前标识符匹配 `nextval`/`setval`/`currval`（含 `pg_catalog.` 限定），同样是 `V15_INVOKE_FORM`。这是序列变异防护。表的属主只要有 schema `USAGE` 就能写自己的表；词法检查是执行前的背书。写防护仍是 `pg_stat_xact_user_tables` 加上仅 `USAGE`、无 `CREATE`（§4.7）。
+同一套词法还要扫描 `bind_invoke` 与 `bind_tool` 的 `arg_sql`。在字符串、注释与 dollar-quote 之外若出现记号 `INSERT`、`UPDATE`、`DELETE`、`MERGE`、`TRUNCATE`、`COPY` 或 `INTO`，整条的 `reject_code = V15_INVOKE_FORM`。同一记号流还拒绝 `(` 前标识符匹配 `nextval`/`setval`/`currval`（含 `pg_catalog.` 限定），同样是 `V15_INVOKE_FORM`。这是序列变异防护。表的属主只要有 schema `USAGE` 就能写自己的表；词法检查是执行前的背书。写防护仍是 `pg_stat_xact_user_tables` 加上仅 `USAGE`、无 `CREATE`（§4.7、§4.14）。
 
 这套记号流也是 §0.18 的权威：控制名只有出现在字符串、注释与 dollar-quote **之外**才算命中。字面量里的同样字符不是 `V15_INVOKE_FORM`。
 
 分类顺序：
 
-1. 命中五式之一，且 `arg_sql` 的写记号检查通过：`kind` 为对应值，`reject_code` 为空。`bind_invoke` 与 `assign` 把字符串字面量的内容写入 `bind_name`。`print`、`return`、`raise` 的 `bind_name` 为空。
-2. 未命中，但记号流在字符串、注释、dollar-quote **之外**出现 `jaz.bind_invoke`、`jaz."return"`、`jaz."raise"`，或未加引号的 `jaz.return` / `jaz.raise`：`kind = plain`，`reject_code = V15_INVOKE_FORM`。函数被实际执行时仍不产子（§0.9）。
+1. 命中六式之一，且 `arg_sql` 的写记号检查通过：`kind` 为对应值，`reject_code` 为空。`bind_invoke`、`bind_tool` 与 `assign` 把字符串字面量的内容写入 `bind_name`。`bind_tool` 另写 `tool_name`。`print`、`return`、`raise` 的 `bind_name` 为空。
+2. 未命中，但记号流在字符串、注释、dollar-quote **之外**出现 `jaz.bind_invoke`、`jaz.bind_tool`、`jaz."return"`、`jaz."raise"`，或未加引号的 `jaz.return` / `jaz.raise`：`kind = plain`，`reject_code = V15_INVOKE_FORM`。函数被实际执行时仍不产子、不挂工具（§0.9、§4.14）。
 3. 首记号序列属于下列 DDL 时，`kind = plain`，`reject_code = V15_DDL`：`CREATE FUNCTION`、`CREATE PROCEDURE`、`CREATE ROUTINE`、`CREATE EXTENSION`、`CREATE ROLE`、`CREATE DATABASE`、`CREATE EVENT TRIGGER`、`GRANT`、`REVOKE`、`COMMENT`、`SECURITY LABEL`、`VACUUM`、`REINDEX`、`CLUSTER`，以及任何 `ALTER TABLE`。`ALTER TABLE` 不因目标在 scratch 里而放行。模型要改表就 `DROP` 再 `CREATE`。
 4. 首记号属于实用语句时，`kind = plain`，`reject_code = V15_DIALECT`：`CALL`、`EXECUTE`、`COPY`、`DO`、`BEGIN`、`COMMIT`、`ROLLBACK`、`SAVEPOINT`、`START`、`END`、`ABORT`、`RELEASE`、`SET`、`RESET`、`LOCK`、`PREPARE`、`DEALLOCATE`、`LISTEN`、`NOTIFY`、`UNLISTEN`、`LOAD`、`DISCARD`、`CHECKPOINT`、`EXPLAIN`、`TRUNCATE`。`DO` 整条拒绝。语句内部的重复计算只走 `WITH RECURSIVE` 的 `SELECT`。`DO` 若要回到语言里，必须换成 `session_user` 本身无权的模型连接；在 `v15_worker` 上 `SET ROLE v15_repl` 之后，顶层 `RESET ROLE` 会回到 worker，本版不把这个洞留在方言里（V15-D25）。
 5. 下列形式 `kind = plain`，`reject_code` 为空，执行后由 §6.4 决定 schema：`CREATE TABLE`、`CREATE TABLE AS`、`SELECT INTO`、`CREATE INDEX`、`CREATE UNIQUE INDEX`、`CREATE VIEW`、`DROP TABLE`、`DROP INDEX`、`DROP VIEW`。`TRUNCATE` 在第 4 步以 `V15_DIALECT` 拒绝；清空表用 `DELETE`。`UNIQUE` 只是 `CREATE INDEX` 的修饰，不是第二条语句。分类器不看目标 schema。本步没有 `ALTER TABLE`。
@@ -2222,7 +2330,7 @@ FakeTool 不是 Python。测试需要工具时，在该测试库里创建 `SECUR
 
 ## 13. 错误码表
 
-本表是唯一码源：42 行，`P1501` 至 `P1542`，无空号，无同义名。硬顶 `P1548`。`P1543`–`P1548` 未分配，不得预占。每个 `RAISE` 使用表中的 `ERRCODE`。本族不得使用 `P0001`（§0.19）。`error` jsonb 的 `sqlstate` 与 `code` 必须来自同一行。回滚类、提交类、语句失败以本表的「分类」列为权威；§4.1 不再另列穷尽清单。
+本表是唯一码源：45 行，`P1501` 至 `P1545`，无空号，无同义名。硬顶 `P1548`。`P1546`–`P1548` 未分配，不得预占。每个 `RAISE` 使用表中的 `ERRCODE`。本族不得使用 `P0001`（§0.19）。`error` jsonb 的 `sqlstate` 与 `code` 必须来自同一行。回滚类、提交类、语句失败以本表的「分类」列为权威；§4.1 不再另列穷尽清单。
 
 hook abort 可原样写入已提交 `error` 的码，闭集为 `{V15_IO_EXHAUSTED, V15_BUDGET_EXHAUSTED, V15_RECURSION_EXCEEDED, V15_ITERATION_EXCEEDED}`。其他任何码一律归一为 `V15_HOOK_ABORT`。多个 abort 规范化之后仍不一致，同样使用 `V15_HOOK_ABORT`（§9.5）。
 
@@ -2264,7 +2372,7 @@ PostgreSQL 自己的 sqlstate（例如散文的 `42601`、权限不足的 `42501
 | `V15_VALUE_INVALID` | `P1524` | 值不符合已写明的形状：租约、jsonb、名字、折叠键、pragma、`p_statements`、hook 消息 id 占用了 `seed:` 或 `iter:<n>:` 的冻结拼写，或持久 `add_messages` 的 id 已存在于 `llm_messages`（§5.2、§6.3、§8.1、§9.4、§9.6）。由 `v15_suspend_for_child` 抛出并经 §4.7 捕获 → 语句失败（提交 `failed` 行）；其余场合维持本列分类。base 的 `input_chars` 超过上限时是提交类中止（§4.5.1）。正文含 NUL 时，合成失败行存放替换后的文本，这个码是语句失败（§6.1） | 内核转移内为回滚类；模型语句与合成失败行为语句失败；`input_chars` 超限为提交类。由 `v15_suspend_for_child` 抛出并经 §4.7 捕获 → 语句失败 |
 | `V15_HANDLER_FAILED` | `P1525` | `jaz.tool` 的目录函数抛出非 `V15_*` 异常（§5.3）。调用返回后 `current_user` 仍是 `v15_repl` | 语句失败 |
 | `V15_STATEMENT_TIMEOUT` | `P1526` | worker 进程截止时间到达，或背书用的 `statement_timeout` 先到达（§4.6.2）。权威是进程截止时间 | 语句失败 |
-| `V15_DELIVERY_CONFLICT` | `P1527` | 子终态送达时父不是等待这个子的 `suspended`；或子 `completed` 但 `bind_name` 已被非 `var` 占用（§4.8）。后者不是 `V15_CHILD_ERROR` | 结构不符为回滚类；名字被占用为提交类，子保持 `completed` |
+| `V15_DELIVERY_CONFLICT` | `P1527` | 子终态送达时父不是等待这个子的 `suspended`；或子 `completed` 但 `bind_name` 已被非 `var` 占用（§4.8）；或 `bind_tool` 送达时同名已被 `input`/`scope`/`tool` 占用（§4.14）。后者不是 `V15_CHILD_ERROR` | 结构不符为回滚类；名字被占用为提交类 |
 | `V15_CHILD_ERROR` | `P1528` | 子自身 `status = failed` 且 `fatal = false`。父语句用这个码，剩余父语句 `skipped`。子行保留自己的码（§0.11、§4.8） | 提交类 |
 | `V15_RAISE` | `P1529` | `jaz."raise"` 写入 `invokes.error` 后，finish 把 invoke 收成 `failed`（§5.3、§4.9）。函数本身不抛这个码。父送达时子行保留它 | 提交类，`fatal = false` |
 | `V15_DEPTH_SELF` | `P1530` | `kind = depth` 的层在组件列或 `extra_hooks` 里写入，或 partial 内再含 `depth_map`（§8.2） | 回滚类 |
@@ -2280,6 +2388,9 @@ PostgreSQL 自己的 sqlstate（例如散文的 `42601`、权限不足的 `42501
 | `V15_VALIDATION_FAILED` | `P1540` | validation hook 在容忍次数耗尽后，将候选 return 改写为带 validation error 的 raise | 提交类，`fatal = false` |
 | `V15_REPLAY_DIVERGED` | `P1541` | 锁定后 `logical_digest` 不一致。缺帧是 `P1542`；终局不一致由驱动投影比较 | 回滚类。非 invoke 终态码，不进入 §9.5 abort 可保留闭集 |
 | `V15_REPLAY_MISSING` | `P1542` | 库已进入真实 LLM 尝试而 trace 无该坐标帧 | 回滚类。非 invoke 终态码，不进入 §9.5 abort 可保留闭集 |
+| `V15_TOOL_BINDING` | `P1543` | `bind_tool` 的 catalog 行 `external = false`（§4.14）。同步 `jaz.tool` 对 `external = false` 仍走 handler，不用此码 | 语句失败 |
+| `V15_TOOL_FAILED` | `P1544` | FakeTool / settle 的 `{"ok":false}`。不写 binding；非 fatal 收束 | 提交类，`fatal = false` |
+| `V15_TOOL_EXHAUSTED` | `P1545` | 下一工具 attempt 的 `n` 将超过有效 `governance_io`。不插入该 attempt | 提交类，`fatal = false` |
 
 `V15_PROVIDER_REJECTED`、`V15_VALIDATION_FAILED`、`V15_REPLAY_DIVERGED` 与 `V15_REPLAY_MISSING` 都不进入 hook abort 可保留闭集。hook 若把它们放进 `abort.error.code`，仍归一成 `V15_HOOK_ABORT`（§9.5）。未知名字仍是 `V15_INVALID_EFFECT`，不走这条归一。
 
@@ -2372,7 +2483,7 @@ D2 轨迹回放不启用 `supply_llm_response`，摘要复用 `logical_digest`�
 
 ## 15. Stage/Gate 计划
 
-十二个 stage 按此顺序追加。合运行时是十二个 SQL 文件都加载之后（§0.0）。前缀库只用于该 stage 的 gate。`agent_v15_govern` 与 `agent_v15_provider` 都是前缀。stage 1 之后可以增加函数、视图、授权、目录种子 DML，以及 §18 点名的 `CREATE OR REPLACE`。不得再增加表。
+十三个 stage 按此顺序追加。合运行时是十三个 SQL 文件都加载之后（§0.0）。前缀库只用于该 stage 的 gate。`agent_v15_govern`、`agent_v15_provider` 与 `agent_v15_replay` 都是前缀。stage 1 之后可以增加函数、视图、授权、目录种子 DML，以及 §18 点名的 `CREATE OR REPLACE`。不得再增加表。**唯一例外：** stage 13 追加 `tool_requests` 与 `tool_attempts`（§3.16），表数 21→23。其后的 stage 仍不得加表。
 
 | # | 目录 | SQL | gate | 证明 |
 |---|---|---|---|---|
@@ -2387,11 +2498,12 @@ D2 轨迹回放不启用 `supply_llm_response`，摘要复用 `logical_digest`�
 | 9 | `v15/govern` | `v15_govern.sql` | `test_govern.py` | 同一 oid 上的 dispatcher、预留先于效应、§9 的合成与代际、§10 的九个 handler、两套窗口警告、`budget_forcing:<ordinal>:<n>`、§11 的池与双摘要。hook 返回的 `fatal = true`，以及子在 `invoke/enter` 上因 hook abort 而在同一事务送达，只在本 stage 断言。回滚类冲突不留行 |
 | 10 | `v15/provider` | `v15_provider.sql` | `test_provider.py` | 三转移、`P1539`、计价 fail-closed 的 SQL 形状、keyless、不执行模型 SQL 的冒烟辅助退出码。不加表。hook 带回 `V15_PROVIDER_REJECTED` 仍归一为 `V15_HOOK_ABORT` 并提交，不因 `P1506` 被拒 |
 | 11 | `v15/return_hooks` | `v15_return_hooks.sql` | `test_return_hooks.py` | 十一文件前缀、`P1540`、计数 id 泛化、return→raise、raise 压过 continue，以及 cap 时 raise 取 ordinal 最小。不加表。ReturnType handler 与 effect builder 不在 M1 |
-| 12 | `v15/replay` | `v15_replay.sql` | `test_replay.py` | 十二文件装载序、轨迹导出/重放、`P1541`/`P1542`、`supply_llm_response` 仍 `P1506`。不加表。摘要复用 `logical_digest` |
+| 12 | `v15/replay` | `v15_replay.sql` | `test_replay.py` | 十二文件前缀、轨迹导出/重放、`P1541`/`P1542`、`supply_llm_response` 仍 `P1506`。不加表。摘要复用 `logical_digest` |
+| 13 | `v15/tools` | `v15_tools.sql` | `test_tools.py` | 十三文件装载序、`tool_requests` 与 `tool_attempts`（不得加表的唯一例外）、`tool_wait`、`bind_tool`、`P1543`/`P1544`/`P1545`。Python `FakeTool` 零网络。合运行时库名 `agent_v15_tools` |
 
 `v15/protocol/v15_protocol.sql` 只有注释，声明切分与渲染不在库内。加载它必须成功，且不得创建表。
 
-`v15/load.py` 照 `v13/load.py` 的形状：`SQL_LOAD_ORDER` 是上表十二个文件，只许在末尾追加；`STAGE_THROUGH` 把目录名映到 `1..12`；`files_through` 取前缀；`load_stage` 按前缀执行，遇到 `ERROR` 或 `FATAL` 即失败。SQL 是普通 `CREATE`，不用 `IF NOT EXISTS`。角色语句不得放进这些文件。
+`v15/load.py` 照 `v13/load.py` 的形状：`SQL_LOAD_ORDER` 是上表十三个文件，只许在末尾追加；`STAGE_THROUGH` 把目录名映到 `1..13`；`files_through` 取前缀；`load_stage` 按前缀执行，遇到 `ERROR` 或 `FATAL` 即失败。SQL 是普通 `CREATE`，不用 `IF NOT EXISTS`。角色语句不得放进这些文件。
 
 gate 串行运行。每个 stage 的 `setup_db.py` 以集群超级用户执行，并且在加载任何 SQL 之前跑引导段：
 
@@ -2408,7 +2520,7 @@ gate 串行运行。每个 stage 的 `setup_db.py` 以集群超级用户执行�
 
 gate 命令是 `uv run python v15/<stage>/test_<stage>.py`，退出码 0 为通过。每个 stage 目录只有这一个 `test_*.py`。共享夹具放在 `v15/support.py`。gate 不得打开网络套接字（§0.0）。`smoke.py` 不是 gate。
 
-worker 只有一份：`v15/worker.py` 的 `run_until_quiescent`。行为循环类 gate 的唯一 LLM 仍是 `v15/fake_llm.py`。`v15/provider/test_provider.py` 可以注入传输构造 `DeepSeekProvider`，零网络。默认传输只由 opt-in 驱动构造。worker 接受 `complete(logical_digest, n, request, llm_config=None)`。stage 7 起需要跑完整循环的测试调用 `run_until_quiescent`。stage 6 的测试导入 `FakeLLM.complete`，并自己调用 §4.2 的转移函数，包括无参数的 `v15_reclaim_expired()`。不得在 stage 目录里再写一个驱动。FakeTool 由该测试在库内创建，不进 `SQL_LOAD_ORDER`（§12）。
+worker 只有一份：`v15/worker.py` 的 `run_until_quiescent`。行为循环类 gate 的唯一 LLM 仍是 `v15/fake_llm.py`。`v15/provider/test_provider.py` 可以注入传输构造 `DeepSeekProvider`，零网络。默认传输只由 opt-in 驱动构造。worker 接受 `complete(logical_digest, n, request, llm_config=None)`。stage 7 起需要跑完整循环的测试调用 `run_until_quiescent`。stage 6 的测试导入 `FakeLLM.complete`，并自己调用 §4.2 的转移函数，包括无参数的 `v15_reclaim_expired()`。不得在 stage 目录里再写一个驱动。SQL 侧工具 handler 由该测试在库内创建，不进 `SQL_LOAD_ORDER`（§12）。Python `FakeTool` 在 `v15/fake_tool.py`，与 FakeLLM 并列，不进装载序，gate 不建 socket。
 
 里程碑沿用 `AGENTS.md` 的阶段纪律：一个 stage 一次提交，该 stage 的 gate 为绿，不把两个 stage 捆在同一提交。三次里程碑提交还要带上矩阵与说明，且不得改写已绿 gate 的断言去凑实现：
 
@@ -2481,7 +2593,7 @@ worker 只有一份：`v15/worker.py` 的 `run_until_quiescent`。行为循环�
 
 ## 18. 冻结协议
 
-本文是 v15 的行为合同。设计修订为 rev 10。K1–K6、R1–R5、R-A1–R-A29、R-B1–R-B19、R-C1–R-C18、R-D1–R-D22、R-E1–R-E10、R-F1–R-F6 与 R-G1–R-G2 只说明这些句子从哪次裁定吸收进来。裁定已全部吸收进本文，本文是唯一权威。`docs/references/v15-oracle-review1.md` 不得再改写已经写进 §0–§18 的句子。
+本文是 v15 的行为合同。设计修订为 rev 11。K1–K6、R1–R5、R-A1–R-A29、R-B1–R-B19、R-C1–R-C18、R-D1–R-D22、R-E1–R-E10、R-F1–R-F6 与 R-G1–R-G2 只说明这些句子从哪次裁定吸收进来。裁定已全部吸收进本文，本文是唯一权威。`docs/references/v15-oracle-review1.md` 不得再改写已经写进 §0–§18 的句子。
 
 实现、gate、矩阵三者与本文不一致时，改那三者。修订本文的提交必须同时带上受影响的 gate，以及受影响的 §14 行。gate 只许加严，或改到新句子所要求的断言。禁止把断言放宽到当前实现做得到的程度。发现本文无法在 PG 18.4 上实现时，先在同一提交里改本文、§14 与 gate，再改实现。禁止先落地违背本文的 SQL、事后补文档。级联删除探针若失败，按 §17 先改 §0.26，不得在函数体内补上 `SET ROLE`。
 
@@ -2489,7 +2601,7 @@ worker 只有一份：`v15/worker.py` 的 `run_until_quiescent`。行为循环�
 
 任何 `SECURITY DEFINER` 函数的函数体都不得包含 `SET ROLE`、`RESET ROLE` 或 `SET SESSION AUTHORIZATION`。模型语句前后的角色切换只出现在 worker 事务的顶层。终态删除的常规路径是 schema 属主直接 `DROP SCHEMA … CASCADE`。
 
-前缀加载是 gate 脚手架，不是交付运行时（§0.0）。`README` 与矩阵不得把 `agent_v15_loop`、`agent_v15_govern`、`agent_v15_provider` 或 `agent_v15_return_hooks` 写成合运行时。合运行时只指十二个文件全部加载的库，库名 `agent_v15_replay`。`SQL_LOAD_ORDER` 只许在末尾追加。角色的删除与重建只在 `setup_db.py` 的引导段，不进入 `SQL_LOAD_ORDER`。会加载 govern SQL 的引导段必须创建 `v15_hook_return_type`。引导段必须先删掉每一个 `starts_with(datname, 'agent_v15_')` 的库，再重建角色（§15）。gate 串行运行。
+前缀加载是 gate 脚手架，不是交付运行时（§0.0）。`README` 与矩阵不得把 `agent_v15_loop`、`agent_v15_govern`、`agent_v15_provider`、`agent_v15_return_hooks` 或 `agent_v15_replay` 写成合运行时。合运行时只指十三个文件全部加载的库，库名 `agent_v15_tools`。`SQL_LOAD_ORDER` 只许在末尾追加。角色的删除与重建只在 `setup_db.py` 的引导段，不进入 `SQL_LOAD_ORDER`。会加载 govern SQL 的引导段必须创建 `v15_hook_return_type`。引导段必须先删掉每一个 `starts_with(datname, 'agent_v15_')` 的库，再重建角色（§15）。gate 串行运行。
 
 stage 10 的 `v15/provider/v15_provider.sql` 只许 `CREATE OR REPLACE` 下面两只映射，签名与 oid 不变，不得 `DROP FUNCTION`：
 
@@ -2500,8 +2612,10 @@ stage 10 的 `v15/provider/v15_provider.sql` 只许 `CREATE OR REPLACE` 下面�
 
 stage 12 的 `v15/replay/v15_replay.sql` 只许 `CREATE OR REPLACE` 下面两只映射，签名与 oid 不变，不得 `DROP FUNCTION`：以 provider 替换体为基线，追加 `V15_REPLAY_DIVERGED` → `P1541` 与 `V15_REPLAY_MISSING` → `P1542`。`v15_govern_known_code` 同步追加这两名。不把 `V15_VALIDATION_FAILED` 写入 `v15_io_sqlstate`。replay 文件不得 `CREATE`、`REPLACE` 或 `DROP` `v15_on_phase` 与四个治理 handler。
 
-错误码只许从表尾追加，追加之后仍不得超过 `P1548`，且不得与已有行同义。本修订的最后一行是 `P1542`。`P1543`–`P1548` 空着，不得预占。§17 的钉文件若显示 `P15` 被占用，整表一起重排，禁止留下空号，也禁止 gate 在重排提交之前断言 sqlstate。
+stage 13 的 `v15/tools/v15_tools.sql` 只许 `CREATE OR REPLACE` 下面映射，签名与 oid 不变，不得 `DROP FUNCTION`：以 replay 替换体为基线，追加 `V15_TOOL_BINDING` → `P1543`、`V15_TOOL_FAILED` → `P1544`、`V15_TOOL_EXHAUSTED` → `P1545`。`v15_govern_known_code` 同步追加这三名。`v15_replay_export` 在本文件替换：树含 `bind_tool` 或 `tool_wait` → `P1524`。tools 文件不得 `CREATE`、`REPLACE` 或 `DROP` `v15_on_phase` 与四个治理 handler。本 stage 是「其后不得加表」的唯一例外：追加 `tool_requests` 与 `tool_attempts`。
 
-文档头的修订说明在行为修订时追加一行，不另起平行规格。本文件现在的修订号是 rev 10。
+错误码只许从表尾追加，追加之后仍不得超过 `P1548`，且不得与已有行同义。本修订的最后一行是 `P1545`。`P1546`–`P1548` 空着，不得预占。§17 的钉文件若显示 `P15` 被占用，整表一起重排，禁止留下空号，也禁止 gate 在重排提交之前断言 sqlstate。
+
+文档头的修订说明在行为修订时追加一行，不另起平行规格。本文件现在的修订号是 rev 11。
 
 

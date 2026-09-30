@@ -336,9 +336,9 @@ def park_open(cur) -> None:
 def test_load_order() -> None:
     hooks = files_through("return_hooks")
     replay = files_through("replay")
-    check("SQL_LOAD_ORDER has twelve files", len(SQL_LOAD_ORDER) == 12)
-    check("replay is last file", SQL_LOAD_ORDER[-1].name == "v15_replay.sql")
-    check("files_through replay is full order", replay == SQL_LOAD_ORDER)
+    check("replay prefix has twelve files", len(replay) == 12)
+    check("replay prefix ends at replay", replay[-1].name == "v15_replay.sql")
+    check("stage through replay", replay == SQL_LOAD_ORDER[:12])
     check("replay keeps return_hooks prefix", replay[:11] == hooks and len(hooks) == 11)
 
 

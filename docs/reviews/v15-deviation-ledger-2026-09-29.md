@@ -2,7 +2,7 @@
 
 从 `docs/designs/v15-jaz-dev.md` §14 抄入。这些行是相对 jaz 参考运行时的有意差别。实现不得把它们修回参考运行时。本文件不是第二份行为合同。
 
-D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。D31–D32 是 rev 10 追加。M2 的 `v15/return_hooks/test_return_hooks.py` 已覆盖封闭 DSL helper、ReturnType handler 与 ValidateReturn 注册协议。M2 评审修正后：形状校验对非字符串 `type` 显式 `false`；effect builder 仅显式 `true` 绕过，畸形 counter/ordinal fail-closed；cap 时多个 raise 取 ordinal 最小。
+D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。D31–D32 是 rev 10 追加。D33 是 rev 11 追加。M2 的 `v15/return_hooks/test_return_hooks.py` 已覆盖封闭 DSL helper、ReturnType handler 与 ValidateReturn 注册协议。M2 评审修正后：形状校验对非字符串 `type` 显式 `false`；effect builder 仅显式 `true` 绕过，畸形 counter/ordinal fail-closed；cap 时多个 raise 取 ordinal 最小。
 
 ## 14.1 偏差
 
@@ -15,6 +15,8 @@ D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。D31�
 **V15-D04。** jaz 的 `return` / `raise` 是未加引号的语法。v15 的规范形式只有双引号 `jaz."return"` 与 `jaz."raise"`。可观察后果：未加引号的调用在执行前就是 `V15_INVOKE_FORM`。解析探针可以打印解析器的反应，但不得变成第二种规范拼写。
 
 **V15-D05。** jaz 可以有异步工具与 `bind_name` 延续。v15 只有 `jaz.tool(name, args) returns jsonb`，在语句事务内同步结束。handler 是 `v15_tool_<name>` 拥有的 `SECURITY DEFINER` 纯函数，不写 scratch，调用时不 `SET ROLE`、不临时 `GRANT`。`external = true` 为 `V15_EXTERNAL_TOOL`。可观察后果：工具要么在本语句返回 jsonb，要么随保存点消失；没有工具挂起，也没有工具留下的 scratch 行。
+
+后继见 **V15-D33**。
 
 **V15-D06。** jaz 的 `ainvoke` 与 `map_invoke` 可以在一轮里并发子调用。v15 一个 invoke 只有一个租约持有者，父在 `suspended` 时不可 claim。可观察后果：扫描结果里子先于重新 `runnable` 的父；不存在同一父迭代的两个 `running` 子语句。
 
@@ -69,6 +71,8 @@ D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。D31�
 **V15-D31。** jaz 的 ReturnType / ValidateReturn 用 Python 类型与异常对象，并在 InvokeComplete 再查一次。v15 用封闭 jsonb 类型规格与注册式 SQL handler，只在 `repl_exec/complete` 校验。可恢复拒绝是 return→continue 加持久消息；耗尽后是 return→raise / `P1540`。`P1540` 不是 abort 保留码。没有第二次谓词调用。validator 直接 `RAISE` 仍走异常隔离，不算校验拒绝。
 
 **V15-D32。** spec 键名限制为 `^[A-Za-z_][A-Za-z0-9_]{0,62}$`，嵌套深度 ≤ 8。`jsonb` 的 `number` 不区分整数与浮点。enum 通过性按数值相等，展示按 `elem::text`。对象渲染的 required 按数组序，可选键按 UTF-8 字节序，项之间是 `, `。
+
+**V15-D33。** jaz 可以有异步工具与 `bind_name` 延续。v15 以规范 `jaz.bind_tool` 做异步延续，且仅 `external = true`：invoke 进入 `tool_wait`（不是 `suspended`），无子 invoke、无树边。同步 `jaz.tool` 对 `external = true` 仍是 `V15_EXTERNAL_TOOL`，不写 `tool_attempts`。`v15_reclaim_expired` 仍不插入 attempt（D14）。FakeTool 只在 `call_started` 已提交、会话无打开事务时运行。可观察后果：成功送达 `kind = var`、`provenance = delivery`；`external = false` 的 `bind_tool` 是 `V15_TOOL_BINDING`；`{"ok":false}` 是 `V15_TOOL_FAILED`；下一 attempt 序号将越 `governance_io` 是 `V15_TOOL_EXHAUSTED`。
 
 D2 轨迹回放不启用 `supply_llm_response`，摘要复用 `llm_requests.logical_digest`。
 
