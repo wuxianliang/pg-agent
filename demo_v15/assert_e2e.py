@@ -1,4 +1,4 @@
-"""Read-only chain, recall, and fanout assertions. No network and no provider import."""
+"""Read-only chain, recall, fanout, and csi assertions. No network and no provider import."""
 from __future__ import annotations
 
 import json
@@ -12,7 +12,19 @@ sys.path.insert(0, str(ROOT))
 
 from v15.protocol.split_sql import SplitFailure, classify_statement, split_sql
 
-from task import INVOKE_LIMIT, WARN_FLOOR, fanout_fragments, role_for
+from task import (
+    CSI_ANSWER,
+    CSI_ERROR,
+    CSI_FORMULA_RIGHT,
+    CSI_FORMULA_WRONG,
+    CSI_TASK_A,
+    CSI_TASK_B,
+    CSI_TASK_C,
+    INVOKE_LIMIT,
+    WARN_FLOOR,
+    fanout_fragments,
+    role_for,
+)
 
 _UNQUOTED = re.compile(r"(?i)\bjaz\s*\.\s*(return|raise)\s*\(")
 _UUID = re.compile(
@@ -210,6 +222,8 @@ def pick_class(facts: dict) -> str:
         return "facts_leaked"
     if facts.get("far_recall_missed"):
         return "far_recall_missed"
+    if facts.get("csi_meta_missed"):
+        return "csi_meta_missed"
     if facts.get("chars_bug"):
         return "harness_bug"
     if facts.get("warning_missed"):
@@ -483,6 +497,16 @@ def assert_e2e(
         if scenario == "fanout":
             parsed_inputs["seal_a"] = None
             parsed_inputs["seal_b"] = None
+        if scenario == "csi":
+            parsed_inputs["task_a"] = None
+            parsed_inputs["task_b"] = None
+            parsed_inputs["task_c"] = None
+            parsed_inputs["formula_wrong"] = None
+            parsed_inputs["formula_right"] = None
+            parsed_inputs["task_id"] = None
+            parsed_inputs["formula"] = None
+            parsed_inputs["diagnosed"] = None
+            parsed_inputs["failed_task"] = None
         for binding in inputs_by.get(iid, []):
             if binding["name"] in parsed_inputs:
                 parsed_inputs[binding["name"]] = parse_json(binding["value"])
@@ -506,6 +530,10 @@ def assert_e2e(
             else:
                 ret_expected = {"fragment": parsed_inputs.get("seal")}
             return_matches = return_equals(cur, iid, ret_expected)
+        elif scenario == "csi":
+            return_matches = _csi_node_return_ok(
+                iid == root_id, parsed_inputs, parse_json(row["return_value"])
+            )
         else:
             return_matches = return_equals(cur, iid, expected_return)
         node = {
@@ -554,6 +582,22 @@ def assert_e2e(
                 delegator_ok = False
                 if len(done_binds) > 1:
                     multi_bind = True
+        elif scenario == "csi" and iid == root_id:
+            csi_bind_ok, csi_meta = _csi_root_bind(
+                done_binds,
+                stmts_by.get(iid, []),
+                invoke_attempts,
+                iters_by.get(iid, []),
+                events_by.get(iid, []),
+                cur,
+                iid,
+                attempts_by,
+            )
+            if done_binds:
+                delegator_count += 1
+            node.update(csi_meta)
+            if not csi_bind_ok:
+                delegator_ok = False
         elif len(done_binds) == 1:
             delegator_count += 1
             bind = done_binds[0]
@@ -648,6 +692,9 @@ def assert_e2e(
     if scenario == "fanout":
         chain = _fanout_spine(nodes, root_id, completed_only=True)
         depth_chain = _fanout_spine(nodes, root_id, completed_only=False)
+    elif scenario == "csi":
+        chain = _csi_spine(nodes, root_id, completed_only=True)
+        depth_chain = _csi_spine(nodes, root_id, completed_only=False)
     else:
         chain = _spine(nodes, root_id, hops, completed_only=True)
         depth_chain = _spine(nodes, root_id, hops, completed_only=False)
@@ -711,7 +758,7 @@ def assert_e2e(
     for node in nodes:
         if not node["parent"]:
             continue
-        if scenario == "fanout":
+        if scenario in {"fanout", "csi"}:
             continue
         parent = by_node.get(node["parent"])
         parent_hops = None if parent is None else _as_int((parent["inputs"] or {}).get("hops"))
@@ -724,6 +771,12 @@ def assert_e2e(
     if scenario == "fanout":
         if len(nodes) > 3 or any(
             child_counts[node["invoke_id"]] > (2 if node["invoke_id"] == root_id else 0)
+            for node in nodes
+        ):
+            flags.append("over_delegation")
+    elif scenario == "csi":
+        if len(nodes) > 4 or any(
+            child_counts[node["invoke_id"]] > (3 if node["invoke_id"] == root_id else 0)
             for node in nodes
         ):
             flags.append("over_delegation")
@@ -785,6 +838,8 @@ def assert_e2e(
             text["unquoted"] = True
     if scenario == "fanout":
         inputs_ok = _fanout_inputs_ok(cur, nodes, root_id, seal, note, statements)
+    elif scenario == "csi":
+        inputs_ok = _csi_inputs_ok(cur, nodes, root_id, seal, note, statements)
     else:
         inputs_ok = bool(nodes) and all(
             _inputs_ok(cur, node, seal, note, root_id, expected_by_depth) for node in nodes
@@ -798,6 +853,18 @@ def assert_e2e(
             and child_counts.get(root_id, 0) == 2
             and all(
                 child_counts[node["invoke_id"]] == (2 if node["invoke_id"] == root_id else 0)
+                for node in nodes
+            )
+            and all(
+                node["depth"] == (1 if node["invoke_id"] == root_id else 2) for node in nodes
+            )
+        )
+    elif scenario == "csi":
+        relay_shape = (
+            len(nodes) == 4
+            and child_counts.get(root_id, 0) == 3
+            and all(
+                child_counts[node["invoke_id"]] == (3 if node["invoke_id"] == root_id else 0)
                 for node in nodes
             )
             and all(
@@ -849,6 +916,10 @@ def assert_e2e(
         )
     elif hooks:
         flags.append("unexpected_warning")
+    csi_ok = True
+    csi_flags: list[str] = []
+    if scenario == "csi":
+        csi_ok, csi_flags = _csi_meta_ok(root_id, nodes, stmts_by, stored_by)
     codes = set()
     for node in nodes:
         if node["error_code"]:
@@ -915,9 +986,11 @@ def assert_e2e(
         "warning_missed": warning_missed,
         "unexpected_warning": unexpected,
         "over_delegation": "over_delegation" in flags,
+        "csi_meta_missed": scenario == "csi" and not csi_ok,
     }
     hard = mode == "fake" or strict
     recall_hard_fail = scenario == "recall" and hard and not recall_ok
+    csi_hard_fail = scenario == "csi" and hard and not csi_ok
     relay_hard_fail = hard and not relay_ok
     unexpected_hard = hard and unexpected
     if override_class:
@@ -929,6 +1002,7 @@ def assert_e2e(
         and not calls_mismatch
         and not relay_hard_fail
         and not recall_hard_fail
+        and not csi_hard_fail
         and not unexpected_hard
     ):
         outcome = "tail_ok"
@@ -991,6 +1065,24 @@ def assert_e2e(
             {"n": 13, "name": "event_seq_continuous", "ok": events_ok},
             {"n": 14, "name": "scratch_clear", "ok": scratch_clear},
         ]
+    if scenario == "csi":
+        root_node = next((node for node in nodes if node["invoke_id"] == root_id), None) or {}
+        assertions = [
+            {"n": 1, "name": "csi_four_nodes", "ok": depth_chain is not None},
+            {"n": 2, "name": "csi_completed", "ok": chain is not None},
+            {"n": 3, "name": "csi_three_children", "ok": child_counts.get(root_id, 0) == 3},
+            {"n": 4, "name": "csi_batch1_a_before_b", "ok": bool(root_node.get("csi_batch1_order_ok"))},
+            {"n": 5, "name": "csi_batch1_before_batch2", "ok": bool(root_node.get("csi_batch1_before_batch2_ok"))},
+            {"n": 6, "name": "csi_bind_home_one_settled", "ok": bool(root_node.get("csi_home_settled_ok"))},
+            {"n": 7, "name": "csi_children_one_settled", "ok": bool(root_node.get("csi_children_one_settled"))},
+            {"n": 8, "name": "csi_var_a_b_c", "ok": bool(root_node.get("csi_var_ok"))},
+            {"n": 9, "name": "csi_no_repl_exit", "ok": bool(root_node.get("csi_pairs_ok"))},
+            {"n": 10, "name": "deepest_return", "ok": deepest_ok},
+            {"n": 11, "name": "quiescent", "ok": running_clear},
+            {"n": 12, "name": "no_reject_no_fatal", "ok": (not rejected) and (not any_fatal)},
+            {"n": 13, "name": "event_seq_continuous", "ok": events_ok},
+            {"n": 14, "name": "scratch_clear", "ok": scratch_clear},
+        ]
     warning_ok = scenario != "recall" or (
         warning["root_tail_warned"]
         and warning["nonroot_warning_count"] == 0
@@ -1005,6 +1097,8 @@ def assert_e2e(
         "relay_flags": flags,
         "recall_ok": recall_ok,
         "recall_flags": recall_flags,
+        "csi_ok": csi_ok,
+        "csi_flags": csi_flags,
         "warning_ok": warning_ok,
         "warning": warning,
         "hook_count": len(hooks),
@@ -1632,3 +1726,324 @@ def _fanout_root_bind(
         "fanout_edges": edges,
     }
     return ok, meta
+
+
+def _contains_value(body, expected) -> bool:
+    if body == expected:
+        return True
+    if isinstance(body, dict):
+        return any(_contains_value(item, expected) for item in body.values())
+    if isinstance(body, list):
+        return any(_contains_value(item, expected) for item in body)
+    return False
+
+
+def _csi_node_return_ok(is_root: bool, inputs: dict, ret) -> bool:
+    if is_root:
+        return _contains_value(ret, CSI_ANSWER)
+    if not isinstance(ret, dict) or not isinstance(ret.get("history"), list):
+        return False
+    task_id = inputs.get("task_id")
+    if task_id == CSI_TASK_A:
+        return (
+            ret.get("ok") is False
+            and ret.get("error") == CSI_ERROR
+            and ret.get("task_id") == CSI_TASK_A
+        )
+    if task_id == CSI_TASK_B:
+        return (
+            ret.get("ok") is False
+            and ret.get("error") == CSI_ERROR
+            and ret.get("task_id") == CSI_TASK_B
+        )
+    if task_id == CSI_TASK_C:
+        return (
+            ret.get("ok") is True
+            and ret.get("answer") == CSI_ANSWER
+            and ret.get("task_id") == CSI_TASK_C
+        )
+    return False
+
+
+def _csi_spine(nodes: list[dict], root_id: str, *, completed_only: bool):
+    root = next(
+        (node for node in nodes if node["invoke_id"] == root_id and node["depth"] == 1),
+        None,
+    )
+    if root is None:
+        return None
+    if completed_only and not _completed(root):
+        return None
+    leaves = [node for node in nodes if node["parent"] == root_id]
+    if len(leaves) != 3 or len(nodes) != 4:
+        return None
+    if any(node["depth"] != 2 for node in leaves):
+        return None
+    if any(other["parent"] == leaf["invoke_id"] for leaf in leaves for other in nodes):
+        return None
+    if completed_only and any(not _completed(leaf) for leaf in leaves):
+        return None
+    return [root, *sorted(leaves, key=lambda node: node["invoke_id"])]
+
+
+def _csi_inputs_ok(cur, nodes: list[dict], root_id: str, seal: str, note: str, statements: list[dict]) -> bool:
+    if len(nodes) != 4:
+        return False
+    if not (
+        input_equals(cur, root_id, "role", "root")
+        and input_equals(cur, root_id, "hops", 1)
+        and input_equals(cur, root_id, "seal", seal)
+        and input_equals(cur, root_id, "note", note)
+        and input_equals(cur, root_id, "root_id", root_id)
+        and input_equals(cur, root_id, "task_a", CSI_TASK_A)
+        and input_equals(cur, root_id, "task_b", CSI_TASK_B)
+        and input_equals(cur, root_id, "task_c", CSI_TASK_C)
+        and input_equals(cur, root_id, "formula_wrong", CSI_FORMULA_WRONG)
+        and input_equals(cur, root_id, "formula_right", CSI_FORMULA_RIGHT)
+    ):
+        return False
+    named = {
+        stmt["bind_name"]: stmt["child_invoke_id"]
+        for stmt in statements
+        if stmt["invoke_id"] == root_id
+        and stmt["kind"] == "bind_invoke"
+        and stmt["status"] == "done"
+        and stmt["bind_name"] in {"a", "b", "c"}
+        and stmt["child_invoke_id"]
+    }
+    if set(named) != {"a", "b", "c"}:
+        return False
+    specs = (
+        ("a", CSI_TASK_A, CSI_FORMULA_WRONG),
+        ("b", CSI_TASK_B, CSI_FORMULA_WRONG),
+        ("c", CSI_TASK_C, CSI_FORMULA_RIGHT),
+    )
+    for name, task_id, formula in specs:
+        child_id = named[name]
+        if not (
+            input_equals(cur, child_id, "role", "leaf")
+            and input_equals(cur, child_id, "hops", 1)
+            and input_equals(cur, child_id, "seal", seal)
+            and input_equals(cur, child_id, "note", note)
+            and input_equals(cur, child_id, "root_id", root_id)
+            and input_equals(cur, child_id, "task_id", task_id)
+            and input_equals(cur, child_id, "formula", formula)
+        ):
+            return False
+    return True
+
+
+def _csi_home_settled(invoke_attempts: list[dict], iteration: int) -> bool:
+    req = [attempt for attempt in invoke_attempts if int(attempt["iteration"]) == iteration]
+    settled = [attempt for attempt in req if attempt["status"] == "settled"]
+    max_n = max((int(attempt["n"]) for attempt in req), default=None)
+    settled_n = int(settled[0]["n"]) if len(settled) == 1 else None
+    return (
+        len(settled) == 1
+        and not any(attempt["status"] == "leased" for attempt in req)
+        and max_n is not None
+        and settled_n is not None
+        and max_n == settled_n
+    )
+
+
+def _csi_root_bind(
+    done_binds: list[dict],
+    stmts: list[dict],
+    invoke_attempts: list[dict],
+    iter_rows: list[dict],
+    ev: list[dict],
+    cur,
+    iid: str,
+    attempts_by: dict,
+) -> tuple[bool, dict]:
+    empty = {}
+    if len(done_binds) != 3:
+        return False, empty
+    ordered = sorted(
+        done_binds, key=lambda stmt: (int(stmt["iteration"]), int(stmt["stmt_index"]))
+    )
+    if [stmt["bind_name"] for stmt in ordered] != ["a", "b", "c"]:
+        return False, empty
+    batch1_iter = int(ordered[0]["iteration"])
+    if int(ordered[1]["iteration"]) != batch1_iter:
+        return False, empty
+    if int(ordered[0]["stmt_index"]) != 0 or int(ordered[1]["stmt_index"]) != 1:
+        return False, empty
+    batch2_iter = int(ordered[2]["iteration"])
+    if batch2_iter <= batch1_iter:
+        return False, empty
+    on_b1 = [stmt for stmt in stmts if int(stmt["iteration"]) == batch1_iter]
+    on_b1.sort(key=lambda stmt: int(stmt["stmt_index"]))
+    batch1_two = (
+        len(on_b1) == 2
+        and on_b1[0]["kind"] == "bind_invoke"
+        and on_b1[1]["kind"] == "bind_invoke"
+        and on_b1[0]["bind_name"] == "a"
+        and on_b1[1]["bind_name"] == "b"
+        and on_b1[0]["status"] == "done"
+        and on_b1[1]["status"] == "done"
+    )
+    on_b2 = [stmt for stmt in stmts if int(stmt["iteration"]) == batch2_iter]
+    on_b2.sort(key=lambda stmt: int(stmt["stmt_index"]))
+    binds_b2 = [stmt for stmt in on_b2 if stmt["kind"] == "bind_invoke"]
+    batch2_one = (
+        bool(on_b2)
+        and all(stmt["status"] == "done" for stmt in on_b2)
+        and len(binds_b2) == 1
+        and binds_b2[0]["bind_name"] == "c"
+        and binds_b2[0]["status"] == "done"
+        and on_b2[-1]["kind"] == "bind_invoke"
+    )
+    home_ok = _csi_home_settled(invoke_attempts, batch1_iter) and _csi_home_settled(
+        invoke_attempts, batch2_iter
+    )
+    b1_kind = next(
+        (item["result_kind"] for item in iter_rows if int(item["iteration"]) == batch1_iter),
+        None,
+    )
+    b2_kind = next(
+        (item["result_kind"] for item in iter_rows if int(item["iteration"]) == batch2_iter),
+        None,
+    )
+    max_iter = max((int(item["iteration"]) for item in iter_rows), default=None)
+    final_kind = None
+    if max_iter is not None:
+        final_kind = next(
+            (item["result_kind"] for item in iter_rows if int(item["iteration"]) == max_iter),
+            None,
+        )
+    iter_ok = (
+        b1_kind == "continue"
+        and b2_kind == "continue"
+        and final_kind == "return"
+        and max_iter is not None
+        and max_iter > batch2_iter
+    )
+    edges = []
+    var_ok_all = True
+    for bind in ordered:
+        suspend_seq, deliver_seq = _edge_pair(ev, bind["child_invoke_id"])
+        exits = 0
+        if suspend_seq is not None and deliver_seq is not None:
+            exits = sum(
+                1
+                for item in ev
+                if item["event_class"] == "span"
+                and item["span"] == "repl_exec"
+                and item["phase"] == "exit"
+                and suspend_seq < int(item["seq"]) < deliver_seq
+            )
+        event_ok = (
+            suspend_seq is not None
+            and deliver_seq is not None
+            and suspend_seq < deliver_seq
+            and exits == 0
+        )
+        var_ok = None
+        if bind["child_invoke_id"] and bind["bind_name"]:
+            var_ok = var_equals_child(cur, iid, bind["child_invoke_id"], bind["bind_name"])
+        if var_ok is not True:
+            var_ok_all = False
+        edges.append(
+            {
+                "bind_name": bind["bind_name"],
+                "child_invoke_id": bind["child_invoke_id"],
+                "iteration": int(bind["iteration"]),
+                "suspend_seq": suspend_seq,
+                "deliver_seq": deliver_seq,
+                "repl_exits_between": exits,
+                "event_ok": event_ok,
+                "var_ok": var_ok is True,
+            }
+        )
+    pairs_ok = bool(edges) and all(edge["event_ok"] for edge in edges)
+    order_ab = (
+        len(edges) == 3
+        and edges[0]["deliver_seq"] is not None
+        and edges[1]["deliver_seq"] is not None
+        and edges[0]["deliver_seq"] < edges[1]["deliver_seq"]
+    )
+    batch1_before_batch2 = (
+        len(edges) == 3
+        and edges[0]["deliver_seq"] is not None
+        and edges[1]["deliver_seq"] is not None
+        and edges[2]["suspend_seq"] is not None
+        and edges[0]["deliver_seq"] < edges[2]["suspend_seq"]
+        and edges[1]["deliver_seq"] < edges[2]["suspend_seq"]
+    )
+    children_settled_ok = True
+    for bind in ordered:
+        child_id = bind["child_invoke_id"]
+        child_attempts = attempts_by.get(child_id, []) if child_id else []
+        settled = [attempt for attempt in child_attempts if attempt["status"] == "settled"]
+        if len(settled) != 1 or len(child_attempts) != 1:
+            children_settled_ok = False
+            break
+    ok = (
+        batch1_two
+        and batch2_one
+        and home_ok
+        and iter_ok
+        and pairs_ok
+        and order_ab
+        and batch1_before_batch2
+        and var_ok_all
+        and children_settled_ok
+    )
+    req0 = [attempt for attempt in invoke_attempts if int(attempt["iteration"]) == batch1_iter]
+    settled0 = [attempt for attempt in req0 if attempt["status"] == "settled"]
+    max_n = max((int(attempt["n"]) for attempt in req0), default=None)
+    settled_n = int(settled0[0]["n"]) if len(settled0) == 1 else None
+    meta = {
+        "bind_iteration": batch1_iter,
+        "settled_on_bind_iteration": len(settled0),
+        "max_n_on_bind_iteration": max_n,
+        "settled_n": settled_n,
+        "statement_count_on_bind_iteration": len(on_b1),
+        "var_matches_child": var_ok_all,
+        "next_kind": None,
+        "suspend_seq": edges[0]["suspend_seq"] if edges else None,
+        "deliver_seq": edges[0]["deliver_seq"] if edges else None,
+        "repl_exits_between": edges[0]["repl_exits_between"] if edges else None,
+        "csi_batch1_two": batch1_two,
+        "csi_batch2_one": batch2_one,
+        "csi_home_settled_ok": home_ok,
+        "csi_iter_ok": iter_ok,
+        "csi_pairs_ok": pairs_ok,
+        "csi_var_ok": var_ok_all,
+        "csi_batch1_order_ok": order_ab,
+        "csi_batch1_before_batch2_ok": batch1_before_batch2,
+        "csi_children_one_settled": children_settled_ok,
+        "csi_batch2_iteration": batch2_iter,
+        "csi_edges": edges,
+    }
+    return ok, meta
+
+
+def _csi_meta_ok(root_id: str, nodes: list[dict], stmts_by: dict, stored_by: dict) -> tuple[bool, list[str]]:
+    flags: list[str] = []
+    root = next((node for node in nodes if node["invoke_id"] == root_id), None)
+    if root is None:
+        return False, ["csi_root_missing"]
+    batch2 = root.get("csi_batch2_iteration")
+    blob = ""
+    if batch2 is not None:
+        blob = "\n".join(
+            stmt["sql"] or ""
+            for stmt in stmts_by.get(root_id, [])
+            if int(stmt["iteration"]) == int(batch2)
+        )
+        for row in stored_by.get(root_id, []):
+            if (
+                row["kind"] == "assistant"
+                and row["iteration"] is not None
+                and int(row["iteration"]) == int(batch2)
+            ):
+                blob += "\n" + (row["content"] or "")
+    if CSI_ERROR not in blob and CSI_TASK_A not in blob and CSI_TASK_B not in blob:
+        flags.append("cites_missed")
+    if not _contains_value(root.get("return_value"), CSI_ANSWER):
+        flags.append("answer_missed")
+    return not flags, flags
+

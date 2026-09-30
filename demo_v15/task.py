@@ -52,6 +52,38 @@ NOTE_FANOUT_V1 = (
     "fragment set to your seal. A JSON object at the root before both children "
     "finish is wrong. No markdown. No prose."
 )
+NOTE_CSI_V1 = (
+    "Copy this note to each child unchanged as the note input. The quotes around "
+    "a value are syntax and are not part of the value. You are the hop given by "
+    "role. hops is 1 for every invoke. seal is the parent seal. root_id is the "
+    "root invoke id. Tasks are t01, t02, t03. The wrong formula is length plus "
+    "width. The revised formula is length times width. True area of 3 by 4 is 12. "
+    "When role is root, first reply binds two solver children named a and b. "
+    "Child a inputs: note (this text), hops 1, role leaf, root_id unchanged, seal "
+    "unchanged, task_id t01, formula length plus width. Child b: same except "
+    "task_id t02. Do not return on that reply. Do not read a child with "
+    "jaz.prior_history. Children return their own jaz.history aggregation. After "
+    "both finish, diagnose from the two child return values. Diagnosis rule: "
+    "error code or ok:false means switch formula. Next reply binds one solver "
+    "child named c with revised instructions: same note hops role root_id seal, "
+    "task_id t03, formula length times width. That reply statement text must cite "
+    "a failed child error code or task_id. When role is leaf, do not bind. Return "
+    "JSON with ok, error, task_id, answer, and history from jaz.history. If "
+    "formula is length plus width: ok is false, error is E_WRONG_FORMULA. If "
+    "formula is length times width: ok is true, answer is 12. After child c "
+    "finishes, return JSON that contains that answer. Root JSON before child c "
+    "finishes is wrong. No markdown. No prose."
+)
+CSI_TASK_A = "t01"
+CSI_TASK_B = "t02"
+CSI_TASK_C = "t03"
+CSI_ERROR = "E_WRONG_FORMULA"
+CSI_ANSWER = 12
+CSI_FORMULA_WRONG = "length plus width"
+CSI_FORMULA_RIGHT = "length times width"
+CSI_BIND_A = "a"
+CSI_BIND_B = "b"
+CSI_BIND_C = "c"
 PRINT_SQL = "SELECT jaz.print((jaz.var('facts') #>> '{}'));"
 FACTS_PREFIX = "token=" + ("0" * 16) + " "
 SYSTEM_CHARS = 1855
@@ -76,6 +108,17 @@ _FANOUT_PHRASES = (
     "fragment",
     "single reply",
     "root_id",
+    "No markdown",
+    "No prose",
+)
+_CSI_PHRASES = (
+    "wrong formula",
+    "ok:false",
+    "error code",
+    "revised",
+    "E_WRONG_FORMULA",
+    "jaz.history",
+    "length times width",
     "No markdown",
     "No prose",
 )
@@ -129,6 +172,8 @@ def note_for(scenario: str) -> str:
         return NOTE_RECALL_V1
     if scenario == "fanout":
         return NOTE_FANOUT_V1
+    if scenario == "csi":
+        return NOTE_CSI_V1
     raise ScenarioInvalid(scenario)
 
 
@@ -139,6 +184,8 @@ def note_revision(scenario: str) -> str:
         return "NOTE_RECALL_V1"
     if scenario == "fanout":
         return "NOTE_FANOUT_V1"
+    if scenario == "csi":
+        return "NOTE_CSI_V1"
     raise ScenarioInvalid(scenario)
 
 
@@ -147,7 +194,7 @@ def default_hops(scenario: str) -> int:
         return 8
     if scenario == "recall":
         return 5
-    if scenario == "fanout":
+    if scenario in {"fanout", "csi"}:
         return 1
     raise ScenarioInvalid(scenario)
 
@@ -165,7 +212,7 @@ def role_sequence(hops: int) -> list[str]:
 
 
 def validate_scenario(scenario: str) -> str:
-    if scenario not in {"chain", "recall", "fanout"}:
+    if scenario not in {"chain", "recall", "fanout", "csi"}:
         raise ScenarioInvalid(scenario)
     return scenario
 
@@ -176,8 +223,10 @@ def validate_hops(value: object, scenario: str = "chain") -> int:
         lo, hi = 3, 8
     elif scenario == "recall":
         lo, hi = 5, 8
-    else:
+    elif scenario in {"fanout", "csi"}:
         lo, hi = 1, 1
+    else:
+        raise ScenarioInvalid(scenario)
     if type(value) is not int or value < lo or value > hi:
         raise HopsInvalid(value)
     return value
@@ -206,6 +255,8 @@ def validate_note(note: str, scenario: str | None = None) -> None:
             missing.extend(phrase for phrase in _RECALL_PHRASES if phrase not in note)
     elif scenario == "fanout":
         missing = [phrase for phrase in _FANOUT_PHRASES if phrase not in note]
+    elif scenario == "csi":
+        missing = [phrase for phrase in _CSI_PHRASES if phrase not in note]
     if missing:
         raise NoteInvalid("phrase")
 
@@ -214,6 +265,7 @@ def check_canonical_notes() -> None:
     validate_note(NOTE_CHAIN_V1, "chain")
     validate_note(NOTE_RECALL_V1, "recall")
     validate_note(NOTE_FANOUT_V1, "fanout")
+    validate_note(NOTE_CSI_V1, "csi")
 
 
 def validate_seal(seal: str) -> None:
@@ -325,6 +377,22 @@ def child_payload(note: str, hops: int, role: str, seal: str, root_id: str) -> d
     }
 
 
+def csi_solver_payload(
+    note: str,
+    root_id: str,
+    seal: str,
+    task_id: str,
+    formula: str,
+    extra: dict | None = None,
+) -> dict:
+    payload = child_payload(note, 1, "leaf", seal, root_id)
+    payload["task_id"] = task_id
+    payload["formula"] = formula
+    if extra:
+        payload.update(extra)
+    return payload
+
+
 def root_inputs(
     seal: str,
     note: str,
@@ -349,4 +417,10 @@ def root_inputs(
         frag_a, frag_b = fanout_fragments(seal)
         rows.append(input_binding("seal_a", frag_a))
         rows.append(input_binding("seal_b", frag_b))
+    if scenario == "csi":
+        rows.append(input_binding("task_a", CSI_TASK_A))
+        rows.append(input_binding("task_b", CSI_TASK_B))
+        rows.append(input_binding("task_c", CSI_TASK_C))
+        rows.append(input_binding("formula_wrong", CSI_FORMULA_WRONG))
+        rows.append(input_binding("formula_right", CSI_FORMULA_RIGHT))
     return rows

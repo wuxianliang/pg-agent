@@ -1,4 +1,4 @@
-"""Headless chain, recall, and fanout driver. DeepSeek is imported only on the real path."""
+"""Headless chain, recall, fanout, and csi driver. DeepSeek is imported only on the real path."""
 from __future__ import annotations
 
 import contextlib
@@ -32,6 +32,7 @@ from script import (
     expected_kinds,
     gate,
     happy_chain,
+    happy_csi,
     happy_fanout,
     happy_recall,
 )
@@ -206,6 +207,8 @@ def _minimal(root_id: str, failure_class: str, pgcode: str | None = None, scenar
         "relay_flags": [],
         "recall_ok": False,
         "recall_flags": [],
+        "csi_ok": False,
+        "csi_flags": [],
         "warning_ok": False,
         "warning": {},
         "root_id": root_id,
@@ -258,13 +261,23 @@ def summarize(mode: str, result: dict, strict: bool) -> tuple[str, int, bool]:
     scenario = result.get("scenario") or "chain"
     relay_ok = bool(result.get("relay_ok"))
     recall_ok = bool(result.get("recall_ok"))
-    if result.get("outcome") == "tail_ok" and relay_ok and (scenario != "recall" or recall_ok):
+    csi_ok = bool(result.get("csi_ok"))
+    extra_ok = True
+    if scenario == "recall":
+        extra_ok = recall_ok
+    elif scenario == "csi":
+        extra_ok = csi_ok
+    if result.get("outcome") == "tail_ok" and relay_ok and extra_ok:
         if scenario == "recall":
             return "tail_ok relay_ok recall_ok", 0, False
+        if scenario == "csi":
+            return "tail_ok relay_ok csi_ok", 0, False
         return "tail_ok relay_ok", 0, False
     if mode == "real" and result.get("outcome") == "tail_ok" and not strict:
         if scenario == "recall" and not recall_ok:
             return "tail_ok recall_soft_fail", 0, False
+        if scenario == "csi" and not csi_ok:
+            return "tail_ok csi_soft_fail", 0, False
         if not relay_ok:
             return "tail_ok relay_soft_fail", 0, False
     return f"fail {result.get('failure_class') or 'harness_bug'}", 1, True
@@ -304,6 +317,8 @@ def _script(scenario: str, note: str, seal: str, hops: int, root_id: str, token:
             replies = happy_recall(note, seal, hops, root_id, token or "")
         elif scenario == "fanout":
             replies = happy_fanout(note, seal, hops, root_id)
+        elif scenario == "csi":
+            replies = happy_csi(note, seal, hops, root_id)
         else:
             replies = happy_chain(note, seal, hops, root_id)
     continued = scenario == "chain" and bool(replies) and replies[0].strip() == "SELECT 1;"
@@ -605,7 +620,7 @@ def parse_args(argv: list[str]) -> dict | str:
         else:
             return "scenario_invalid"
         index += 1
-    if scenario not in {"chain", "recall", "fanout"}:
+    if scenario not in {"chain", "recall", "fanout", "csi"}:
         return "scenario_invalid"
     if hops is None:
         hops = default_hops(scenario)

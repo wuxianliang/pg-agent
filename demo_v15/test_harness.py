@@ -20,6 +20,13 @@ from task import (
     HopsInvalid,
     NoteInvalid,
     ScenarioInvalid,
+    CSI_ANSWER,
+    CSI_ERROR,
+    CSI_FORMULA_RIGHT,
+    CSI_FORMULA_WRONG,
+    CSI_TASK_A,
+    CSI_TASK_B,
+    CSI_TASK_C,
     fanout_fragments,
     note_for,
     solve_n,
@@ -212,6 +219,75 @@ def fanout_case() -> None:
         check(f"fanout {name}", names.get(name) is True, names)
 
 
+def csi_case() -> None:
+    result = _run("csi", 1)
+    check("csi calls", result["cost"]["calls_used"] == 6, result["cost"])
+    check("csi nodes", len(result["nodes"]) == 4, len(result["nodes"]))
+    check("csi hops", result.get("hops") == 1, result.get("hops"))
+    check("csi scenario", result.get("scenario") == "csi", result.get("scenario"))
+    check("csi ok", result.get("csi_ok") is True, result.get("csi_flags"))
+    root = _node(result, 1)
+    leaves = [node for node in result["nodes"] if node["depth"] == 2]
+    check("csi three leaves", len(leaves) == 3, len(leaves))
+    check("csi parent attempts", root["attempt_count"] == 3, root["attempt_count"])
+    check("csi settled", root["settled_on_bind_iteration"] == 1, root)
+    check(
+        "csi batch1 two statements",
+        root["statement_count_on_bind_iteration"] == 2,
+        root["statement_count_on_bind_iteration"],
+    )
+    check(
+        "csi root tasks",
+        root["inputs"].get("task_a") == CSI_TASK_A
+        and root["inputs"].get("task_b") == CSI_TASK_B
+        and root["inputs"].get("task_c") == CSI_TASK_C,
+        root["inputs"],
+    )
+    check(
+        "csi root formulas",
+        root["inputs"].get("formula_wrong") == CSI_FORMULA_WRONG
+        and root["inputs"].get("formula_right") == CSI_FORMULA_RIGHT,
+        root["inputs"],
+    )
+    by_task = {leaf["inputs"].get("task_id"): leaf for leaf in leaves}
+    check("csi leaf tasks", set(by_task) == {CSI_TASK_A, CSI_TASK_B, CSI_TASK_C}, set(by_task))
+    check(
+        "csi fail a",
+        by_task[CSI_TASK_A]["return_value"].get("ok") is False
+        and by_task[CSI_TASK_A]["return_value"].get("error") == CSI_ERROR,
+        by_task[CSI_TASK_A]["return_value"],
+    )
+    check(
+        "csi fail b",
+        by_task[CSI_TASK_B]["return_value"].get("ok") is False
+        and by_task[CSI_TASK_B]["return_value"].get("error") == CSI_ERROR,
+        by_task[CSI_TASK_B]["return_value"],
+    )
+    check(
+        "csi ok c",
+        by_task[CSI_TASK_C]["return_value"].get("ok") is True
+        and by_task[CSI_TASK_C]["return_value"].get("answer") == CSI_ANSWER,
+        by_task[CSI_TASK_C]["return_value"],
+    )
+    check(
+        "csi parent answer",
+        (root["return_value"] or {}).get("answer") == CSI_ANSWER,
+        root["return_value"],
+    )
+    check("csi hooks", result.get("hook_count") == 0, result.get("hook_count"))
+    names = {item["name"]: item["ok"] for item in result.get("assertions") or []}
+    for name in (
+        "csi_three_children",
+        "csi_batch1_a_before_b",
+        "csi_batch1_before_batch2",
+        "csi_bind_home_one_settled",
+        "csi_children_one_settled",
+        "csi_var_a_b_c",
+        "csi_no_repl_exit",
+    ):
+        check(f"csi {name}", names.get(name) is True, names)
+
+
 def bounds() -> None:
     server = get_server()
     drop_database(server, BOUND_DB)
@@ -221,6 +297,9 @@ def bounds() -> None:
         ("hops_invalid", {"scenario": "fanout", "hops": 2}),
         ("hops_invalid", {"scenario": "fanout", "hops": 3}),
         ("hops_invalid", {"scenario": "fanout", "hops": 8}),
+        ("hops_invalid", {"scenario": "csi", "hops": 2}),
+        ("hops_invalid", {"scenario": "csi", "hops": 3}),
+        ("hops_invalid", {"scenario": "csi", "hops": 8}),
         ("scenario_invalid", {"scenario": "nope"}),
         ("note_invalid", {"note": "has;semicolon"}),
     )
@@ -250,9 +329,24 @@ def bounds() -> None:
         pass
     check("fanout hops 1", validate_hops(1, "fanout") == 1)
     try:
+        validate_hops(2, "csi")
+        raise SystemExit("FAIL csi hops 2 accepted")
+    except HopsInvalid:
+        pass
+    try:
+        validate_hops(8, "csi")
+        raise SystemExit("FAIL csi hops 8 accepted")
+    except HopsInvalid:
+        pass
+    check("csi hops 1", validate_hops(1, "csi") == 1)
+    try:
         validate_scenario("fanout")
     except ScenarioInvalid:
         raise SystemExit("FAIL fanout scenario rejected")
+    try:
+        validate_scenario("csi")
+    except ScenarioInvalid:
+        raise SystemExit("FAIL csi scenario rejected")
     try:
         validate_scenario("nope")
         raise SystemExit("FAIL scenario accepted")
@@ -302,12 +396,14 @@ def main() -> int:
         continue_case()
         recall_case()
         fanout_case()
+        csi_case()
         print("bounds hops/scenario/note exit=2")
         print("sizer fixed=3400 solved fixed=4000 rejected")
         print("chain 3/5/8 tail_ok relay_ok")
         print("continue-then-tail calls_used=6")
         print("recall tail_ok relay_ok recall_ok")
         print("fanout hops=1 tail_ok relay_ok")
+        print("csi hops=1 tail_ok relay_ok csi_ok")
         print("keyless exit=2")
         return 0
     finally:

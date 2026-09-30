@@ -97,6 +97,7 @@ stage 8 是树。fatal 只走桩预留耗尽。`invoke/enter` abort 的同事务
 
 | 63 | §0.2 / §4.8 同迭代消费 | ✅ | `v15/tree/test_tree.py` | 父一次回复里 `bind_invoke` 后的下一条 `jaz.var` 读到子结果并 `return`。父迭代仍是 0，`llm_attempts` 仍是 1。等待期间父 `repl_exec` 没有 `exit` |
 | 63a | §0.2 / §4.8 同迭代双 bind 扇出 | ✅ | `v15/tree/test_tree.py` `test_same_iteration_fanout` | 父一次回复里连续 `bind_invoke('a')`、`bind_invoke('b')`，再 `return` 读两个 var。三次 LLM（1 父 + 2 子）。父迭代 0、`attempts` 1、该迭代恰好一条 settled。每个子恰好一条 settled。a 的 deliver seq 小于 b。两对 suspend/deliver 之间都无 `repl_exec` exit。父 `return_value` 合并两个子 `return_value` |
+| 63b | 论文性质 2 CSI meta-agent（demo，非新 SQL gate） | demo | `demo_v15/drive.py --scenario csi`、`demo_v15/test_harness.py` | 根 batch-1 bind a/b（task_id t01/t02 失败，error `E_WRONG_FORMULA`），batch-2 bind c（t03，答案 12）。6 次 LLM（3 根 + 3 子）。`csi_ok`：batch-2 根语句引用 `E_WRONG_FORMULA` 或 `t01`；根 `return_value` 含 12。`v15_tree_bind_context` 按 `(invoke_id, stmt_index)` 键 `arg_sql` 不含 iteration，demo 在 batch-2 垫两条 `SELECT 1;` 使 bind c 的 stmt_index=2。不是 tree gate，不新开 V15-D。fake 退出 0 `tail_ok relay_ok csi_ok`。真栈见 Demo evidence。 |
 | 64 | §4.7 先 bind-wait 再子 open | ✅ | 同上 | 挂起审计在送达之前。子停在 `runnable` 时父是 `suspended`、无租约，`v15_claim` 返回 NULL，扫描不返回父 |
 | 65 | §4.8 三分支 | ✅ | 同上 | 子 `completed` 写 `kind = var`。子 `raise` 时父语句是 `V15_CHILD_ERROR`（`P1528`）、剩余语句 `skipped`、迭代 `continue`，子行保留 `V15_RAISE`。名字被 scope 占用是 `V15_DELIVERY_CONFLICT`（`P1527`），子仍 `completed`，不覆盖 scope |
 | 66 | §0.11 / §4.8 fatal 展开 | ✅ | 同上 | 子孙的桩预留耗尽把父、子、孙都收成 `aborted`、`fatal = true`、`V15_BUDGET_EXHAUSTED`。链上原来 `running` 的 bind 语句失败，更晚语句 `skipped`。没有 `running` 残留。父语句不是 `V15_CHILD_ERROR` |
@@ -287,6 +288,7 @@ D27–D30 已写入规格与台账。D27 与 D29 由 provider gate 的线协议�
 | 2026-09-29 CHAIN hops=8 | DEMO_MODE=real deepseek-flash lease 240s | tail_ok relay_ok | gitignore 的 demo_v15/reports/ | 链长 N=8 时每一环的绑定迭代恰好两句且下一条 return 读到子 var；该迭代恰好一条 settled；suspend 与 deliver 之间无 repl_exec/exit。十道 gate 不导入该驱动。 |
 | 2026-09-29 RECALL hops=5 | 同上 | tail_ok recall_soft_fail（token 列提取：叶搜了 llm_response，token 在 repl_output） | 同上 | 根 iteration 0 的 repl_output 持有 token；子 input 无 facts；叶语句含 jaz.prior_history(根 uuid)；根绑定迭代的 request 含瞬态 context_window_warning，且该行不在 llm_messages。 |
 | 2026-09-30 FANOUT hops=1 | DEMO_MODE=real deepseek-flash lease 240s | tail_ok relay_ok | gitignore 的 `demo_v15/reports/e2e_report-20260930T134701Z.md` | 结构：父一次迭代、连续双 bind a/b、每个子一条 settled、父该迭代一条 settled、a 的 deliver seq 小于 b、两对 suspend/deliver 之间均无 repl_exec exit、父 return 合并两 var。fake 同场景亦退出 0。 |
+| 2026-09-30 CSI hops=1 | DEMO_MODE=real deepseek-flash lease 240s | fail bad_tail_shape（exit 1；非 tail_ok；CSI 结构 1–9 全 False）。fake 同场景退出 0 `tail_ok relay_ok csi_ok` | gitignore 的 `demo_v15/reports/e2e_report-20260930T150715Z.md` | 论文性质 2 demo：读子 return 诊断、改 instructions、第二批 bind c。字面量 t01/t02 失败、t03 成功、`E_WRONG_FORMULA`、答案 12、bind a/b 再 c、6 次 LLM。`csi_ok` = batch-2 根语句引用 `E_WRONG_FORMULA` 或 `t01`，根 return_value 含 12。本次真栈：5 节点（4 子）非 4；7 次 LLM 非 6；根 return 是 t01 失败 JSON 非 12；§0.2 edges 空。budget 1 次不重跑。batch-2 垫 `SELECT 1;`×2 使 bind c 的 stmt_index=2（`v15_tree_bind_context` 按 stmt_index 键 arg_sql，不含 iteration）。不新开 V15-D。 |
 
 
 ## Merge verification（2026-09-30）
