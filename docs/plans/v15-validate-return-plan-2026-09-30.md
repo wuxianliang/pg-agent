@@ -221,6 +221,8 @@ spec {"type":"object","required":["n"],"properties":{"n":{"type":"number"}}}，�
 [v15 return_type] Expected number at $.n. Got jsonb string.
 spec {"anyOf":[{"type":"string"},{"type":"null"}]}，值 1：
 [v15 return_type] Expected anyOf (string | null). Got jsonb number.
+spec {"type":"object","required":["x"],"properties":{"x":{"anyOf":[{"type":"string"},{"type":"null"}]}}}，值 {"x":1}：
+[v15 return_type] Expected anyOf (string | null). Got jsonb number.
 ```
 
 **两只内核辅助函数**（owner `v15_owner`、STABLE、SECURITY INVOKER、search_path=pg_catalog、REVOKE PUBLIC、`GRANT EXECUTE` 给 `v15_owner` 与 `v15_hook_return_type`——hook 运行时 current_user 是 hook owner，漏授会让调用抛错、异常隔离把非法 return 当通过）：`v15_return_spec_valid(jsonb) returns boolean`（只走形状）、`v15_return_spec_fault(jsonb, jsonb) returns text`。两函数**放 govern 文件**（评审 Q2 裁决：optional_guard 的 ELSIF 在 stage-9 前缀库的 INSERT/UPDATE 时即要调用 `v15_return_spec_valid`，放 stage 11 会留晚绑定赌注；它们是内核辅助函数而非 hook handler，不违反 §18）。辅助函数体不进 handler 摘要（摘要只盖 hook 自身 proacl）。
@@ -918,6 +920,7 @@ V15-D31 必须记录：
 - 多个 validator 产生相同 exec_result 可合成；
 - **raise 压过 continue**：同相位出现 raise 与 continue 时取 raise，输家 continue 的持久消息丢弃（不落 `llm_messages`、不计数）——否则 `budget_forcing`×`return_type` 组合会 P1535 回滚重试永久卡死（评审 F1）；
 - 两个不等的 continue 仍 P1535（continue 形状唯一，实际不可达）；
+- **cap 时多个 raise 取 ordinal 最小**：两个 validator 都到 cap 且 message 不同时合成最小 ordinal 的那条 raise，其余 raise 的 message 丢弃、不计数、不落 `llm_messages`，终态是 P1540 而不是 P1535；
 - validation error 不参加 abort code normalization；
 - terminal validation error 的 message 取 effect 内 message，经统一 1024 字符边界处理。
 

@@ -449,11 +449,13 @@ BEGIN
     INTO v_keys
   FROM pg_catalog.jsonb_object_keys(p_spec) AS t(key);
   IF v_keys = '["type"]'::jsonb THEN
-    RETURN (p_spec->>'type') IN ('any', 'null', 'string', 'number', 'boolean');
+    RETURN pg_catalog.jsonb_typeof(p_spec->'type') = 'string'
+       AND (p_spec->>'type') IN ('any', 'null', 'string', 'number', 'boolean');
   END IF;
   IF v_keys = '["items","type"]'::jsonb THEN
-    RETURN (p_spec->>'type') = 'array'
-       AND v15.v15_return_spec_shape(p_spec->'items', p_depth + 1);
+    RETURN pg_catalog.jsonb_typeof(p_spec->'type') = 'string'
+       AND (p_spec->>'type') = 'array'
+       AND v15.v15_return_spec_shape(p_spec->'items', p_depth + 1) IS TRUE;
   END IF;
   IF v_keys = '["anyOf"]'::jsonb THEN
     IF pg_catalog.jsonb_typeof(p_spec->'anyOf') IS DISTINCT FROM 'array' THEN
@@ -466,14 +468,17 @@ BEGIN
     RETURN NOT EXISTS (
       SELECT 1
       FROM pg_catalog.jsonb_array_elements(p_spec->'anyOf') AS e(value)
-      WHERE NOT v15.v15_return_spec_shape(e.value, p_depth + 1)
+      WHERE v15.v15_return_spec_shape(e.value, p_depth + 1) IS NOT TRUE
     );
   END IF;
   IF v_keys = '["enum"]'::jsonb THEN
-    RETURN pg_catalog.jsonb_typeof(p_spec->'enum') = 'array'
-       AND pg_catalog.jsonb_array_length(p_spec->'enum') >= 1;
+    IF pg_catalog.jsonb_typeof(p_spec->'enum') IS DISTINCT FROM 'array' THEN
+      RETURN false;
+    END IF;
+    RETURN pg_catalog.jsonb_array_length(p_spec->'enum') >= 1;
   END IF;
   IF v_keys IS DISTINCT FROM '["properties","required","type"]'::jsonb
+     OR pg_catalog.jsonb_typeof(p_spec->'type') IS DISTINCT FROM 'string'
      OR (p_spec->>'type') IS DISTINCT FROM 'object'
      OR pg_catalog.jsonb_typeof(p_spec->'required') IS DISTINCT FROM 'array'
      OR pg_catalog.jsonb_typeof(p_spec->'properties') IS DISTINCT FROM 'object' THEN
@@ -509,7 +514,7 @@ BEGIN
   RETURN NOT EXISTS (
     SELECT 1
     FROM pg_catalog.jsonb_each(p_spec->'properties') AS e(key, value)
-    WHERE NOT v15.v15_return_spec_shape(e.value, p_depth + 1)
+    WHERE v15.v15_return_spec_shape(e.value, p_depth + 1) IS NOT TRUE
   );
 EXCEPTION
   WHEN OTHERS THEN
@@ -524,7 +529,7 @@ SECURITY INVOKER
 SET search_path = pg_catalog
 AS $fn$
 BEGIN
-  RETURN v15.v15_return_spec_shape(p_spec, 1);
+  RETURN v15.v15_return_spec_shape(p_spec, 1) IS TRUE;
 EXCEPTION
   WHEN OTHERS THEN
     RETURN false;
@@ -542,7 +547,7 @@ DECLARE
   v_key text;
   v_elem jsonb;
 BEGIN
-  IF NOT v15.v15_return_spec_valid(p_spec) THEN
+  IF v15.v15_return_spec_valid(p_spec) IS NOT TRUE THEN
     RETURN 'invalid';
   END IF;
   IF p_spec ? 'type' AND (p_spec->>'type') IN ('any', 'null', 'string', 'number', 'boolean')
@@ -624,6 +629,9 @@ BEGIN
         RETURN NULL;
       END IF;
     END LOOP;
+    v_got := pg_catalog.jsonb_typeof(p_value);
+    RETURN 'Expected ' || v15.v15_return_spec_render(p_node)
+      || '. Got jsonb ' || v_got || '.';
   ELSIF p_node ? 'enum' THEN
     FOR v_elem IN
       SELECT e.value
@@ -633,6 +641,9 @@ BEGIN
         RETURN NULL;
       END IF;
     END LOOP;
+    v_got := pg_catalog.jsonb_typeof(p_value);
+    RETURN 'Expected ' || v15.v15_return_spec_render(p_node)
+      || '. Got jsonb ' || v_got || '.';
   ELSIF (p_node->>'type') = 'array' THEN
     IF pg_catalog.jsonb_typeof(p_value) IS DISTINCT FROM 'array' THEN
       NULL;
@@ -731,7 +742,7 @@ SECURITY INVOKER
 SET search_path = pg_catalog
 AS $fn$
 BEGIN
-  IF NOT v15.v15_return_spec_valid(p_spec) THEN
+  IF v15.v15_return_spec_valid(p_spec) IS NOT TRUE THEN
     RETURN 'config spec invalid';
   END IF;
   IF p_value IS NULL THEN
@@ -846,7 +857,7 @@ BEGIN
     IF NOT (NEW.config ? 'spec') OR NOT (NEW.config ? 'max_failures') THEN
       RAISE EXCEPTION 'V15_VALUE_INVALID' USING ERRCODE = 'P1524';
     END IF;
-    IF NOT v15.v15_return_spec_valid(NEW.config->'spec') THEN
+    IF v15.v15_return_spec_valid(NEW.config->'spec') IS NOT TRUE THEN
       RAISE EXCEPTION 'V15_VALUE_INVALID' USING ERRCODE = 'P1524';
     END IF;
     IF NEW.config->'max_failures' IS DISTINCT FROM 'null'::jsonb
@@ -913,6 +924,18 @@ BEGIN
     pg_catalog.clock_timestamp()
   )
   RETURNING hook_def_id INTO v_id;
+  IF p_hook_key = 'validate_return'
+     OR pg_catalog.starts_with(p_hook_key, 'validate_return_') THEN
+    EXECUTE format('GRANT USAGE ON SCHEMA v15 TO %I', 'v15_hook_' || p_hook_key);
+    IF pg_catalog.to_regprocedure(
+         'v15.v15_return_validation_effect(jsonb, boolean, text)'
+       ) IS NOT NULL THEN
+      EXECUTE format(
+        'GRANT EXECUTE ON FUNCTION v15.v15_return_validation_effect(jsonb, boolean, text) TO %I',
+        'v15_hook_' || p_hook_key
+      );
+    END IF;
+  END IF;
   RETURN v_id;
 END;
 $fn$;
@@ -1378,6 +1401,7 @@ DECLARE
   v_exec jsonb;
   v_raise boolean := false;
   v_continue_ords jsonb := '[]'::jsonb;
+  v_raise_loser_ords jsonb := '[]'::jsonb;
   v_budget jsonb;
   v_disable boolean := false;
   v_out jsonb;
@@ -1695,13 +1719,13 @@ BEGIN
     END IF;
     IF v_ret ? 'exec_result' AND v_ret->'exec_result' IS DISTINCT FROM 'null'::jsonb THEN
       IF v_ret #>> '{exec_result,result_kind}' = 'raise' THEN
-        IF v_exec IS NOT NULL
-           AND v_exec->>'result_kind' = 'raise'
-           AND v_exec IS DISTINCT FROM v_ret->'exec_result' THEN
-          RAISE EXCEPTION 'V15_EFFECT_CONFLICT' USING ERRCODE = 'P1535';
+        IF v_raise THEN
+          v_raise_loser_ords := v_raise_loser_ords
+            || pg_catalog.jsonb_build_array(v_hook.ordinal);
+        ELSE
+          v_exec := v_ret->'exec_result';
+          v_raise := true;
         END IF;
-        v_exec := v_ret->'exec_result';
-        v_raise := true;
       ELSIF v_ret #>> '{exec_result,result_kind}' = 'continue' THEN
         IF v_exec IS NOT NULL
            AND v_exec->>'result_kind' = 'continue'
@@ -1735,6 +1759,7 @@ BEGIN
     FROM pg_catalog.jsonb_array_elements(v_msg_acc) AS e(value)
     WHERE NOT (
       v_continue_ords @> pg_catalog.jsonb_build_array((e.value->>'ord')::integer)
+      OR v_raise_loser_ords @> pg_catalog.jsonb_build_array((e.value->>'ord')::integer)
     );
   END IF;
   IF EXISTS (

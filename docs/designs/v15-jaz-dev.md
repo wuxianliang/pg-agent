@@ -1925,7 +1925,7 @@ hook 的唯一写入 `hook_defs` 的路径是 bootstrap 装载与 `v15_register_
 - 同一 `id` 的多次 drop：合并为一次。该 `id` 不在本 phase 的 add 里：无操作。drop 不得 `DELETE` 已插入的 `llm_messages`；触发器拒绝删除（§3.5）。drop 只影响本 phase 尚未落地的 add 集合，不改写 base，也不改写已经插入的持久行。
 - 同一 `name` 的 `input_adds`：`value` 与 `show_in_prompt` 都相等则留一条；否则 `V15_INPUT_CONFLICT`。同一 `name` 既 add 又 drop：`V15_INPUT_CONFLICT`。
 - 同一黑板 `key`：`value` jsonb 相等则留一条；否则 `V15_BLACKBOARD_CONFLICT`。
-- `exec_result`：jsonb 相等则留一份。同相位同时出现 `result_kind = raise` 与 `result_kind = continue` 时取 `raise`，不报 `V15_EFFECT_CONFLICT`；发出 `continue` 的 handler 在本相位的持久消息丢弃，不写入 `llm_messages`，也不参加计数。两个不等的 `continue` 仍是 `V15_EFFECT_CONFLICT`。两个不等的 `raise` 同样是 `V15_EFFECT_CONFLICT`。
+- `exec_result`：jsonb 相等则留一份。同相位同时出现 `result_kind = raise` 与 `result_kind = continue` 时取 `raise`，不报 `V15_EFFECT_CONFLICT`；发出 `continue` 的 handler 在本相位的持久消息丢弃，不写入 `llm_messages`，也不参加计数。两个不等的 `continue` 仍是 `V15_EFFECT_CONFLICT`。多个 `raise` 取 `ordinal` 最小的那条，其余 `raise` 的本相位持久消息丢弃，不写入 `llm_messages`，也不参加计数。
 - `budget`：jsonb 相等则留一份；否则 `V15_EFFECT_CONFLICT`。
 - 多个 `disable_recursion`：合并为一次。
 - `abort`：先规范化每一个 `error.code`。hook 可保留的 abort 码集合闭合为 `{V15_IO_EXHAUSTED, V15_BUDGET_EXHAUSTED, V15_RECURSION_EXCEEDED, V15_ITERATION_EXCEEDED}`。集合内的码保持不变。保留码的 `fatal` 强制取 §13 的规范值：`V15_BUDGET_EXHAUSTED` 为 true，其余三码为 false。返回的 `fatal` 与规范值不符时不报错，直接归一。hook 返回的其他任何码一律归一为 `V15_HOOK_ABORT`（`P1538`）。规范化后的码全部相同：顶层 `code` 用该码。不相同：顶层 `code` 为 `V15_HOOK_ABORT`。两种情况都是提交类，`fatal` 取归一后的或。`error.message` 不参加相等判断；落地时用 `ordinal` 最小的那条，截到 1024 字符。不得回滚去换 `V15_EFFECT_CONFLICT`，不得提交带 `payload.codes` 的替代行。未知名字仍是 `V15_INVALID_EFFECT`（§9.4），不走这条归一。
@@ -2083,7 +2083,7 @@ SELECT jaz."return"(jaz.var('<ident>'));
 
 `render(spec)` 由 `v15_return_spec_render(jsonb) returns text` 实现。标量等于 type 词；数组为 `array of <render(items)>`；对象为 `object {` + required 按序 `<key>: <render>` + 可选键按 UTF-8 字节序 `<key>?: <render>` + `}`，多项之间是 `, `，花括号内侧无空格；anyOf 为 `anyOf (<render> | <render>)`，分支之间是 ` | `；enum 为 `enum (<elem::text>, ...)`，元素之间是 `, `。enum 通过性按 jsonb 数值相等（`enum:[1]` 匹配 `1.0`），展示按 `elem::text` 字形。
 
-失败文字从 `$` 起。根类型不符：`Expected <render(root)>. Got jsonb <typeof>.`。深层：`Expected <render(node)> at <path>. Got jsonb <typeof>.`。缺必填键：`Expected <render(root)>. Missing key <path>.`。anyOf 全败与 enum 不符不钻进分支：该节点在根上用根模板，在深层用深层模板，render 都是该节点整棵。SQL NULL 根值的失败文字是 `Expected <render(root)>. Got SQL NULL.`。handler 前缀是 `[v15 return_type] `（一个空格）。continue 消息与 raise 的 `error.message` 是同一整句。
+失败文字从 `$` 起。根类型不符：`Expected <render(root)>. Got jsonb <typeof>.`。深层：`Expected <render(node)> at <path>. Got jsonb <typeof>.`。缺必填键：`Expected <render(root)>. Missing key <path>.`。anyOf 全败与 enum 不符不钻进分支：一律用根模板配该节点整棵 render，不写 `at <path>`。SQL NULL 根值的失败文字是 `Expected <render(root)>. Got SQL NULL.`。handler 前缀是 `[v15 return_type] `（一个空格）。continue 消息与 raise 的 `error.message` 是同一整句。
 
 冻结示例：
 
@@ -2095,6 +2095,8 @@ spec {"type":"object","required":["n"],"properties":{"n":{"type":"number"}}}，�
 同 spec，值 {"n":"x"}：
 [v15 return_type] Expected number at $.n. Got jsonb string.
 spec {"anyOf":[{"type":"string"},{"type":"null"}]}，值 1：
+[v15 return_type] Expected anyOf (string | null). Got jsonb number.
+spec {"type":"object","required":["x"],"properties":{"x":{"anyOf":[{"type":"string"},{"type":"null"}]}}}，值 {"x":1}：
 [v15 return_type] Expected anyOf (string | null). Got jsonb number.
 ```
 
@@ -2110,7 +2112,7 @@ spec {"anyOf":[{"type":"string"},{"type":"null"}]}，值 1：
 
 handler 在 `span/phase` 不是 `repl_exec/complete`，或 `io.result_kind` 不是 `return` 时返回 proceed。拒绝时调用 `v15_return_validation_effect(snapshot, valid, message)`，不得用直接 `RAISE` 表示值不合法。直接抛出的异常仍走既有非 baseline 隔离，不算校验拒绝，不 bump。每个 validator 的计数按自己的 full hook key 与 ordinal 隔离。
 
-`v15_return_validation_effect(jsonb, boolean, text) returns jsonb` 放在 stage 11。它不写表，不改计数。`p_valid = true`、非 `repl_exec/complete`、非 return 候选或 `capture` 非空时返回 proceed。`p_message` 为 SQL NULL 时用 `validation message missing`；超过 1024 时截到 1024，不抛异常。未达上限时返回 continue 与一条持久消息，id 为 `<hook_key>:<ordinal>:<n>`。已达上限时返回 raise，`error = {"code":"V15_VALIDATION_FAILED","message":<原始消息>}`，不产生计数消息。登记 `validate_return*` 的一方须把 schema `v15` 的 USAGE 和该函数的 EXECUTE 授给 `v15_hook_<key>`。
+`v15_return_validation_effect(jsonb, boolean, text) returns jsonb` 放在 stage 11。它不写表，不改计数。仅当 `p_valid` 为 SQL `true`、非 `repl_exec/complete`、非 return 候选或 `capture` 非空时返回 proceed。`p_valid` 为 SQL NULL 或 `false` 走拒绝路径。`p_message` 为 SQL NULL 时用 `validation message missing`；超过 1024 时截到 1024，不抛异常。计数行缺席视为 0；计数行存在但值畸形、`ordinal` 不在 `0..2147483647`、或 hook key 不在 counted family 白名单时 fail-closed 为 raise，不生成不可计数的 continue。未达上限时返回 continue 与一条持久消息，id 为 `<hook_key>:<ordinal>:<n>`。已达上限时返回 raise，`error = {"code":"V15_VALIDATION_FAILED","message":<原始消息>}`，不产生计数消息。`v15_register_hook` 登记 `validate_return` / `validate_return_*` 时授予 schema `v15` 的 USAGE 和该函数的 EXECUTE 给 `v15_hook_<key>`。
 
 计数键是 `<hook_key>:<ordinal>`。`v15_loop_accept_forcing` 名字与签名不变。它只接受 `budget_forcing`、`return_type`、`validate_return`，以及以 `validate_return_` 开头的 key。`(invoke_id, ordinal)` 必须存在，且关联的 `hook_key` 等于消息中的 key，否则 `V15_INVALID_TRANSITION`。同一 message id 只 bump 一次。不比对消息里的 `n` 与库值。第 2、3 段不是数字，或数字溢出，则跳过，不抛 `V15_PHASE_CONTRACT`。`n` 达到 bigint 最大值时，接受函数以 `V15_VALUE_INVALID` 失败，不允许溢出。
 
@@ -2269,7 +2271,7 @@ PostgreSQL 自己的 sqlstate（例如散文的 `42601`、权限不足的 `42501
 | `V15_BASELINE_IMMUTABLE` | `P1532` | 层或 partial 含 `baseline_hooks`，或触发器拒绝删除、改写 baseline hook 行（§8.6、§11.1） | 回滚类 |
 | `V15_BLACKBOARD_CONFLICT` | `P1533` | 同一 phase、同一黑板键的两份 `value` jsonb 不相等（§9.5） | 回滚类 |
 | `V15_INPUT_CONFLICT` | `P1534` | 同一 phase、同一输入名的 add 不相等，或 add 与 drop 同时出现，或 add 撞上已有的非 `input` 名字（§9.5、§9.6） | 回滚类 |
-| `V15_EFFECT_CONFLICT` | `P1535` | 同一消息 `id`、同一 `exec_result` 或同一 `budget` 的两份 jsonb 不相等（§9.5）。`raise` 压过 `continue` 不是这个码。abort 码不一致不是这个码 | 回滚类 |
+| `V15_EFFECT_CONFLICT` | `P1535` | 同一消息 `id`、同一 `exec_result` 或同一 `budget` 的两份 jsonb 不相等（§9.5）。`raise` 压过 `continue` 不是这个码。多个 `raise` 取 `ordinal` 最小的那条也不是这个码。abort 码不一致不是这个码 | 回滚类 |
 | `V15_HANDLER_DIGEST` | `P1536` | 调用前按 §3.11 重算的摘要（含规范化 `proacl`）与存放值不一致，或 owner、`provolatile`、`prosecdef`、语言、`proconfig` 不符，或 owner 重新获得了内核表权限（§9.2、§5.3） | 阶段调度为回滚类；`jaz.tool` 内为语句失败 |
 | `V15_HANDLER_SHAPE` | `P1537` | 登记 hook 或 tool 时函数不是 STABLE 的 SQL/plpgsql、owner 或 `search_path` 或签名不符、owner 持有内核表权限，或 `PUBLIC` 仍有 `EXECUTE`，或 `EXECUTE` 不只在 `v15_owner`（§9.3） | 回滚类 |
 | `V15_HOOK_ABORT` | `P1538` | 形状合法的 hook abort 所带的码不在 `{V15_IO_EXHAUSTED, V15_BUDGET_EXHAUSTED, V15_RECURSION_EXCEEDED, V15_ITERATION_EXCEEDED}` 内，或数个 abort 规范化之后的码仍不相同（§0.12、§9.5）。`fatal` 为 §9.5 归一后的或。不得用来包装预留名或未知键 | 提交类 |
@@ -2379,7 +2381,7 @@ PostgreSQL 自己的 sqlstate（例如散文的 `42601`、权限不足的 `42501
 | 8 | `v15/tree` | `v15_tree.sql` | `test_tree.py` | §4.7 先写父的 bind-wait 再跑子 open。§4.8 的结构送达：子 `completed` 绑定、子 `failed` 时父语句 `V15_CHILD_ERROR`、名字冲突 `V15_DELIVERY_CONFLICT`。内核深度守卫的非 fatal 送达也在这里。子 `fatal = true` 的祖先展开只用 §9.6 的桩预留把子收成 `aborted`，不用 hook。断言终态 invoke 没有 `running` 语句（§4.8）。同迭代 `jaz.var`、父不再次 LLM、等待期间 `repl_exec` 不 `exit`。不含 hook 返回的 fatal，不含 hook 在 `invoke/enter` 上的 abort |
 | 9 | `v15/govern` | `v15_govern.sql` | `test_govern.py` | 同一 oid 上的 dispatcher、预留先于效应、§9 的合成与代际、§10 的九个 handler、两套窗口警告、`budget_forcing:<ordinal>:<n>`、§11 的池与双摘要。hook 返回的 `fatal = true`，以及子在 `invoke/enter` 上因 hook abort 而在同一事务送达，只在本 stage 断言。回滚类冲突不留行 |
 | 10 | `v15/provider` | `v15_provider.sql` | `test_provider.py` | 三转移、`P1539`、计价 fail-closed 的 SQL 形状、keyless、不执行模型 SQL 的冒烟辅助退出码。不加表。hook 带回 `V15_PROVIDER_REJECTED` 仍归一为 `V15_HOOK_ABORT` 并提交，不因 `P1506` 被拒 |
-| 11 | `v15/return_hooks` | `v15_return_hooks.sql` | `test_return_hooks.py` | 十一文件加载序、`P1540`、计数 id 泛化、return→raise 与 raise 压过 continue。不加表。ReturnType handler 与 effect builder 不在 M1 |
+| 11 | `v15/return_hooks` | `v15_return_hooks.sql` | `test_return_hooks.py` | 十一文件加载序、`P1540`、计数 id 泛化、return→raise、raise 压过 continue，以及 cap 时 raise 取 ordinal 最小。不加表。ReturnType handler 与 effect builder 不在 M1 |
 
 `v15/protocol/v15_protocol.sql` 只有注释，声明切分与渲染不在库内。加载它必须成功，且不得创建表。
 

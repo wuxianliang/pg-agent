@@ -103,12 +103,13 @@ def call_phase(cur, invoke_id: str, io: dict):
     return parse_json(cur.fetchone()[0])
 
 
-def install_hook(cur, key: str, body: str, invoke_id: str, config=None) -> None:
+def install_hook(cur, key: str, body: str, invoke_id: str, config=None, *, grants: bool = True) -> None:
     role = f"v15_hook_{key}"
     cur.execute(
         f"CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
     )
-    cur.execute(f"GRANT USAGE ON SCHEMA v15 TO {role}")
+    if grants:
+        cur.execute(f"GRANT USAGE ON SCHEMA v15 TO {role}")
     cur.execute(
         f"""
         CREATE FUNCTION v15.{key}(p_snapshot jsonb) RETURNS jsonb
@@ -123,9 +124,10 @@ def install_hook(cur, key: str, body: str, invoke_id: str, config=None) -> None:
     cur.execute(f"REVOKE ALL ON FUNCTION v15.{key}(jsonb) FROM PUBLIC")
     cur.execute(f"REVOKE ALL ON FUNCTION v15.{key}(jsonb) FROM {role}")
     cur.execute(f"GRANT EXECUTE ON FUNCTION v15.{key}(jsonb) TO v15_owner")
-    cur.execute(
-        f"GRANT EXECUTE ON FUNCTION v15.v15_return_validation_effect(jsonb, boolean, text) TO {role}"
-    )
+    if grants:
+        cur.execute(
+            f"GRANT EXECUTE ON FUNCTION v15.v15_return_validation_effect(jsonb, boolean, text) TO {role}"
+        )
     cur.execute(
         "SELECT v15.v15_register_hook(%s, %s::regprocedure, false)",
         (key, f"v15.{key}(jsonb)"),
@@ -178,6 +180,39 @@ def spec_render(cur, spec: dict) -> str:
     return cur.fetchone()[0]
 
 
+def effect_snap(
+    *,
+    hook: str = "return_type",
+    ordinal=0,
+    max_failures=2,
+    counters=None,
+) -> dict:
+    return {
+        "span": "repl_exec",
+        "phase": "complete",
+        "io": {
+            "result_kind": "return",
+            "return_value": 1,
+            "error": None,
+            "capture": "",
+        },
+        "self": {
+            "hook_key": hook,
+            "ordinal": ordinal,
+            "config": {"max_failures": max_failures},
+        },
+        "counters": {} if counters is None else counters,
+    }
+
+
+def call_effect(cur, snapshot: dict, valid, message: str = "x"):
+    cur.execute(
+        "SELECT v15.v15_return_validation_effect(%s::jsonb, %s, %s)",
+        (json.dumps(snapshot), valid, message),
+    )
+    return parse_json(cur.fetchone()[0])
+
+
 def counter_n(cur, invoke_id: str, key: str):
     cur.execute(
         "SELECT n FROM v15.hook_counters WHERE invoke_id = %s AND counter_key = %s",
@@ -207,13 +242,46 @@ OBJECT_SPEC = {
     "properties": {"n": {"type": "number"}},
 }
 ANY_SPEC = {"anyOf": [{"type": "string"}, {"type": "null"}]}
+NESTED_UNION = {
+    "type": "object",
+    "required": ["x"],
+    "properties": {"x": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+}
 FROZEN = (
     (STRING_SPEC, "'1'::jsonb", "Expected string. Got jsonb number."),
     (OBJECT_SPEC, "'{}'::jsonb", "Expected object {n: number}. Missing key $.n."),
     (OBJECT_SPEC, '\'{"n":"x"}\'::jsonb', "Expected number at $.n. Got jsonb string."),
     (ANY_SPEC, "'1'::jsonb", "Expected anyOf (string | null). Got jsonb number."),
+    (NESTED_UNION, '\'{"x":1}\'::jsonb', "Expected anyOf (string | null). Got jsonb number."),
 )
 PREFIX = "[v15 return_type] "
+
+
+def continue_body(message: str, msg_id: str) -> str:
+    return f"""
+    BEGIN
+      IF p_snapshot->>'span' = 'repl_exec'
+         AND p_snapshot->>'phase' = 'complete'
+         AND p_snapshot #>> '{{io,result_kind}}' = 'return' THEN
+        RETURN jsonb_build_object(
+          'contract', 1,
+          'action', 'proceed',
+          'exec_result', jsonb_build_object(
+            'result_kind', 'continue',
+            'return_value', 'null'::jsonb,
+            'error', 'null'::jsonb
+          ),
+          'messages', jsonb_build_array(jsonb_build_object(
+            'id', '{msg_id}',
+            'role', 'user',
+            'content', '{message}',
+            'persistent', true
+          ))
+        );
+      END IF;
+      RETURN '{{"contract":1,"action":"proceed"}}'::jsonb;
+    END
+    """
 
 
 def raise_body(message: str, code: str = "V15_VALIDATION_FAILED") -> str:
@@ -378,13 +446,21 @@ def test_raise_wins(cur, wconn) -> None:
     open_invoke(wconn, other)
     install_hook(cur, "vr_raise_a", raise_body("one"), other)
     install_hook(cur, "vr_raise_b", raise_body("two"), other)
-    fails(
-        cur,
-        "SELECT v15.v15_on_phase(%s, 0, 'repl_exec', 'complete', %s::jsonb)",
-        (other, json.dumps(COMPLETE_IO)),
-        "P1535",
-        "unequal raises still conflict",
+    ret = call_phase(cur, other, COMPLETE_IO)
+    check(
+        "unequal raises keep min ordinal",
+        ret.get("exec_result", {}).get("result_kind") == "raise"
+        and ret["exec_result"]["error"] == {"code": "V15_VALIDATION_FAILED", "message": "one"},
+        ret,
     )
+    merged = str(uuid.uuid4())
+    open_invoke(wconn, merged)
+    install_hook(cur, "vr_cont_a", continue_body("a", "cont-a"), merged)
+    install_hook(cur, "vr_cont_b", continue_body("b", "cont-b"), merged)
+    ret = call_phase(cur, merged, COMPLETE_IO)
+    ids = [m["id"] for m in ret.get("messages", [])]
+    check("equal continues merge", ret.get("exec_result", {}).get("result_kind") == "continue", ret)
+    check("equal continue messages kept", "cont-a" in ids and "cont-b" in ids, ids)
 
 
 def test_counter_parse(cur, wconn) -> None:
@@ -543,6 +619,15 @@ def test_spec_and_config(cur, wconn) -> None:
     check("empty enum invalid", cur.fetchone()[0] is False)
     cur.execute("SELECT v15.v15_return_spec_valid(%s::jsonb)", (json.dumps({"type": "int"}),))
     check("unknown scalar invalid", cur.fetchone()[0] is False)
+    cur.execute("SELECT v15.v15_return_spec_valid(%s::jsonb)", (json.dumps({"type": None}),))
+    check("json null type invalid", cur.fetchone()[0] is False)
+    cur.execute("SELECT v15.v15_return_spec_valid(%s::jsonb)", (json.dumps({"type": 1}),))
+    check("numeric type invalid", cur.fetchone()[0] is False)
+    cur.execute(
+        "SELECT v15.v15_return_spec_valid(%s::jsonb)",
+        (json.dumps({"anyOf": [{"type": None}]}),),
+    )
+    check("nested json null type invalid", cur.fetchone()[0] is False)
     for spec, value_sql, text in FROZEN:
         check("frozen helper " + text, spec_fault(cur, value_sql, spec) == text, spec_fault(cur, value_sql, spec))
     check(
@@ -673,6 +758,32 @@ def test_spec_and_config(cur, wconn) -> None:
         (bad_id, json.dumps({"spec": {"anyOf": [{"type": "string"}] * 9}, "max_failures": 1})),
         "P1524",
         "anyOf over 8 is P1524",
+    )
+    fails(
+        cur,
+        """
+        INSERT INTO v15.invoke_hooks (
+          invoke_id, ordinal, hook_def_id, channel, config, state
+        )
+        SELECT %s, 9, d.hook_def_id, 'local', %s::jsonb, '{}'::jsonb
+        FROM v15.hook_defs d WHERE d.hook_key = 'return_type'
+        """,
+        (bad_id, json.dumps({"spec": {"type": None}, "max_failures": 1})),
+        "P1524",
+        "json null type is P1524",
+    )
+    fails(
+        cur,
+        """
+        INSERT INTO v15.invoke_hooks (
+          invoke_id, ordinal, hook_def_id, channel, config, state
+        )
+        SELECT %s, 9, d.hook_def_id, 'local', %s::jsonb, '{}'::jsonb
+        FROM v15.hook_defs d WHERE d.hook_key = 'return_type'
+        """,
+        (bad_id, json.dumps({"spec": {"anyOf": [{"type": None}]}, "max_failures": 1})),
+        "P1524",
+        "nested json null type is P1524",
     )
     fails(
         cur,
@@ -900,6 +1011,55 @@ def test_known_code(cur) -> None:
     check("known_code V15_VALIDATION_FAILED", cur.fetchone()[0] is True)
 
 
+def test_effect_builder(cur) -> None:
+    got = call_effect(cur, effect_snap(), True)
+    check("p_valid true proceeds", got == {"contract": 1, "action": "proceed"}, got)
+    got = call_effect(cur, effect_snap(max_failures=0), None)
+    check(
+        "p_valid null raises",
+        got.get("exec_result", {}).get("result_kind") == "raise",
+        got,
+    )
+    got = call_effect(cur, effect_snap(max_failures=2), False)
+    check(
+        "absent counter continues",
+        got.get("exec_result", {}).get("result_kind") == "continue"
+        and got.get("messages", [{}])[0].get("id") == "return_type:0:0",
+        got,
+    )
+    got = call_effect(
+        cur,
+        effect_snap(max_failures=2, counters={"return_type:0": -1}),
+        False,
+    )
+    check(
+        "negative counter raises",
+        got.get("exec_result", {}).get("result_kind") == "raise"
+        and "messages" not in got,
+        got,
+    )
+    got = call_effect(
+        cur,
+        effect_snap(max_failures=2, counters={"return_type:0": "bad"}),
+        False,
+    )
+    check("bad counter raises", got.get("exec_result", {}).get("result_kind") == "raise", got)
+    got = call_effect(cur, effect_snap(ordinal=2147483648, max_failures=2), False)
+    check(
+        "overflow ordinal raises",
+        got.get("exec_result", {}).get("result_kind") == "raise"
+        and "messages" not in got,
+        got,
+    )
+    got = call_effect(cur, effect_snap(hook="iteration_limit", max_failures=2), False)
+    check(
+        "non family hook raises",
+        got.get("exec_result", {}).get("result_kind") == "raise"
+        and "messages" not in got,
+        got,
+    )
+
+
 def test_register_shape(cur) -> None:
     cur.execute("CREATE ROLE v15_hook_bad_own2 NOLOGIN NOSUPERUSER")
     cur.execute(
@@ -918,6 +1078,29 @@ def test_register_shape(cur) -> None:
         "SELECT v15.v15_register_hook('bad_own2', 'v15.bad_own2(jsonb)'::regprocedure, false)",
         code="P1537",
         label="wrong owner still P1537",
+    )
+
+
+def test_register_grants(cur, wconn) -> None:
+    iid = str(uuid.uuid4())
+    open_invoke(wconn, iid)
+    install_hook(
+        cur,
+        "validate_return_grant",
+        validator_body("no-manual"),
+        iid,
+        {"max_failures": 0},
+        grants=False,
+    )
+    ret = call_phase(cur, iid, COMPLETE_IO)
+    check(
+        "register_hook grants rejection without manual ACL",
+        ret.get("exec_result", {}).get("result_kind") == "raise"
+        and ret["exec_result"]["error"] == {
+            "code": "V15_VALIDATION_FAILED",
+            "message": "no-manual",
+        },
+        ret,
     )
 
 
@@ -1228,6 +1411,49 @@ def test_two_validators(server, cur, wconn) -> None:
     check("validators do not wrap as V15_RAISE", got == ("completed", None), got)
 
 
+def test_two_cap_validators(server, cur, wconn) -> None:
+    park(cur)
+    iid = str(uuid.uuid4())
+    open_invoke(wconn, iid)
+    install_hook(
+        cur,
+        "validate_return_alpha",
+        validator_body("alpha-msg"),
+        iid,
+        {"max_failures": 0},
+    )
+    install_hook(
+        cur,
+        "validate_return_beta",
+        validator_body("beta-msg"),
+        iid,
+        {"max_failures": 0},
+    )
+    cur.execute("COMMIT")
+    run_until_quiescent(server.get_uri(DB), Script([RETURN_SQL]), OWNER)
+    cur.execute(
+        """
+        SELECT status, error->>'code', error->>'sqlstate', error->>'message'
+        FROM v15.invokes WHERE invoke_id = %s
+        """,
+        (iid,),
+    )
+    got = cur.fetchone()
+    check(
+        "two cap validators finish P1540",
+        got == ("failed", "V15_VALIDATION_FAILED", "P1540", "alpha-msg"),
+        got,
+    )
+    cur.execute("SELECT count(*) FROM v15.hook_counters WHERE invoke_id = %s", (iid,))
+    check("two cap validators do not bump", cur.fetchone()[0] == 0)
+    ids = [row[0] for row in message_rows(cur, iid)]
+    check(
+        "losing cap raise messages not stored",
+        not any(item.startswith("validate_return_beta:") for item in ids),
+        ids,
+    )
+
+
 def main() -> int:
     test_load_order()
     setup_db()
@@ -1246,7 +1472,9 @@ def main() -> int:
         test_prompt_and_match(cur, worker)
         test_validator_phase(cur, worker)
         test_known_code(cur)
+        test_effect_builder(cur)
         test_register_shape(cur)
+        test_register_grants(cur, worker)
         cur.execute("COMMIT")
         test_finish_raise(server, cur, worker)
         test_prompt_lands(server, cur, worker)
@@ -1256,6 +1484,7 @@ def main() -> int:
         test_abort_normalizes(server, cur, worker)
         test_forcing_raise_finish(server, cur, worker)
         test_two_validators(server, cur, worker)
+        test_two_cap_validators(server, cur, worker)
     finally:
         worker.close()
         admin.close()

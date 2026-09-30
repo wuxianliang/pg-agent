@@ -230,11 +230,11 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 | 11.1 | §15 十一文件 | ✅ | `v15/return_hooks/test_return_hooks.py` | `files_through("govern")` 9 项且末项 govern；`files_through("provider")` 10 项且末项 provider；完整列表 11 项且末项 return_hooks |
 | 11.2 | §18 `v15_on_phase` oid | ✅ | 同上 | 库内 `v15_on_phase` 恰好一个 oid |
 | 11.3 | §9.4 return→raise | ✅ | 同上 | `call_phase` 接受 `V15_VALIDATION_FAILED` 的 raise；错码与超 1024 的 message 是 `P1506` |
-| 11.4 | §9.5 raise 压过 continue | ✅ | 同上 | 同相位 continue 的持久消息不进入返回值，也不写入 `llm_messages`。胜者自己的持久消息留下。两个不等的 raise 仍是 `P1535`。真实 `budget_forcing:<ordinal>:<n>` 与 raise 同相位时，finish 后该计数仍为 0 |
+| 11.4 | §9.5 raise 压过 continue | ✅ | 同上 | 同相位 continue 的持久消息不进入返回值，也不写入 `llm_messages`。胜者自己的持久消息留下。两个不等的 raise 取 ordinal 最小的那条，不是 `P1535`。两个 `max_failures=0` 且 message 不同的 validator 终态是 `P1540`。真实 `budget_forcing:<ordinal>:<n>` 与 raise 同相位时，finish 后该计数仍为 0 |
 | 11.5 | §4.9 计数泛化 | ✅ | 同上 | 重复的 `budget_forcing:<ordinal>:<n>` 只 bump 一次。`return_type:prompt:<n>` 不 bump、不抛 `P1516`。不存在的 ordinal 是 `P1523` |
 | 11.6 | §4.9 finish return→raise | ✅ | 同上 | finish 后 invoke `failed`、`fatal=false`、`return_value` 为 SQL NULL、`error` 为 `V15_VALIDATION_FAILED` / `P1540`。历史 `repl_exception` 同码。无 `invoke/complete`。语句保持 `return`/`done`。不 bump。`repl_exec`/`invoke` exit 为 `failed`。scratch 已删 |
-| 11.7 | §10.2 config / DSL | ✅ | 同上 | 五种形态与 `max_failures` null/0 可安装。缺键、多余键、坏形态、深度 9、坏键名、`anyOf` 超 8、非法 max、baseline channel 都是 `P1524`。`validate_return` 与 `validate_return_<suffix>` 可安装；`validate_returnx` 不走该 family。未知 key 仍只要求 object |
-| 11.8 | §10.2 冻结文字 | ✅ | 同上 | 四条冻结示例 helper 与 handler 前缀逐字相同。JSON null 按 `null`/`any`/`anyOf` 匹配。SQL NULL 根值固定句。非法 spec 返回 `config spec invalid` 并按 mismatch 处理 |
+| 11.7 | §10.2 config / DSL | ✅ | 同上 | 五种形态与 `max_failures` null/0 可安装。缺键、多余键、坏形态、深度 9、坏键名、`anyOf` 超 8、非法 max、baseline channel、根级与嵌套 JSON-null-type 都是 `P1524`。`validate_return` 与 `validate_return_<suffix>` 可安装；`validate_returnx` 不走该 family。未知 key 仍只要求 object |
+| 11.8 | §10.2 冻结文字 | ✅ | 同上 | 五条冻结示例 helper 与 handler 前缀逐字相同，含嵌套 union 用根模板、不写 `at <path>`。JSON null 按 `null`/`any`/`anyOf` 匹配。SQL NULL 根值固定句。非法 spec 返回 `config spec invalid` 并按 mismatch 处理 |
 | 11.9 | §10.2 prompt | ✅ | 同上 | `iteration=0` 且 `next_attempt_n=1` 发一条持久 prompt，正文含 `render(spec)`。重试与后续迭代不重复。enter→send 后 `llm_messages` 只有一条 |
 | 11.10 | §10.2 容忍与计数 | ✅ | 同上 | 匹配 return 不产生 effect、不 bump。complete 相位不 bump。`max_failures=1` 时 finish 接受后 n 加一，id 用增加前的 n；下一次 raise 且不写下一条计数 id。`max_failures=0` 首次即 raise 且不 bump。`max_failures` 为 JSON null 时两次拒绝后仍 complete，计数为 2 |
 | 11.11 | §10.2 ValidateReturn | ✅ | 同上 | helper 产生 continue/raise。原始 message 不包装成 `V15_RAISE`。两个 validator 各自计数。valid 的那个不产生 exec_result。`invoke/complete` 不第二次校验 |
@@ -242,6 +242,8 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 | 11.13 | §9.2 异常隔离 | ✅ | 同上 | validator 直接 `RAISE` 写 audit，invoke 仍 `completed`，计数保持 0 |
 | 11.14 | §9.5 abort 归一 | ✅ | 同上 | abort 携带 `V15_VALIDATION_FAILED` 时阶段返回 `V15_HOOK_ABORT`，提交后 invoke `failed`、`P1538`，不是 `P1540` |
 | 11.15 | §13 known-code | ✅ | 同上 | `v15_govern_known_code('V15_VALIDATION_FAILED')` 为 true。错 owner 登记仍是 `P1537` |
+| 11.16 | §10.2 effect builder | ✅ | 同上 | helper 直测：仅 SQL `true` 绕过；`p_valid` NULL、畸形 counter、溢出 ordinal、非 counted family 都 raise，不生成 continue。缺席 counter 视为 0 |
+| 11.17 | §9.3 family GRANT | ✅ | 同上 | `v15_register_hook` 登记 `validate_return_*` 后，不手工 `GRANT` 也能发出 rejection |
 
 ## M3 · §14
 
