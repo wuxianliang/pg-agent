@@ -2,7 +2,7 @@
 
 从 `docs/designs/v15-jaz-dev.md` §14 抄入。这些行是相对 jaz 参考运行时的有意差别。实现不得把它们修回参考运行时。本文件不是第二份行为合同。
 
-D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。D31–D32 是 rev 10 的骨架句，M1 只记录偏差，不声称 DSL helper 已经进 gate。
+D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。D31–D32 是 rev 10 追加。M2 的 `v15/return_hooks/test_return_hooks.py` 已覆盖封闭 DSL helper、ReturnType handler 与 ValidateReturn 注册协议。
 
 ## 14.1 偏差
 
@@ -66,9 +66,9 @@ D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。D31�
 
 **V15-D30。** 高峰只按上海时区周一至周五的两个半开窗口 `[09:00, 12:00)` 与 `[14:00, 18:00)` 估算，不含法定节假日。假日若落在周一至周五，按高峰计价，方向是多报，不少报。实现不得为了贴近发票而补节假日日历。
 
-**V15-D31。** jaz 的 ReturnType / ValidateReturn 用 Python 类型与异常对象，并在 InvokeComplete 再查一次。v15 用封闭 jsonb 类型规格与注册式 SQL handler，只在 `repl_exec/complete` 校验。可恢复拒绝是 return→continue 加持久消息；耗尽后是 return→raise / `P1540`。`P1540` 不是 abort 保留码。没有第二次谓词调用。
+**V15-D31。** jaz 的 ReturnType / ValidateReturn 用 Python 类型与异常对象，并在 InvokeComplete 再查一次。v15 用封闭 jsonb 类型规格与注册式 SQL handler，只在 `repl_exec/complete` 校验。可恢复拒绝是 return→continue 加持久消息；耗尽后是 return→raise / `P1540`。`P1540` 不是 abort 保留码。没有第二次谓词调用。validator 直接 `RAISE` 仍走异常隔离，不算校验拒绝。
 
-**V15-D32。** spec 键名限制为 `^[A-Za-z_][A-Za-z0-9_]{0,62}$`，嵌套深度 ≤ 8。`jsonb` 的 `number` 不区分整数与浮点。enum 通过性按数值相等，展示按 `elem::text`。
+**V15-D32。** spec 键名限制为 `^[A-Za-z_][A-Za-z0-9_]{0,62}$`，嵌套深度 ≤ 8。`jsonb` 的 `number` 不区分整数与浮点。enum 通过性按数值相等，展示按 `elem::text`。对象渲染的 required 按数组序，可选键按 UTF-8 字节序，项之间是 `, `。
 
 ## 14.2 故意保留
 

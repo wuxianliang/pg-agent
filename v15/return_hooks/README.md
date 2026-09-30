@@ -2,8 +2,8 @@
 
 Gate: `uv run python v15/return_hooks/test_return_hooks.py`（退出码 0 = 通过）。只用 FakeLLM，不开网络。
 
-库名 `agent_v15_return_hooks`。`load_stage(..., "return_hooks")` 加载全部十一个 SQL 文件。这是合运行时库。`agent_v15_provider` 与更早的 `agent_v15_*` 仍是前缀库。
+库名 `agent_v15_return_hooks`。`load_stage(..., "return_hooks")` 加载全部十一个 SQL 文件。这是合运行时库。更早的 `agent_v15_*` 仍是前缀库。
 
-本 stage 不新增表。M1 只放可加载的 helper 占位；validation effect builder、ReturnType handler 与 ValidateReturn 注册协议在后续里程碑。`return_type` 的 CREATE、权限与 `hook_defs` 插入仍只许出现在 govern 文件。
+本 stage 不新增表。本文件只放 `v15_return_validation_effect`：读 snapshot 里的 `max_failures` 与计数，生成 return→continue 或 return→raise，不写表。`v15_return_spec_valid` / `v15_return_spec_fault` / `v15_return_spec_render` 与内建 `return_type` 的 CREATE、权限、`hook_defs` 插入仍只在 govern 文件。
 
-M1 已落地：`P1540` / `V15_VALIDATION_FAILED`、`v15_loop_accept_forcing` 的计数 id 泛化（不改名）、`return`→`raise` 的效应放行与 finish 消费、同相位 raise 压过 continue。封闭类型 DSL 的五形态文法在规格 §10.2；运行期 helper 尚未进本文件。
+`return_type` 用封闭 jsonb 类型规格（五形态）。`validate_return` 与 `validate_return_<suffix>` 不预插 builtin 行；登记方创建 `v15_hook_<key>`，并授予 schema `v15` 的 USAGE 与 effect builder 的 EXECUTE。handler 用 effect builder 传 valid/message，不要用直接 `RAISE` 表示值不合法。

@@ -2081,9 +2081,9 @@ SELECT jaz."return"(jaz.var('<ident>'));
 
 运行期 `v15_return_spec_fault(value, spec) returns text`：匹配返回 SQL NULL；否则返回不带前缀的失败文字。spec 非法时返回 `config spec invalid`，不抛异常。运行期任何错误按校验失败处理。
 
-`render(spec)`：标量等于 type 词；数组为 `array of <render(items)>`；对象为 `object {` + required 按序 `<key>: <render>` + 可选键按 UTF-8 字节序 `<key>?: <render>` + `}`；anyOf 为 `anyOf (<render> | <render>)`；enum 为 `enum (<elem::text>, ...)`。enum 通过性按 jsonb 数值相等（`enum:[1]` 匹配 `1.0`），展示按 `elem::text` 字形。
+`render(spec)` 由 `v15_return_spec_render(jsonb) returns text` 实现。标量等于 type 词；数组为 `array of <render(items)>`；对象为 `object {` + required 按序 `<key>: <render>` + 可选键按 UTF-8 字节序 `<key>?: <render>` + `}`，多项之间是 `, `，花括号内侧无空格；anyOf 为 `anyOf (<render> | <render>)`，分支之间是 ` | `；enum 为 `enum (<elem::text>, ...)`，元素之间是 `, `。enum 通过性按 jsonb 数值相等（`enum:[1]` 匹配 `1.0`），展示按 `elem::text` 字形。
 
-失败文字从 `$` 起。根类型不符：`Expected <render(root)>. Got jsonb <typeof>.`。深层：`Expected <render(node)> at <path>. Got jsonb <typeof>.`。缺必填键：`Expected <render(root)>. Missing key <path>.`。anyOf 全败与 enum 不符用根模板配整棵 render。SQL NULL 根值的失败文字是 `Expected <render(root)>. Got SQL NULL.`。handler 前缀是 `[v15 return_type] `（一个空格）。continue 消息与 raise 的 `error.message` 是同一整句。
+失败文字从 `$` 起。根类型不符：`Expected <render(root)>. Got jsonb <typeof>.`。深层：`Expected <render(node)> at <path>. Got jsonb <typeof>.`。缺必填键：`Expected <render(root)>. Missing key <path>.`。anyOf 全败与 enum 不符不钻进分支：该节点在根上用根模板，在深层用深层模板，render 都是该节点整棵。SQL NULL 根值的失败文字是 `Expected <render(root)>. Got SQL NULL.`。handler 前缀是 `[v15 return_type] `（一个空格）。continue 消息与 raise 的 `error.message` 是同一整句。
 
 冻结示例：
 
@@ -2098,7 +2098,7 @@ spec {"anyOf":[{"type":"string"},{"type":"null"}]}，值 1：
 [v15 return_type] Expected anyOf (string | null). Got jsonb number.
 ```
 
-两只内核辅助函数的 owner 是 `v15_owner`，STABLE，SECURITY INVOKER，`search_path = pg_catalog`，REVOKE PUBLIC，`GRANT EXECUTE` 给 `v15_owner` 与 `v15_hook_return_type`。它们放在 govern 文件。`v15_return_spec_valid(jsonb) returns boolean` 只走形状。`v15_return_spec_fault(jsonb, jsonb) returns text` 做运行期匹配。
+两只内核辅助函数的 owner 是 `v15_owner`，STABLE，SECURITY INVOKER，`search_path = pg_catalog`，REVOKE PUBLIC，`GRANT EXECUTE` 给 `v15_owner` 与 `v15_hook_return_type`。`v15_hook_return_type` 还须有 schema `v15` 的 USAGE，否则 schema 限定调用在 handler 内因权限失败，被异常隔离当成通过。它们放在 govern 文件。`v15_return_spec_valid(jsonb) returns boolean` 只走形状。`v15_return_spec_fault(jsonb, jsonb) returns text` 做运行期匹配。
 
 `llm_query/enter` 且 `iteration = 0`、`next_attempt_n = 1` 时，返回一条持久 user message。id 固定为 `return_type:prompt:<ordinal>`，不参与计数。正文含 `render(spec)`。`next_attempt_n > 1` 不再生成。
 
@@ -2110,7 +2110,7 @@ spec {"anyOf":[{"type":"string"},{"type":"null"}]}，值 1：
 
 handler 在 `span/phase` 不是 `repl_exec/complete`，或 `io.result_kind` 不是 `return` 时返回 proceed。拒绝时调用 `v15_return_validation_effect(snapshot, valid, message)`，不得用直接 `RAISE` 表示值不合法。直接抛出的异常仍走既有非 baseline 隔离，不算校验拒绝，不 bump。每个 validator 的计数按自己的 full hook key 与 ordinal 隔离。
 
-`v15_return_validation_effect(jsonb, boolean, text) returns jsonb` 放在 stage 11。它不写表，不改计数。`p_valid = true`、非 `repl_exec/complete` 或非 return 候选时返回 proceed。`p_message` 必须是非 null 文本，长度不超过 1024。未达上限时返回 continue 与一条持久消息，id 为 `<hook_key>:<ordinal>:<n>`。已达上限时返回 raise，`error = {"code":"V15_VALIDATION_FAILED","message":<原始消息>}`，不产生计数消息。
+`v15_return_validation_effect(jsonb, boolean, text) returns jsonb` 放在 stage 11。它不写表，不改计数。`p_valid = true`、非 `repl_exec/complete`、非 return 候选或 `capture` 非空时返回 proceed。`p_message` 为 SQL NULL 时用 `validation message missing`；超过 1024 时截到 1024，不抛异常。未达上限时返回 continue 与一条持久消息，id 为 `<hook_key>:<ordinal>:<n>`。已达上限时返回 raise，`error = {"code":"V15_VALIDATION_FAILED","message":<原始消息>}`，不产生计数消息。登记 `validate_return*` 的一方须把 schema `v15` 的 USAGE 和该函数的 EXECUTE 授给 `v15_hook_<key>`。
 
 计数键是 `<hook_key>:<ordinal>`。`v15_loop_accept_forcing` 名字与签名不变。它只接受 `budget_forcing`、`return_type`、`validate_return`，以及以 `validate_return_` 开头的 key。`(invoke_id, ordinal)` 必须存在，且关联的 `hook_key` 等于消息中的 key，否则 `V15_INVALID_TRANSITION`。同一 message id 只 bump 一次。不比对消息里的 `n` 与库值。第 2、3 段不是数字，或数字溢出，则跳过，不抛 `V15_PHASE_CONTRACT`。`n` 达到 bigint 最大值时，接受函数以 `V15_VALUE_INVALID` 失败，不允许溢出。
 
@@ -2346,9 +2346,9 @@ PostgreSQL 自己的 sqlstate（例如散文的 `42601`、权限不足的 `42501
 
 **V15-D30。** 高峰只按上海时区周一至周五的两个半开窗口 `[09:00, 12:00)` 与 `[14:00, 18:00)` 估算，不含法定节假日。假日若落在周一至周五，按高峰计价。方向是多报成本，不少报。实现不得为了贴近发票而补节假日日历。
 
-**V15-D31。** jaz 的 ReturnType / ValidateReturn 用 Python 类型与异常对象，并在 InvokeComplete 再查一次。v15 用封闭 jsonb 类型规格与注册式 SQL handler，只在 `repl_exec/complete` 校验。可恢复拒绝是 return→continue 加持久消息；耗尽后是 return→raise / `P1540`。`P1540` 不是 abort 保留码。没有第二次谓词调用。
+**V15-D31。** jaz 的 ReturnType / ValidateReturn 用 Python 类型与异常对象，并在 InvokeComplete 再查一次。v15 用封闭 jsonb 类型规格与注册式 SQL handler，只在 `repl_exec/complete` 校验。可恢复拒绝是 return→continue 加持久消息；耗尽后是 return→raise / `P1540`。`P1540` 不是 abort 保留码。没有第二次谓词调用。validator 直接 `RAISE` 仍走异常隔离，不算校验拒绝。
 
-**V15-D32。** spec 键名限制为 `^[A-Za-z_][A-Za-z0-9_]{0,62}$`，嵌套深度 ≤ 8。`jsonb` 的 `number` 不区分整数与浮点。enum 通过性按数值相等，展示按 `elem::text`。
+**V15-D32。** spec 键名限制为 `^[A-Za-z_][A-Za-z0-9_]{0,62}$`，嵌套深度 ≤ 8。`jsonb` 的 `number` 不区分整数与浮点。enum 通过性按数值相等，展示按 `elem::text`。对象渲染的 required 按数组序，可选键按 UTF-8 字节序，项之间是 `, `。
 
 ### 14.2 故意保留
 

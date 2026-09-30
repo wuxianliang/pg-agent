@@ -1228,4 +1228,8 @@ P1540 和新 `hook_defs` row 不是旧十 stage 的兼容数据。rollback 必�
 
 步骤 1–6 已落地：stage 11 骨架、`P1540`（loop CASE + known_code 双体，`v15_io_sqlstate` 不动）、`v15_loop_accept_forcing` 不改名的计数泛化、`v15_govern_check_return` 放行 return→raise、`v15_finish_exec` 消费该分支并同步 `v_inv.return_value` / `v_inv.error`、`v15_on_phase` raise 压过 continue。规格升 rev 10。
 
+### M2（2026-09-30）
+
+步骤 7–10 已落地：govern 内 `v15_return_spec_valid` / `v15_return_spec_fault` / `v15_return_spec_render`，optional guard 的 `return_type` 与 `validate_return*` 分支，内建 `return_type` handler，stage 11 的 `v15_return_validation_effect`，以及 stage 11 完整 gate。`v15_hook_return_type` 与登记式 validator 角色需要 schema `v15` 的 USAGE，否则 helper 调用被异常隔离。十一道 gate 串行退出码 0。
+
 十一道 gate 串行实跑，退出码都是 0：schema、namespace、config、protocol、repl、io、loop、tree、govern、provider、return_hooks。budget_forcing 既有断言未放宽。
