@@ -70,6 +70,8 @@ class Driver:
                 raise RuntimeError("io inside transaction")
             if hooks.get("on_io"):
                 hooks["on_io"](self.conn)
+            if self.conn.info.transaction_status != TRANSACTION_STATUS_IDLE:
+                raise RuntimeError("io inside transaction")
             try:
                 outcome = self.adapter.run(
                     req["tool"], req["paths"], req["payload"], req["attempt_key"], hooks)

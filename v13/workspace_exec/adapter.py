@@ -77,8 +77,16 @@ class Adapter:
         parts = rel.split("/")
         if not parts or any(p in ("", ".", "..") for p in parts):
             raise Escape()
-        fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
+            fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.EMLINK):
+                raise Escape() from exc
+            raise WorkerFail("io_error") from exc
+        try:
+            st = os.fstat(fd)
+            if (st.st_dev, st.st_ino) != (self._dev, self._ino) or not stat.S_ISDIR(st.st_mode):
+                raise Escape()
             for part in parts[:-1]:
                 try:
                     nxt = os.open(
@@ -163,7 +171,16 @@ class Adapter:
                 os.close(fd)
 
     def _temp_name(self, attempt_key):
-        return ".v13tmp-" + attempt_key
+        if not isinstance(attempt_key, str) or attempt_key in ("", ".", ".."):
+            raise Escape()
+        if "/" in attempt_key or "\\" in attempt_key or "\0" in attempt_key:
+            raise Escape()
+        name = ".v13tmp-" + attempt_key
+        if name in (".", "..", "") or "/" in name or "\\" in name or "\0" in name:
+            raise Escape()
+        if os.path.basename(name) != name or os.path.dirname(name) != "":
+            raise Escape()
+        return name
 
     def _write_temp(self, parent, temp, data):
         fd = os.open(

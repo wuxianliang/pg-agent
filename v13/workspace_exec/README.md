@@ -4,6 +4,8 @@ Phase B 第二段。无 SQL，无加载键。另一份脚本上的 edit、write�
 
 ## 使用域
 
+PB-4 夹具的 owner 是本目录测试文件里的 `Volume`，不是 `setup_db.py`，也不是适配器。挂载、`Foo`/`foo` 探针、三标志（镜像已创建 / 已 attach / 库已 `CREATED`）、`detach` 与删镜像的独立 try，都在 `test_workspace_exec.py`。ASCII 往返在 `audit_tree`（`workspace_root_is_mount` 与 `fixture_bound_only` 各跑一次）。inode 碰撞探针在 `Volume._probe`（`a`/`ab`）以及 `audit_tree`。这些是实测位置，不是「gate 退出码 0 即视为探针已做」。
+
 工作区根是系统临时目录树下的 cs-APFS 挂载点路径字符串本身。不是仓库根，不是 `/`，不是 `/Volumes`。不调用 `realpath` 改写它。镜像文件不是根。
 
 挂载：`hdiutil create -size 64m -fs "Case-sensitive APFS" -type SPARSE` 写到 `$TMPDIR` 下唯一名镜像。已存在则拒绝，不覆盖。`hdiutil attach -mountpoint $TMPDIR/<唯一名>/ws`，挂载点目录预先建空。只处理本进程创建的资源。三标志分开：镜像已创建、已 attach、库已 `CREATED`。
@@ -16,7 +18,9 @@ NFC/NFD 查找折叠保留在使用域外。使用域内由纯 ASCII、往返和
 
 ## 清理
 
-`finally` 里 detach、删镜像、DROP 库各自独立 try。create 成功而 attach 失败则删镜像并退出非零。探针失败则先清镜像再 DROP 库，退出非零。detach 失败只记 `[cleanup-fail]`，不阻塞 DROP，但该次运行不得记 `exit_0`。断言已过后清理失败：库仍 DROP，进程非零退出。
+测试 fixture 的 `finally` 里 detach、删镜像、DROP 库各自独立 try。create 成功而 attach 失败则删镜像并退出非零。探针失败则先清镜像再 DROP 库，退出非零。detach 失败只记 `[cleanup-fail]`，不阻塞 DROP，但该次运行不得记 `exit_0`。断言已过后清理失败：库仍 DROP，进程非零退出。
+
+`setup_db.py`：建库成功后 `CREATED=True`。`load_stage` 失败则本函数独立 DROP 本次创建的库（DROP 成功则清 `CREATED`）；成功路径把库交给外层测试 fixture，由它的 `finally` DROP。
 
 ## 驱动
 
@@ -28,4 +32,4 @@ NFC/NFD 查找折叠保留在使用域外。使用域内由纯 ASCII、往返和
 
 断言名按计划 §5.2。
 
-证据：退出码 0；51 checks；库 `ll_workspace_exec_72059_f88160`（跑完已 DROP）。Fake 退出码 0 不是产品可用。
+证据：退出码 0；54 checks（含 `temp_component_closed` / `root_fd_rechecked` / `idle_after_on_io`）；库 `ll_workspace_exec_87590_06f189`（跑完已 DROP）。Fake 退出码 0 不是产品可用。父补审 group `44C31F75` 四条 P1 已跟进。未改 `workspace_admit` SQL。

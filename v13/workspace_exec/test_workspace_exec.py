@@ -27,6 +27,7 @@ sys.path.insert(0, str(AGENT_ROOT))
 from server import get_server
 from v13.load import run_psql
 from v13.workspace_exec.driver import Driver
+from v13.workspace_exec.adapter import Escape
 from v13.workspace_exec.setup_db import DB, main as setup_db
 import v13.workspace_exec.setup_db as setup_mod
 
@@ -80,6 +81,9 @@ REQUIRED = {
     "no_real_provider",
     "no_material_spent_insert",
     "tool_result_without_tool_call",
+    "temp_component_closed",
+    "root_fd_rechecked",
+    "idle_after_on_io",
 }
 
 
@@ -412,6 +416,11 @@ def test_static():
         "urllib" not in blob and "httpx" not in blob and "openai" not in blob
         and not os.environ.get("V13_REAL_PROVIDER_AUTHORIZATION"),
     )
+    parent_src = adapter_src.split("def _parent", 1)[1].split("def _map_open", 1)[0]
+    check(
+        "root_fd_rechecked",
+        "fstat" in parent_src and "self._dev" in parent_src and "self._ino" in parent_src,
+    )
 
 
 def run_cases(cur, driver, mount):
@@ -427,6 +436,20 @@ def run_cases(cur, driver, mount):
         ver == 2 and "v13_open_session(" not in static_names(driver_src)
         and "v13_plan_commit_entry(" not in static_names(driver_src),
         ver,
+    )
+    blocked = True
+    for key in ("a/b", "x\0y", ".", "..", "", "foo\\bar"):
+        try:
+            driver.adapter._temp_name(key)
+            blocked = False
+            break
+        except Escape:
+            pass
+    good = driver.adapter._temp_name("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    check(
+        "temp_component_closed",
+        blocked and good == ".v13tmp-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        good,
     )
     materials = n_events(cur, sid, "turn/material_spent")
     calls = n_events(cur, sid, "tool/call")
@@ -481,6 +504,29 @@ def run_cases(cur, driver, mount):
         idle.get("status"),
     )
     check("no_advisory_lock_across_io", idle.get("adv") == 0, idle.get("adv"))
+    child_idle = str(q1(cur, "SELECT v13_fork(%s::uuid, 0, 'fresh_fork')", (sid,)))
+    cur.connection.commit()
+    d_idle = Driver(driver.conn, child_idle, mount, [mount])
+    d_idle.policy = driver.policy
+    d_idle.adapter = driver.adapter
+
+    def begin_txn(conn):
+        conn.cursor().execute("SELECT 1")
+
+    raised = False
+    try:
+        d_idle.execute(
+            "workspace_edit", write_req("idlehook.txt", "x", None),
+            hooks={"on_io": begin_txn},
+        )
+    except RuntimeError as exc:
+        raised = "io inside transaction" in str(exc)
+        driver.conn.rollback()
+    check(
+        "idle_after_on_io",
+        raised is True and d_idle.adapter_calls == 0,
+        (raised, d_idle.adapter_calls),
+    )
     check(
         "workspace_request_not_in_tool_calls",
         n_events(cur, sid, "tool/call") == calls,

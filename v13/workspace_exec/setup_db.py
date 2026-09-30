@@ -2,6 +2,8 @@
 
 No SQL file. No load key. Never DROP an existing name. Cleanup drops only
 the database this process created. The name must not match agent_v13_%.
+Load failure after CREATE drops in this function. A successful load leaves
+CREATED set so the test fixture DROPs in its finally.
 """
 from __future__ import annotations
 
@@ -62,7 +64,16 @@ def main() -> int:
         return 1
     run_psql(server, "postgres", f'CREATE DATABASE "{DB}";')
     CREATED = True
-    load_stage(server, DB, "workspace_admit")
+    try:
+        load_stage(server, DB, "workspace_admit")
+    except Exception:
+        try:
+            run_psql(server, "postgres", 'DROP DATABASE "%s" WITH (FORCE);' % DB)
+            CREATED = False
+            print("[dropped]", DB)
+        except Exception as exc:
+            print("[cleanup-fail]", exc)
+        raise
     print("[ready]", DB)
     return 0
 
