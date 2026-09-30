@@ -15,9 +15,9 @@
 | B4 | Phase C | 不实现。gap 投影尚未存在 | 无 | not_run |
 | B5 | Phase C | 不实现。驱动器不是收据写者 | 无 | not_run |
 | B6 | `loop_driver` | 所有权表（README `## B6` 15 行，含 fourth-duty=none）与静态检查已交付。不授权无人值守；Phase C 声称前必须再交表 | 同上。断言 `b6_table_complete`/`static_check`/`no_recover_idle`/`no_direct_spawn`/`no_closed_set_leak`。claim 路径偏差见台账 L12/L13 | exit_0 |
-| C1 | `workflow_bind` | 不得声称政策行或解析器已交付 | 无 | not_run |
-| C2 | `workflow_bind` | 合同未交。子集不在 A | 无 | not_run |
-| C3 | `workflow_bind` / `real_chain` | 不得声称指针函数或生产调用已交付 | 无 | not_run |
+| C1 | `workflow_bind` | 政策行 `workflow_template` version 1 与 STABLE 解析器已交付。返回四段文本，不合并单行。不声称 `judgment_templates` 被复用 | `UV_FROZEN=1 uv run python v13/workflow_bind/test_workflow_bind.py` 退出码 0；库 `ll_workflow_bind_47316`（跑完已 DROP）；8 checks。断言 `resolve_v1` / `judgment_templates_untouched` | exit_0 |
+| C2 | `workflow_bind` | 合同在同一政策行（labels / allowed_tools / parent_tools / chain）。子集交付不在本行（Phase B）。explore 仍 RAISE。不 UPDATE tools | 同上。断言 `label_does_not_open_explore` / `no_tool_flag_update` | exit_0 |
+| C3 | `workflow_bind` / `real_chain` | 函数 `v13_child_pointer` 已交付。生产调用者不在本行，留在 `real_chain`。不改 `v13_session_log` | 同上。断言 `one_pointer` / `pointer_not_transcript` / `session_log_unchanged` / `root_waterline_unchanged` | exit_0 |
 | C4 | `real_chain` | 不得声称摘录引用已交付。多 lane 不建 | 无 | not_run |
 | C5 | `loop_driver` | 不实现自动 skip | 无 | not_run |
 | C6 | Phase C | 不实现。V11 未读 | 无 | not_run |
@@ -33,5 +33,5 @@
 | plan_read gate | `v13/plan_read` | A3 库存与前沿零写。不声称 `v13_selected_todo` / `v13_plan_gate` 已交付 | 同上。断言：`zero_write`；`inventory_33`；`inventory_32`；`inventory_0`；`horizon_caps`；`gap_inserts_nothing`；`text_cap`；`empty_plan`；`child_reads_root_stream` | exit_0 |
 | plan_arm gate | `v13/plan_arm` | 唯一一份 `v13_advance` 替换已在一次性库跑通。不声称绑定窗已闭合，不声称产品角色 | `UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0；库 `ll_plan_arm_16921`（跑完已 DROP）；43 checks。断言名按 §7.3。结算扫描全部绑定行 | exit_0 |
 | loop_driver gate | `v13/loop_driver` | B1/B2/B6/C7 在一次性库跑通（三轮 Oracle 复审：首轮 P0×1 加一批 P1 全改；第二轮 codex 通过；第三轮三路通过后余项亦全改）。不声称真链端到端，不声称产品角色，不授权无人值守。Fake 绿不是产品可用 | `UV_FROZEN=1 uv run python v13/loop_driver/test_loop_driver.py` 退出码 0；库 `ll_loop_driver_62098`（跑完已 DROP）；55 checks。回归：`plan_contract` 93、`plan_read` 11、`plan_arm` 43 同日全绿 | exit_0 |
-| workflow_bind gate | `v13/workflow_bind` | 无 | 无 | not_run |
+| workflow_bind gate | `v13/workflow_bind` | C1/C2/C3 在一次性库跑通。不声称工具子集、explore 已改、生产调用已接、产品角色。Fake 绿不是产品可用 | `UV_FROZEN=1 uv run python v13/workflow_bind/test_workflow_bind.py` 退出码 0；库 `ll_workflow_bind_47316`（跑完已 DROP）；8 checks。回归：`plan_contract` 93、`plan_read` 11、`plan_arm` 43、`loop_driver` 55 同日全绿 | exit_0 |
 | real_chain gate | `v13/real_chain` | 无 | 无 | not_run |
