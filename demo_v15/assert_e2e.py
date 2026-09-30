@@ -1073,15 +1073,18 @@ def assert_e2e(
             {"n": 3, "name": "csi_three_children", "ok": child_counts.get(root_id, 0) == 3},
             {"n": 4, "name": "csi_batch1_a_before_b", "ok": bool(root_node.get("csi_batch1_order_ok"))},
             {"n": 5, "name": "csi_batch1_before_batch2", "ok": bool(root_node.get("csi_batch1_before_batch2_ok"))},
-            {"n": 6, "name": "csi_bind_home_one_settled", "ok": bool(root_node.get("csi_home_settled_ok"))},
-            {"n": 7, "name": "csi_children_one_settled", "ok": bool(root_node.get("csi_children_one_settled"))},
-            {"n": 8, "name": "csi_var_a_b_c", "ok": bool(root_node.get("csi_var_ok"))},
-            {"n": 9, "name": "csi_no_repl_exit", "ok": bool(root_node.get("csi_pairs_ok"))},
-            {"n": 10, "name": "deepest_return", "ok": deepest_ok},
-            {"n": 11, "name": "quiescent", "ok": running_clear},
-            {"n": 12, "name": "no_reject_no_fatal", "ok": (not rejected) and (not any_fatal)},
-            {"n": 13, "name": "event_seq_continuous", "ok": events_ok},
-            {"n": 14, "name": "scratch_clear", "ok": scratch_clear},
+            {"n": 6, "name": "csi_batch2_three_statements", "ok": bool(root_node.get("csi_batch2_three"))},
+            {"n": 7, "name": "csi_return_reads_var_c", "ok": bool(root_node.get("csi_return_reads_var_c"))},
+            {"n": 8, "name": "csi_bind_home_one_settled", "ok": bool(root_node.get("csi_home_settled_ok"))},
+            {"n": 9, "name": "csi_children_one_settled", "ok": bool(root_node.get("csi_children_one_settled"))},
+            {"n": 10, "name": "csi_var_a_b_c", "ok": bool(root_node.get("csi_var_ok"))},
+            {"n": 11, "name": "csi_no_repl_exit", "ok": bool(root_node.get("csi_pairs_ok"))},
+            {"n": 12, "name": "deepest_return", "ok": deepest_ok},
+            {"n": 13, "name": "quiescent", "ok": running_clear},
+            {"n": 14, "name": "no_reject_no_fatal", "ok": (not rejected) and (not any_fatal)},
+            {"n": 15, "name": "event_seq_continuous", "ok": events_ok},
+            {"n": 16, "name": "scratch_clear", "ok": scratch_clear},
+            {"n": 17, "name": "csi_child_roles_leaf", "ok": inputs_ok},
         ]
     warning_ok = scenario != "recall" or (
         warning["root_tail_warned"]
@@ -1738,9 +1741,14 @@ def _contains_value(body, expected) -> bool:
     return False
 
 
+def _csi_select_one(sql: str) -> bool:
+    compact = " ".join((sql or "").split()).rstrip(";").upper()
+    return compact == "SELECT 1"
+
+
 def _csi_node_return_ok(is_root: bool, inputs: dict, ret) -> bool:
     if is_root:
-        return _contains_value(ret, CSI_ANSWER)
+        return isinstance(ret, dict) and ret.get("answer") == CSI_ANSWER
     if not isinstance(ret, dict) or not isinstance(ret.get("history"), list):
         return False
     task_id = inputs.get("task_id")
@@ -1887,13 +1895,22 @@ def _csi_root_bind(
     on_b2 = [stmt for stmt in stmts if int(stmt["iteration"]) == batch2_iter]
     on_b2.sort(key=lambda stmt: int(stmt["stmt_index"]))
     binds_b2 = [stmt for stmt in on_b2 if stmt["kind"] == "bind_invoke"]
-    batch2_one = (
-        bool(on_b2)
+    batch2_three = (
+        len(on_b2) == 3
         and all(stmt["status"] == "done" for stmt in on_b2)
+        and int(on_b2[0]["stmt_index"]) == 0
+        and on_b2[0]["kind"] == "plain"
+        and _csi_select_one(on_b2[0]["sql"] or "")
+        and int(on_b2[1]["stmt_index"]) == 1
+        and on_b2[1]["kind"] == "plain"
+        and _csi_select_one(on_b2[1]["sql"] or "")
+        and int(on_b2[2]["stmt_index"]) == 2
+        and on_b2[2]["kind"] == "bind_invoke"
+        and on_b2[2]["bind_name"] == "c"
+        and on_b2[2]["status"] == "done"
         and len(binds_b2) == 1
         and binds_b2[0]["bind_name"] == "c"
-        and binds_b2[0]["status"] == "done"
-        and on_b2[-1]["kind"] == "bind_invoke"
+        and int(binds_b2[0]["stmt_index"]) == 2
     )
     home_ok = _csi_home_settled(invoke_attempts, batch1_iter) and _csi_home_settled(
         invoke_attempts, batch2_iter
@@ -1920,6 +1937,12 @@ def _csi_root_bind(
         and max_iter is not None
         and max_iter > batch2_iter
     )
+    on_final = [
+        stmt for stmt in stmts if max_iter is not None and int(stmt["iteration"]) == max_iter
+    ]
+    on_final.sort(key=lambda stmt: int(stmt["stmt_index"]))
+    return_sqls = [stmt["sql"] or "" for stmt in on_final if stmt["kind"] == "return"]
+    return_reads_var_c = bool(return_sqls) and all(mentions_var(sql, "c") for sql in return_sqls)
     edges = []
     var_ok_all = True
     for bind in ordered:
@@ -1982,7 +2005,7 @@ def _csi_root_bind(
             break
     ok = (
         batch1_two
-        and batch2_one
+        and batch2_three
         and home_ok
         and iter_ok
         and pairs_ok
@@ -1990,6 +2013,7 @@ def _csi_root_bind(
         and batch1_before_batch2
         and var_ok_all
         and children_settled_ok
+        and return_reads_var_c
     )
     req0 = [attempt for attempt in invoke_attempts if int(attempt["iteration"]) == batch1_iter]
     settled0 = [attempt for attempt in req0 if attempt["status"] == "settled"]
@@ -2007,7 +2031,9 @@ def _csi_root_bind(
         "deliver_seq": edges[0]["deliver_seq"] if edges else None,
         "repl_exits_between": edges[0]["repl_exits_between"] if edges else None,
         "csi_batch1_two": batch1_two,
-        "csi_batch2_one": batch2_one,
+        "csi_batch2_three": batch2_three,
+        "csi_batch2_statement_count": len(on_b2),
+        "csi_return_reads_var_c": return_reads_var_c,
         "csi_home_settled_ok": home_ok,
         "csi_iter_ok": iter_ok,
         "csi_pairs_ok": pairs_ok,
@@ -2019,6 +2045,41 @@ def _csi_root_bind(
         "csi_edges": edges,
     }
     return ok, meta
+
+
+def _csi_child_a_cite_tokens(root_id: str, nodes: list[dict], stmts_by: dict) -> list[str]:
+    child_id = None
+    for stmt in stmts_by.get(root_id, []):
+        if (
+            stmt["kind"] == "bind_invoke"
+            and stmt.get("bind_name") == "a"
+            and stmt.get("child_invoke_id")
+        ):
+            child_id = stmt["child_invoke_id"]
+            break
+    if child_id is None:
+        root = next((node for node in nodes if node["invoke_id"] == root_id), None) or {}
+        for edge in root.get("csi_edges") or []:
+            if edge.get("bind_name") == "a" and edge.get("child_invoke_id"):
+                child_id = edge["child_invoke_id"]
+                break
+    child = next((node for node in nodes if node["invoke_id"] == child_id), None)
+    if child is None:
+        return []
+    tokens: list[str] = []
+    ret = child.get("return_value")
+    if isinstance(ret, dict):
+        error = ret.get("error")
+        if isinstance(error, str) and error:
+            tokens.append(error)
+        task_id = ret.get("task_id")
+        if task_id is not None and str(task_id):
+            tokens.append(str(task_id))
+    inputs = child.get("inputs") or {}
+    input_task = inputs.get("task_id")
+    if input_task is not None and str(input_task) and str(input_task) not in tokens:
+        tokens.append(str(input_task))
+    return tokens
 
 
 def _csi_meta_ok(root_id: str, nodes: list[dict], stmts_by: dict, stored_by: dict) -> tuple[bool, list[str]]:
@@ -2034,16 +2095,11 @@ def _csi_meta_ok(root_id: str, nodes: list[dict], stmts_by: dict, stored_by: dic
             for stmt in stmts_by.get(root_id, [])
             if int(stmt["iteration"]) == int(batch2)
         )
-        for row in stored_by.get(root_id, []):
-            if (
-                row["kind"] == "assistant"
-                and row["iteration"] is not None
-                and int(row["iteration"]) == int(batch2)
-            ):
-                blob += "\n" + (row["content"] or "")
-    if CSI_ERROR not in blob and CSI_TASK_A not in blob and CSI_TASK_B not in blob:
+    cites = _csi_child_a_cite_tokens(root_id, nodes, stmts_by)
+    if not cites or not any(token in blob for token in cites):
         flags.append("cites_missed")
-    if not _contains_value(root.get("return_value"), CSI_ANSWER):
+    ret_root = root.get("return_value")
+    if not (isinstance(ret_root, dict) and ret_root.get("answer") == CSI_ANSWER):
         flags.append("answer_missed")
     return not flags, flags
 

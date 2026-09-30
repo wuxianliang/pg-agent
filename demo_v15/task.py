@@ -7,7 +7,7 @@ import secrets
 
 from v15.protocol.render_prompt import render_system
 
-NOTE_MAX = 1500
+NOTE_MAX = 3200
 NOTE_CHAIN_V1 = (
     "Copy this note to the child unchanged as the note input. The quotes around "
     "a value are syntax and are not part of the value. You are the hop given by "
@@ -58,21 +58,30 @@ NOTE_CSI_V1 = (
     "role. hops is 1 for every invoke. seal is the parent seal. root_id is the "
     "root invoke id. Tasks are t01, t02, t03. The wrong formula is length plus "
     "width. The revised formula is length times width. True area of 3 by 4 is 12. "
-    "When role is root, first reply binds two solver children named a and b. "
-    "Child a inputs: note (this text), hops 1, role leaf, root_id unchanged, seal "
-    "unchanged, task_id t01, formula length plus width. Child b: same except "
+    "When role is root, emit three replies. Reply 1: exactly two statements, bind "
+    "a then bind b: SELECT jaz.bind_invoke('a', payload); SELECT jaz.bind_invoke('b', "
+    "payload). Child a inputs: note (this text), hops 1, role leaf, root_id unchanged, "
+    "seal unchanged, task_id t01, formula length plus width. Child b: same except "
     "task_id t02. Do not return on that reply. Do not read a child with "
     "jaz.prior_history. Children return their own jaz.history aggregation. After "
     "both finish, diagnose from the two child return values. Diagnosis rule: "
-    "error code or ok:false means switch formula. Next reply binds one solver "
-    "child named c with revised instructions: same note hops role root_id seal, "
-    "task_id t03, formula length times width. That reply statement text must cite "
-    "a failed child error code or task_id. When role is leaf, do not bind. Return "
-    "JSON with ok, error, task_id, answer, and history from jaz.history. If "
-    "formula is length plus width: ok is false, error is E_WRONG_FORMULA. If "
-    "formula is length times width: ok is true, answer is 12. After child c "
-    "finishes, return JSON that contains that answer. Root JSON before child c "
-    "finishes is wrong. No markdown. No prose."
+    "error code or ok:false means switch formula. Reply 2 after diagnosis: exactly "
+    "three statements: SELECT 1; SELECT 1; SELECT jaz.bind_invoke('c', payload). "
+    "The first two are required placeholders and bind c MUST be the third statement. "
+    "Child c inputs: note (this text), hops 1, role leaf, root_id unchanged, seal "
+    "unchanged, task_id t03, formula length times width. That statement text must "
+    "cite a failed child error code or "
+    "task_id. Forbid jaz.print, jaz.prior_history, re-dispatch of t01 or t02, and "
+    "return on this reply. Reply 3 after c finishes: a separate reply. jaz.\"return\" "
+    "must read jaz.var('c') answer. Reply 3 is exactly: SELECT jaz.\"return\"(jsonb_build_object('ok', true, 'answer', (jaz.var('c') -> 'answer'))); "
+    "Do not copy any child failure JSON. Do not "
+    "return the literal 12. When role is leaf, do not bind. Return JSON with ok, "
+    "error, task_id, answer, and history from jaz.history. When role is leaf, the "
+    "return statement is exactly this shape: SELECT jaz.\"return\"(jsonb_build_object('ok', …, 'error', …, 'task_id', …, 'answer', …, 'history', COALESCE((SELECT jsonb_agg(jsonb_build_object('iteration', iteration, 'llm_response', llm_response, 'repl_output', repl_output)) FROM jaz.history), '[]'::jsonb))); The history value is that scalar subquery inside jsonb_build_object. jaz.\"return\" is the whole statement: no WITH before it and no FROM after its closing parenthesis. "
+    "If formula is length "
+    "plus width: ok is false, error is E_WRONG_FORMULA. If formula is length times "
+    "width: ok is true, answer is 12. Root JSON before child c finishes is wrong. "
+    "No markdown. No prose."
 )
 CSI_TASK_A = "t01"
 CSI_TASK_B = "t02"
@@ -119,6 +128,13 @@ _CSI_PHRASES = (
     "E_WRONG_FORMULA",
     "jaz.history",
     "length times width",
+    "exactly two statements",
+    "exactly three statements",
+    "required placeholders",
+    "SELECT 1;",
+    "jaz.bind_invoke",
+    "jaz.var('c')",
+    'jaz."return"',
     "No markdown",
     "No prose",
 )
@@ -233,15 +249,18 @@ def validate_hops(value: object, scenario: str = "chain") -> int:
 
 
 def _printable(note: str) -> bool:
-    return all(32 <= ord(ch) <= 126 for ch in note)
+    return all(32 <= ord(ch) <= 126 or ch == "\u2026" for ch in note)
 
 
 def validate_note(note: str, scenario: str | None = None) -> None:
     if not isinstance(note, str) or note == "":
         raise NoteInvalid("empty")
-    if len(note) > NOTE_MAX or not _printable(note) or any(ch in note for ch in _BANNED):
+    if len(note) > NOTE_MAX or not _printable(note):
         raise NoteInvalid("chars")
-    if "jaz.bind_invoke" in note or 'jaz."return"' in note:
+    csi = scenario == "csi"
+    if not csi and any(ch in note for ch in _BANNED):
+        raise NoteInvalid("chars")
+    if not csi and ("jaz.bind_invoke" in note or 'jaz."return"' in note):
         raise NoteInvalid("forbidden")
     if scenario is None:
         return
@@ -402,7 +421,7 @@ def root_inputs(
     *,
     scenario: str = "chain",
 ) -> list[dict]:
-    validate_note(note)
+    validate_note(note, scenario)
     validate_seal(seal)
     rows = [
         input_binding("hops", hops),

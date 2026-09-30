@@ -237,6 +237,21 @@ def csi_case() -> None:
         root["statement_count_on_bind_iteration"],
     )
     check(
+        "csi batch2 three statements",
+        root.get("csi_batch2_three") is True
+        and root.get("csi_batch2_statement_count") == 3,
+        {
+            "three": root.get("csi_batch2_three"),
+            "count": root.get("csi_batch2_statement_count"),
+        },
+    )
+    check(
+        "csi return reads var c",
+        root.get("csi_return_reads_var_c") is True
+        and any("jaz.var('c')" in (sql or "") for sql in root["sqls"]),
+        root["sqls"],
+    )
+    check(
         "csi root tasks",
         root["inputs"].get("task_a") == CSI_TASK_A
         and root["inputs"].get("task_b") == CSI_TASK_B
@@ -280,10 +295,13 @@ def csi_case() -> None:
         "csi_three_children",
         "csi_batch1_a_before_b",
         "csi_batch1_before_batch2",
+        "csi_batch2_three_statements",
+        "csi_return_reads_var_c",
         "csi_bind_home_one_settled",
         "csi_children_one_settled",
         "csi_var_a_b_c",
         "csi_no_repl_exit",
+        "csi_child_roles_leaf",
     ):
         check(f"csi {name}", names.get(name) is True, names)
 
@@ -357,6 +375,12 @@ def bounds() -> None:
         raise SystemExit("FAIL note accepted")
     except NoteInvalid:
         pass
+    try:
+        validate_note("Copy this note. No markdown. No prose.", "csi")
+        raise SystemExit("FAIL stripped csi note accepted")
+    except NoteInvalid:
+        pass
+    validate_note(note_for("csi"), "csi")
     check("sizer 3400", solve_n(3400) is not None, solve_n(3400))
     check("sizer 4000", solve_n(4000) is None, solve_n(4000))
     check("bound absent", not database_exists(server, BOUND_DB), BOUND_DB)
