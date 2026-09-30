@@ -486,7 +486,7 @@ validate_return_quality:7
 | `v15_govern_check_return(text,text,jsonb,jsonb)` | 签名不变；`exec_result` 从只允许 continue 扩为允许 validation return→raise |
 | `v15_finish_exec(uuid,bigint,text)` | 签名不变；新增 return→raise 消费与 `invokes.error` 写入 |
 | `v15_loop_sqlstate(text)` | 签名不变；增加 `V15_VALIDATION_FAILED -> P1540` |
-| `v15_io_sqlstate(text)` | 签名不变；provider 文件中增加同一映射 |
+| `v15_io_sqlstate(text)` | **不动**（裁决 Q4：P1540 由 loop 层产生，io 层永不见；循 `V15_RAISE→P1529` 先例） |
 | `v15_govern_known_code(text)` | 签名不变；provider 文件中增加 P1540 code |
 | `v15_loop_accept_forcing(...)` | 名字与签名不变；体内放宽 id 解析为泛化三段式（评审裁决：不改名） |
 
@@ -1133,11 +1133,11 @@ P1540 和新 `hook_defs` row 不是旧十 stage 的兼容数据。rollback 必�
    - 添加 `STAGE_THROUGH["return_hooks"] = 11`；
    - 确认前十 stage 的 `files_through()` 输出不变。
 
-3. **先实现错误码映射。**
-   - 修改 loop 的 `v15_loop_sqlstate`；
-   - 修改 provider 的 `v15_io_sqlstate`；
-   - 修改 provider 的 `v15_govern_known_code`；
-   - 用 provider gate 验证 P1540 能被 `RAISE`、映射唯一且旧映射不变。
+3. **先实现错误码映射（两张口径，裁决 Q4）。**
+   - 修改 loop 的 `v15_loop_sqlstate` CASE；
+   - 修改 govern 的 `v15_govern_known_code` 原建体 + provider 的 REPLACE 体（超集）；
+   - **`v15_io_sqlstate` 不动**；
+   - 用 provider gate 验证 P1540 映射唯一且旧映射不变。
    - 这一步必须与后续 return→raise 消费逻辑一起进入最终原子提交。
 
 4. **泛化计数接受函数。**
