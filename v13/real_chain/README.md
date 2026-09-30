@@ -2,17 +2,17 @@
 
 Phase A 第六段，也是最后一段。交付第 4 节整段序列、G2 的 Fake 门、本链 read 注册、C4 首期 `effect_id` 加有界摘录，以及 `v13_workflow_resolve` / `v13_child_pointer` 的唯一生产调用。
 
-Fake 退出码 0 不是产品可用。真实 provider 验收不是本 gate。本目录不证明产品角色，不交付 G1，不建多 lane，不授权无人值守。
+Fake 退出码 0 不是产品可用。真实 provider 退出码 0 也不是产品可用。本目录不证明产品角色，不交付 G1，不建多 lane，不授权无人值守。
 
 ## Gate
 
 `UV_FROZEN=1 uv run python v13/real_chain/test_real_chain.py`
 
-真实验收（本里程碑不设置授权，不跑正路径）：
+真实验收与 Fake 门分开：
 
 `UV_FROZEN=1 uv run python v13/real_chain/accept_real_provider.py`
 
-授权信号只有 `V13_REAL_PROVIDER_AUTHORIZATION=1`。未设置或不是 `1`：非零退出，消息 `v13: real provider not authorized`，零网络。正路径不在本 gate 的通过条件里。
+授权信号只有 `V13_REAL_PROVIDER_AUTHORIZATION=1`。未设置或不是 `1`：非零退出，消息 `v13: real provider not authorized`，零网络。变量为 `1` 时走同一条 §4 序列，适配器是 `RealProviderAdapter`，没有 Fake。已实跑退出码 0，`provider_calls` 2，库 `ll_real_accept_15677_ad39d2`（已 DROP）。不要求固定模型正文。
 
 ## 序列
 

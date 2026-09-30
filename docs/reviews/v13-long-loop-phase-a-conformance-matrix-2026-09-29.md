@@ -27,7 +27,7 @@
 | D3 | Phase C | 不实现。哈希句之前不得标绿 | 无 | not_run |
 | G1 | Phase B | 未交付。真链只注册并接线 `read_pi` / `read_file_swift` / `read_file_py` / `read_duck`，不是完整工具面 | 无 | not_run |
 | G2 `fake_exit_0` | `real_chain` | Fake 门已在一次性库跑通。不是产品可用。与 `real_authorized_exit_0` 分开 | `UV_FROZEN=1 uv run python v13/real_chain/test_real_chain.py` 退出码 0；库 `ll_real_chain_37745_34afa7`（跑完已 DROP）；24 checks | exit_0 |
-| G2 `real_authorized_exit_0` | `real_chain` | 不得声称真实验收已跑。本行与 Fake 行分开。授权信号只有 `V13_REAL_PROVIDER_AUTHORIZATION=1`，本里程碑不设置 | 无 | not_run |
+| G2 `real_authorized_exit_0` | `real_chain` | 授权真实验收已跑通同一条 §4 序列。不是产品可用。与 Fake 行分开。不要求固定模型正文 | `UV_FROZEN=1 V13_REAL_PROVIDER_AUTHORIZATION=1 uv run python v13/real_chain/accept_real_provider.py` 退出码 0；库 `ll_real_accept_15677_ad39d2`（跑完已 DROP）；`provider_calls` 2；里程碑 roots=1 kids=1 plans=1 child_version=2 pointers=1 read=succeeded excerpt_len=21 todo=done | exit_0 |
 | G3 | Phase C | `v13_recover_idle` 未改 | 无 | not_run |
 | G4 | Phase C / D | 不实现。PC-4 不开工 | 无 | not_run |
 | plan_read gate | `v13/plan_read` | A3 库存与前沿零写。不声称 `v13_selected_todo` / `v13_plan_gate` 已交付 | 同上。断言：`zero_write`；`inventory_33`；`inventory_32`；`inventory_0`；`horizon_caps`；`gap_inserts_nothing`；`text_cap`；`empty_plan`；`child_reads_root_stream` | exit_0 |
