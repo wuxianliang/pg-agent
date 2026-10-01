@@ -275,7 +275,7 @@ def test_stage_bytes():
     from v13.plan_arm.test_plan_arm import r0_source_scope
     base = r0_source_scope()
     # Authorized plan_arm/frontier test differences have positive byte proofs.
-    paths = [p for p in paths if p not in ("v13/plan_arm", "v13/frontier_gap")]
+    paths = [p for p in paths if p not in ("v13/plan_arm", "v13/frontier_gap", "v13/loop_driver")]
     diff = subprocess.check_output(["git", "diff", base, "--", *paths], cwd=AGENT_ROOT)
     load = subprocess.check_output(
         ["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT).decode()

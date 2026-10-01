@@ -37,3 +37,12 @@ R0 只关闭根会话已进入 `ready`/`claimed` 阻断分支时的 harness mate
 | goal_supervise | 99 | `ll_goal_supervise_43598_6cbb94` |
 
 R1/M3、`goal_supervisor` 保持 `not_run`；R0 不证明 V11 auto-wake、PC-4、产品 operator 权限、真实 provider、multi-goal fairness/soak，也不改写 Phase A 既有真实验收记录。
+
+## R1 点名入口（2026-10-01）
+
+R1 只点名 `LoopDriver.settle_once`：根锁、T0 与至多一次 `v13_advance` 同未提交事务；无未付则 quiet `waiting`；返回后 IDLE。不替换 `v13_advance`，不新增 SQL/加载键，不授权无人值守，不证明产品角色或真实 provider。M3 / `goal_supervisor` / `unattended_continuation` 仍 `not_run`。实现基线仍为 `fb295ac6c7459bb98dac57e37883af549d2d8a4c`；去掉 `# R1_SETTLE_ONCE_BEGIN/END` 后 `v13/loop_driver/driver.py` 恢复该基线字节。`v13_loop_driver.sql` 与 `v13/load.py` 相对该基线全等。
+
+| R1 项目 | 命令/库 | 实际证据 | 状态 |
+|---|---|---|---|
+| R1 全量回归 | `UV_FROZEN=1 uv run python v13/<stage>/test_<stage>.py`（以下十条逐条实跑） | `plan_contract` exit 0 / `ll_plan_contract_46731` / 93 checks；`plan_read` exit 0 / `ll_plan_read_47878` / 11；`plan_arm` exit 0 / `ll_plan_arm_48087` / 104；`loop_driver` exit 0 / `ll_loop_driver_48647` / 91；`workflow_bind` exit 0 / `ll_workflow_bind_49071` / 8；`real_chain` exit 0 / `ll_real_chain_49280_b55417` / 24；`workspace_admit` exit 0 / `ll_workspace_admit_49425_6d1f7f` / 65；`workspace_exec` exit 0 / `ll_workspace_exec_49571_d124c0` / 54；`frontier_gap` exit 0 / `ll_frontier_gap_49724_b2db16` / 59；`goal_supervise` exit 0 / `ll_goal_supervise_50345_7ec8b9` + owned `ll_r0_gs_50345_1a5127` / 172。所有测试库均已 DROP。 | exit_0 |
+| R1 点名入口 | `loop_driver` | `settle_once(sid)->str` 不是 `run_turn`；Phase A 前缀无 `v13_unpaid_harness_turn`/`v13_harness_settle`；T0 与 `sessions ... FOR UPDATE` 同事务；quiet 零 advance；未付 progress/finish 恰好一次 `v13_advance`；`skipped_failed` 零 advance；unknown/cancel/stale 断言名含 `unpaid_remaining`；两连接 `pg_blocking_pids` 交错；返回后 IDLE 且 `FOR UPDATE NOWAIT` 成功。 | exit_0 |

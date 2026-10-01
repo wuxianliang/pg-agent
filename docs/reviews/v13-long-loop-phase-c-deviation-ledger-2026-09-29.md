@@ -21,4 +21,12 @@ R0 已按复审接受计划实现并完成十条 gate；仅声称 DB owner/super
 
 R0 十条全量结果、advance 加载后 SHA-256 `e49c4efa9f45ccd0521be96b28d053c16a4e63c3a113285138d96ad8632da87c`、固定基线哨兵块 byte-restore 证明、临时库清理结果见同日覆盖矩阵 R0 小节。历史 PC-C1…PC-C9 与 P2-C1 记录不覆盖。
 
-未关闭边界：R1/M3 仍未获接受且 `not_run`；child 不获得 root receipt；未知/取消/终态/stale 可能先行返回；普通 advance 的早记账可影响后续 session-local quota/派发；不证明产品角色 EXECUTE、真实 provider、V11/auto-wake、PC-4、产品可用或无人值守完成。无本期 SQL helper、加载器/其他运行时 SQL/loop_driver/goal_supervise SQL 变化。
+未关闭边界：R1 已落地（见下节）；M3/`goal_supervisor`/`unattended_continuation` 仍 `not_run`。child 不获得 root receipt；unknown/cancel/stale 夹具上 `settle_once` 仍返回活体词且未付行仍在（R1 把这记成可见失败面，不把 waiting 当成功）。普通 advance 的早记账可影响后续 session-local quota/派发；不证明产品角色 EXECUTE、真实 provider、V11/auto-wake、PC-4、产品可用或无人值守完成。无本期 SQL helper、加载器/其他运行时 SQL/goal_supervise SQL 变化；`v13_loop_driver.sql` 与 `load.py` 相对 `fb295ac` 全等。
+
+## R1 点名入口偏差与边界（2026-10-01）
+
+R1 按 `docs/plans/v13-long-loop-phase-c-r1-m3-plan-2026-10-01.md` 实现 `LoopDriver.settle_once`。仅声称：DB owner/superuser 确定性夹具、Phase A 前缀与完整 Phase C 前缀上，该函数是已点名的根结算入口；T0 与 advance 同事务同根锁；无未付则 quiet；有未付则至多一次 `v13_advance`；返回后 IDLE。不声称无人值守完成、产品角色、真实 provider。
+
+无新增 SQL 函数、无 `load.py` 键、不调用 `v13_harness_settle` / `v13_unpaid_harness_turn`。去掉 `# R1_SETTLE_ONCE_BEGIN/END` 后 `driver.py` 恢复 `fb295ac` 字节。stop 先提交的交错夹具必须先成功写出 `goal/stopped` 再放行 waiter；settle 先持锁的负例断言随后 `goal busy`，两条不可互换。
+
+M3 监督进程尚未实现；`unattended_continuation` 不得写成 `exit_0`。

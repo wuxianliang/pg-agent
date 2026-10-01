@@ -28,4 +28,4 @@ Phase A 第三段。唯一一份 `CREATE OR REPLACE v13_advance`。它是 govern
 - `R0_DECL_BEGIN/END`、`R0_RECEIPT_BEGIN/END` 是唯一新增区。去掉两区后 SQL bytes 必须与 `fb295ac6c7459bb98dac57e37883af549d2d8a4c` 完全一致；测试还冻结原功能测试/模块设置。缺 git 基线对象时明确失败，不以 HEAD 干净替代。
 - stage 32 测试不依赖 Phase C SQL。stage 38 另测 wrapper、workspace、统计调用数及并发锁交错。运行结果统一记在 Phase C 覆盖矩阵的 R0 新行；不覆盖历史 M1/M2。
 
-R0 只证明 material 记账，不证明 blocker 已解除、finish 已 closeout 或 M3 续行已通。R1/M3 仍未解锁。
+R0 只证明 material 记账，不证明 blocker 已解除、finish 已 closeout 或 M3 续行已通。R1 点名入口是 `LoopDriver.settle_once`；本目录 SQL 仍不改。

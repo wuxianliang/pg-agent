@@ -62,3 +62,5 @@ stage_bytes 用固定 `fb295ac6c7459bb98dac57e37883af549d2d8a4c` 正向证明替
 新增 R0 测试在独立随机 `ll_r0_gs_*` 库中累计加载到 stage 38，根夹具 version 2、首 advance 前 direct override。只清理本次创建的库；并发使用 pg_blocking_pids 确认锁等待后放行，轮询间隔不是胜者依据。验证：root human ready/claimed 的 progress/finish、workspace 完整行不变、同源收据且队列零增长、两连接只付一次、effect 等锁后重读、child 不上锁 root。stopped/failed 的 wrapper 零 advance 用独立库 track_functions 统计并在 rollback/flush 后读取，另有 null/缺键调用一次的正对照，不以 receipt=0 冒充零调用。
 
 R0 结果见覆盖矩阵的单独行。它不修改 M1/M2 历史证据，不证明 M3、产品 operator EXECUTE 权限、V11、PC-4 或生产无人值守。
+
+R1 不修改本目录 SQL。`loop_driver` 的 `settle_once` 哨兵还原由共享 `r0_source_scope` 证明；stage_bytes 不再对整个 `v13/loop_driver` 目录要求与 `fb295ac` 空 diff。

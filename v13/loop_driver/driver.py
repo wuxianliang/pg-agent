@@ -464,3 +464,90 @@ class LoopDriver:
                            upstream_word=upstream_word)
         self.take_exit(word, sid)
         return word, self.attempts_used
+    # R1_SETTLE_ONCE_BEGIN
+    def settle_once(self, sid):
+        """Named one-hop root settlement. T0, the root row lock, and at most
+        one v13_advance share a single uncommitted transaction. No provider IO."""
+        from psycopg2.extensions import TRANSACTION_STATUS_IDLE
+        conn = self.connection()
+        if conn.get_transaction_status() != TRANSACTION_STATUS_IDLE:
+            raise RuntimeError("v13: settle_once: open transaction")
+        cur = conn.cursor()
+        word = "waiting"
+        spent_kind = "turn/" + "material_spent"
+        try:
+            cur.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            cur.execute("SHOW transaction_isolation")
+            isolation = cur.fetchone()[0]
+            if isolation != "read committed":
+                raise RuntimeError("v13: settle_once: isolation")
+            cur.execute(
+                "SELECT 1 FROM sessions WHERE session_id = %s FOR UPDATE",
+                (sid,))
+            locked = cur.fetchone()
+            if locked is None:
+                raise RuntimeError("v13: settle_once: unknown session")
+            self.calls.append(("sessions_lock", sid))
+            hold = getattr(self, "_r1_after_root_lock", None)
+            if hold is not None:
+                hold()
+            cur.execute(
+                "SELECT parent_session_id FROM sessions WHERE session_id = %s",
+                (sid,))
+            parent = cur.fetchone()[0]
+            if parent is not None:
+                raise RuntimeError("v13: settle_once: not_root")
+            cur.execute("SELECT v13_goal_lifecycle(%s::uuid)", (sid,))
+            lifecycle = cur.fetchone()[0]
+            self.calls.append(("v13_goal_lifecycle", sid))
+            cur.execute("SELECT v13_harness_predecessor(%s::uuid)", (sid,))
+            pred = cur.fetchone()[0]
+            if pred is not None:
+                cur.execute(
+                    "SELECT 1 FROM effects WHERE effect_id = %s FOR UPDATE",
+                    (pred,))
+                if cur.fetchone() is not None:
+                    cur.execute(
+                        "SELECT e.result FROM effects e "
+                        "WHERE e.effect_id = %s "
+                        "AND e.session_id = %s "
+                        "AND e.kind = 'tool' "
+                        "AND public.v13_is_harness_tool(e.tool_name, e.kind) "
+                        "AND e.origin_user_seq = public.v13_last_user_seq(%s::uuid) "
+                        "AND public.v13_harness_request_ok(e.request) "
+                        "AND e.status = 'succeeded' "
+                        "AND ("
+                        " e.result->>'result_kind' = 'finish' "
+                        " OR (e.result->>'result_kind' = 'progress' AND NOT EXISTS ("
+                        "       SELECT 1 FROM public.events "
+                        "        WHERE source_effect_id = e.effect_id "
+                        "          AND type IN ('repair/required', 'replan/required')))) "
+                        "AND NOT EXISTS ("
+                        "       SELECT 1 FROM public.events "
+                        "        WHERE source_effect_id = e.effect_id "
+                        "          AND type = %s)",
+                        (pred, sid, sid, spent_kind))
+                    matched = cur.fetchone()
+                    if matched is not None:
+                        stored = as_obj(matched[0])
+                        stored_map = stored if isinstance(stored, dict) else {}
+                        if t0_advance_blocked(lifecycle, stored_map):
+                            word = "skipped_failed"
+                        else:
+                            snap = self._snap_with(cur, sid)
+                            pre = getattr(self, "_r1_before_advance", None)
+                            if pre is not None:
+                                pre()
+                            cur.execute(
+                                "SELECT v13_advance(%s::uuid, %s::jsonb)",
+                                (sid, json.dumps(snap)))
+                            word = cur.fetchone()[0]
+                            self.calls.append(("v13_advance", sid))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        if conn.get_transaction_status() != TRANSACTION_STATUS_IDLE:
+            raise RuntimeError("v13: settle_once: not idle")
+        return word
+    # R1_SETTLE_ONCE_END

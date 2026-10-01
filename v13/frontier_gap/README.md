@@ -57,3 +57,5 @@ Phase C 第一段。交付 B4 语义缺口投影与插入，以及 D3 断言。�
 ## R0 源码冻结兼容（2026-10-01）
 
 Frontier SQL 与既有功能测试均未修改。为允许已接受的 plan_arm R0 重开，stage_bytes 不再要求整个 plan_arm 对 HEAD 空 diff；改用 `v13.plan_arm.test_plan_arm.r0_source_scope` 对固定 `fb295ac6c7459bb98dac57e37883af549d2d8a4c` 的正向证明。删除唯一新增 R0 声明/receipt 哨兵块后，plan_arm SQL 必须与基线 bytes 相同；其它运行时文件和原测试仍被冻结。基线对象缺失则失败，提交前后均有效。此调整不改变 Frontier 哈希/义务语义，也不将 R0 的记账能力归入 Frontier。
+
+R1 把 `v13/loop_driver/driver.py` 从整文件相等改为哨兵还原：去掉 `# R1_SETTLE_ONCE_BEGIN/END` 后必须回到该基线字节。Frontier SQL 仍全等。

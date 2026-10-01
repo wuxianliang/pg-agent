@@ -272,6 +272,58 @@ def test_stage_bytes():
     check("r0_source_scope", r0_source_scope() == "fb295ac6c7459bb98dac57e37883af549d2d8a4c")
 
 
+def r1_driver_restore(current, original):
+    """Strip the unique R1 settle_once sentinel pair; remainder must equal fb295ac."""
+    import re
+    start, end = b"# R1_SETTLE_ONCE_BEGIN", b"# R1_SETTLE_ONCE_END"
+    assert current.count(start) == current.count(end) == 1, "r1 sentinel pair"
+    assert start not in original and end not in original
+    pattern = rb"(?m)^[ \t]*" + start + rb"\n.*?^[ \t]*" + end + rb"\n"
+    match = re.search(pattern, current, re.S)
+    assert match, "r1 sentinel block"
+    block = match.group()
+    assert b"def settle_once" in block, "settle_once must live inside the R1 sentinel"
+    sess_lock = b"FROM sessions WHERE session_id = %s FOR UPDATE"
+    assert block.count(sess_lock) == 1, "sessions FOR UPDATE once in sentinel"
+    restored = current[:match.start()] + current[match.end():]
+    assert restored == original, "R1 removal must restore ALL baseline driver.py bytes"
+    assert b"FOR UPDATE" not in restored, "FOR UPDATE only inside the R1 sentinel"
+    return restored, block
+
+
+def r1_freeze_positive_proof():
+    """Mutated copies must fail the R1 restore; the live tree must pass."""
+    base = "fb295ac6c7459bb98dac57e37883af549d2d8a4c"
+    original = subprocess.check_output(
+        ["git", "show", base + ":v13/loop_driver/driver.py"], cwd=AGENT_ROOT)
+    current = (AGENT_ROOT / "v13/loop_driver/driver.py").read_bytes()
+    r1_driver_restore(current, original)
+    empty = original + b"    # R1_SETTLE_ONCE_BEGIN\n    # R1_SETTLE_ONCE_END\n"
+    empty_failed = False
+    try:
+        r1_driver_restore(empty, original)
+    except AssertionError:
+        empty_failed = True
+    assert empty_failed, "empty R1 sentinel must fail"
+    mutated = current.replace(b"def run_turn", b"def run_turn_x", 1)
+    run_turn_failed = False
+    try:
+        r1_driver_restore(mutated, original)
+    except AssertionError:
+        run_turn_failed = True
+    assert run_turn_failed, "run_turn edit outside sentinel must fail"
+    leaked = current + (
+        b"\n    def _r1_leak(self, sid):\n"
+        b"        self._sql('v13_advance', 'SELECT v13_advance(%s::uuid, %s::jsonb)',"
+        b" (sid, '{}'), sid)\n")
+    leak_failed = False
+    try:
+        r1_driver_restore(leaked, original)
+    except AssertionError:
+        leak_failed = True
+    assert leak_failed, "v13_advance outside sentinel must fail"
+
+
 def r0_source_scope():
     """Fixed-base positive proof, shared by the three affected stage gates."""
     import ast
@@ -311,8 +363,11 @@ def r0_source_scope():
                   b"v13_plan_advance_prefix", b"v13_spawn", b"v13_route(", b"EXCEPTION"):
         assert token not in blocks["RECEIPT"], token
     tests = {"v13/plan_arm/test_plan_arm.py", "v13/frontier_gap/test_frontier_gap.py",
-             "v13/goal_supervise/test_goal_supervise.py"}
-    readmes = {"v13/plan_arm/README.md", "v13/frontier_gap/README.md", "v13/goal_supervise/README.md"}
+             "v13/goal_supervise/test_goal_supervise.py",
+             "v13/loop_driver/test_loop_driver.py"}
+    readmes = {"v13/plan_arm/README.md", "v13/frontier_gap/README.md",
+               "v13/goal_supervise/README.md", "v13/loop_driver/README.md"}
+    driver_path = "v13/loop_driver/driver.py"
     protected = subprocess.check_output([
         "git", "ls-tree", "-r", "--name-only", base, "--", "v13",
         "docs/plans/v13-long-loop-plan-2026-09-28.md",
@@ -322,9 +377,11 @@ def r0_source_scope():
     tracked = set(subprocess.check_output(["git", "ls-files", "--", "v13"], cwd=AGENT_ROOT).decode().splitlines())
     assert tracked <= set(protected), "new tracked v13 file outside the R0 scope"
     for name in protected:
-        if name not in tests | readmes | {path}:
+        if name not in tests | readmes | {path, driver_path}:
             assert (AGENT_ROOT / name).read_bytes() == original(name), "protected bytes: " + name
-    # Keep existing functions byte-for-byte; only stage guards and added r0_ calls are exceptions.
+    r1_driver_restore((AGENT_ROOT / driver_path).read_bytes(), original(driver_path))
+    r1_freeze_positive_proof()
+    # Keep existing functions byte-for-byte; only stage guards and added r0_/r1_ calls are exceptions.
     for name in tests:
         before = original(name).decode()
         after = (AGENT_ROOT / name).read_text()
@@ -339,14 +396,16 @@ def r0_source_scope():
             old_text = "\n".join(before.splitlines()[old_node.lineno - 1:old_node.end_lineno])
             new_text = "\n".join(after.splitlines()[new_node.lineno - 1:new_node.end_lineno])
             if func in ("main", "run"):
-                new_text = "\n".join(line for line in new_text.splitlines()
-                                     if not re.match(r"\s+r0_[a-z_]+\(.*\)$", line))
+                new_text = "\n".join(
+                    line for line in new_text.splitlines()
+                    if not re.match(r"\s+r[01]_[a-z_]+\(.*\)$", line))
             assert old_text == new_text, "changed existing test: " + name + ":" + func
         # Also freeze imports, constants, and top-level exception/entry handling.
         normalize = lambda tree: [ast.dump(n, include_attributes=False) for n in tree.body
                                   if not isinstance(n, ast.FunctionDef)]
         assert normalize(old_tree) == normalize(new_tree), "changed module setup: " + name
-        assert all(n in old_functions or n.startswith("r0_") for n in new_functions), name
+        assert all(n in old_functions or n.startswith("r0_") or n.startswith("r1_")
+                   for n in new_functions), name
     return base
 
 
