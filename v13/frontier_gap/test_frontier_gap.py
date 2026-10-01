@@ -341,7 +341,11 @@ def test_stage_bytes():
         "v13/loop_driver", "v13/real_chain", "v13/workflow_bind",
         "v13/plan_contract", "v13/plan_read",
     ]
-    diff = subprocess.check_output(["git", "diff", "HEAD", "--", *paths], cwd=AGENT_ROOT)
+    from v13.plan_arm.test_plan_arm import r0_source_scope
+    base = r0_source_scope()
+    # The fixed-base proof replaces the old whole-directory plan_arm freeze.
+    paths = [p for p in paths if p != "v13/plan_arm"]
+    diff = subprocess.check_output(["git", "diff", base, "--", *paths], cwd=AGENT_ROOT)
     load = subprocess.check_output(
         ["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
     removed = [
@@ -361,6 +365,7 @@ def test_stage_bytes():
     else:
         load_ok = tail_ok and "frontier_gap" in text
     check("stage_bytes", diff == b"" and load_ok, (removed, tail_ok, bool(load.strip())))
+    check("r0_source_scope", r0_source_scope() == "fb295ac6c7459bb98dac57e37883af549d2d8a4c")
     check(
         "advance_sql_not_replaced",
         "CREATE OR REPLACE FUNCTION public.v13_advance" not in SQL

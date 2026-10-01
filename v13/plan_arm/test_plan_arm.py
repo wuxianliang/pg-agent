@@ -269,6 +269,85 @@ def test_stage_bytes():
         "stage_bytes",
         diff == b"" and removed == [] and "plan_arm" in (load + head_load),
         (removed, load, "plan_arm" in head_load))
+    check("r0_source_scope", r0_source_scope() == "fb295ac6c7459bb98dac57e37883af549d2d8a4c")
+
+
+def r0_source_scope():
+    """Fixed-base positive proof, shared by the three affected stage gates."""
+    import ast
+    import re
+
+    base = "fb295ac6c7459bb98dac57e37883af549d2d8a4c"
+    subprocess.check_call(["git", "cat-file", "-e", base + "^{commit}"], cwd=AGENT_ROOT)
+
+    def original(path):
+        return subprocess.check_output(["git", "show", base + ":" + path], cwd=AGENT_ROOT)
+
+    path = "v13/plan_arm/v13_plan_arm.sql"
+    old = original(path)
+    current = (AGENT_ROOT / path).read_bytes()
+    restored = current
+    blocks = {}
+    for kind in ("DECL", "RECEIPT"):
+        start, end = ("-- R0_" + kind + "_BEGIN").encode(), ("-- R0_" + kind + "_END").encode()
+        assert current.count(start) == current.count(end) == 1, kind
+        assert start not in old and end not in old
+        pattern = rb"(?m)^[ \t]*" + start + rb"\n.*?^[ \t]*" + end + rb"\n"
+        match = re.search(pattern, restored, re.S)
+        assert match, kind
+        blocks[kind] = match.group()
+        restored = restored[:match.start()] + restored[match.end():]
+    assert restored == old, "R0 removal must restore ALL baseline SQL bytes"
+    assert current.count(b"CREATE OR REPLACE FUNCTION public.v13_advance") == 1
+    declare_anchor = b"  v_plan_word text;\n"
+    assert current.index(declare_anchor) + len(declare_anchor) == current.index(blocks["DECL"])
+    assert current[current.index(blocks["DECL"]) + len(blocks["DECL"]):].startswith(b"BEGIN\n")
+    anchor = b"  IF EXISTS (SELECT 1 FROM effects WHERE session_id = p_sid AND status IN ('ready', 'claimed')) THEN\n"
+    assert current.count(anchor) == 1
+    assert current.index(anchor) + len(anchor) == current.index(blocks["RECEIPT"])
+    assert blocks["RECEIPT"].count(b"v13_append_event(") == 1
+    for token in (b"v13_plan_map_root", b"v13_unpaid_harness_turn", b"v13_harness_settle",
+                  b"v13_harness_tail_gap", b"v13_enqueue", b"v13_send_work", b"v13_closeout",
+                  b"v13_plan_advance_prefix", b"v13_spawn", b"v13_route(", b"EXCEPTION"):
+        assert token not in blocks["RECEIPT"], token
+    tests = {"v13/plan_arm/test_plan_arm.py", "v13/frontier_gap/test_frontier_gap.py",
+             "v13/goal_supervise/test_goal_supervise.py"}
+    readmes = {"v13/plan_arm/README.md", "v13/frontier_gap/README.md", "v13/goal_supervise/README.md"}
+    protected = subprocess.check_output([
+        "git", "ls-tree", "-r", "--name-only", base, "--", "v13",
+        "docs/plans/v13-long-loop-plan-2026-09-28.md",
+        "docs/plans/v13-long-loop-phase-a-plan-2026-09-29.md",
+        "docs/plans/v13-long-loop-phase-b-plan-2026-09-29.md",
+        "docs/plans/v13-long-loop-phase-c-plan-2026-09-29.md"], cwd=AGENT_ROOT).decode().splitlines()
+    tracked = set(subprocess.check_output(["git", "ls-files", "--", "v13"], cwd=AGENT_ROOT).decode().splitlines())
+    assert tracked <= set(protected), "new tracked v13 file outside the R0 scope"
+    for name in protected:
+        if name not in tests | readmes | {path}:
+            assert (AGENT_ROOT / name).read_bytes() == original(name), "protected bytes: " + name
+    # Keep existing functions byte-for-byte; only stage guards and added r0_ calls are exceptions.
+    for name in tests:
+        before = original(name).decode()
+        after = (AGENT_ROOT / name).read_text()
+        old_tree, new_tree = ast.parse(before), ast.parse(after)
+        old_functions = {n.name: n for n in old_tree.body if isinstance(n, ast.FunctionDef)}
+        new_functions = {n.name: n for n in new_tree.body if isinstance(n, ast.FunctionDef)}
+        for func, old_node in old_functions.items():
+            assert func in new_functions, (name, func)
+            new_node = new_functions[func]
+            if func == "test_stage_bytes":
+                continue
+            old_text = "\n".join(before.splitlines()[old_node.lineno - 1:old_node.end_lineno])
+            new_text = "\n".join(after.splitlines()[new_node.lineno - 1:new_node.end_lineno])
+            if func in ("main", "run"):
+                new_text = "\n".join(line for line in new_text.splitlines()
+                                     if not re.match(r"\s+r0_[a-z_]+\(.*\)$", line))
+            assert old_text == new_text, "changed existing test: " + name + ":" + func
+        # Also freeze imports, constants, and top-level exception/entry handling.
+        normalize = lambda tree: [ast.dump(n, include_attributes=False) for n in tree.body
+                                  if not isinstance(n, ast.FunctionDef)]
+        assert normalize(old_tree) == normalize(new_tree), "changed module setup: " + name
+        assert all(n in old_functions or n.startswith("r0_") for n in new_functions), name
+    return base
 
 
 def harness_req(cur, sid):
@@ -914,6 +993,223 @@ def test_p1_fixes(cur):
         check("selector_excludes_terminal_child", nsel == 0, (child_status, nsel))
 
 
+def r0_fixture(cur, result=None, stopped=False, human_status="ready"):
+    sid = fresh(cur)
+    q1(cur, "SELECT v13_submit_override(%s,%s::jsonb)", (sid, json.dumps({
+        "schema_version": 1, "intent": "direct", "reason": "", "source_principal": "operator"})))
+    eid = enqueue(cur, sid, "tool", harness_req(cur, sid), "harness_turn")
+    settle(cur, eid, PROGRESS if result is None else result)
+    if stopped:
+        q1(cur, "SELECT v13_goal_stop(%s,%s)", (sid, "r0"))
+    hid = enqueue(cur, sid, "human", {"schema_version": 1, "interaction_ref": "r0-" + u()})
+    if human_status == "claimed":
+        cur.execute("UPDATE effects SET status='claimed', lease_owner='r0', "
+                    "lease_until='infinity' WHERE effect_id=%s", (hid,))
+    return sid, eid, hid
+
+
+def r0_spent(cur, eid):
+    return q1(cur, "SELECT count(*) FROM events WHERE source_effect_id=%s "
+              "AND type='turn/material_spent'", (eid,))
+
+
+def r0_effect_state(cur):
+    return q1(cur, "SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY effect_id), '[]'::jsonb) FROM effects e")
+
+
+def r0_attempt(cur, sid, eid, expected, label):
+    effects0 = r0_effect_state(cur)
+    seq0 = max_seq(cur, sid)
+    queue0 = q1(cur, "SELECT count(*) FROM pgmq.q_v13_work")
+    spent0 = r0_spent(cur, eid)
+    word = advance(cur, sid, include_failed=False)
+    cur.execute("SELECT type, source_effect_id::text, payload FROM events "
+                "WHERE session_id=%s AND seq>%s ORDER BY seq", (sid, seq0))
+    extra = cur.fetchall()
+    expected_events = [] if not expected else [(
+        "turn/material_spent", eid, {"schema_version": 1, "effect_id": eid})]
+    check(label, word == "waiting" and r0_spent(cur, eid) == spent0 + expected
+          and extra == expected_events and r0_effect_state(cur) == effects0
+          and q1(cur, "SELECT count(*) FROM pgmq.q_v13_work") == queue0,
+          (word, r0_spent(cur, eid) - spent0, extra))
+
+
+def r0_direct_cases(cur):
+    for result in (PROGRESS, FINISH):
+        for status in ("ready", "claimed"):
+            cur.execute("SAVEPOINT r0_case")
+            try:
+                sid, eid, hid = r0_fixture(cur, result, human_status=status)
+                r0_attempt(cur, sid, eid, 1, "r0_root_human_" + status + "_receipt")
+                r0_attempt(cur, sid, eid, 0, "r0_idempotent_same_source")
+                check("r0_no_dispatch", q1(cur, "SELECT status FROM effects WHERE effect_id=%s", (hid,)) == status
+                      and q1(cur, "SELECT status FROM sessions WHERE session_id=%s", (sid,)) == "waiting")
+            finally:
+                cur.execute("ROLLBACK TO SAVEPOINT r0_case")
+    for stopped in (True, False):
+        for value in (False, 0, "", "bad", None, "MISSING"):
+            cur.execute("SAVEPOINT r0_failed")
+            try:
+                sid, eid, _ = r0_fixture(cur, stopped=stopped)
+                if value != "MISSING":
+                    cur.execute("UPDATE effects SET result=result || %s::jsonb WHERE effect_id=%s",
+                                (json.dumps({"failed": value}), eid))
+                expected = int(not stopped or value is None or value == "MISSING")
+                r0_attempt(cur, sid, eid, expected,
+                           "r0_stopped_failed_direct" if stopped else "r0_running_failed_direct")
+            finally:
+                cur.execute("ROLLBACK TO SAVEPOINT r0_failed")
+    negatives = (None, [], 7, "scalar", {"result_kind": "wait"}, {"result_kind": "reject"},
+                 {"result_kind": "progress", "signals": None},
+                 {"result_kind": "progress", "signals": 7},
+                 {"result_kind": "progress", "signals": {}},
+                 {"result_kind": "progress", "signals": [1]},
+                 {"result_kind": "progress", "signals": ["repair/required"]})
+    for value in negatives:
+        cur.execute("SAVEPOINT r0_invalid")
+        try:
+            sid, eid, _ = r0_fixture(cur)
+            cur.execute("UPDATE effects SET result=%s::jsonb WHERE effect_id=%s", (json.dumps(value), eid))
+            r0_attempt(cur, sid, eid, 0, "r0_signals_mismatch_waits")
+        finally:
+            cur.execute("ROLLBACK TO SAVEPOINT r0_invalid")
+    for change in ("old_origin", "non_harness", "bad_request", "ready", "claimed", "failed", "other_session"):
+        cur.execute("SAVEPOINT r0_pred")
+        try:
+            sid, eid, hid = r0_fixture(cur)
+            if change in ("ready", "claimed"):
+                # Preserve the single-active index: make the human inactive, then
+                # make the current harness predecessor itself the blocking row.
+                cur.execute("UPDATE effects SET status='succeeded' WHERE effect_id=%s", (hid,))
+                cur.execute("UPDATE effects SET status=%s WHERE effect_id=%s", (change, eid))
+            elif change == "old_origin":
+                prefix(cur, sid, "new user turn")
+            elif change == "non_harness":
+                cur.execute("UPDATE effects SET tool_name='read_file_py' WHERE effect_id=%s", (eid,))
+            elif change == "bad_request":
+                cur.execute("UPDATE effects SET request=request || '{\"extra\":true}'::jsonb WHERE effect_id=%s", (eid,))
+            elif change == "other_session":
+                other = fresh(cur)
+                cur.execute("UPDATE effects SET session_id=%s WHERE effect_id=%s", (other, eid))
+            else:
+                cur.execute("UPDATE effects SET status=%s WHERE effect_id=%s", (change, eid))
+            if change in ("ready", "claimed"):
+                cur.execute("SELECT effect_id::text, status FROM effects WHERE session_id=%s "
+                            "AND status IN ('ready','claimed')", (sid,))
+                check("r0_active_predecessor_is_blocker", cur.fetchall() == [(eid, change)]
+                      and str(q1(cur, "SELECT v13_harness_predecessor(%s)", (sid,))) == eid)
+            r0_attempt(cur, sid, eid, 0, "r0_current_predecessor_only")
+        finally:
+            cur.execute("ROLLBACK TO SAVEPOINT r0_pred")
+    cur.execute("SAVEPOINT r0_signal_event")
+    try:
+        sid, eid, _ = r0_fixture(cur, {"result_kind": "progress", "signals": ["replan/required"]})
+        cur.execute("UPDATE effects SET result='{}'::jsonb || %s::jsonb WHERE effect_id=%s", (json.dumps(PROGRESS), eid))
+        r0_attempt(cur, sid, eid, 0, "r0_signals_event_mismatch_waits")
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT r0_signal_event")
+    cur.execute("SAVEPOINT r0_collision")
+    try:
+        sid, first, hid = r0_fixture(cur)
+        r0_attempt(cur, sid, first, 1, "r0_direct_advance_receipt")
+        cur.execute("UPDATE effects SET status='succeeded' WHERE effect_id=%s", (hid,))
+        req = q1(cur, "SELECT request FROM effects WHERE effect_id=%s", (first,))
+        req["continuation_index"] = 1
+        second = enqueue(cur, sid, "tool", req, "harness_turn")
+        settle(cur, second, PROGRESS)
+        enqueue(cur, sid, "human", {"schema_version": 1, "interaction_ref": "collision-" + u()})
+        r0_attempt(cur, sid, second, 0, "r0_material_collision_waits")
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT r0_collision")
+    cur.execute("SAVEPOINT r0_two_unpaid")
+    try:
+        sid, first, hid = r0_fixture(cur)
+        cur.execute("UPDATE effects SET status='succeeded' WHERE effect_id=%s", (hid,))
+        second = enqueue(cur, sid, "tool", harness_req(cur, sid), "harness_turn")
+        settle(cur, second, PROGRESS)
+        enqueue(cur, sid, "human", {"schema_version": 1, "interaction_ref": "two-" + u()})
+        winner = str(q1(cur, "SELECT v13_harness_predecessor(%s)", (sid,)))
+        r0_attempt(cur, sid, winner, 1, "r0_current_predecessor_only")
+        loser = first if winner == second else second
+        check("r0_old_unpaid_not_selected", r0_spent(cur, loser) == 0)
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT r0_two_unpaid")
+
+
+def r0_preceding_walls(cur):
+    for wall in ("unknown", "cancel", "terminal", "stale"):
+        cur.execute("SAVEPOINT r0_wall")
+        try:
+            sid, eid, hid = r0_fixture(cur, human_status="claimed")
+            if wall == "unknown":
+                cur.execute("UPDATE effects SET status='unknown' WHERE effect_id=%s", (hid,))
+                cur.execute("UPDATE sessions SET status='blocked_unknown' WHERE session_id=%s", (sid,))
+            elif wall == "cancel":
+                q1(cur, "SELECT v13_cancel(%s)", (sid,))
+            elif wall == "terminal":
+                cur.execute("UPDATE sessions SET status='completed' WHERE session_id=%s", (sid,))
+            snap = snap_of(cur, sid, include_failed=False)
+            if wall == "stale":
+                snap["snap"]["max_event_seq"] = -1
+            word = q1(cur, "SELECT v13_advance(%s,%s::jsonb)", (sid, json.dumps(snap)))
+            expected = {"unknown": "waiting", "cancel": "waiting", "terminal": "terminal", "stale": "stale"}[wall]
+            check("r0_unknown_cancel_terminal_stale_unchanged", word == expected and r0_spent(cur, eid) == 0,
+                  (wall, word, r0_spent(cur, eid)))
+        finally:
+            cur.execute("ROLLBACK TO SAVEPOINT r0_wall")
+    print("[r0 advance hash]", fn_hash(cur, "public.v13_advance(uuid,jsonb)"))
+    src = q1(cur, "SELECT pg_get_functiondef('public.v13_material_spent_guard()'::regprocedure)")
+    check("r0_receipt_guard_no_dispatch", "v13_send_work" not in src and "v13_enqueue_effect" not in src
+          and "INSERT" not in src and "UPDATE effects" not in src)
+
+
+def r0_quota_boundary(cur):
+    """Real receipts in committed transactions, followed by a legal human response."""
+    original = q1(cur, "SELECT value FROM v13_policies WHERE name='quota_window' AND active")
+    original_version = q1(cur, "SELECT version FROM v13_policies WHERE name='quota_window' AND active")
+    try:
+        for allowed in (1, 1000000):
+            sid, eid, hid = r0_fixture(cur)
+            tid = u()
+            writer(cur, sid, plan_body([todo(tid, "quota-bound", "advancement_task", "runnable")], max_seq(cur, sid)))
+            next_version = q1(cur, "SELECT max(version)+1 FROM v13_policies WHERE name='quota_window'")
+            cur.execute("UPDATE v13_policies SET active=false WHERE name='quota_window' AND active")
+            cur.execute("INSERT INTO v13_policies(name,version,value,active) VALUES ('quota_window',%s,%s::jsonb,true)",
+                        (next_version, json.dumps(dict(original, allowed=allowed))))
+            cur.connection.commit()
+            before = q1(cur, "SELECT v13_quota_eligible(%s)", (sid,))
+            r0_attempt(cur, sid, eid, 1, "r0_quota_time_honesty")
+            cur.connection.commit()
+            after = q1(cur, "SELECT v13_quota_eligible(%s)", (sid,))
+            ref = q1(cur, "SELECT request->>'interaction_ref' FROM effects WHERE effect_id=%s", (hid,))
+            word = settle(cur, hid, {"schema_version": 1, "interaction_ref": ref, "response": "approved by fixture operator"})
+            check("r0_quota_human_legally_completed", word == "accepted"
+                  and q1(cur, "SELECT status FROM effects WHERE effect_id=%s", (hid,)) == "succeeded", word)
+            cur.connection.commit()
+            eff0, plans0 = n_effects(cur, sid), plan_n(cur, sid)
+            routes0 = q1(cur, "SELECT count(*) FROM events WHERE session_id=%s AND type='turn/route'", (sid,))
+            gate = q1(cur, "SELECT v13_should_run_gate(%s)", (sid,))
+            should = q1(cur, "SELECT v13_should_run(%s)", (sid,))
+            result = advance(cur, sid, include_failed=False)
+            if allowed == 1:
+                check("r0_next_turn_quota_boundary", before is True and after is False and should is False
+                      and gate == "quota_window" and n_effects(cur, sid) == eff0
+                      and plan_n(cur, sid) == plans0 and r0_spent(cur, eid) == 1
+                      and q1(cur, "SELECT count(*) FROM events WHERE session_id=%s AND type='turn/route'", (sid,)) == routes0,
+                      (allowed, before, after, gate, result))
+            else:
+                check("r0_next_turn_quota_control", before is True and after is True and should is True
+                      and n_effects(cur, sid) == eff0 + 1 and plan_n(cur, sid) == plans0 + 1
+                      and r0_spent(cur, eid) == 1,
+                      (allowed, gate, result, eff0, n_effects(cur, sid)))
+            cur.connection.commit()
+    finally:
+        cur.connection.rollback()
+        cur.execute("UPDATE v13_policies SET active=false WHERE name='quota_window' AND active")
+        cur.execute("UPDATE v13_policies SET active=true WHERE name='quota_window' AND version=%s", (original_version,))
+        cur.connection.commit()
+
+
 def run(cur, server):
     before = (
         fn_hash(cur, "public.v13_recover_idle()"),
@@ -929,7 +1225,10 @@ def run(cur, server):
     test_archive_and_child(cur)
     test_reenable(cur)
     test_p1_fixes(cur)
+    r0_direct_cases(cur)
+    r0_preceding_walls(cur)
     cur.execute("COMMIT")
+    r0_quota_boundary(cur)
 
 
 def main() -> int:

@@ -272,7 +272,11 @@ def test_stage_bytes():
         "v13/loop_driver", "v13/real_chain", "v13/workflow_bind",
         "v13/plan_contract", "v13/plan_read", "v13/frontier_gap",
     ]
-    diff = subprocess.check_output(["git", "diff", "HEAD", "--", *paths], cwd=AGENT_ROOT)
+    from v13.plan_arm.test_plan_arm import r0_source_scope
+    base = r0_source_scope()
+    # Authorized plan_arm/frontier test differences have positive byte proofs.
+    paths = [p for p in paths if p not in ("v13/plan_arm", "v13/frontier_gap")]
+    diff = subprocess.check_output(["git", "diff", base, "--", *paths], cwd=AGENT_ROOT)
     load = subprocess.check_output(
         ["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
     removed = [
@@ -1020,6 +1024,733 @@ def test_hold_lease(cur, sid):
         and q1(cur, "SELECT status FROM effects WHERE effect_id=%s", (tool,)) == "claimed")
 
 
+def r0_reload_hashes(cur):
+    before = tuple(fn_hash(cur, sig) for sig in HASH_FNS)
+    cur.execute(SQL)
+    after = tuple(fn_hash(cur, sig) for sig in HASH_FNS)
+    check("r0_goal_supervise_reload_preserves_functions", before == after, (before, after))
+    print("[r0 advance hash]", after[0])
+
+
+def r0_stage(server):
+    slot = r0_stage.__dict__
+    if slot.get("ready") and slot.get("conn") is not None and slot["conn"].closed == 0:
+        return slot
+    import os
+    import re
+    import secrets
+    from v13.load import load_stage
+    name = "ll_r0_gs_%s_%s" % (os.getpid(), secrets.token_hex(3))
+    if re.fullmatch(r"ll_r0_gs_[0-9]+_[0-9a-f]{6}", name) is None or name.startswith("agent_v13_"):
+        raise AssertionError(name)
+    admin = psycopg2.connect(server.get_uri("postgres"))
+    admin.autocommit = True
+    created = False
+    try:
+        ac = admin.cursor()
+        ac.execute("SELECT 1 FROM pg_database WHERE datname=%s", (name,))
+        if ac.fetchone() is not None:
+            raise AssertionError("exists " + name)
+        ac.execute('CREATE DATABASE "%s"' % name)
+        created = True
+    finally:
+        admin.close()
+    conn = None
+    try:
+        load_stage(server, name, "goal_supervise")
+        conn = psycopg2.connect(server.get_uri(name))
+        conn.autocommit = False
+        cur = conn.cursor()
+        state = q1(
+            cur,
+            "SELECT state FROM v13_route_policies "
+            "WHERE policy_name='default' AND policy_version=2")
+        check("r0_root_version_2", state == "frozen", state)
+        cur.execute("SET track_functions TO 'all'")
+        conn.commit()
+    except Exception:
+        if conn is not None:
+            conn.close()
+        if created:
+            r0_drop_db(server, name)
+        raise
+    slot["ready"] = True
+    slot["server"] = server
+    slot["name"] = name
+    slot["conn"] = conn
+    slot["threads"] = []
+    slot["conns"] = []
+    print("[r0-db]", name)
+    return slot
+
+
+def r0_drop_db(server, name):
+    admin = psycopg2.connect(server.get_uri("postgres"))
+    admin.autocommit = True
+    try:
+        admin.cursor().execute('DROP DATABASE "%s" WITH (FORCE)' % name)
+    finally:
+        admin.close()
+
+
+def r0_cancel_others(server, name):
+    killer = psycopg2.connect(server.get_uri(name))
+    killer.autocommit = True
+    try:
+        killer.cursor().execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE datname=%s AND pid <> pg_backend_pid()", (name,))
+    finally:
+        killer.close()
+
+
+def r0_stage_drop(server=None):
+    slot = r0_stage.__dict__
+    if not slot.get("ready"):
+        return
+    name = slot["name"]
+    srv = slot["server"]
+    alive = [t for t in slot.get("threads") or [] if t.is_alive()]
+    if alive:
+        try:
+            r0_cancel_others(srv, name)
+        except Exception as exc:
+            print("[r0-cancel]", exc)
+        for t in alive:
+            t.join(10)
+    for c in slot.get("conns") or []:
+        try:
+            if c is not None and c.closed == 0:
+                c.close()
+        except Exception:
+            pass
+    conn = slot.get("conn")
+    if conn is not None and conn.closed == 0:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        conn.close()
+    r0_drop_db(srv, name)
+    slot["ready"] = False
+    slot["conn"] = None
+    print("[dropped]", name)
+
+
+def r0_guard(server, fn):
+    r0_stage(server)
+    try:
+        fn()
+    except Exception:
+        try:
+            r0_stage_drop(server)
+        except Exception as exc:
+            print("[r0-cleanup-fail]", exc)
+        raise
+
+
+def r0_connect(server, name):
+    conn = psycopg2.connect(server.get_uri(name))
+    conn.autocommit = False
+    return conn
+
+
+def r0_open_version2(cur):
+    sid = str(q1(
+        cur, "SELECT v13_plan_commit_entry(%s::jsonb)",
+        (json.dumps({"route_policy_name": "default", "version": 2}),)))
+    prefix(cur, sid, "r0 goal")
+    seq = q1(
+        cur, "SELECT v13_submit_override(%s::uuid, %s::jsonb)",
+        (sid, json.dumps({
+            "schema_version": 1,
+            "intent": "direct",
+            "reason": "",
+            "source_principal": "operator",
+        })))
+    ver = q1(cur, "SELECT route_policy_version FROM sessions WHERE session_id=%s", (sid,))
+    check("r0_root_version_2", ver == 2 and seq is not None, (ver, seq))
+    return sid
+
+
+def r0_harness_ok(cur, sid, kind):
+    eid = enqueue(cur, sid, "tool", harness_req(cur, sid), "harness_turn")
+    word = settle_complete(cur, eid, {"result_kind": kind})
+    check("r0_harness_accepted", word == "accepted", (kind, word))
+    return eid
+
+
+def r0_human(cur, sid):
+    return enqueue(
+        cur, sid, "human",
+        {"schema_version": 1, "interaction_ref": "r0-" + u()})
+
+
+def r0_claim_human(cur, sid):
+    hid = r0_human(cur, sid)
+    got = as_obj(q1(cur, "SELECT v13_claim(%s, %s)", ("r0w", 60000)))
+    check("r0_human_claimed", got is not None and str(got.get("effect_id")) == hid, got)
+    return hid
+
+
+def r0_effect_text(cur, eid):
+    return q1(cur, "SELECT to_jsonb(e)::text FROM effects e WHERE effect_id=%s", (eid,))
+
+
+def r0_effects_text(cur, sid):
+    return q1(
+        cur,
+        "SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.effect_id::text)::text, '[]') "
+        "FROM effects e WHERE session_id=%s", (sid,))
+
+
+def r0_event_counts(cur, sid):
+    cur.execute(
+        "SELECT type, count(*) FROM events WHERE session_id=%s GROUP BY type", (sid,))
+    return {row[0]: int(row[1]) for row in cur.fetchall()}
+
+
+def r0_receipt_n(cur, sid, eid=None):
+    if eid is None:
+        return int(q1(
+            cur, "SELECT count(*) FROM events WHERE session_id=%s AND type='turn/material_spent'",
+            (sid,)))
+    return int(q1(
+        cur,
+        "SELECT count(*) FROM events WHERE session_id=%s AND type='turn/material_spent' "
+        "AND source_effect_id=%s", (sid, eid)))
+
+
+def r0_queue_n(cur):
+    return int(q1(cur, "SELECT count(*) FROM pgmq.q_v13_work"))
+
+
+def r0_advance_calls(cur):
+    cur.execute("SELECT pg_stat_force_next_flush()")
+    cur.fetchone()
+    slot = r0_stage.__dict__
+    obs = psycopg2.connect(slot["server"].get_uri(slot["name"]))
+    obs.autocommit = True
+    try:
+        oc = obs.cursor()
+        oc.execute("SELECT pg_stat_force_next_flush()")
+        oc.fetchone()
+        oc.execute(
+            "SELECT coalesce((SELECT calls FROM pg_stat_user_functions "
+            "WHERE funcid = 'public.v13_advance(uuid,jsonb)'::regprocedure), 0)")
+        return int(oc.fetchone()[0])
+    finally:
+        obs.close()
+
+
+def r0_reset_advance_calls(cur):
+    cur.execute(
+        "SELECT pg_stat_reset_single_function_counters("
+        "'public.v13_advance(uuid,jsonb)'::regprocedure)")
+    cur.fetchone()
+
+
+def r0_read_snap(cur, sid):
+    probe = as_obj(q1(cur, "SELECT v13_probe(%s)", (sid,)))
+    probe["sid"] = sid
+    return {"snap": probe, "envelope": {"sid": sid}, "remaining": 0, "abandon": False}
+
+
+def r0_settle(cur, sid, eid):
+    stored = as_obj(q1(cur, "SELECT result FROM effects WHERE effect_id=%s", (eid,)))
+    return q1(
+        cur, "SELECT v13_harness_settle(%s::uuid, %s::uuid, %s::uuid, %s::jsonb)",
+        (None, sid, eid, json.dumps(stored)))
+
+
+def r0_payload_ok(cur, sid, eid):
+    raw = as_obj(q1(
+        cur,
+        "SELECT payload FROM events WHERE session_id=%s AND type='turn/material_spent' "
+        "AND source_effect_id=%s", (sid, eid)))
+    return (
+        isinstance(raw, dict)
+        and set(raw) == {"schema_version", "effect_id"}
+        and raw["schema_version"] == 1
+        and raw["effect_id"] == eid)
+
+
+def r0_assert_booked(cur, sid, eid, blocker, row0, types0, eff0, q0, word, label):
+    types1 = r0_event_counts(cur, sid)
+    delta = {}
+    for key in set(types0) | set(types1):
+        diff = types1.get(key, 0) - types0.get(key, 0)
+        if diff:
+            delta[key] = diff
+    status = q1(cur, "SELECT status FROM sessions WHERE session_id=%s", (sid,))
+    check(
+        label,
+        word == "waiting"
+        and r0_receipt_n(cur, sid, eid) == 1
+        and r0_payload_ok(cur, sid, eid)
+        and r0_effect_text(cur, blocker) == row0
+        and delta == {"turn/material_spent": 1}
+        and n_effects(cur, sid) == eff0
+        and r0_queue_n(cur) == q0
+        and status == "waiting",
+        (word, delta, status, r0_receipt_n(cur, sid, eid)))
+    check(
+        "r0_no_dispatch",
+        delta == {"turn/material_spent": 1} and n_effects(cur, sid) == eff0 and r0_queue_n(cur) == q0,
+        delta)
+
+
+def r0_human_once(cur, kind, claimed):
+    sid = r0_open_version2(cur)
+    eid = r0_harness_ok(cur, sid, kind)
+    blocker = r0_claim_human(cur, sid) if claimed else r0_human(cur, sid)
+    row0 = r0_effect_text(cur, blocker)
+    types0 = r0_event_counts(cur, sid)
+    eff0 = n_effects(cur, sid)
+    q0 = r0_queue_n(cur)
+    word = r0_settle(cur, sid, eid)
+    label = "r0_root_human_claimed_receipt" if claimed else "r0_root_human_ready_receipt"
+    r0_assert_booked(cur, sid, eid, blocker, row0, types0, eff0, q0, word, label)
+
+
+def r0_root_human_ready_receipt(server):
+    def run():
+        conn = r0_stage(server)["conn"]
+        try:
+            for kind in ("progress", "finish"):
+                cur = conn.cursor()
+                try:
+                    r0_human_once(cur, kind, False)
+                finally:
+                    conn.rollback()
+        finally:
+            conn.rollback()
+    r0_guard(server, run)
+
+
+def r0_root_human_claimed_receipt(server):
+    def run():
+        conn = r0_stage(server)["conn"]
+        try:
+            for kind in ("progress", "finish"):
+                cur = conn.cursor()
+                try:
+                    r0_human_once(cur, kind, True)
+                finally:
+                    conn.rollback()
+        finally:
+            conn.rollback()
+    r0_guard(server, run)
+
+
+def r0_workspace_once(cur, kind):
+    sid = r0_open_version2(cur)
+    writer(cur, sid, plan_body([todo(u())], max_seq(cur, sid)))
+    eid = r0_harness_ok(cur, sid, kind)
+    opened_row = opened(cur, sid, "read_only", request("ls", ["dir"], {"path": "dir"}))
+    blocker = str(opened_row["effect_id"])
+    inf = q1(
+        cur,
+        "SELECT status='claimed' AND lease_owner='v13_workspace_opener' "
+        "AND lease_until='infinity'::timestamptz FROM effects WHERE effect_id=%s", (blocker,))
+    check("r0_root_workspace_claimed_receipt", inf is True, opened_row)
+    row0 = r0_effect_text(cur, blocker)
+    types0 = r0_event_counts(cur, sid)
+    eff0 = n_effects(cur, sid)
+    q0 = r0_queue_n(cur)
+    tc0 = n_events(cur, sid, "tool/call")
+    src0 = int(q1(
+        cur, "SELECT count(*) FROM events WHERE source_effect_id=%s AND type='tool/call'",
+        (blocker,)))
+    word = r0_settle(cur, sid, eid)
+    r0_assert_booked(
+        cur, sid, eid, blocker, row0, types0, eff0, q0, word, "r0_root_workspace_claimed_receipt")
+    tc1 = n_events(cur, sid, "tool/call")
+    src1 = int(q1(
+        cur, "SELECT count(*) FROM events WHERE source_effect_id=%s AND type='tool/call'",
+        (blocker,)))
+    check(
+        "r0_root_workspace_claimed_receipt",
+        tc1 == tc0 and src1 == src0 and r0_effect_text(cur, blocker) == row0,
+        (kind, tc0, tc1, src0, src1))
+
+
+def r0_root_workspace_claimed_receipt(server):
+    def run():
+        conn = r0_stage(server)["conn"]
+        try:
+            cur = conn.cursor()
+            try:
+                r0_workspace_once(cur, "progress")
+            finally:
+                conn.rollback()
+        finally:
+            conn.rollback()
+    r0_guard(server, run)
+
+
+def r0_set_failed(cur, eid, value):
+    cur.execute(
+        "UPDATE effects SET result = result || %s::jsonb WHERE effect_id=%s",
+        (json.dumps({"failed": value}), eid))
+
+
+def r0_stopped_case(cur, label, value, present, allow):
+    sid = r0_open_version2(cur)
+    q1(cur, "SELECT v13_goal_stop(%s, %s)", (sid, "r0-stop"))
+    eid = r0_harness_ok(cur, sid, "progress")
+    if present:
+        r0_set_failed(cur, eid, value)
+    life = q1(cur, "SELECT v13_goal_lifecycle(%s)", (sid,))
+    blocker = r0_human(cur, sid)
+    row0 = r0_effect_text(cur, blocker)
+    ev0 = n_events(cur, sid)
+    rec0 = r0_receipt_n(cur, sid, eid)
+    word = r0_settle(cur, sid, eid)
+    check("r0_stopped_failed_wrapper", life == "stopped", (label, life))
+    if allow:
+        check(
+            "r0_stopped_failed_wrapper",
+            word == "waiting"
+            and r0_receipt_n(cur, sid, eid) == rec0 + 1
+            and r0_payload_ok(cur, sid, eid)
+            and r0_effect_text(cur, blocker) == row0,
+            (label, word, rec0))
+    else:
+        check(
+            "r0_stopped_failed_wrapper",
+            word == "skipped_failed"
+            and r0_receipt_n(cur, sid, eid) == rec0
+            and n_events(cur, sid) == ev0
+            and r0_effect_text(cur, blocker) == row0,
+            (label, word, ev0, n_events(cur, sid)))
+
+
+def r0_stopped_failed_wrapper(server):
+    def run():
+        conn = r0_stage(server)["conn"]
+        cases = (
+            ("missing", None, False, True),
+            ("null", None, True, True),
+            ("false", False, True, False),
+            ("zero", 0, True, False),
+            ("empty", "", True, False),
+            ("text", "no", True, False),
+        )
+        try:
+            for label, value, present, allow in cases:
+                cur = conn.cursor()
+                try:
+                    cur.execute("SELECT pg_stat_force_next_flush()")
+                    cur.fetchone()
+                    conn.commit()
+                    cur = conn.cursor()
+                    r0_reset_advance_calls(cur)
+                    conn.commit()
+                    cur = conn.cursor()
+                    r0_stopped_case(cur, label, value, present, allow)
+                    conn.rollback()
+                    cur = conn.cursor()
+                    cur.execute("SELECT pg_stat_force_next_flush()")
+                    cur.fetchone()
+                    conn.commit()
+                    calls1 = r0_advance_calls(cur)
+                    check(
+                        "r0_stopped_failed_wrapper",
+                        calls1 == (1 if allow else 0),
+                        (label, calls1, allow))
+                finally:
+                    conn.rollback()
+        finally:
+            conn.rollback()
+    r0_guard(server, run)
+
+
+def r0_prepare_locked_root(cur):
+    sid = r0_open_version2(cur)
+    eid = r0_harness_ok(cur, sid, "progress")
+    hid = r0_human(cur, sid)
+    cur.execute(
+        "UPDATE sessions SET context_active_revision = v13_context_required(session_id) "
+        "WHERE session_id=%s", (sid,))
+    return sid, eid, hid
+
+
+def r0_wait_blocked(server, name, box, holder_pid, worker):
+    obs = psycopg2.connect(server.get_uri(name))
+    obs.autocommit = True
+    try:
+        cur = obs.cursor()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            pid = box.get("pid")
+            if pid:
+                blockers = q1(cur, "SELECT pg_blocking_pids(%s)", (pid,)) or []
+                if holder_pid in list(blockers):
+                    return True
+            if box.get("err") is not None or not worker.is_alive():
+                return False
+            time.sleep(0.05)
+        return False
+    finally:
+        obs.close()
+
+
+def r0_worker_advance(server, name, sid, snap, box):
+    conn = r0_connect(server, name)
+    try:
+        cur = conn.cursor()
+        cur.execute("SET lock_timeout = '8s'")
+        box["pid"] = int(q1(cur, "SELECT pg_backend_pid()"))
+        box["word"] = q1(
+            cur, "SELECT v13_advance(%s::uuid, %s::jsonb)", (sid, json.dumps(snap)))
+        conn.commit()
+    except Exception as exc:
+        diag = getattr(exc, "diag", None)
+        box["err"] = diag.message_primary if diag is not None and diag.message_primary else str(exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+
+def r0_finish_worker(server, name, worker):
+    if worker.is_alive():
+        try:
+            r0_cancel_others(server, name)
+        except Exception as exc:
+            print("[r0-cancel]", exc)
+        worker.join(10)
+
+
+def r0_two_connections_one_receipt(server):
+    def run():
+        slot = r0_stage(server)
+        conn = slot["conn"]
+        name = slot["name"]
+        hold = None
+        worker = None
+        try:
+            cur = conn.cursor()
+            sid, eid, hid = r0_prepare_locked_root(cur)
+            conn.commit()
+            cur = conn.cursor()
+            snap = r0_read_snap(cur, sid)
+            row0 = r0_effect_text(cur, hid)
+            eff0 = n_effects(cur, sid)
+            q0 = r0_queue_n(cur)
+            conn.rollback()
+            hold = r0_connect(server, name)
+            slot["conns"].append(hold)
+            hc = hold.cursor()
+            hpid = int(q1(hc, "SELECT pg_backend_pid()"))
+            hc.execute("SELECT 1 FROM sessions WHERE session_id=%s FOR UPDATE", (sid,))
+            hc.fetchone()
+            box = {}
+            worker = threading.Thread(
+                target=r0_worker_advance, args=(server, name, sid, snap, box))
+            slot["threads"].append(worker)
+            worker.start()
+            blocked = r0_wait_blocked(server, name, box, hpid, worker)
+            check("r0_two_connections_one_receipt", blocked, box)
+            word_h = q1(
+                hc, "SELECT v13_advance(%s::uuid, %s::jsonb)", (sid, json.dumps(snap)))
+            rec_h = r0_receipt_n(hc, sid, eid)
+            check(
+                "r0_two_connections_one_receipt",
+                word_h == "waiting" and rec_h == 1 and r0_payload_ok(hc, sid, eid),
+                (word_h, rec_h, box))
+            hold.commit()
+            worker.join(20)
+            check(
+                "r0_two_connections_one_receipt",
+                not worker.is_alive() and box.get("err") is None
+                and box.get("word") in ("stale", "waiting"),
+                box)
+            cur = conn.cursor()
+            snap2 = r0_read_snap(cur, sid)
+            cur.execute(
+                "UPDATE sessions SET context_active_revision = v13_context_required(session_id) "
+                "WHERE session_id=%s", (sid,))
+            snap2 = r0_read_snap(cur, sid)
+            word2 = q1(
+                cur, "SELECT v13_advance(%s::uuid, %s::jsonb)", (sid, json.dumps(snap2)))
+            check(
+                "r0_two_connections_one_receipt",
+                word2 == "waiting"
+                and r0_receipt_n(cur, sid, eid) == 1
+                and r0_effect_text(cur, hid) == row0
+                and n_effects(cur, sid) == eff0
+                and r0_queue_n(cur) == q0,
+                (word2, box, r0_receipt_n(cur, sid, eid)))
+        finally:
+            if worker is not None:
+                r0_finish_worker(server, name, worker)
+            if hold is not None and hold.closed == 0:
+                try:
+                    hold.rollback()
+                except Exception:
+                    pass
+                hold.close()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    r0_guard(server, run)
+
+
+def r0_effect_lock_recheck(server):
+    def run():
+        slot = r0_stage(server)
+        conn = slot["conn"]
+        name = slot["name"]
+        hold = None
+        worker = None
+        try:
+            cur = conn.cursor()
+            sid, eid, hid = r0_prepare_locked_root(cur)
+            conn.commit()
+            cur = conn.cursor()
+            snap = r0_read_snap(cur, sid)
+            row0 = r0_effect_text(cur, hid)
+            q0 = r0_queue_n(cur)
+            conn.rollback()
+            hold = r0_connect(server, name)
+            slot["conns"].append(hold)
+            hc = hold.cursor()
+            hpid = int(q1(hc, "SELECT pg_backend_pid()"))
+            hc.execute("SELECT 1 FROM effects WHERE effect_id=%s FOR UPDATE", (eid,))
+            hc.fetchone()
+            box = {}
+            worker = threading.Thread(
+                target=r0_worker_advance, args=(server, name, sid, snap, box))
+            slot["threads"].append(worker)
+            worker.start()
+            blocked = r0_wait_blocked(server, name, box, hpid, worker)
+            check("r0_effect_lock_recheck", blocked, box)
+            hc.execute(
+                "UPDATE effects SET status='failed' WHERE effect_id=%s AND status='succeeded'",
+                (eid,))
+            check("r0_effect_lock_recheck", hc.rowcount == 1, hc.rowcount)
+            hold.commit()
+            worker.join(20)
+            cur = conn.cursor()
+            status = q1(cur, "SELECT status FROM effects WHERE effect_id=%s", (eid,))
+            sess = q1(cur, "SELECT status FROM sessions WHERE session_id=%s", (sid,))
+            check(
+                "r0_effect_lock_recheck",
+                not worker.is_alive()
+                and box.get("err") is None
+                and box.get("word") == "waiting"
+                and r0_receipt_n(cur, sid, eid) == 0
+                and status == "failed"
+                and sess == "waiting"
+                and r0_effect_text(cur, hid) == row0
+                and r0_queue_n(cur) == q0,
+                (box, status, sess))
+        finally:
+            if worker is not None:
+                r0_finish_worker(server, name, worker)
+            if hold is not None and hold.closed == 0:
+                try:
+                    hold.rollback()
+                except Exception:
+                    pass
+                hold.close()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    r0_guard(server, run)
+
+
+def r0_child_advance_unchanged(server):
+    def run():
+        slot = r0_stage(server)
+        conn = slot["conn"]
+        name = slot["name"]
+        hold = None
+        worker = None
+        try:
+            cur = conn.cursor()
+            sid = r0_open_version2(cur)
+            kids = as_obj(q1(
+                cur, "SELECT v13_spawn_subsession(%s, %s::jsonb)",
+                (sid, json.dumps({
+                    "schema_version": 1,
+                    "children": [{"tool_call_id": "c1", "task": "one"}],
+                }))))
+            child = str(kids["children"][0]["session_id"])
+            parent = str(q1(
+                cur, "SELECT parent_session_id FROM sessions WHERE session_id=%s", (child,)))
+            check("r0_child_advance_unchanged", parent == sid, (parent, sid))
+            root_harness = r0_harness_ok(cur, sid, "progress")
+            child_harness = r0_harness_ok(cur, child, "progress")
+            check("r0_child_advance_unchanged", r0_receipt_n(cur, sid, root_harness) == 0
+                  and r0_receipt_n(cur, child, child_harness) == 0)
+            r0_human(cur, child)
+            cur.execute(
+                "UPDATE sessions SET context_active_revision = v13_context_required(session_id) "
+                "WHERE session_id=%s", (child,))
+            conn.commit()
+            cur = conn.cursor()
+            snap = r0_read_snap(cur, child)
+            root_st = q1(cur, "SELECT status FROM sessions WHERE session_id=%s", (sid,))
+            root_fx = r0_effects_text(cur, sid)
+            child_fx = r0_effects_text(cur, child)
+            rec_r = r0_receipt_n(cur, sid)
+            rec_c = r0_receipt_n(cur, child)
+            conn.rollback()
+            hold = r0_connect(server, name)
+            slot["conns"].append(hold)
+            hc = hold.cursor()
+            hpid = int(q1(hc, "SELECT pg_backend_pid()"))
+            hc.execute("SELECT 1 FROM sessions WHERE session_id=%s FOR UPDATE", (sid,))
+            hc.fetchone()
+            box = {}
+            worker = threading.Thread(
+                target=r0_worker_advance, args=(server, name, child, snap, box))
+            slot["threads"].append(worker)
+            worker.start()
+            worker.join(15)
+            obs = psycopg2.connect(server.get_uri(name))
+            obs.autocommit = True
+            try:
+                state = q1(
+                    obs.cursor(), "SELECT state FROM pg_stat_activity WHERE pid=%s", (hpid,))
+            finally:
+                obs.close()
+            cur = conn.cursor()
+            check(
+                "r0_child_advance_unchanged",
+                not worker.is_alive()
+                and box.get("err") is None
+                and box.get("word") == "waiting"
+                and state == "idle in transaction"
+                and q1(cur, "SELECT status FROM sessions WHERE session_id=%s", (sid,)) == root_st
+                and r0_effects_text(cur, sid) == root_fx
+                and r0_effects_text(cur, child) == child_fx
+                and r0_receipt_n(cur, sid) == rec_r
+                and r0_receipt_n(cur, child) == rec_c,
+                (box, state, root_st))
+        finally:
+            if worker is not None:
+                r0_finish_worker(server, name, worker)
+            if hold is not None and hold.closed == 0:
+                try:
+                    hold.rollback()
+                except Exception:
+                    pass
+                hold.close()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    r0_guard(server, run)
+
+
 def main() -> int:
     print("[db]", DB)
     test_stage_bytes()
@@ -1031,6 +1762,7 @@ def main() -> int:
         cur = conn.cursor()
         before_hashes = tuple(fn_hash(cur, sig) for sig in HASH_FNS)
         test_static(cur, before_hashes)
+        r0_reload_hashes(cur)
         sid = open_root(cur)
         prefix(cur, sid)
         isolated(cur, lambda: test_waiting_and_explore(cur, sid))
@@ -1046,6 +1778,14 @@ def main() -> int:
         test_settle_snap_binding(cur, sid)
         test_multiple_unpaid_selector(cur, sid)
         test_unpaid_settle(cur, sid, server, conn)
+        r0_root_human_ready_receipt(server)
+        r0_root_human_claimed_receipt(server)
+        r0_root_workspace_claimed_receipt(server)
+        r0_stopped_failed_wrapper(server)
+        r0_two_connections_one_receipt(server)
+        r0_effect_lock_recheck(server)
+        r0_child_advance_unchanged(server)
+        r0_stage_drop(server)
         conn.commit()
     finally:
         conn.close()

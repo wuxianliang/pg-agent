@@ -340,6 +340,11 @@ DECLARE
   v_cap_new boolean; v_cont boolean; v_idx bigint; v_st text;
   v_calls jsonb; v_sreq jsonb; v_triage text;
   v_plan_word text;
+  -- R0_DECL_BEGIN
+  v_r0_parent uuid;
+  v_r0_pred uuid;
+  v_r0_good boolean;
+  -- R0_DECL_END
 BEGIN
   IF p_snap IS NULL
      OR (p_snap->'snap'->>'sid') IS DISTINCT FROM p_sid::text
@@ -397,6 +402,66 @@ BEGIN
     RETURN 'waiting';
   END IF;
   IF EXISTS (SELECT 1 FROM effects WHERE session_id = p_sid AND status IN ('ready', 'claimed')) THEN
+    -- R0_RECEIPT_BEGIN
+    -- The entry lock is on p_sid itself: never map or lock a child's root.
+    SELECT parent_session_id INTO v_r0_parent FROM sessions WHERE session_id = p_sid;
+    IF v_r0_parent IS NULL THEN
+      v_r0_pred := v13_harness_predecessor(p_sid);
+      IF v_r0_pred IS NOT NULL THEN
+        SELECT * INTO v_prow FROM effects WHERE effect_id = v_r0_pred FOR UPDATE;
+        v_r0_good := FOUND
+          AND v_prow.session_id = p_sid
+          AND v_r0_pred = v13_harness_predecessor(p_sid)
+          AND v_prow.kind = 'tool'
+          AND v13_is_harness_tool(v_prow.tool_name, v_prow.kind)
+          AND v13_harness_request_ok(v_prow.request)
+          AND v_prow.origin_user_seq = v13_last_user_seq(p_sid)
+          AND v_prow.status = 'succeeded'
+          AND jsonb_typeof(v_prow.result) = 'object';
+        IF v_r0_good THEN
+          -- Keep JSON expansion behind separate type checks, not SQL AND order.
+          IF v_prow.result ? 'signals' THEN
+            IF jsonb_typeof(v_prow.result->'signals') IS DISTINCT FROM 'array' THEN
+              v_r0_good := false;
+            ELSE
+              SELECT NOT EXISTS (
+                SELECT 1 FROM jsonb_array_elements(v_prow.result->'signals') x
+                 WHERE jsonb_typeof(x) IS DISTINCT FROM 'string') INTO v_r0_good;
+            END IF;
+          END IF;
+          IF v_r0_good THEN
+            SELECT coalesce(array_agg(x ORDER BY x), '{}') INTO v_sig
+              FROM jsonb_array_elements_text(
+                CASE WHEN v_prow.result ? 'signals'
+                     THEN v_prow.result->'signals' ELSE '[]'::jsonb END) x;
+            SELECT coalesce(array_agg(type ORDER BY type), '{}') INTO v_ev
+              FROM events WHERE source_effect_id = v_r0_pred
+               AND type IN ('repair/required', 'replan/required');
+            v_r0_good := v_sig IS NOT DISTINCT FROM v_ev
+              AND (v_prow.result->>'result_kind' = 'finish'
+                OR (v_prow.result->>'result_kind' = 'progress' AND NOT EXISTS (
+                      SELECT 1 FROM events WHERE source_effect_id = v_r0_pred
+                       AND type IN ('repair/required', 'replan/required'))))
+              AND NOT (v13_goal_lifecycle(p_sid) = 'stopped'
+                       AND (v_prow.result->>'failed') IS NOT NULL)
+              AND NOT EXISTS (
+                SELECT 1 FROM events ev
+                JOIN effects src ON src.effect_id = ev.source_effect_id
+                 WHERE ev.session_id = p_sid AND ev.type = 'turn/material_spent'
+                   AND src.request->>'logical_turn_id' = v_prow.request->>'logical_turn_id'
+                   AND ev.source_effect_id IS DISTINCT FROM v_r0_pred)
+              AND NOT EXISTS (
+                SELECT 1 FROM events WHERE source_effect_id = v_r0_pred
+                 AND type = 'turn/material_spent');
+            IF v_r0_good THEN
+              PERFORM v13_append_event(p_sid, gen_random_uuid(), 'turn/material_spent',
+                jsonb_build_object('schema_version', 1, 'effect_id', v_r0_pred::text), v_r0_pred);
+            END IF;
+          END IF;
+        END IF;
+      END IF;
+    END IF;
+    -- R0_RECEIPT_END
     UPDATE sessions SET status = 'waiting' WHERE session_id = p_sid;
     RETURN 'waiting';
   END IF;

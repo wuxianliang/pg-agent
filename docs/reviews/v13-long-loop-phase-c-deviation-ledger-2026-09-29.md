@@ -14,3 +14,11 @@
 | PC-C8 | 收据候选与活体前驱一致 | 已修复并实测 | Oracle `301594C5` 指出 settle 不得自写胜者。`plan_arm:449` 的活体臂先调用 `v13_harness_predecessor`，选择器 `control:180-194` 已有排序与 LIMIT。本期读函数及 settle 直接消费该选择器，再验证未付谓词，不新增排序。两条物理未付行时仅当前前驱可结算，旧行无收据；前驱已付后不回落旧行。`multiple_unpaid_candidates`、`settled_predecessor_does_not_fall_back` 实测通过 |
 | PC-C9 | 未退役 user_gate 通知 | 已修复并实测 | Oracle P2：通知事实不限 selector 的 operator 派发状态。现排除 `done/dropped`，覆盖合法 `runnable -> waiting`（通过写者 todo_delta）与初始 blocked。写者仍拒绝初始 waiting user_gate；没有改 Phase A 写者 |
 | P2-C1 | 非 operator 显式 NULL 的隔离测试 | 开放，不挡 | gate 已测试根 UUID actor 拒绝；尚无非 operator 显式 NULL 的角色夹具。SQL 的 operator 检查存在，但当前超级用户测试不声称此角色路径已实跑，不声称产品角色闭合 |
+
+## R0 重开实现偏差与边界（2026-10-01）
+
+R0 已按复审接受计划实现并完成十条 gate；仅声称 DB owner/superuser 确定性夹具下，根 `v13_advance` 在 ready/claimed 阻断分支可为合格当前 harness 幂等补记 `turn/material_spent`，随后仍 waiting。复审 Oracle group `FA70C826-BE9B-498C-A493-99E67CA085D7`：无 P0/P1；P2 ready/claimed 负例夹具曾先改 human blocker，现已重写为显式将 human 置 succeeded、将 harness 前驱置 ready/claimed，并断言选择器返回的唯一活跃阻断行正是该 harness effect。复跑 `plan_arm` exit 0，库 `ll_plan_arm_79930` 已 DROP，104 checks。
+
+R0 十条全量结果、advance 加载后 SHA-256 `e49c4efa9f45ccd0521be96b28d053c16a4e63c3a113285138d96ad8632da87c`、固定基线哨兵块 byte-restore 证明、临时库清理结果见同日覆盖矩阵 R0 小节。历史 PC-C1…PC-C9 与 P2-C1 记录不覆盖。
+
+未关闭边界：R1/M3 仍未获接受且 `not_run`；child 不获得 root receipt；未知/取消/终态/stale 可能先行返回；普通 advance 的早记账可影响后续 session-local quota/派发；不证明产品角色 EXECUTE、真实 provider、V11/auto-wake、PC-4、产品可用或无人值守完成。无本期 SQL helper、加载器/其他运行时 SQL/loop_driver/goal_supervise SQL 变化。

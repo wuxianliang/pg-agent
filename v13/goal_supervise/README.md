@@ -52,3 +52,13 @@ Phase C 第二段。交付 C5 旁路、C6 折叠、D1 政策与投影、D2 检�
 断言名按计划 §7.2。
 
 2026-10-01 实跑退出码 0，99 checks；库 `ll_goal_supervise_31540_9afbe8` 已 DROP。同窗口九个回归 gate 均退出码 0，命令与库名见 Phase C 覆盖矩阵。
+
+## R0 重开兼容与新增测试（2026-10-01）
+
+以上是 M2 历史记录。R0 不修改本目录 SQL、wrapper 授权/快照绑定/skipped_failed，也不新增加载键。变化来自唯一 plan_arm advance 的 root ready/claimed 分支：可补记当前 harness 收据，随后仍 waiting；human/claimed workspace 不被绕过派发。unknown/cancel/terminal/stale 墙仍可能先返回，不能将这类 waiting 当收据成功。
+
+stage_bytes 用固定 `fb295ac6c7459bb98dac57e37883af549d2d8a4c` 正向证明替代 plan_arm/frontier 测试目录的空 diff 条件，不移除其它运行时文件保护。本目录 SQL bytes 保持基线相同，并真正重载自身 SQL、比较加载前后 advance/fingerprint/recover/should_run/hint 函数哈希。
+
+新增 R0 测试在独立随机 `ll_r0_gs_*` 库中累计加载到 stage 38，根夹具 version 2、首 advance 前 direct override。只清理本次创建的库；并发使用 pg_blocking_pids 确认锁等待后放行，轮询间隔不是胜者依据。验证：root human ready/claimed 的 progress/finish、workspace 完整行不变、同源收据且队列零增长、两连接只付一次、effect 等锁后重读、child 不上锁 root。stopped/failed 的 wrapper 零 advance 用独立库 track_functions 统计并在 rollback/flush 后读取，另有 null/缺键调用一次的正对照，不以 receipt=0 冒充零调用。
+
+R0 结果见覆盖矩阵的单独行。它不修改 M1/M2 历史证据，不证明 M3、产品 operator EXECUTE 权限、V11、PC-4 或生产无人值守。
