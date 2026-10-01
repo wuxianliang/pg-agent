@@ -52,6 +52,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "real_chain" / "v13_real_chain.sql",
     V13_ROOT / "workspace_admit" / "v13_workspace_admit.sql",
     V13_ROOT / "frontier_gap" / "v13_frontier_gap.sql",
+    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",
 ]
 
 STAGE_THROUGH = {
@@ -92,6 +93,7 @@ STAGE_THROUGH = {
     "real_chain": 35,
     "workspace_admit": 36,
     "frontier_gap": 37,
+    "goal_supervise": 38,
 }
 
 
