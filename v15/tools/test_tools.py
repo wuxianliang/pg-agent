@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import sys
 import uuid
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -24,7 +25,7 @@ from v15.load import SQL_LOAD_ORDER, files_through
 from v15.protocol.render_prompt import render_system
 from v15.protocol.split_sql import classify_statement
 from v15.tools.setup_db import DB, main as setup_db
-from v15.worker import Worker, run_until_quiescent
+from v15.worker import CAP, Worker, run_until_quiescent
 
 OWNER = "tools-owner"
 FENCE = 1
@@ -45,6 +46,30 @@ def check(label: str, condition: bool, detail: object = "") -> None:
     print(f"[{mark}] {label}" + (f": {detail}" if detail != "" else ""))
     if not condition:
         raise AssertionError(f"{label}: {detail}")
+
+
+def assert_exception_block(cur, invoke_id: str, code: str, label: str) -> None:
+    cur.execute(
+        """
+        SELECT h.repl_output, m.content
+        FROM v15.repl_history h
+        JOIN v15.llm_messages m
+          ON m.invoke_id = h.invoke_id
+         AND m.iteration = h.iteration
+         AND m.kind = 'observation'
+        WHERE h.invoke_id = %s
+        ORDER BY h.iteration
+        LIMIT 1
+        """,
+        (invoke_id,),
+    )
+    row = cur.fetchone()
+    needle = f"[v15 exception {code}]"
+    check(
+        label,
+        row is not None and needle in (row[0] or "") and needle in (row[1] or ""),
+        row,
+    )
 
 
 def connect(server, user: str | None = None):
@@ -87,6 +112,16 @@ def test_classifier() -> None:
     check("bind_tool tool_name", got.tool_name == "fake_search", got)
     check("bind_tool arg_sql", got.arg_sql == "'{}'::jsonb", got)
     check("bind_tool no reject", got.reject_code is None, got)
+    check(
+        "bind_tool five-tuple",
+        got == ("bind_tool", "out", "'{}'::jsonb", None, "fake_search"),
+        got,
+    )
+    check(
+        "bind_tool four-tuple not equal",
+        got != ("bind_tool", "out", "'{}'::jsonb", None),
+        got,
+    )
     quoted = classify_statement(
         'SELECT jaz."bind_tool"(\'out\',\'fake_search\',\'{}\'::jsonb)'
     )
@@ -97,19 +132,19 @@ def test_classifier() -> None:
     check("bind_tool case", folded.kind == "bind_tool", folded)
     check(
         "string is not bind_tool",
-        classify_statement("SELECT 'jaz.bind_tool'") == ("plain", None, None, None),
+        classify_statement("SELECT 'jaz.bind_tool'") == ("plain", None, None, None, None),
     )
     check(
         "comment is not bind_tool",
-        classify_statement("/* jaz.bind_tool */ SELECT 1") == ("plain", None, None, None),
+        classify_statement("/* jaz.bind_tool */ SELECT 1") == ("plain", None, None, None, None),
     )
     check(
         "line comment is not bind_tool",
-        classify_statement("SELECT 1 -- jaz.bind_tool\n") == ("plain", None, None, None),
+        classify_statement("SELECT 1 -- jaz.bind_tool\n") == ("plain", None, None, None, None),
     )
     check(
         "dollar quote is not bind_tool",
-        classify_statement("SELECT $$ jaz.bind_tool $$") == ("plain", None, None, None),
+        classify_statement("SELECT $$ jaz.bind_tool $$") == ("plain", None, None, None, None),
     )
     d24 = classify_statement(
         "SELECT jaz.bind_tool('out','fake_search',(SELECT 1 INTO t))"
@@ -126,21 +161,21 @@ def test_classifier() -> None:
     )
     check("D24 INSERT token", insert.reject_code == "V15_INVOKE_FORM", insert)
     six = classify_statement("SELECT jaz.bind_tool('out','fake_search')")
-    check("two-arg bind_tool is form", six == ("plain", None, None, "V15_INVOKE_FORM"), six)
+    check("two-arg bind_tool is form", six == ("plain", None, None, "V15_INVOKE_FORM", None), six)
     check(
         "DO is dialect",
         classify_statement("DO $$ BEGIN PERFORM 1; END $$")
-        == ("plain", None, None, "V15_DIALECT"),
+        == ("plain", None, None, "V15_DIALECT", None),
     )
     check(
         "unquoted return is form",
         classify_statement("SELECT jaz.return('null'::jsonb)")
-        == ("plain", None, None, "V15_INVOKE_FORM"),
+        == ("plain", None, None, "V15_INVOKE_FORM", None),
     )
     check(
         "ALTER TABLE is ddl",
         classify_statement("ALTER TABLE t ADD COLUMN x int")
-        == ("plain", None, None, "V15_DDL"),
+        == ("plain", None, None, "V15_DDL", None),
     )
     from v15.worker import statement_payload
 
@@ -600,9 +635,9 @@ def test_shape(cur) -> None:
     )
     cur.execute(
         """
-        SELECT has_function_privilege('v15_worker', 'v15.v15_suspend_for_tool(uuid,integer,integer,text,jsonb)', 'EXECUTE'),
-               has_function_privilege('v15_repl', 'v15.v15_suspend_for_tool(uuid,integer,integer,text,jsonb)', 'EXECUTE'),
-               has_function_privilege('public', 'v15.v15_suspend_for_tool(uuid,integer,integer,text,jsonb)', 'EXECUTE'),
+        SELECT has_function_privilege('v15_worker', 'v15.v15_suspend_for_tool(uuid,integer,integer,text,jsonb,bigint,bigint)', 'EXECUTE'),
+               has_function_privilege('v15_repl', 'v15.v15_suspend_for_tool(uuid,integer,integer,text,jsonb,bigint,bigint)', 'EXECUTE'),
+               has_function_privilege('public', 'v15.v15_suspend_for_tool(uuid,integer,integer,text,jsonb,bigint,bigint)', 'EXECUTE'),
                has_function_privilege('v15_repl', 'jaz.bind_tool(text,text,jsonb)', 'EXECUTE'),
                has_function_privilege('v15_worker', 'jaz.bind_tool(text,text,jsonb)', 'EXECUTE'),
                has_function_privilege('public', 'jaz.bind_tool(text,text,jsonb)', 'EXECUTE')
@@ -812,6 +847,13 @@ def test_suspend_paths(server, admin, worker) -> None:
         (wait_id, OWNER),
     )
     check("claim tool_wait is NULL", wcur.fetchone()[0] is None)
+    wcur.execute("SELECT v15.v15_loop_snapshot(%s)", (wait_id,))
+    claimed = parse_json(wcur.fetchone()[0])
+    check(
+        "claim left tool_wait fence",
+        claimed.get("status") == "tool_wait" and int(claimed.get("fence")) == FENCE,
+        claimed,
+    )
     worker.rollback()
     wcur.execute("SELECT v15.v15_next_runnable()")
     runnable = [row[0] for row in wcur.fetchall()]
@@ -898,7 +940,8 @@ def test_success_delivery(admin, worker) -> None:
         opened.get("action") == "proceed"
         and opened.get("n") == 1
         and opened.get("tool_name") == "fake_search"
-        and opened.get("args") == {},
+        and opened.get("args") == {}
+        and int(opened.get("fence") or 0) >= 1,
         opened,
     )
     after_begin = next_tool_ids(worker)
@@ -910,8 +953,8 @@ def test_success_delivery(admin, worker) -> None:
         "P1523",
         "second begin while leased",
     )
-    mark_tool(worker, opened["attempt_id"])
-    settle_tool(worker, opened["attempt_id"], {"ok": True, "value": {"hits": 1}})
+    mark_tool(worker, opened["attempt_id"], int(opened["fence"]))
+    settle_tool(worker, opened["attempt_id"], {"ok": True, "value": {"hits": 1}}, int(opened["fence"]))
     cur.execute(
         """
         SELECT i.status, i.fence, i.lease_owner, it.status, it.resume_stmt,
@@ -989,6 +1032,38 @@ def test_success_delivery(admin, worker) -> None:
     )
     check("success charges one call", cur.fetchone() == (1, 0))
 
+    vid, _ = seed_wait(admin, worker, bind_name="kept")
+    cur.execute(
+        """
+        INSERT INTO v15.bindings (
+          invoke_id, name, kind, value, show_in_prompt, provenance
+        ) VALUES (%s, 'kept', 'var', '{"old":true}'::jsonb, false, 'repl')
+        """,
+        (vid,),
+    )
+    admin.commit()
+    vopened = begin_tool(worker, vid)
+    mark_tool(worker, vopened["attempt_id"], int(vopened["fence"]))
+    settle_tool(
+        worker,
+        vopened["attempt_id"],
+        {"ok": True, "value": {"new": 1}},
+        int(vopened["fence"]),
+    )
+    cur.execute(
+        """
+        SELECT kind, provenance, show_in_prompt, value
+        FROM v15.bindings WHERE invoke_id = %s AND name = 'kept'
+        """,
+        (vid,),
+    )
+    row = cur.fetchone()
+    check(
+        "update var sets show_in_prompt",
+        row[:3] == ("var", "delivery", True) and parse_json(row[3]) == {"new": 1},
+        row,
+    )
+
 
 def test_reclaim_tool(admin, worker) -> None:
     cur = admin.cursor()
@@ -1017,6 +1092,23 @@ def test_reclaim_tool(admin, worker) -> None:
         "unmarked failed no charge",
         row == ("failed", False, False, "tool_wait", "open", 0, 0),
         row,
+    )
+    cur.execute(
+        """
+        SELECT payload
+        FROM v15.invoke_events
+        WHERE invoke_id = %s AND event_class = 'audit'
+          AND payload->>'op' = 'tool_retry'
+        ORDER BY seq DESC LIMIT 1
+        """,
+        (iid,),
+    )
+    retry_payload = parse_json(cur.fetchone()[0])
+    check(
+        "tool_retry new_attempt_id",
+        retry_payload.get("new_attempt_id") is None
+        and retry_payload.get("op") == "tool_retry",
+        retry_payload,
     )
     marked_pool = make_pool(cur)
     mid, _ = seed_wait(admin, worker, pool_id=marked_pool)
@@ -1201,6 +1293,7 @@ def test_ok_false_and_conflict(admin, worker) -> None:
         ),
         row,
     )
+    assert_exception_block(cur, iid, "V15_TOOL_FAILED", "ok=false observation block")
     cur.execute(
         """
         SELECT phase FROM v15.invoke_events
@@ -1518,6 +1611,32 @@ def test_worker_loop_and_replay(server) -> None:
         "SELECT jaz.bind_tool('out','fake_search','{}'::jsonb);\n"
         "SELECT 1;\n" + RET
     )
+
+    def drive_one(invoke_id, script, faketool=None):
+        w = Worker(server.get_uri(DB), script, OWNER, faketool=faketool)
+        try:
+            steps = 0
+            while steps <= CAP:
+                w.reclaim()
+                w.drive_tools()
+                fence = w.claim(invoke_id)
+                if fence is None:
+                    cur.execute(
+                        "SELECT status FROM v15.invokes WHERE invoke_id = %s",
+                        (invoke_id,),
+                    )
+                    st = cur.fetchone()
+                    admin.rollback()
+                    if steps == 0:
+                        raise AssertionError(
+                            f"not claimable {invoke_id} status={st}"
+                        )
+                    return
+                w.drive(invoke_id, fence)
+                steps += 1
+            raise RuntimeError("drive_one cap")
+        finally:
+            w.close()
     try:
         cur = admin.cursor()
         pool_id = make_pool(cur)
@@ -1711,11 +1830,11 @@ def test_worker_loop_and_replay(server) -> None:
         row = cur.fetchone()
         check(
             "FakeTool exception P1544",
-            row[:6] == ("V15_TOOL_FAILED", "P1544", 0, 0, "skipped", "pending")
-            or row[:5] == ("V15_TOOL_FAILED", "P1544", 0, 0, "skipped"),
+            row == ("V15_TOOL_FAILED", "P1544", 0, 0, "skipped", "done", "completed"),
             row,
         )
         check("no leaked leased attempt", row[3] == 0, row)
+        assert_exception_block(cur, boom_id, "V15_TOOL_FAILED", "boom observation block")
         cur.execute(
             """
             SELECT payload->>'op'
@@ -1773,11 +1892,8 @@ def test_worker_loop_and_replay(server) -> None:
             "sync external=true",
             row is not None
             and row[3] == 0
-            and (
-                row[0] == "V15_EXTERNAL_TOOL"
-                or row[1] == "P1517"
-                or (row[2] or "").startswith("V15_EXTERNAL_TOOL")
-            ),
+            and row[0] == "P1517"
+            and row[1] == "P1517",
             row,
         )
 
@@ -1842,6 +1958,13 @@ def test_worker_loop_and_replay(server) -> None:
             and row[11] == "pending",
             row,
         )
+        occ_fin = Worker(server.get_uri(DB), Script([RET]), OWNER)
+        try:
+            fence = occ_fin.claim(occ_id)
+            if fence is not None:
+                occ_fin.drive(occ_id, fence)
+        finally:
+            occ_fin.close()
 
         wait_id, _ = seed_wait(admin, worker)
         expect(
@@ -1851,9 +1974,500 @@ def test_worker_loop_and_replay(server) -> None:
             "P1524",
             "export tool_wait",
         )
+
+        plain_pool = make_pool(cur)
+        admin.commit()
+        plain_id = str(uuid.uuid4())
+        open_invoke(worker, plain_id, pool_id=plain_pool)
+        admin.commit()
+        plain_worker = Worker(server.get_uri(DB), Script([RET]), OWNER)
+        try:
+            plain_worker.reclaim()
+            fence = plain_worker.claim(plain_id)
+            if fence is None:
+                raise AssertionError("plain export tree was not claimable")
+            plain_worker.drive(plain_id, fence)
+        finally:
+            plain_worker.close()
+        admin.rollback()
+        cur.execute(
+            """
+            SELECT count(*) FROM v15.tool_grants g
+            JOIN v15.tool_catalog c ON c.tool_id = g.tool_id
+            WHERE g.invoke_id = %s AND c.name = 'fake_search'
+            """,
+            (plain_id,),
+        )
+        check("plain export tree has no fake_search grant", cur.fetchone()[0] == 0)
+        wcur = worker.cursor()
+        wcur.execute("SELECT v15.v15_replay_export(%s)::text", (plain_id,))
+        raw_export = wcur.fetchone()[0]
+        exported = parse_json(raw_export)
+        worker.commit()
+        check("plain export no P1524 version", exported.get("version") == 1, exported)
+        check(
+            "plain export invokes nonempty",
+            isinstance(exported.get("invokes"), list) and len(exported["invokes"]) > 0,
+            exported,
+        )
+        typed_export = json.loads(raw_export, parse_int=Decimal, parse_float=Decimal)
+        costs = [
+            step.get("recorded_cost_usd")
+            for inv in typed_export.get("invokes") or []
+            for step in inv.get("steps") or []
+        ]
+        check(
+            "plain export recorded_cost_usd is Decimal or None",
+            all(c is None or isinstance(c, Decimal) for c in costs),
+            costs,
+        )
+        check(
+            "plain export recorded_cost_usd not str",
+            all(not isinstance(c, str) for c in costs),
+            costs,
+        )
+        nonzero = [c for c in costs if c is not None and c != 0]
+        if nonzero:
+            from v15.replay.trace import dumps
+
+            compact = dumps(typed_export).replace(" ", "").replace("\n", "")
+            for c in nonzero:
+                token = str(int(c)) if c == c.to_integral_value() else format(c, "f")
+                check(
+                    "plain export recorded_cost_usd is json number",
+                    f'"recorded_cost_usd":{token}' in compact,
+                    compact,
+                )
+                check(
+                    "plain export cost not quoted str",
+                    f'"recorded_cost_usd":"{token}"' not in compact,
+                    compact,
+                )
+
+        false_id = str(uuid.uuid4())
+        open_invoke(worker, false_id)
+        grant_catalog_tool(cur, false_id, "echo_tool")
+        admin.commit()
+        false_sql = (
+            "SELECT jaz.bind_tool('out','echo_tool','{}'::jsonb);\n"
+            "SELECT 1;\n" + RET
+        )
+        drive_one(false_id, Script([false_sql]))
+        admin.rollback()
+        cur.execute(
+            """
+            SELECT s0.error->>'sqlstate', s0.error->>'code', s0.status,
+                   s1.status, i.status
+            FROM v15.invokes i
+            JOIN v15.statements s0
+              ON s0.invoke_id = i.invoke_id AND s0.iteration = 0 AND s0.stmt_index = 0
+            JOIN v15.statements s1
+              ON s1.invoke_id = i.invoke_id AND s1.iteration = 0 AND s1.stmt_index = 1
+            WHERE i.invoke_id = %s
+            """,
+            (false_id,),
+        )
+        row = cur.fetchone()
+        check(
+            "external=false then plain continues",
+            row == ("P1543", "V15_TOOL_BINDING", "failed", "done", "completed"),
+            row,
+        )
+
+        limit_pool = make_pool(cur)
+        admin.commit()
+        limit_id = str(uuid.uuid4())
+        open_invoke(worker, limit_id, pool_id=limit_pool)
+        grant_catalog_tool(cur, limit_id, "fake_search")
+        admin.commit()
+        over_sql = (
+            "SELECT jaz.bind_tool('out','fake_search',"
+            "'{\"pad\":\"0123456789ABCDEF\"}'::jsonb);\n" + RET
+        )
+
+        class Tighten(Script):
+            def complete(self, logical_digest, n, request, llm_config=None):
+                out = super().complete(logical_digest, n, request, llm_config)
+                tight = connect(server)
+                tight.autocommit = True
+                try:
+                    tight.cursor().execute(
+                        """
+                        UPDATE v15.invokes
+                        SET resolved_config = jsonb_set(
+                          resolved_config,
+                          '{protocol,max_invoke_input_length}',
+                          '10'::jsonb,
+                          true
+                        )
+                        WHERE invoke_id = %s
+                        """,
+                        (limit_id,),
+                    )
+                finally:
+                    tight.close()
+                return out
+
+        drive_one(limit_id, Tighten([over_sql, RET]))
+        admin.rollback()
+        probe = connect(server)
+        try:
+            pcur = probe.cursor()
+            pcur.execute(
+                """
+                SELECT s.error->>'sqlstate', s.error->>'code',
+                       (SELECT count(*) FROM v15.tool_requests r WHERE r.invoke_id = %s),
+                       i.status
+                FROM v15.statements s
+                JOIN v15.invokes i ON i.invoke_id = s.invoke_id
+                WHERE s.invoke_id = %s AND s.iteration = 0 AND s.stmt_index = 0
+                """,
+                (limit_id, limit_id),
+            )
+            row = pcur.fetchone()
+        finally:
+            probe.close()
+        check(
+            "over-limit P1524 no suspend",
+            row is not None and row[0] == "P1524" and row[1] == "V15_VALUE_INVALID" and row[2] == 0,
+            row,
+        )
+
+        tiny = make_pool(cur, calls_limit=2)
+        admin.commit()
+        chain_id = str(uuid.uuid4())
+        open_invoke(worker, chain_id, pool_id=tiny)
+        parent_sql = (
+            "SELECT jaz.bind_invoke('c', '{}'::jsonb);\n"
+            "SELECT jaz.\"return\"(jaz.var('c'));"
+        )
+        child_sql = (
+            "SELECT jaz.bind_invoke('g', '{}'::jsonb);\n"
+            "SELECT jaz.\"return\"(jaz.var('g'));"
+        )
+        chain_w = Worker(
+            server.get_uri(DB), Script([parent_sql, child_sql]), OWNER
+        )
+        try:
+            steps = 0
+            while steps <= CAP:
+                chain_w.reclaim()
+                chain_w.drive_tools()
+                cur.execute(
+                    """
+                    SELECT invoke_id::text FROM v15.invokes
+                    WHERE status = 'runnable'
+                      AND (invoke_id = %s OR root_invoke_id = %s)
+                    ORDER BY invoke_id
+                    LIMIT 1
+                    """,
+                    (chain_id, chain_id),
+                )
+                nxt = cur.fetchone()
+                admin.rollback()
+                if nxt is None:
+                    break
+                fence = chain_w.claim(nxt[0])
+                if fence is None:
+                    steps += 1
+                    continue
+                chain_w.drive(nxt[0], fence)
+                steps += 1
+            else:
+                raise RuntimeError("drive_tree cap")
+        finally:
+            chain_w.close()
+        admin.rollback()
+        cur.execute(
+            "SELECT status, fatal, error->>'code' FROM v15.invokes WHERE invoke_id = %s",
+            (chain_id,),
+        )
+        row = cur.fetchone()
+        check(
+            "child pool exhaust parent not suspended",
+            row is not None and row[0] != "suspended",
+            row,
+        )
+        check(
+            "child pool exhaust parent aborted",
+            row == ("aborted", True, "V15_BUDGET_EXHAUSTED"),
+            row,
+        )
+
+        class Unenc:
+            def call(self, tool_name, args):
+                return {"ok": True, "value": {"x": {1, 2}}}
+
+        un_id = str(uuid.uuid4())
+        open_invoke(worker, un_id)
+        grant_catalog_tool(cur, un_id, "fake_search")
+        admin.commit()
+        drive_one(un_id, Script([FAIL_SQL, RET]), faketool=Unenc())
+        admin.rollback()
+        cur.execute(
+            """
+            SELECT s.error->>'code', s.error->>'sqlstate',
+                   (SELECT count(*) FROM v15.tool_attempts a
+                    JOIN v15.tool_requests r ON r.request_id = a.request_id
+                    WHERE r.invoke_id = %s AND a.status = 'leased')
+            FROM v15.statements s
+            WHERE s.invoke_id = %s AND s.iteration = 0 AND s.stmt_index = 0
+            """,
+            (un_id, un_id),
+        )
+        row = cur.fetchone()
+        check(
+            "unencodable value settles ok=false",
+            row == ("V15_TOOL_FAILED", "P1544", 0),
+            row,
+        )
+
+        class ZeroOk:
+            def call(self, tool_name, args):
+                return {"ok": 0}
+
+        z_id = str(uuid.uuid4())
+        open_invoke(worker, z_id)
+        grant_catalog_tool(cur, z_id, "fake_search")
+        admin.commit()
+        drive_one(z_id, Script([FAIL_SQL, RET]), faketool=ZeroOk())
+        admin.rollback()
+        cur.execute(
+            """
+            SELECT s.error->>'code', s.error->>'sqlstate',
+                   (SELECT count(*) FROM v15.tool_attempts a
+                    JOIN v15.tool_requests r ON r.request_id = a.request_id
+                    WHERE r.invoke_id = %s AND a.status = 'leased')
+            FROM v15.statements s
+            WHERE s.invoke_id = %s AND s.iteration = 0 AND s.stmt_index = 0
+            """,
+            (z_id, z_id),
+        )
+        row = cur.fetchone()
+        check(
+            "non-boolean ok settles false",
+            row == ("V15_TOOL_FAILED", "P1544", 0),
+            row,
+        )
+
+        class Counter:
+            def __init__(self):
+                self.n = 0
+            def call(self, tool_name, args):
+                self.n += 1
+                return {"ok": True, "value": {}}
+
+        rid, _ = seed_wait(admin, worker)
+        counter = Counter()
+        race = Worker(server.get_uri(DB), Script([]), OWNER, faketool=counter)
+        orig_run = race._run
+        seen = {"n": 0}
+
+        def wrapped(fn):
+            result = orig_run(fn)
+            seen["n"] += 1
+            if seen["n"] == 1 and isinstance(result, dict) and result.get("attempt_id"):
+                expire_tool_attempt(cur, str(result["attempt_id"]))
+                admin.commit()
+                extra = connect(server, "v15_worker")
+                extra.autocommit = False
+                try:
+                    call(extra, "SELECT v15.v15_reclaim_expired()")
+                    extra.commit()
+                finally:
+                    extra.close()
+            return result
+
+        try:
+            race._run = wrapped
+            race._run_one_tool(rid, counter)
+        finally:
+            race.close()
+        check("mark race does not call FakeTool", counter.n == 0, counter.n)
+
+        iso_a, _ = seed_wait(admin, worker)
+        iso_b, _ = seed_wait(admin, worker)
+        class Seen:
+            def __init__(self):
+                self.ids = []
+            def call(self, tool_name, args):
+                self.ids.append(tool_name)
+                return {"ok": True, "value": {"v": 1}}
+
+        seen_tool = Seen()
+        iso = Worker(server.get_uri(DB), Script([]), OWNER, faketool=seen_tool)
+        orig_fetch = iso._fetch
+        settles = {"n": 0}
+
+        class ForcedError(psycopg2.Error):
+            @property
+            def pgcode(self):
+                return "XX000"
+
+        def fetch(conn, query, args=()):
+            if "v15_settle_tool" in query:
+                settles["n"] += 1
+                if settles["n"] == 1:
+                    raise ForcedError("isolated")
+            return orig_fetch(conn, query, args)
+
+        try:
+            iso._fetch = fetch
+            iso._run_one_tool(iso_a, seen_tool)
+            iso._run_one_tool(iso_b, seen_tool)
+        finally:
+            iso.close()
+        admin.rollback()
+        check("settle isolation still calls other", len(seen_tool.ids) == 2, seen_tool.ids)
+        cur.execute(
+            """
+            SELECT count(*) FILTER (WHERE a.status = 'leased')
+            FROM v15.tool_attempts a
+            JOIN v15.tool_requests r ON r.request_id = a.request_id
+            WHERE r.invoke_id IN (%s, %s)
+            """,
+            (iso_a, iso_b),
+        )
+        check("settle isolation no leftover leased", cur.fetchone()[0] == 0)
+
     finally:
         worker.close()
         admin.close()
+
+
+def test_reclaim_child_delivery(admin, worker) -> None:
+    cur = admin.cursor()
+    parent = str(uuid.uuid4())
+    child = str(uuid.uuid4())
+    scratch = scratch_for(parent)
+    child_scratch = scratch_for(child)
+    cur.execute(psql.SQL("CREATE SCHEMA {} AUTHORIZATION v15_owner").format(psql.Identifier(scratch)))
+    cur.execute(psql.SQL("CREATE SCHEMA {} AUTHORIZATION v15_owner").format(psql.Identifier(child_scratch)))
+    cur.execute(
+        """
+        INSERT INTO v15.invokes (
+          invoke_id, parent_invoke_id, parent_iteration, root_invoke_id, depth,
+          status, fatal, recursion_available, resolved_config, config_digest,
+          manifest_digest, scratch_schema, fence, lease_owner, lease_until,
+          created_at, updated_at
+        ) VALUES (
+          %s, NULL, NULL, %s, 1,
+          'leased', false, true, '{"llm":{"model":"fake"},"repl":{},"protocol":{},"depth":1}'::jsonb,
+          'cfg', 'md', %s, 4, 'old', clock_timestamp() - interval '1 minute',
+          clock_timestamp(), clock_timestamp()
+        )
+        """,
+        (parent, parent, scratch),
+    )
+    cur.execute(
+        """
+        INSERT INTO v15.invokes (
+          invoke_id, parent_invoke_id, parent_iteration, root_invoke_id, depth,
+          status, fatal, recursion_available, return_value, resolved_config,
+          config_digest, manifest_digest, scratch_schema, fence,
+          created_at, updated_at
+        ) VALUES (
+          %s, %s, 0, %s, 2,
+          'completed', false, false, '{"ok":1}'::jsonb,
+          '{"llm":{"model":"fake"},"repl":{},"protocol":{},"depth":2}'::jsonb,
+          'cfg2', 'md', %s, 1,
+          clock_timestamp(), clock_timestamp()
+        )
+        """,
+        (child, parent, parent, child_scratch),
+    )
+    cur.execute(
+        """
+        INSERT INTO v15.invoke_hooks (
+          invoke_id, ordinal, hook_def_id, channel, config, state
+        )
+        SELECT %s,
+               CASE d.hook_key
+                 WHEN 'governance_iterations' THEN 0
+                 WHEN 'governance_depth' THEN 1
+                 WHEN 'governance_io' THEN 2
+                 ELSE 3
+               END,
+               d.hook_def_id,
+               'baseline',
+               pg_catalog.jsonb_build_object(
+                 'max',
+                 CASE d.hook_key
+                   WHEN 'governance_statement' THEN 30000
+                   WHEN 'governance_iterations' THEN 10
+                   WHEN 'governance_depth' THEN 8
+                   ELSE 3
+                 END
+               ),
+               '{}'::jsonb
+        FROM v15.hook_defs d
+        WHERE d.hook_key IN (
+          'governance_iterations', 'governance_depth',
+          'governance_io', 'governance_statement'
+        )
+        """,
+        (parent,),
+    )
+    cur.execute(
+        """
+        INSERT INTO v15.iterations (invoke_id, iteration, status, resume_stmt, capture)
+        VALUES (%s, 0, 'executing', 0, '')
+        """,
+        (parent,),
+    )
+    bind_sql = "SELECT jaz.bind_invoke('out', '{}'::jsonb);"
+    ret_sql = "SELECT jaz.\"return\"(jaz.var('out'));"
+    cur.execute(
+        """
+        INSERT INTO v15.statements (
+          invoke_id, iteration, stmt_index, sql, sql_digest, kind, bind_name,
+          arg_sql, status, child_invoke_id
+        ) VALUES
+          (%s, 0, 0, %s, md5(%s), 'bind_invoke', 'out', '{}'::text, 'running', %s),
+          (%s, 0, 1, %s, md5(%s), 'return', NULL, 'jaz.var(''out'')', 'pending', NULL)
+        """,
+        (parent, bind_sql, bind_sql, child, parent, ret_sql, ret_sql),
+    )
+    cur.execute(
+        """
+        INSERT INTO v15.invoke_events (
+          invoke_id, seq, event_class, span, phase, payload, fence, created_at
+        ) VALUES
+          (%s, 0, 'span', 'invoke', 'enter', '{}'::jsonb, 4, clock_timestamp()),
+          (%s, 1, 'span', 'repl_exec', 'enter', '{}'::jsonb, 4, clock_timestamp())
+        """,
+        (parent, parent),
+    )
+    admin.commit()
+    n = call(worker, "SELECT v15.v15_reclaim_expired()")
+    worker.commit()
+    cur.execute(
+        "SELECT status, fence, lease_owner FROM v15.invokes WHERE invoke_id = %s",
+        (parent,),
+    )
+    row = cur.fetchone()
+    check("reclaim child-delivery fence", row == ("runnable", 4, None), row)
+    cur.execute(
+        "SELECT status FROM v15.statements WHERE invoke_id = %s AND stmt_index = 0",
+        (parent,),
+    )
+    check("reclaim child-delivery statement done", cur.fetchone()[0] == "done")
+    cur.execute(
+        "SELECT kind, provenance FROM v15.bindings WHERE invoke_id = %s AND name = 'out'",
+        (parent,),
+    )
+    delivered = cur.fetchone()
+    check(
+        "reclaim child-delivery var",
+        delivered is not None and delivered[0] == "var",
+        delivered,
+    )
+    cur.execute(
+        "SELECT resume_stmt, status FROM v15.iterations WHERE invoke_id = %s AND iteration = 0",
+        (parent,),
+    )
+    check("reclaim child-delivery resume", cur.fetchone() == (1, "executing"))
+    check("reclaim child-delivery counted attempts", n == 0, n)
 
 
 def main() -> int:
@@ -1878,6 +2492,7 @@ def main() -> int:
         test_ok_false_and_conflict(admin, worker)
         test_settle_errors(admin, worker)
         test_reclaim_homomorphism(admin, worker)
+        test_reclaim_child_delivery(admin, worker)
     finally:
         worker.close()
         admin.close()

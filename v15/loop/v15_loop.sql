@@ -838,10 +838,17 @@ BEGIN
     AND s.stmt_index < coalesce(v_failed_at, 2147483647);
   IF v_ret_at IS NOT NULL
      AND v_raise_at IS NULL
-     AND v_failed = 0
      AND v_pending = 0
      AND v_running = 0
-     AND v_inv.return_value IS NOT NULL THEN
+     AND v_inv.return_value IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1
+       FROM v15.statements s
+       WHERE s.invoke_id = p_invoke_id
+         AND s.iteration = v_it.iteration
+         AND s.status = 'failed'
+         AND s.stmt_index >= v_ret_at
+     ) THEN
     v_kind := 'return';
   ELSIF v_raise_at IS NOT NULL
         AND v_ret_at IS NULL

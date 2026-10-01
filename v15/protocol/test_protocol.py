@@ -148,9 +148,9 @@ def expect_fail(source: str, code: str, sql: str, label: str) -> None:
     )
 
 
-def expect_class(sql: str, kind, bind_name, arg_sql, reject, label: str) -> None:
+def expect_class(sql: str, kind, bind_name, arg_sql, reject, label: str, tool_name=None) -> None:
     got = classify_statement(sql)
-    check(label, got == (kind, bind_name, arg_sql, reject), got)
+    check(label, got == (kind, bind_name, arg_sql, reject, tool_name), got)
 
 
 def _fence(doc: str, first_line: str) -> str:
@@ -284,6 +284,22 @@ def test_split() -> None:
 
 
 def test_classify() -> None:
+    plain = classify_statement("SELECT 1")
+    check(
+        "five-field tuple",
+        plain == ("plain", None, None, None, None),
+        plain,
+    )
+    check(
+        "four-tuple is not equal",
+        plain != ("plain", None, None, None),
+        plain,
+    )
+    check(
+        "as_core four-tuple",
+        plain.as_core() == ("plain", None, None, None),
+        plain.as_core(),
+    )
     expect_class(
         'SELECT jaz."return"(1)',
         "return",

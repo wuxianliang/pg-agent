@@ -451,7 +451,9 @@ CREATE FUNCTION v15.v15_suspend_for_tool(
   p_iteration integer,
   p_stmt_index integer,
   p_owner text,
-  p_args jsonb
+  p_args jsonb,
+  p_fence bigint DEFAULT NULL,
+  p_statement_fence bigint DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 VOLATILE
@@ -472,6 +474,7 @@ DECLARE
   v_err jsonb;
   v_req uuid;
   v_fence bigint;
+  v_ctx v15.exec_context;
 BEGIN
   PERFORM v15.v15_repl_require_worker();
   IF p_invoke_id IS NULL OR p_iteration IS NULL OR p_stmt_index IS NULL
@@ -482,7 +485,11 @@ BEGIN
     RAISE EXCEPTION 'V15_VALUE_INVALID' USING ERRCODE = 'P1524';
   END IF;
   v_inv := v15.v15_repl_lock(p_invoke_id);
-  PERFORM v15.v15_repl_check_holder(v_inv, v_inv.fence, p_owner);
+  IF p_fence IS NULL THEN
+    PERFORM v15.v15_repl_check_holder(v_inv, v_inv.fence, p_owner);
+  ELSE
+    PERFORM v15.v15_repl_check_holder(v_inv, p_fence, p_owner);
+  END IF;
   SELECT count(*)
     INTO v_n
   FROM v15.iterations i
@@ -500,6 +507,18 @@ BEGIN
   IF p_iteration IS DISTINCT FROM v_iter
      OR p_stmt_index IS DISTINCT FROM v_resume THEN
     RAISE EXCEPTION 'V15_INVALID_TRANSITION' USING ERRCODE = 'P1523';
+  END IF;
+  IF p_statement_fence IS NOT NULL THEN
+    SELECT * INTO v_ctx
+    FROM v15.exec_context e
+    WHERE e.backend_pid = pg_catalog.pg_backend_pid();
+    IF NOT FOUND
+       OR v_ctx.invoke_id IS DISTINCT FROM p_invoke_id
+       OR v_ctx.iteration IS DISTINCT FROM v_iter
+       OR v_ctx.stmt_index IS DISTINCT FROM p_stmt_index
+       OR v_ctx.revision IS DISTINCT FROM p_statement_fence THEN
+      RAISE EXCEPTION 'V15_INVALID_TRANSITION' USING ERRCODE = 'P1523';
+    END IF;
   END IF;
   SELECT s.kind, s.bind_name, s.tool_name, s.status
     INTO v_kind, v_bind, v_tool, v_status
@@ -609,9 +628,9 @@ EXCEPTION
 END;
 $fn$;
 
-ALTER FUNCTION v15.v15_suspend_for_tool(uuid, integer, integer, text, jsonb) OWNER TO v15_owner;
-REVOKE ALL ON FUNCTION v15.v15_suspend_for_tool(uuid, integer, integer, text, jsonb) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION v15.v15_suspend_for_tool(uuid, integer, integer, text, jsonb) TO v15_worker;
+ALTER FUNCTION v15.v15_suspend_for_tool(uuid, integer, integer, text, jsonb, bigint, bigint) OWNER TO v15_owner;
+REVOKE ALL ON FUNCTION v15.v15_suspend_for_tool(uuid, integer, integer, text, jsonb, bigint, bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION v15.v15_suspend_for_tool(uuid, integer, integer, text, jsonb, bigint, bigint) TO v15_worker;
 
 -- D24: bind_tool arg_sql is evaluated in scratch, same as bind_invoke.
 -- USAGE without CREATE so INSERT/SELECT INTO cannot succeed during eval.
@@ -633,9 +652,12 @@ DECLARE
   v_n integer;
   v_kind text;
   v_sql text;
+  v_arg text;
+  v_tool text;
   v_scratch text;
   v_timeout integer;
   v_fence bigint;
+  v_limit integer;
 BEGIN
   PERFORM v15.v15_repl_require_worker();
   IF p_invoke_id IS NULL OR p_fence IS NULL OR p_owner IS NULL
@@ -663,8 +685,8 @@ BEGIN
   IF p_stmt_index IS DISTINCT FROM v_resume THEN
     RAISE EXCEPTION 'V15_INVALID_TRANSITION' USING ERRCODE = 'P1523';
   END IF;
-  SELECT s.kind, s.sql
-    INTO v_kind, v_sql
+  SELECT s.kind, s.sql, s.arg_sql, s.tool_name
+    INTO v_kind, v_sql, v_arg, v_tool
   FROM v15.statements s
   WHERE s.invoke_id = p_invoke_id
     AND s.iteration = v_iter
@@ -709,11 +731,22 @@ BEGIN
     v_kind IS DISTINCT FROM 'bind_invoke'
       AND v_kind IS DISTINCT FROM 'bind_tool'
   );
+  IF pg_catalog.jsonb_typeof(
+       v_inv.resolved_config #> '{protocol,max_invoke_input_length}'
+     ) = 'number' THEN
+    v_limit := (v_inv.resolved_config #>> '{protocol,max_invoke_input_length}')::integer;
+  ELSE
+    v_limit := NULL;
+  END IF;
   RETURN pg_catalog.jsonb_build_object(
     'statement_fence', v_fence,
     'timeout_ms', v_timeout,
     'kind', v_kind,
-    'scratch_schema', v_scratch
+    'scratch_schema', v_scratch,
+    'iteration', v_iter,
+    'arg_sql', to_jsonb(v_arg),
+    'tool_name', to_jsonb(v_tool),
+    'max_invoke_input_length', to_jsonb(v_limit)
   );
 EXCEPTION
   WHEN lock_not_available THEN
@@ -857,6 +890,7 @@ DECLARE
   v_child uuid;
   v_attempt uuid;
   v_until timestamptz;
+  v_att_fence bigint;
 BEGIN
   PERFORM v15.v15_repl_require_worker();
   IF p_invoke_id IS NULL
@@ -951,11 +985,12 @@ BEGIN
   WHERE c.tool_id = v_req.tool_id;
   v_attempt := pg_catalog.gen_random_uuid();
   v_until := pg_catalog.clock_timestamp() + p_lease;
+  v_att_fence := 1;
   INSERT INTO v15.tool_attempts (
     attempt_id, request_id, n, status, fence, lease_owner, lease_until,
     pool_id, reserved_calls, reserved_cost, call_started, calls_charged
   ) VALUES (
-    v_attempt, v_req.request_id, v_next, 'leased', 1, p_owner, v_until,
+    v_attempt, v_req.request_id, v_next, 'leased', v_att_fence, p_owner, v_until,
     v_inv.pool_id, 1, 0, false, false
   );
   PERFORM v15.v15_repl_event(
@@ -969,6 +1004,7 @@ BEGIN
     'action', 'proceed',
     'attempt_id', v_attempt,
     'n', v_next,
+    'fence', v_att_fence,
     'tool_name', v_tool,
     'args', v_req.args,
     'args_digest', v_req.args_digest
@@ -1198,6 +1234,7 @@ BEGIN
     UPDATE v15.bindings b
     SET value = v_value,
         provenance = 'delivery',
+        show_in_prompt = true,
         revision = b.revision + 1
     WHERE b.invoke_id = v_invoke
       AND b.name = v_name
@@ -1492,7 +1529,8 @@ BEGIN
       pg_catalog.jsonb_build_object(
         'op', 'tool_retry',
         'attempt_id', v_attempt,
-        'old_status', v_status
+        'old_status', v_status,
+        'new_attempt_id', 'null'::jsonb
       ),
       v_fence
     );
@@ -1640,7 +1678,7 @@ DECLARE
   v_ids uuid[];
   v_status text;
   v_n integer;
-  v_pools uuid[];
+  v_has_null_pool boolean;
   v_pool uuid;
   v_pool_obj jsonb;
   v_outcome jsonb;
@@ -1716,16 +1754,22 @@ BEGIN
   IF v_n <> 0 THEN
     RAISE EXCEPTION 'V15_INVALID_TRANSITION' USING ERRCODE = 'P1523';
   END IF;
-  SELECT array_agg(DISTINCT i.pool_id ORDER BY i.pool_id) INTO v_pools
+  SELECT count(DISTINCT i.pool_id) FILTER (WHERE i.pool_id IS NOT NULL),
+         coalesce(bool_or(i.pool_id IS NULL), false)
+    INTO v_n, v_has_null_pool
   FROM v15.invokes i
   WHERE i.invoke_id = ANY (v_ids);
-  IF v_pools IS NOT NULL AND cardinality(v_pools) > 1 THEN
+  IF v_n > 1 OR (v_has_null_pool AND v_n > 0) THEN
     RAISE EXCEPTION 'V15_VALUE_INVALID' USING ERRCODE = 'P1524';
   END IF;
-  IF v_pools IS NULL OR cardinality(v_pools) = 0 THEN
+  IF v_n = 0 THEN
     v_pool := NULL;
   ELSE
-    v_pool := v_pools[1];
+    SELECT i.pool_id INTO v_pool
+    FROM v15.invokes i
+    WHERE i.invoke_id = ANY (v_ids)
+      AND i.pool_id IS NOT NULL
+    LIMIT 1;
   END IF;
   IF v_pool IS NULL THEN
     v_pool_obj := NULL;
@@ -1765,7 +1809,7 @@ BEGIN
         'response_content', a.response->>'content',
         'recorded_cost_usd', CASE
           WHEN a.cost_usd IS NULL THEN NULL
-          ELSE a.cost_usd::text
+          ELSE a.cost_usd
         END,
         'statements', coalesce((
           SELECT jsonb_agg(

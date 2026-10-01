@@ -808,7 +808,7 @@ tool_attempts(
 
 `args_digest = md5(args::text)`。`args` 必须是 jsonb 对象。同一 request 至多一行 `leased`。`n` 从 1 连续，与 LLM request 的 `n` 各自计数，上限看 `governance_io`。`fence` 插入时为 1。不接受 FakeTool 上报 cost。
 
-`tool_wait` 不变量：恰一条 `running` 的 `bind_tool` 语句（`child_invoke_id` NULL、`stmt_index` 等于 open request）、恰一条 `open` request、`leased` attempt ≤ 1、无 `suspended` 子等待、无其他 `running` 语句、`repl_exec` 已 enter 无 exit。
+`tool_wait` 不变量：恰一条 `running` 的 `bind_tool` 语句（`child_invoke_id` NULL、`stmt_index` 等于 open request）、恰一条 `open` request、`leased` attempt ≤ 1、无 `suspended` 子等待、无其他 `running` 语句、`repl_exec` 已 enter 无 exit。worker 在挂起前对已求值实参的再序列化 jsonb 文本做 `protocol.max_invoke_input_length` 预闸：超限则 `V15_VALUE_INVALID`，不调用 `v15_suspend_for_tool`。
 
 ## 4. 状态机与转移合同
 
@@ -1628,7 +1628,7 @@ jaz.prior_history(ancestor uuid) returns table (
 
 ### 6.2 规范形式与分类
 
-`classify_statement(sql: str) -> (kind, bind_name, arg_sql, reject_code)`。`kind` 是 §3.3 的枚举。`reject_code` 为空表示可以执行。否则 worker 不执行该条，settle 把它存成 `failed` 且 `error` 非空。存放之后，可执行谓词不再看 `reject_code`。`bind_tool` 另有 `tool_name`。
+`classify_statement(sql: str) -> (kind, bind_name, arg_sql, reject_code, tool_name)`。`kind` 是 §3.3 的枚举。`reject_code` 为空表示可以执行。否则 worker 不执行该条，settle 把它存成 `failed` 且 `error` 非空。存放之后，可执行谓词不再看 `reject_code`。`bind_tool` 的 `tool_name` 非空；其余 kind 的 `tool_name` 为空。对象相等是这五个字段；需要旧四元组时显式转换，不得把四元组当成相等合同。worker 对 `bind_tool` 已求值实参的再序列化 jsonb 文本做 `protocol.max_invoke_input_length` 预闸，超限 `V15_VALUE_INVALID`、不挂起。
 
 关键字与未加引号的 `jaz` 大小写不敏感。空白在记号之间可多可少。规范形式是**单独一条** `SELECT`，实参列表之外没有尾随记号：
 

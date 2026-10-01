@@ -269,12 +269,12 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 | # | 条文 | 状态 | 测试落点 | 断言的行为 |
 |---|---|---|---|---|
 | 13.1 | §15 十三文件 | ✅ | `v15/tools/test_tools.py` | `len(SQL_LOAD_ORDER)==13`，末项 `v15_tools.sql`，`files_through("tools")==SQL_LOAD_ORDER`，前 12 项等于 `files_through("replay")` |
-| 13.2 | §3.16 / §4 `tool_wait` | ✅ | 同上 | 规范 `bind_tool` 后 invoke 为 `tool_wait`，不是 `suspended`；无子 invoke、无树边；`v15_claim` 对 `tool_wait` 返回 NULL；`v15_next_runnable` 不返回该行 |
-| 13.3 | §6.2 `bind_tool` | ✅ | 同上 | 规范形式识别七键 payload。字面量/注释/dollar-quote 内的名字不分类。`arg_sql` 含 `INSERT` 为 `V15_INVOKE_FORM`。六键 `bind_tool` 存语句 `P1524`。直接执行 `jaz.bind_tool` 为 `V15_INVOKE_FORM` |
-| 13.4 | §13 `P1543`/`P1544`/`P1545` | ✅ | 同上 | `external=false` 的 `bind_tool` → `P1543`（`V15_TOOL_BINDING`）。FakeTool `{"ok":false}` → `P1544`（`V15_TOOL_FAILED`），不写 binding。`n` 将越 `governance_io` → `P1545`（`V15_TOOL_EXHAUSTED`），不插该 attempt。同步 `jaz.tool` 对 `external=true` 仍 `P1517`，`tool_attempts=0` |
-| 13.5 | §3.7 送达 | ✅ | 同上 | 成功：`kind=var`、`provenance=delivery`、`show_in_prompt=true`，同迭代可读，该迭代 `llm_requests` 仍 1。名字被 `scope` 占用则 FakeTool 仍被调、attempt `settled`、binding 不改、语句 `P1527` |
-| 13.6 | §4.14 回收与 FakeTool | ✅ | 同上 | 未 mark 过期 → attempt `failed` 不计 calls；已 mark 过期 → `unknown` 计 1；invoke 仍 `tool_wait`。FakeTool 只在 `call_started` 提交后、会话无打开事务时调用。gate 与 FakeTool 不建 socket |
-| 13.7 | 导出拒绝 | ✅ | 同上 | 含 `bind_tool` / `tool_wait` 的树 `v15_replay_export` → `P1524`，不产文件。旧 replay 夹具仍过 |
+| 13.2 | §3.16 / §4 `tool_wait` | ✅ | 同上 | 规范 `bind_tool` 后 invoke 为 `tool_wait`，不是 `suspended`；无子 invoke、无树边；`v15_claim` 对 `tool_wait` 返回 NULL；回滚前断言 status/fence 仍是 `tool_wait`；`v15_next_runnable` 不返回该行 |
+| 13.3 | §6.2 `bind_tool` | ✅ | `v15/protocol/test_protocol.py`、`v15/tools/test_tools.py` | 五字段 Classification 相等；四元组不相等（`as_core()` 才是旧形）。规范形识别七键 payload。字面量/注释/dollar-quote 内的名字不分类。`arg_sql` 含 `INSERT` 为 `V15_INVOKE_FORM`。六键 `bind_tool` 存语句 `P1524`。直接执行 `jaz.bind_tool` 为 `V15_INVOKE_FORM`。超 `max_invoke_input_length` 预闸 `P1524`，不挂起 |
+| 13.4 | §13 `P1543`/`P1544`/`P1545` | ✅ | `v15/tools/test_tools.py` | `external=false` 的 `bind_tool` → `P1543`（`V15_TOOL_BINDING`），同迭代下一条 plain 继续。FakeTool `{"ok":false}` 与异常 → `P1544`（整行七元组严格比），不写 binding，observation 含 `[v15 exception V15_TOOL_FAILED]`。不可 JSON 编码/非布尔 `ok` 收成 `{"ok":false}` 再 settle。`n` 将越 `governance_io` → `P1545`。同步 `jaz.tool` 对 `external=true` 仍 `P1517`（code 与 sqlstate 都要），`tool_attempts=0` |
+| 13.5 | §3.7 送达 | ✅ | 同上 | 成功：`kind=var`、`provenance=delivery`、`show_in_prompt=true`，同迭代可读，该迭代 `llm_requests` 仍 1。更新已有 var 行也把 `show_in_prompt` 设回 true。名字被 `scope` 占用则 FakeTool 仍被调、attempt `settled`、binding 不改、语句 `P1527`/`V15_DELIVERY_CONFLICT` |
+| 13.6 | §4.14 回收与 FakeTool | ✅ | 同上 | 未 mark 过期 → attempt `failed` 不计 calls；已 mark 过期 → `unknown` 计 1；invoke 仍 `tool_wait`。`tool_retry` payload 含 `new_attempt_id: null`。stage-13 上 reclaim 子送达分支仍走通；子 invoke 池耗尽时父不留 `suspended`。mark 阶段 P1502 不调 FakeTool；settle 非 P1502 异常只隔离该 invoke。FakeTool 只在 `call_started` 提交后、会话无打开事务时调用。gate 与 FakeTool 不建 socket |
+| 13.7 | 导出拒绝 | ✅ | 同上 | 含 `bind_tool` / `tool_wait` 的树 `v15_replay_export` → `P1524`，不产文件。无 `bind_tool`、无 `fake_search` grant 的已完成树导出 `version=1` 且 `invokes` 非空，不抛 P1524。旧 replay 夹具仍过 |
 
 ## M3 · §14
 

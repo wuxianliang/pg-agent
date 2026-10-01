@@ -72,7 +72,7 @@ D01–D26 抄自 rev 8。D27–D30 是 rev 9 追加，不重抄前 26 行。D31�
 
 **V15-D32。** spec 键名限制为 `^[A-Za-z_][A-Za-z0-9_]{0,62}$`，嵌套深度 ≤ 8。`jsonb` 的 `number` 不区分整数与浮点。enum 通过性按数值相等，展示按 `elem::text`。对象渲染的 required 按数组序，可选键按 UTF-8 字节序，项之间是 `, `。
 
-**V15-D33。** jaz 可以有异步工具与 `bind_name` 延续。v15 以规范 `jaz.bind_tool` 做异步延续，且仅 `external = true`：invoke 进入 `tool_wait`（不是 `suspended`），无子 invoke、无树边。同步 `jaz.tool` 对 `external = true` 仍是 `V15_EXTERNAL_TOOL`，不写 `tool_attempts`。`v15_reclaim_expired` 仍不插入 attempt（D14）。FakeTool 只在 `call_started` 已提交、会话无打开事务时运行。可观察后果：成功送达 `kind = var`、`provenance = delivery`；`external = false` 的 `bind_tool` 是 `V15_TOOL_BINDING`；`{"ok":false}` 是 `V15_TOOL_FAILED`；下一 attempt 序号将越 `governance_io` 是 `V15_TOOL_EXHAUSTED`。
+**V15-D33。** jaz 可以有异步工具与 `bind_name` 延续。v15 以规范 `jaz.bind_tool` 做异步延续，且仅 `external = true`：invoke 进入 `tool_wait`（不是 `suspended`），无子 invoke、无树边。同步 `jaz.tool` 对 `external = true` 仍是 `V15_EXTERNAL_TOOL`，不写 `tool_attempts`。`v15_reclaim_expired` 仍不插入 attempt（D14）。FakeTool 只在 `call_started` 已提交、会话无打开事务时运行。可观察后果：成功送达 `kind = var`、`provenance = delivery`；`external = false` 的 `bind_tool` 是 `V15_TOOL_BINDING`；`{"ok":false}` 是 `V15_TOOL_FAILED`；下一 attempt 序号将越 `governance_io` 是 `V15_TOOL_EXHAUSTED`；名字被 `input`/`scope`/`tool` 占用是 `V15_DELIVERY_CONFLICT`。
 
 D2 轨迹回放不启用 `supply_llm_response`，摘要复用 `llm_requests.logical_digest`。
 

@@ -1,8 +1,9 @@
 """Lexical splitter and statement classifier for v15 (§6.1–§6.3).
 
-classify_statement returns (kind, bind_name, arg_sql, reject_code), the
-order in §6.2. An empty reject_code is None. An empty bind_name or arg_sql
-is None, which is the SQL NULL the settlement row stores.
+classify_statement returns Classification with five fields in §6.2 order:
+(kind, bind_name, arg_sql, reject_code, tool_name). An empty reject_code is
+None. An empty bind_name, arg_sql, or tool_name is None, which is the SQL
+NULL the settlement row stores. Object equality is the five-field contract.
 """
 from __future__ import annotations
 
@@ -131,19 +132,9 @@ class Classification(NamedTuple):
     reject_code: str | None
     tool_name: str | None = None
 
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, Classification):
-            return tuple.__eq__(self, other)
-        if isinstance(other, tuple):
-            core = (self.kind, self.bind_name, self.arg_sql, self.reject_code)
-            if len(other) == 4:
-                return core == other
-            if len(other) == 5:
-                return (*core, self.tool_name) == other
-        return NotImplemented
-
-    def __hash__(self) -> int:
-        return tuple.__hash__(self)
+    def as_core(self) -> tuple[str, str | None, str | None, str | None]:
+        """Explicit 4-tuple of the pre-tool fields. Equality stays five-field."""
+        return (self.kind, self.bind_name, self.arg_sql, self.reject_code)
 
 
 def split_sql(source: str) -> list[str] | SplitFailure:

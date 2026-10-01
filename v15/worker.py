@@ -32,9 +32,14 @@ CAP = 256
 BIND_FAIL = {
     "P1503": "V15_INVOKE_FORM",
     "P1505": "V15_GOVERNANCE_RAISE",
+    "P1507": "V15_TOOL_UNAUTHORIZED",
     "P1509": "V15_SCOPE_CONFLICT",
     "P1518": "V15_RECURSION_DISABLED",
     "P1524": "V15_VALUE_INVALID",
+    "P1527": "V15_DELIVERY_CONFLICT",
+    "P1543": "V15_TOOL_BINDING",
+    "P1544": "V15_TOOL_FAILED",
+    "P1545": "V15_TOOL_EXHAUSTED",
 }
 
 
@@ -152,14 +157,41 @@ def statement_payload(content: str) -> list[dict]:
     return out
 
 
-def _tool_result_shape(result) -> bool:
-    if not isinstance(result, dict):
+def _tool_result_encodable(obj) -> bool:
+    if not _json_no_nul(obj):
         return False
-    if result == {"ok": False}:
-        return True
-    if result.get("ok") is True and set(result.keys()) == {"ok", "value"}:
-        return True
-    return False
+    try:
+        json.dumps(obj, allow_nan=False, ensure_ascii=False)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
+def _json_no_nul(obj) -> bool:
+    if isinstance(obj, str):
+        return "\x00" not in obj
+    if isinstance(obj, dict):
+        return all(
+            isinstance(k, str) and "\x00" not in k and _json_no_nul(v)
+            for k, v in obj.items()
+        )
+    if isinstance(obj, (list, tuple)):
+        return all(_json_no_nul(v) for v in obj)
+    return True
+
+
+def _canonical_tool_result(result) -> dict:
+    if isinstance(result, dict):
+        keys = set(result.keys())
+        if keys == {"ok"} and result.get("ok") is False:
+            payload = {"ok": False}
+            if _tool_result_encodable(payload):
+                return payload
+        if keys == {"ok", "value"} and result.get("ok") is True:
+            payload = {"ok": True, "value": result["value"]}
+            if _tool_result_encodable(payload):
+                return payload
+    return {"ok": False}
 
 
 def error_of(exc: psycopg2.Error, *, timeout: bool) -> dict:
@@ -281,10 +313,24 @@ class Worker:
         return self._run(read)
 
     def next_tool(self) -> list[str]:
-        if self._has_next_tool is False:
-            return []
+        def tool_defined(conn) -> bool:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM pg_catalog.pg_proc p
+                  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+                  WHERE n.nspname = 'v15'
+                    AND p.proname = 'v15_next_tool'
+                )
+                """
+            )
+            return bool(cur.fetchone()[0])
 
         def read(conn):
+            if self._has_next_tool is not True and not tool_defined(conn):
+                return []
             cur = conn.cursor()
             cur.execute("SELECT v15.v15_next_tool()")
             return [str(row[0]) for row in cur.fetchall() if row[0] is not None]
@@ -293,8 +339,9 @@ class Worker:
             ids = self._run(read)
         except psycopg2.Error as exc:
             if exc.pgcode == "42883":
-                self._has_next_tool = False
-                return []
+                exists = self._run(tool_defined)
+                if not exists:
+                    return []
             raise
         self._has_next_tool = True
         return ids
@@ -316,30 +363,48 @@ class Worker:
 
         opened = self._run(begin)
         if opened.get("action") != "proceed":
+            leftover = opened.get("attempt_id")
+            if leftover:
+                self._cleanup_tool_attempt(
+                    str(leftover), int(opened.get("fence") or 1), marked=False
+                )
             return
         attempt_id = str(opened["attempt_id"])
+        attempt_fence = int(opened["fence"])
 
         def mark(conn):
             self._fetch(
                 conn,
-                "SELECT v15.v15_mark_tool_started(%s, 1, %s)",
-                (attempt_id, self.worker_id),
+                "SELECT v15.v15_mark_tool_started(%s, %s, %s)",
+                (attempt_id, attempt_fence, self.worker_id),
             )
 
-        self._run(mark)
+        try:
+            self._run(mark)
+        except psycopg2.Error as exc:
+            if exc.pgcode == "P1502":
+                return
+            if retryable_sqlstate(exc.pgcode):
+                raise
+            self._cleanup_tool_attempt(attempt_id, attempt_fence, marked=False)
+            return
         self._assert_idle()
         try:
             result = tool.call(opened["tool_name"], opened.get("args"))
         except Exception:
             result = {"ok": False}
-        if not _tool_result_shape(result):
+        result = _canonical_tool_result(result)
+        try:
+            encoded = Json(result)
+        except (TypeError, ValueError):
             result = {"ok": False}
+            encoded = Json(result)
 
         def settle(conn):
             self._fetch(
                 conn,
-                "SELECT v15.v15_settle_tool(%s, 1, %s, %s)",
-                (attempt_id, self.worker_id, Json(result)),
+                "SELECT v15.v15_settle_tool(%s, %s, %s, %s)",
+                (attempt_id, attempt_fence, self.worker_id, encoded),
             )
 
         try:
@@ -347,7 +412,29 @@ class Worker:
         except psycopg2.Error as exc:
             if exc.pgcode == "P1502":
                 return
-            raise
+            if retryable_sqlstate(exc.pgcode):
+                raise
+            self._cleanup_tool_attempt(attempt_id, attempt_fence, marked=True)
+            return
+
+    def _cleanup_tool_attempt(self, attempt_id: str, attempt_fence: int, *, marked: bool) -> None:
+        def fail(conn):
+            if not marked:
+                self._fetch(
+                    conn,
+                    "SELECT v15.v15_mark_tool_started(%s, %s, %s)",
+                    (attempt_id, attempt_fence, self.worker_id),
+                )
+            self._fetch(
+                conn,
+                "SELECT v15.v15_settle_tool(%s, %s, %s, %s)",
+                (attempt_id, attempt_fence, self.worker_id, Json({"ok": False})),
+            )
+
+        try:
+            self._run(fail)
+        except psycopg2.Error:
+            return
 
     def claim(self, invoke_id: str):
         def read(conn):
@@ -656,7 +743,54 @@ class Worker:
             ),
         )
 
-    def _bind_invoke(self, invoke_id: str, fence: int, index: int) -> None:
+    def _error_from_code(self, code: str) -> dict:
+        sqlstate = next((k for k, v in BIND_FAIL.items() if v == code), None)
+        if sqlstate is None:
+            sqlstate = "P1524"
+            code = "V15_VALUE_INVALID"
+        return {"sqlstate": sqlstate, "code": code, "message": code}
+
+    def _eval_bind_json(self, cur, arg_sql, fired, timer, invoke_id, fence, index, info):
+        if not arg_sql:
+            fired["done"] = True
+            timer.cancel()
+            self._complete_failed(
+                cur, invoke_id, fence, index, info, self._value_invalid()
+            )
+            self.conn.commit()
+            return None
+        cur.execute("SET LOCAL ROLE v15_repl")
+        try:
+            cur.execute(f"SELECT ({arg_sql})")
+            rows = cur.fetchall() if cur.description else []
+            value = rows[0][0] if len(rows) == 1 else None
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    value = None
+            if len(rows) != 1 or not isinstance(value, dict):
+                fired["done"] = True
+                timer.cancel()
+                self._complete_failed(
+                    cur, invoke_id, fence, index, info, self._value_invalid()
+                )
+                self.conn.commit()
+                return None
+            cur.execute("RESET ROLE")
+            return value
+        except psycopg2.Error as exc:
+            if exc.pgcode == "57014" or retryable_sqlstate(exc.pgcode):
+                raise
+            fired["done"] = True
+            timer.cancel()
+            self._complete_failed(
+                cur, invoke_id, fence, index, info, self._bind_error(exc)
+            )
+            self.conn.commit()
+            return None
+
+    def _bind_session(self, invoke_id: str, fence: int, index: int, consume) -> None:
         while True:
             fired = {"done": False, "hit": False}
             timer = None
@@ -670,11 +804,6 @@ class Worker:
                     (invoke_id, fence, self.worker_id, index),
                 )
                 info = parse_json(cur.fetchone()[0])
-                cur.execute(
-                    "SELECT v15.v15_tree_bind_context(%s, %s)",
-                    (invoke_id, index),
-                )
-                facts = parse_json(cur.fetchone()[0])
                 timeout_ms = int(info["timeout_ms"])
                 timer = threading.Timer(
                     timeout_ms / 1000.0,
@@ -692,64 +821,7 @@ class Worker:
                     f"SET LOCAL statement_timeout = '{timeout_ms + 1000}ms'"
                 )
                 cur.execute("SAVEPOINT model_stmt")
-                if not facts.get("arg_sql"):
-                    fired["done"] = True
-                    timer.cancel()
-                    self._complete_failed(
-                        cur, invoke_id, fence, index, info, self._value_invalid()
-                    )
-                    self.conn.commit()
-                    return
-                cur.execute("SET LOCAL ROLE v15_repl")
-                phase = "eval"
-                try:
-                    cur.execute(f"SELECT ({facts['arg_sql']})")
-                    rows = cur.fetchall() if cur.description else []
-                    value = rows[0][0] if len(rows) == 1 else None
-                    if isinstance(value, str):
-                        try:
-                            value = json.loads(value)
-                        except json.JSONDecodeError:
-                            value = None
-                    if len(rows) != 1 or not isinstance(value, dict):
-                        fired["done"] = True
-                        timer.cancel()
-                        self._complete_failed(
-                            cur, invoke_id, fence, index, info, self._value_invalid()
-                        )
-                        self.conn.commit()
-                        return
-                    cur.execute("RESET ROLE")
-                    system, user = self._child_seed(cur, facts, value)
-                    phase = "suspend"
-                    cur.execute(
-                        """
-                        SELECT v15.v15_suspend_for_child(
-                          %s, %s, %s, %s, %s, %s, %s, %s
-                        )
-                        """,
-                        (
-                            invoke_id,
-                            fence,
-                            self.worker_id,
-                            index,
-                            int(info["statement_fence"]),
-                            Json(value),
-                            system,
-                            user,
-                        ),
-                    )
-                except psycopg2.Error as exc:
-                    if exc.pgcode == "57014":
-                        raise
-                    if phase == "suspend" and exc.pgcode not in BIND_FAIL:
-                        raise
-                    fired["done"] = True
-                    timer.cancel()
-                    self._complete_failed(
-                        cur, invoke_id, fence, index, info, self._bind_error(exc)
-                    )
-                    self.conn.commit()
+                if consume(cur, info, fired, timer):
                     return
                 fired["done"] = True
                 timer.cancel()
@@ -770,125 +842,147 @@ class Worker:
                     self._fail_cancelled(invoke_id, fence, index, exc, timeout=True)
                     return
                 raise
+            except Exception:
+                fired["done"] = True
+                if timer is not None:
+                    timer.cancel()
+                try:
+                    self.conn.rollback()
+                except psycopg2.Error:
+                    pass
+                raise
+
+    def _bind_invoke(self, invoke_id: str, fence: int, index: int) -> None:
+        def consume(cur, info, fired, timer) -> bool:
+            cur.execute(
+                "SELECT v15.v15_tree_bind_context(%s, %s)",
+                (invoke_id, index),
+            )
+            facts = parse_json(cur.fetchone()[0])
+            value = self._eval_bind_json(
+                cur, facts.get("arg_sql"), fired, timer, invoke_id, fence, index, info
+            )
+            if value is None:
+                return True
+            system, user = self._child_seed(cur, facts, value)
+            try:
+                cur.execute(
+                    """
+                    SELECT v15.v15_suspend_for_child(
+                      %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        invoke_id,
+                        fence,
+                        self.worker_id,
+                        index,
+                        int(info["statement_fence"]),
+                        Json(value),
+                        system,
+                        user,
+                    ),
+                )
+            except psycopg2.Error as exc:
+                if exc.pgcode == "57014" or retryable_sqlstate(exc.pgcode):
+                    raise
+                if exc.pgcode not in BIND_FAIL:
+                    raise
+                fired["done"] = True
+                timer.cancel()
+                self._complete_failed(
+                    cur, invoke_id, fence, index, info, self._bind_error(exc)
+                )
+                self.conn.commit()
+                return True
+            return False
+
+        self._bind_session(invoke_id, fence, index, consume)
+
 
     def _bind_tool(self, invoke_id: str, fence: int, stmt: dict, snap: dict) -> None:
         index = int(stmt["stmt_index"])
-        iteration = int(snap["iteration"])
-        classified = classify_statement(stmt["sql"])
-        arg_sql = classified.arg_sql
-        limit = int(snap["resolved_config"]["protocol"]["max_invoke_input_length"])
-        while True:
-            fired = {"done": False, "hit": False}
-            timer = None
-            try:
-                self._begin(self.conn)
-                cur = self.conn.cursor()
-                cur.execute("SELECT pg_backend_pid()")
-                pid = cur.fetchone()[0]
-                cur.execute(
-                    "SELECT v15.v15_prepare_statement(%s, %s, %s, %s)",
-                    (invoke_id, fence, self.worker_id, index),
-                )
-                info = parse_json(cur.fetchone()[0])
-                timeout_ms = int(info["timeout_ms"])
-                timer = threading.Timer(
-                    timeout_ms / 1000.0,
-                    self._cancel,
-                    args=(pid, fired),
-                )
-                timer.daemon = True
-                timer.start()
-                cur.execute(
-                    sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(
-                        sql.Identifier(info["scratch_schema"])
-                    )
-                )
-                cur.execute(
-                    f"SET LOCAL statement_timeout = '{timeout_ms + 1000}ms'"
-                )
-                cur.execute("SAVEPOINT model_stmt")
-                if not arg_sql:
-                    fired["done"] = True
-                    timer.cancel()
-                    self._complete_failed(
-                        cur, invoke_id, fence, index, info, self._value_invalid()
-                    )
-                    self.conn.commit()
-                    return
-                cur.execute("SET LOCAL ROLE v15_repl")
-                phase = "eval"
-                try:
-                    cur.execute(f"SELECT ({arg_sql})")
-                    rows = cur.fetchall() if cur.description else []
-                    value = rows[0][0] if len(rows) == 1 else None
-                    if isinstance(value, str):
-                        try:
-                            value = json.loads(value)
-                        except json.JSONDecodeError:
-                            value = None
-                    if len(rows) != 1 or not isinstance(value, dict):
-                        fired["done"] = True
-                        timer.cancel()
-                        self._complete_failed(
-                            cur, invoke_id, fence, index, info, self._value_invalid()
-                        )
-                        self.conn.commit()
-                        return
-                    cur.execute("RESET ROLE")
-                    cur.execute("SELECT char_length((%s::jsonb)::text)", (Json(value),))
-                    if int(cur.fetchone()[0]) > limit:
-                        fired["done"] = True
-                        timer.cancel()
-                        self._complete_failed(
-                            cur, invoke_id, fence, index, info, self._value_invalid()
-                        )
-                        self.conn.commit()
-                        return
-                    phase = "suspend"
-                    cur.execute(
-                        """
-                        SELECT v15.v15_suspend_for_tool(%s, %s, %s, %s, %s)
-                        """,
-                        (
-                            invoke_id,
-                            iteration,
-                            index,
-                            self.worker_id,
-                            Json(value),
-                        ),
-                    )
-                    outcome = parse_json(cur.fetchone()[0])
-                except psycopg2.Error as exc:
-                    if exc.pgcode == "57014":
-                        raise
-                    if phase == "suspend" and exc.pgcode not in BIND_FAIL:
-                        raise
-                    fired["done"] = True
-                    timer.cancel()
-                    self._complete_failed(
-                        cur, invoke_id, fence, index, info, self._bind_error(exc)
-                    )
-                    self.conn.commit()
-                    return
+
+        def consume(cur, info, fired, timer) -> bool:
+            reject = info.get("reject_code") or stmt.get("reject_code")
+            if reject:
                 fired["done"] = True
                 timer.cancel()
+                self._complete_failed(
+                    cur,
+                    invoke_id,
+                    fence,
+                    index,
+                    info,
+                    self._error_from_code(str(reject)),
+                )
                 self.conn.commit()
-                return
-            except psycopg2.Error as exc:
+                return True
+            arg_sql = info.get("arg_sql")
+            value = self._eval_bind_json(
+                cur, arg_sql, fired, timer, invoke_id, fence, index, info
+            )
+            if value is None:
+                return True
+            raw_limit = info.get("max_invoke_input_length")
+            if raw_limit is None:
+                raw_limit = snap["resolved_config"]["protocol"][
+                    "max_invoke_input_length"
+                ]
+            limit = int(raw_limit)
+            cur.execute("SELECT char_length((%s::jsonb)::text)", (Json(value),))
+            if int(cur.fetchone()[0]) > limit:
                 fired["done"] = True
-                if timer is not None:
-                    timer.cancel()
-                try:
-                    self.conn.rollback()
-                except psycopg2.Error:
-                    pass
-                if retryable_sqlstate(exc.pgcode):
-                    continue
-                if exc.pgcode == "57014" or fired["hit"]:
-                    self._replace_conn()
-                    self._fail_cancelled(invoke_id, fence, index, exc, timeout=True)
-                    return
-                raise
+                timer.cancel()
+                self._complete_failed(
+                    cur, invoke_id, fence, index, info, self._value_invalid()
+                )
+                self.conn.commit()
+                return True
+            iteration = int(info["iteration"])
+            try:
+                cur.execute(
+                    """
+                    SELECT v15.v15_suspend_for_tool(
+                      %s, %s, %s, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        invoke_id,
+                        iteration,
+                        index,
+                        self.worker_id,
+                        Json(value),
+                        fence,
+                        int(info["statement_fence"]),
+                    ),
+                )
+                outcome = parse_json(cur.fetchone()[0])
+            except psycopg2.Error as exc:
+                if exc.pgcode == "57014" or retryable_sqlstate(exc.pgcode):
+                    raise
+                fired["done"] = True
+                timer.cancel()
+                self._complete_failed(
+                    cur, invoke_id, fence, index, info, self._bind_error(exc)
+                )
+                self.conn.commit()
+                return True
+            action = outcome.get("action") if isinstance(outcome, dict) else None
+            if action == "wait":
+                return False
+            if action == "reject":
+                return False
+            fired["done"] = True
+            timer.cancel()
+            self._complete_failed(
+                cur, invoke_id, fence, index, info, self._value_invalid()
+            )
+            self.conn.commit()
+            return True
+
+        self._bind_session(invoke_id, fence, index, consume)
+
 
     def _execute_one(self, invoke_id: str, fence: int, stmt: dict) -> None:
         index = int(stmt["stmt_index"])
