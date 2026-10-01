@@ -174,6 +174,10 @@ def _closed_or_none(value: Any, allowed: frozenset[str], label: str) -> str | No
 
 
 def _json_value(value: Any, label: str) -> None:
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise TraceInvalid(label)
+        return
     if isinstance(value, JSON_SCALAR):
         return
     if isinstance(value, list):
@@ -181,7 +185,9 @@ def _json_value(value: Any, label: str) -> None:
             _json_value(item, label)
         return
     if isinstance(value, dict):
-        for item in value.values():
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TraceInvalid(label)
             _json_value(item, label)
         return
     raise TraceInvalid(label)

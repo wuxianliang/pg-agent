@@ -117,7 +117,7 @@ def sample_step(**over) -> dict:
         "result_kind": "return",
         "logical_digest": "a" * 32,
         "response_content": "SELECT 1;",
-        "recorded_cost_usd": "0",
+        "recorded_cost_usd": Decimal("0"),
         "statements": [],
         "repl_output": "",
         "repl_exception_code": None,
@@ -502,6 +502,30 @@ def test_trace_local() -> None:
         raise AssertionError("float value")
     except TraceInvalid:
         check("float blackboard value rejected", True)
+    try:
+        validate_trace(sample_trace(invokes=[sample_invoke(bindings=[{
+            "name": "x", "kind": "var", "provenance": "repl", "tool_name": None,
+            "value": {1: "x"},
+        }])]))
+        raise AssertionError("non-str key")
+    except TraceInvalid:
+        check("non-str dict key rejected", True)
+    try:
+        validate_trace(sample_trace(invokes=[sample_invoke(bindings=[{
+            "name": "x", "kind": "var", "provenance": "repl", "tool_name": None,
+            "value": Decimal("NaN"),
+        }])]))
+        raise AssertionError("nan")
+    except TraceInvalid:
+        check("NaN Decimal rejected", True)
+    try:
+        validate_trace(sample_trace(invokes=[sample_invoke(bindings=[{
+            "name": "x", "kind": "var", "provenance": "repl", "tool_name": None,
+            "value": Decimal("Infinity"),
+        }])]))
+        raise AssertionError("inf")
+    except TraceInvalid:
+        check("Infinity Decimal rejected", True)
 
     bind_z = {"name": "Z", "kind": "var", "provenance": "repl", "tool_name": None, "value": 1}
     bind_a = {"name": "a", "kind": "var", "provenance": "repl", "tool_name": None, "value": 2}
@@ -903,7 +927,23 @@ def test_happy_and_idempotent(server) -> None:
         )
         check("no provider_rejected events", acur.fetchone()[0] == 0)
         costs = [step["recorded_cost_usd"] for inv in rec_trace["invokes"] for step in inv["steps"] if step["logical_digest"]]
-        check("recorded_cost_usd nonzero", any(c not in (None, "0") for c in costs), costs)
+        check("exported recorded_cost_usd is Decimal", all(isinstance(c, Decimal) for c in costs), costs)
+        check("recorded_cost_usd nonzero", any(c is not None and c != 0 for c in costs), costs)
+        check("recorded_cost_usd equals COST", any(c == COST for c in costs), costs)
+        with tempfile.TemporaryDirectory() as tmp:
+            rec_path = Path(tmp) / "rec.json"
+            write_trace(rec_path, rec_trace)
+            loaded_rec = load_trace(rec_path)
+            loaded_costs = [
+                step["recorded_cost_usd"]
+                for inv in loaded_rec["invokes"]
+                for step in inv["steps"]
+                if step["logical_digest"]
+            ]
+            check("recorded_cost_usd round-trip", loaded_costs == costs, loaded_costs)
+            compact_export = dumps(loaded_rec).replace(" ", "").replace("\n", "")
+            check("export recorded_cost_usd is json number", '"recorded_cost_usd":1.25' in compact_export)
+            check("export cost not quoted str", '"recorded_cost_usd":"1.25"' not in compact_export)
         check("digest_scheme", rec_trace["digest_scheme"] == DIGEST_SCHEME)
         admin.commit()
     finally:
@@ -1203,6 +1243,8 @@ def test_export_precision_and_byte_order(server, admin, worker) -> None:
         exported["pool_outcome"]["cost_used"] == PREC,
         exported["pool_outcome"]["cost_used"],
     )
+    rec_cost = exported["invokes"][0]["steps"][0]["recorded_cost_usd"]
+    check("exported recorded_cost_usd is Decimal", isinstance(rec_cost, Decimal), rec_cost)
     names = [b["name"] for b in exported["invokes"][0]["bindings"]]
     check("mixed-case binding export byte order", names == ["Z", "a"], names)
     with tempfile.TemporaryDirectory() as tmp:
@@ -1214,6 +1256,11 @@ def test_export_precision_and_byte_order(server, admin, worker) -> None:
             "loaded high-precision cost_used",
             loaded["pool_outcome"]["cost_used"] == PREC,
             loaded["pool_outcome"]["cost_used"],
+        )
+        check(
+            "loaded recorded_cost_usd lossless",
+            loaded["invokes"][0]["steps"][0]["recorded_cost_usd"] == rec_cost,
+            loaded["invokes"][0]["steps"][0]["recorded_cost_usd"],
         )
 
 
@@ -1308,6 +1355,23 @@ def main() -> int:
         acur.execute("UPDATE v15.invokes SET pool_id = %s WHERE invoke_id = %s", (p2, child))
         admin.commit()
         fails(worker.cursor(), "SELECT v15.v15_replay_export(%s)", (root,), "P1524", "two pools P1524")
+        worker.rollback()
+        root_mix = str(uuid.uuid4())
+        p_mix = make_pool(admin.cursor())
+        admin.commit()
+        park_open(admin.cursor())
+        admin.commit()
+        open_invoke(worker, root_mix, p_mix)
+        run_until_quiescent(server.get_uri(DB), RecordingLLM([paid(BIND_ONE), paid(RET)]), OWNER)
+        acur = admin.cursor()
+        acur.execute("SELECT invoke_id FROM v15.invokes WHERE parent_invoke_id = %s", (root_mix,))
+        child_mix = acur.fetchone()[0]
+        acur.execute("UPDATE v15.invokes SET pool_id = NULL WHERE invoke_id = %s", (child_mix,))
+        admin.commit()
+        fails(
+            worker.cursor(), "SELECT v15.v15_replay_export(%s)", (root_mix,),
+            "P1524", "mixed null/non-null pools P1524",
+        )
         worker.rollback()
     finally:
         worker.close()

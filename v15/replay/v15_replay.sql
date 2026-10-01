@@ -301,7 +301,7 @@ DECLARE
   v_ids uuid[];
   v_status text;
   v_n integer;
-  v_pools uuid[];
+  v_has_null_pool boolean;
   v_pool uuid;
   v_pool_obj jsonb;
   v_outcome jsonb;
@@ -364,16 +364,22 @@ BEGIN
   IF v_n <> 0 THEN
     RAISE EXCEPTION 'V15_INVALID_TRANSITION' USING ERRCODE = 'P1523';
   END IF;
-  SELECT array_agg(DISTINCT i.pool_id ORDER BY i.pool_id) INTO v_pools
+  SELECT count(DISTINCT i.pool_id) FILTER (WHERE i.pool_id IS NOT NULL),
+         coalesce(bool_or(i.pool_id IS NULL), false)
+    INTO v_n, v_has_null_pool
   FROM v15.invokes i
   WHERE i.invoke_id = ANY (v_ids);
-  IF v_pools IS NOT NULL AND cardinality(v_pools) > 1 THEN
+  IF v_n > 1 OR (v_has_null_pool AND v_n > 0) THEN
     RAISE EXCEPTION 'V15_VALUE_INVALID' USING ERRCODE = 'P1524';
   END IF;
-  IF v_pools IS NULL OR cardinality(v_pools) = 0 THEN
+  IF v_n = 0 THEN
     v_pool := NULL;
   ELSE
-    v_pool := v_pools[1];
+    SELECT i.pool_id INTO v_pool
+    FROM v15.invokes i
+    WHERE i.invoke_id = ANY (v_ids)
+      AND i.pool_id IS NOT NULL
+    LIMIT 1;
   END IF;
   IF v_pool IS NULL THEN
     v_pool_obj := NULL;
@@ -413,7 +419,7 @@ BEGIN
         'response_content', a.response->>'content',
         'recorded_cost_usd', CASE
           WHEN a.cost_usd IS NULL THEN NULL
-          ELSE a.cost_usd::text
+          ELSE a.cost_usd
         END,
         'statements', coalesce((
           SELECT jsonb_agg(
