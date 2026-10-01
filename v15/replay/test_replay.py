@@ -210,11 +210,11 @@ def open_invoke(conn, invoke_id: str, pool_id: str | None = None) -> None:
     conn.commit()
 
 
-def make_pool(cur) -> str:
+def make_pool(cur, *, calls_limit=None, cost_limit=None) -> str:
     pool_id = str(uuid.uuid4())
     cur.execute(
-        "INSERT INTO v15.budget_pools (pool_id, calls_limit, cost_limit) VALUES (%s, 40, 100)",
-        (pool_id,),
+        "INSERT INTO v15.budget_pools (pool_id, calls_limit, cost_limit) VALUES (%s, %s, %s)",
+        (pool_id, calls_limit, cost_limit),
     )
     return pool_id
 
@@ -1264,6 +1264,40 @@ def test_export_precision_and_byte_order(server, admin, worker) -> None:
         )
 
 
+def test_unlimited_pool_export_roundtrip(server, admin, worker) -> None:
+    park_open(admin.cursor())
+    admin.commit()
+    pool_id = make_pool(admin.cursor())
+    admin.commit()
+    root = str(uuid.uuid4())
+    open_invoke(worker, root, pool_id)
+    run_until_quiescent(server.get_uri(DB), RecordingLLM([paid(RET)]), OWNER)
+    exported = export_trace(worker, root)
+    worker.commit()
+    check("unlimited pool present", exported["pool"] is not None, exported["pool"])
+    check("exported calls_limit is null", exported["pool"]["calls_limit"] is None, exported["pool"])
+    check("exported cost_limit is null", exported["pool"]["cost_limit"] is None, exported["pool"])
+    check(
+        "exported calls_used is number",
+        exported["pool_outcome"]["calls_used"] is not None,
+        exported["pool_outcome"],
+    )
+    check(
+        "exported cost_used is number",
+        exported["pool_outcome"]["cost_used"] is not None,
+        exported["pool_outcome"],
+    )
+    validate_trace(exported)
+    check("validate_trace accepts unlimited pool", True)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "unlimited.json"
+        write_trace(path, exported)
+        loaded = load_trace(path)
+        check("unlimited export write/load projection", projection(exported) == projection(loaded))
+        check("loaded calls_limit is null", loaded["pool"]["calls_limit"] is None, loaded["pool"])
+        check("loaded cost_limit is null", loaded["pool"]["cost_limit"] is None, loaded["pool"])
+
+
 def test_bind_name_slash_path(server, admin, worker) -> None:
     park_open(admin.cursor())
     admin.commit()
@@ -1333,6 +1367,7 @@ def main() -> int:
         worker.autocommit = False
         test_bind_name_slash_path(server, admin, worker)
         test_export_precision_and_byte_order(server, admin, worker)
+        test_unlimited_pool_export_roundtrip(server, admin, worker)
     finally:
         worker.close()
         admin.close()

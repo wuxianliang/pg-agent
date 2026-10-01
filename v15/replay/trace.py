@@ -149,6 +149,12 @@ def _as_number(value: Any, label: str) -> Decimal:
     raise TraceInvalid(label)
 
 
+def _as_number_or_none(value: Any, label: str) -> Decimal | None:
+    if value is None:
+        return None
+    return _as_number(value, label)
+
+
 def _as_str(value: Any, label: str) -> str:
     if not isinstance(value, str):
         raise TraceInvalid(label)
@@ -211,8 +217,8 @@ def _validate_trace(trace: Any) -> dict:
         raise TraceInvalid("digest_scheme")
     if obj["pool"] is not None:
         pool = _expect_keys(obj["pool"], POOL_KEYS, "pool")
-        _as_number(pool["calls_limit"], "calls_limit")
-        _as_number(pool["cost_limit"], "cost_limit")
+        _as_number_or_none(pool["calls_limit"], "calls_limit")
+        _as_number_or_none(pool["cost_limit"], "cost_limit")
     if obj["pool_outcome"] is not None:
         outcome = _expect_keys(obj["pool_outcome"], OUTCOME_KEYS, "pool_outcome")
         _as_number(outcome["calls_used"], "calls_used")
