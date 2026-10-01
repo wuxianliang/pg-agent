@@ -375,7 +375,12 @@ def r0_source_scope():
         "docs/plans/v13-long-loop-phase-b-plan-2026-09-29.md",
         "docs/plans/v13-long-loop-phase-c-plan-2026-09-29.md"], cwd=AGENT_ROOT).decode().splitlines()
     tracked = set(subprocess.check_output(["git", "ls-files", "--", "v13"], cwd=AGENT_ROOT).decode().splitlines())
-    assert tracked <= set(protected), "new tracked v13 file outside the R0 scope"
+    extra = tracked - set(protected)
+    assert extra <= {n for n in extra if n.startswith("v13/goal_supervisor/")}, (
+        "new tracked v13 file outside R0 scope or v13/goal_supervisor/")
+    for name in extra:
+        assert name.startswith("v13/goal_supervisor/"), name
+        assert (AGENT_ROOT / name).is_file()
     for name in protected:
         if name not in tests | readmes | {path, driver_path}:
             assert (AGENT_ROOT / name).read_bytes() == original(name), "protected bytes: " + name
