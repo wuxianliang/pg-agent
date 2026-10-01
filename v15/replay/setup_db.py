@@ -1,4 +1,4 @@
-"""Create the isolated v15 provider database and load the full runtime."""
+"""Create the isolated v15 replay database and load the full runtime."""
 from __future__ import annotations
 
 import sys
@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from server import get_server
 from v15.load import load_stage
 
-DB = "agent_v15_provider"
-STAGE = "provider"
+DB = "agent_v15_replay"
+STAGE = "replay"
 
 HOOK_ROLES = (
     "v15_hook_governance_iterations",

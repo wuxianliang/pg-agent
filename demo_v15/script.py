@@ -10,7 +10,24 @@ sys.path.insert(0, str(ROOT))
 
 from v15.protocol.split_sql import SplitFailure, classify_statement, split_sql
 
-from task import BIND_NAME, PRINT_SQL, child_payload, role_for
+from task import (
+    BIND_NAME,
+    CSI_ANSWER,
+    CSI_BIND_A,
+    CSI_BIND_B,
+    CSI_BIND_C,
+    CSI_ERROR,
+    CSI_FORMULA_RIGHT,
+    CSI_FORMULA_WRONG,
+    CSI_TASK_A,
+    CSI_TASK_B,
+    CSI_TASK_C,
+    PRINT_SQL,
+    child_payload,
+    csi_solver_payload,
+    fanout_fragments,
+    role_for,
+)
 
 
 class ScriptExhausted(Exception):
@@ -91,6 +108,95 @@ def happy_recall(note: str, seal: str, hops: int, root_id: str, token: str) -> l
     return [PRINT_SQL, *tails, leaf_recall(seal, root_id)]
 
 
+def happy_fanout(note: str, seal: str, hops: int, root_id: str) -> list[str]:
+    del hops
+    frag_a, frag_b = fanout_fragments(seal)
+    payload_a = child_payload(note, 1, "leaf", frag_a, root_id)
+    payload_b = child_payload(note, 1, "leaf", frag_b, root_id)
+    root = (
+        f"SELECT jaz.bind_invoke('a', {sql_jsonb(payload_a)});\n"
+        f"SELECT jaz.bind_invoke('b', {sql_jsonb(payload_b)});\n"
+        f"SELECT jaz.\"return\"(jsonb_build_object('a', jaz.var('a'), 'b', jaz.var('b')));"
+    )
+    child_a = f"SELECT jaz.\"return\"({sql_jsonb({'fragment': frag_a})});"
+    child_b = f"SELECT jaz.\"return\"({sql_jsonb({'fragment': frag_b})});"
+    return [root, child_a, child_b]
+
+
+_CSI_HISTORY = """(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
+      'iteration', h.iteration,
+      'llm_response', h.llm_response,
+      'repl_output', h.repl_output
+    ) ORDER BY h.iteration), '[]'::jsonb)
+    FROM jaz.history AS h
+  )"""
+
+
+def _csi_child_fail(task_id: str) -> str:
+    return (
+        "SELECT jaz.\"return\"(jsonb_build_object(\n"
+        "  'ok', false,\n"
+        f"  'error', '{CSI_ERROR}',\n"
+        f"  'task_id', '{task_id}',\n"
+        f"  'history', {_CSI_HISTORY}\n"
+        "));"
+    )
+
+
+def _csi_child_ok(task_id: str) -> str:
+    return (
+        "SELECT jaz.\"return\"(jsonb_build_object(\n"
+        "  'ok', true,\n"
+        f"  'task_id', '{task_id}',\n"
+        f"  'answer', {CSI_ANSWER},\n"
+        f"  'history', {_CSI_HISTORY}\n"
+        "));"
+    )
+
+
+def happy_csi(note: str, seal: str, hops: int, root_id: str) -> list[str]:
+    del hops
+    payload_a = csi_solver_payload(
+        note, root_id, seal, CSI_TASK_A, CSI_FORMULA_WRONG
+    )
+    payload_b = csi_solver_payload(
+        note, root_id, seal, CSI_TASK_B, CSI_FORMULA_WRONG
+    )
+    payload_c = csi_solver_payload(
+        note,
+        root_id,
+        seal,
+        CSI_TASK_C,
+        CSI_FORMULA_RIGHT,
+        extra={"diagnosed": CSI_ERROR, "failed_task": CSI_TASK_A},
+    )
+    root_batch1 = (
+        f"SELECT jaz.bind_invoke('{CSI_BIND_A}', {sql_jsonb(payload_a)});\n"
+        f"SELECT jaz.bind_invoke('{CSI_BIND_B}', {sql_jsonb(payload_b)});"
+    )
+    # Pad so bind c is stmt_index 2: v15_tree_bind_context keys arg_sql by stmt_index only.
+    root_batch2 = (
+        "SELECT 1;\n"
+        "SELECT 1;\n"
+        f"SELECT jaz.bind_invoke('{CSI_BIND_C}', {sql_jsonb(payload_c)});"
+    )
+    root_final = (
+        "SELECT jaz.\"return\"(jsonb_build_object("
+        "'ok', true, "
+        f"'answer', (jaz.var('{CSI_BIND_C}') -> 'answer')"
+        "));"
+    )
+    return [
+        root_batch1,
+        _csi_child_fail(CSI_TASK_A),
+        _csi_child_fail(CSI_TASK_B),
+        root_batch2,
+        _csi_child_ok(CSI_TASK_C),
+        root_final,
+    ]
+
+
 def continue_then_tail(note: str, seal: str, hops: int, root_id: str) -> list[str]:
     return ["SELECT 1;", *happy_chain(note, seal, hops, root_id)]
 
@@ -104,6 +210,17 @@ def expected_kinds(scenario: str, hops: int, *, continued: bool = False) -> list
         return [*tails, leaf]
     if scenario == "recall":
         return [["print"], *tails, leaf]
+    if scenario == "fanout":
+        return [["bind_invoke", "bind_invoke", "return"], ["return"], ["return"]]
+    if scenario == "csi":
+        return [
+            ["bind_invoke", "bind_invoke"],
+            ["return"],
+            ["return"],
+            ["plain", "plain", "bind_invoke"],
+            ["return"],
+            ["return"],
+        ]
     raise ScriptGate(scenario)
 
 

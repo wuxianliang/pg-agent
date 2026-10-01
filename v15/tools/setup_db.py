@@ -1,4 +1,4 @@
-"""Create the isolated v15 provider database and load the full runtime."""
+"""Create the isolated v15 tools database and load through stage 13."""
 from __future__ import annotations
 
 import sys
@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from server import get_server
 from v15.load import load_stage
 
-DB = "agent_v15_provider"
-STAGE = "provider"
+DB = "agent_v15_tools"
+STAGE = "tools"
 
 HOOK_ROLES = (
     "v15_hook_governance_iterations",
@@ -26,6 +26,8 @@ HOOK_ROLES = (
     "v15_hook_context_window_warning",
     "v15_hook_return_type",
 )
+
+TOOL_ROLES = ("v15_tool_fake_search",)
 
 
 def _connect(server, database: str):
@@ -110,6 +112,12 @@ def _create_roles(cur) -> None:
         "CREATE ROLE v15_repl NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
     )
     for name in HOOK_ROLES:
+        cur.execute(
+            sql.SQL(
+                "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+            ).format(sql.Identifier(name))
+        )
+    for name in TOOL_ROLES:
         cur.execute(
             sql.SQL(
                 "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"

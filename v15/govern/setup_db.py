@@ -25,6 +25,7 @@ HOOK_ROLES = (
     "v15_hook_budget_pool",
     "v15_hook_budget_forcing",
     "v15_hook_context_window_warning",
+    "v15_hook_return_type",
 )
 
 OID_NAMES = (

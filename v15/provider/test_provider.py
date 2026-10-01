@@ -201,7 +201,8 @@ def test_prefix_shape() -> None:
     check("provider load has ten files", len(provider) == 10)
     check("provider load ends at provider", provider[-1].name == "v15_provider.sql")
     check("provider is append-only", provider[:9] == govern)
-    check("provider is last SQL", SQL_LOAD_ORDER[-1].name == "v15_provider.sql")
+    check("provider prefix matches files_through", provider == SQL_LOAD_ORDER[:10])
+    check("provider prefix length", len(provider) == 10 and provider[-1].name == "v15_provider.sql")
 
 
 def test_sql_shape() -> None:
@@ -210,6 +211,13 @@ def test_sql_shape() -> None:
     check("provider SQL has no session authorization", "SESSION AUTHORIZATION" not in source)
     check("provider SQL has exact three transitions", source.count("CREATE FUNCTION v15.v15_provider_") == 3)
     check("provider SQL carries P1539 mapping", "WHEN 'V15_PROVIDER_REJECTED' THEN 'P1539'" in source)
+    check("provider known-code lists validation", "'V15_VALIDATION_FAILED'" in source)
+    io_body = source.split("CREATE OR REPLACE FUNCTION v15.v15_govern_known_code")[0]
+    check("provider io map omits P1540", "V15_VALIDATION_FAILED" not in io_body)
+    govern_sql = (ROOT.parent / "govern" / "v15_govern.sql").read_text()
+    loop_sql = (ROOT.parent / "loop" / "v15_loop.sql").read_text()
+    check("govern known-code lists validation", "'V15_VALIDATION_FAILED'" in govern_sql)
+    check("loop maps P1540", "WHEN 'V15_VALIDATION_FAILED' THEN 'P1540'" in loop_sql)
 
 
 def test_unstarted(server, admin, worker) -> None:
@@ -1131,6 +1139,31 @@ def test_smoke_exits() -> None:
     check("smoke no key did not urlopen", URL_OPENS["n"] == before, URL_OPENS["n"])
 
 
+def test_p1540_mapping(admin) -> None:
+    cur = admin.cursor()
+    cur.execute(
+        """
+        SELECT v15.v15_loop_sqlstate('V15_VALIDATION_FAILED'),
+               v15.v15_io_sqlstate('V15_VALIDATION_FAILED'),
+               v15.v15_govern_known_code('V15_VALIDATION_FAILED'),
+               v15.v15_govern_known_code('V15_PROVIDER_REJECTED'),
+               v15.v15_loop_sqlstate('V15_RAISE'),
+               v15.v15_io_sqlstate('V15_PROVIDER_REJECTED')
+        """
+    )
+    got = cur.fetchone()
+    check("P1540 mapping and known-code", got == ("P1540", None, True, True, "P1529", "P1539"), got)
+    cur.execute("SAVEPOINT p1540")
+    try:
+        cur.execute("DO $$ BEGIN RAISE EXCEPTION 'V15_VALIDATION_FAILED' USING ERRCODE = 'P1540'; END $$")
+    except psycopg2.Error as exc:
+        check("P1540 can RAISE", exc.pgcode == "P1540", exc.pgcode)
+        cur.execute("ROLLBACK TO SAVEPOINT p1540")
+        return
+    cur.execute("ROLLBACK TO SAVEPOINT p1540")
+    raise AssertionError("P1540 can RAISE: expected failure")
+
+
 def run_tests() -> None:
     test_prefix_shape()
     test_sql_shape()
@@ -1150,6 +1183,7 @@ def run_tests() -> None:
     try:
         admin.autocommit = False
         worker.autocommit = False
+        test_p1540_mapping(admin)
         test_unstarted(server, admin, worker)
         test_started_reject_and_validation(server, admin, worker)
         test_abandon_and_io_exhaustion(server, admin, worker)

@@ -321,6 +321,214 @@ def test_same_iteration(server, wconn, cur) -> None:
     )[0] == "completed")
 
 
+def test_same_iteration_fanout(server, wconn, cur) -> None:
+    iid = str(uuid.uuid4())
+    open_invoke(wconn, iid)
+    parent = (
+        "SELECT jaz.bind_invoke('a', '{\"who\":\"a\"}'::jsonb);\n"
+        "SELECT jaz.bind_invoke('b', '{\"who\":\"b\"}'::jsonb);\n"
+        "SELECT jaz.\"return\"(jsonb_build_object('a', jaz.var('a'), 'b', jaz.var('b')));"
+    )
+    child_a = "SELECT jaz.\"return\"('{\"from\":\"a\"}'::jsonb);"
+    child_b = "SELECT jaz.\"return\"('{\"from\":\"b\"}'::jsonb);"
+    script = run(server, [parent, child_a, child_b])
+    check("fanout llm calls", len(script.calls) == 3, len(script.calls))
+    check("parent attempts stay one", attempts(cur, iid) == 1, attempts(cur, iid))
+    parent_settled = one(
+        cur,
+        """
+        SELECT count(*)
+        FROM v15.llm_attempts a
+        JOIN v15.llm_requests r ON r.request_id = a.request_id
+        WHERE r.invoke_id = %s AND r.iteration = 0 AND a.status = 'settled'
+        """,
+        (iid,),
+    )[0]
+    check("parent this iteration one settled attempt", parent_settled == 1, parent_settled)
+    kids = children(cur, iid)
+    check("two children", len(kids) == 2, kids)
+    kid_a = one(
+        cur,
+        """
+        SELECT child_invoke_id::text
+        FROM v15.statements
+        WHERE invoke_id = %s AND iteration = 0 AND bind_name = 'a'
+        """,
+        (iid,),
+    )[0]
+    kid_b = one(
+        cur,
+        """
+        SELECT child_invoke_id::text
+        FROM v15.statements
+        WHERE invoke_id = %s AND iteration = 0 AND bind_name = 'b'
+        """,
+        (iid,),
+    )[0]
+    check("child a among children", kid_a in kids, (kid_a, kids))
+    check("child b among children", kid_b in kids, (kid_b, kids))
+    for label, kid in (("a", kid_a), ("b", kid_b)):
+        settled = one(
+            cur,
+            """
+            SELECT count(*)
+            FROM v15.llm_attempts a
+            JOIN v15.llm_requests r ON r.request_id = a.request_id
+            WHERE r.invoke_id = %s AND a.status = 'settled'
+            """,
+            (kid,),
+        )[0]
+        check(f"child {label} one settled attempt", settled == 1, settled)
+        check(f"child {label} attempts", attempts(cur, kid) == 1, attempts(cur, kid))
+    row = one(
+        cur,
+        """
+        SELECT status, return_value, fatal
+        FROM v15.invokes WHERE invoke_id = %s
+        """,
+        (iid,),
+    )
+    check("parent completed", row[0] == "completed" and row[2] is False, row)
+    child_a_value = parse_json(one(
+        cur, "SELECT return_value FROM v15.invokes WHERE invoke_id = %s", (kid_a,)
+    )[0])
+    child_b_value = parse_json(one(
+        cur, "SELECT return_value FROM v15.invokes WHERE invoke_id = %s", (kid_b,)
+    )[0])
+    check("child a distinct return", child_a_value == {"from": "a"}, child_a_value)
+    check("child b distinct return", child_b_value == {"from": "b"}, child_b_value)
+    var_a = parse_json(binding(cur, iid, "a")[1])
+    var_b = parse_json(binding(cur, iid, "b")[1])
+    check("var a equals child a return", var_a == child_a_value, var_a)
+    check("var b equals child b return", var_b == child_b_value, var_b)
+    check(
+        "parent return merges both vars",
+        parse_json(row[1]) == {"a": child_a_value, "b": child_b_value},
+        row[1],
+    )
+    row0, row1, row2 = (
+        one(cur, "SELECT status, kind, bind_name FROM v15.statements WHERE invoke_id = %s AND stmt_index = 0", (iid,)),
+        one(cur, "SELECT status, kind, bind_name FROM v15.statements WHERE invoke_id = %s AND stmt_index = 1", (iid,)),
+        one(cur, "SELECT status, kind, bind_name FROM v15.statements WHERE invoke_id = %s AND stmt_index = 2", (iid,)),
+    )
+    check("stmt 0 is bind a done", row0 == ("done", "bind_invoke", "a"), row0)
+    check("stmt 1 is bind b done", row1 == ("done", "bind_invoke", "b"), row1)
+    check("stmt 2 is return done", row2 == ("done", "return", None), row2)
+    kid_iters_a = one(
+        cur,
+        """
+        SELECT count(*), max(iteration),
+               bool_or(iteration = 0 AND result_kind = 'return')
+        FROM v15.iterations WHERE invoke_id = %s
+        """,
+        (kid_a,),
+    )
+    kid_iters_b = one(
+        cur,
+        """
+        SELECT count(*), max(iteration),
+               bool_or(iteration = 0 AND result_kind = 'return')
+        FROM v15.iterations WHERE invoke_id = %s
+        """,
+        (kid_b,),
+    )
+    check("child a single return iteration", kid_iters_a == (1, 0, True), kid_iters_a)
+    check("child b single return iteration", kid_iters_b == (1, 0, True), kid_iters_b)
+    iters = one(
+        cur,
+        """
+        SELECT count(*), max(iteration),
+               bool_or(iteration = 0 AND result_kind = 'return')
+        FROM v15.iterations WHERE invoke_id = %s
+        """,
+        (iid,),
+    )
+    check("no extra parent iteration", iters == (1, 0, True), iters)
+    cur.execute(
+        """
+        SELECT seq, payload->>'op', payload->>'bind_name'
+        FROM v15.invoke_events
+        WHERE invoke_id = %s AND event_class = 'audit'
+          AND payload->>'op' IN ('suspend', 'deliver')
+        ORDER BY seq
+        """,
+        (iid,),
+    )
+    pairs = cur.fetchall()
+    check(
+        "suspend then deliver for both binds",
+        [(row[1], row[2]) for row in pairs] == [
+            ("suspend", "a"),
+            ("deliver", "a"),
+            ("suspend", "b"),
+            ("deliver", "b"),
+        ],
+        pairs,
+    )
+    cur.execute(
+        """
+        SELECT seq, span, phase
+        FROM v15.invoke_events
+        WHERE invoke_id = %s AND event_class = 'span' AND span = 'repl_exec'
+        ORDER BY seq
+        """,
+        (iid,),
+    )
+    spans = cur.fetchall()
+    check(
+        "repl_exec span exactly enter/send/complete/exit",
+        [(row[2]) for row in spans] == ["enter", "send", "complete", "exit"],
+        spans,
+    )
+    for name in ("a", "b"):
+        suspend_seq = one(
+            cur,
+            """
+            SELECT seq FROM v15.invoke_events
+            WHERE invoke_id = %s AND payload->>'op' = 'suspend'
+              AND payload->>'bind_name' = %s
+            """,
+            (iid, name),
+        )[0]
+        deliver_seq = one(
+            cur,
+            """
+            SELECT seq FROM v15.invoke_events
+            WHERE invoke_id = %s AND payload->>'op' = 'deliver'
+              AND payload->>'bind_name' = %s
+            """,
+            (iid, name),
+        )[0]
+        exits_between = [
+            row for row in spans
+            if row[2] == "exit" and suspend_seq < row[0] < deliver_seq
+        ]
+        check(
+            f"repl_exec stays open while waiting {name}",
+            exits_between == [],
+            spans,
+        )
+    deliver_a = one(
+        cur,
+        """
+        SELECT seq FROM v15.invoke_events
+        WHERE invoke_id = %s AND payload->>'op' = 'deliver'
+          AND payload->>'bind_name' = 'a'
+        """,
+        (iid,),
+    )[0]
+    deliver_b = one(
+        cur,
+        """
+        SELECT seq FROM v15.invoke_events
+        WHERE invoke_id = %s AND payload->>'op' = 'deliver'
+          AND payload->>'bind_name' = 'b'
+        """,
+        (iid,),
+    )[0]
+    check("child a deliver before child b", deliver_a < deliver_b, (deliver_a, deliver_b))
+
+
 def test_grandchild(server, wconn, cur) -> None:
     iid = str(uuid.uuid4())
     open_invoke(wconn, iid)
@@ -1000,6 +1208,7 @@ def main() -> int:
     cur = conn.cursor()
     wconn = connect(server, "v15_worker")
     test_same_iteration(server, wconn, cur)
+    test_same_iteration_fanout(server, wconn, cur)
     test_grandchild(server, wconn, cur)
     test_scope(server, wconn, cur)
     test_child_raise(server, wconn, cur)

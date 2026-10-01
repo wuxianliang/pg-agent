@@ -30,6 +30,7 @@ PRINT_SQL = "SELECT jaz.print('seen');"
 PROSE = "this is not sql"
 UNCLOSED = "SELECT 'unterminated"
 DO_AFTER = 'SELECT jaz."return"(\'1\'::jsonb); DO $$ BEGIN END $$;'
+FAIL_THEN_RETURN = "DO $$ BEGIN END $$;\n" + RETURN_SQL
 ORDERED = "SELECT 1; DO $$ BEGIN END $$; SELECT 2;"
 SLOW = "-- timeout: 0.2\nSELECT count(*) FROM generate_series(1, 100000000);"
 
@@ -568,6 +569,114 @@ def test_continue_paths(server, wconn, cur) -> None:
     )
     cur.execute("SELECT status FROM v15.invokes WHERE invoke_id = %s", (skipped,))
     check("return after skip completed", cur.fetchone()[0] == "completed")
+
+    ordinary = str(uuid.uuid4())
+    open_invoke(wconn, ordinary)
+    try:
+        run(server, [FAIL_THEN_RETURN, StopScript])
+    except StopScript:
+        pass
+    cur.execute(
+        """
+        SELECT stmt_index, status, error->>'code'
+        FROM v15.statements
+        WHERE invoke_id = %s AND iteration = 0
+        ORDER BY stmt_index
+        """,
+        (ordinary,),
+    )
+    ordinary_rows = cur.fetchall()
+    check(
+        "ordinary fail then return skips return",
+        ordinary_rows == [(0, "failed", "V15_DIALECT"), (1, "skipped", None)],
+        ordinary_rows,
+    )
+    cur.execute("SELECT status FROM v15.invokes WHERE invoke_id = %s", (ordinary,))
+    check(
+        "ordinary fail then return is not completed",
+        cur.fetchone()[0] != "completed",
+    )
+
+    binding = finish_return_with_prior_fail(
+        cur, wconn, "V15_TOOL_BINDING", "P1543"
+    )
+    check("tool-reject then return completed", binding[1] == "completed", binding)
+    dialect = finish_return_with_prior_fail(
+        cur, wconn, "V15_DIALECT", "P1511"
+    )
+    check(
+        "non-reject fail then return is not completed",
+        dialect[1] != "completed",
+        dialect,
+    )
+
+
+def finish_return_with_prior_fail(cur, wconn, code: str, sqlstate: str):
+    iid = str(uuid.uuid4())
+    scratch = "s_" + iid.replace("-", "")
+    cur.execute(
+        f"CREATE SCHEMA {scratch} AUTHORIZATION v15_owner"
+    )
+    cur.execute(
+        """
+        INSERT INTO v15.invokes (
+          invoke_id, parent_invoke_id, parent_iteration, root_invoke_id, depth,
+          status, fatal, recursion_available, resolved_config, config_digest,
+          manifest_digest, scratch_schema, fence, lease_owner, lease_until,
+          return_value, created_at, updated_at
+        ) VALUES (
+          %s, NULL, NULL, %s, 1,
+          'leased', false, true, '{}'::jsonb, 'cfg',
+          'md', %s, 1, %s, clock_timestamp() + interval '10 minutes',
+          '1'::jsonb, clock_timestamp(), clock_timestamp()
+        )
+        """,
+        (iid, iid, scratch, OWNER),
+    )
+    cur.execute(
+        """
+        INSERT INTO v15.iterations (invoke_id, iteration, status, resume_stmt, capture)
+        VALUES (%s, 0, 'executing', 2, '')
+        """,
+        (iid,),
+    )
+    fail_sql = "DO $$ BEGIN END $$"
+    ret_sql = 'SELECT jaz."return"(\'1\'::jsonb)'
+    err = json.dumps({"sqlstate": sqlstate, "code": code, "message": ""})
+    cur.execute(
+        """
+        INSERT INTO v15.statements (
+          invoke_id, iteration, stmt_index, sql, sql_digest, kind, status,
+          error, error_sqlstate
+        ) VALUES
+          (%s, 0, 0, %s, md5(%s), 'plain', 'failed', %s::jsonb, %s),
+          (%s, 0, 1, %s, md5(%s), 'return', 'done', NULL, NULL)
+        """,
+        (iid, fail_sql, fail_sql, err, sqlstate, iid, ret_sql, ret_sql),
+    )
+    for seq, span in ((0, "invoke"), (1, "repl_exec")):
+        cur.execute(
+            """
+            INSERT INTO v15.invoke_events (
+              invoke_id, seq, event_class, span, phase, payload, created_at
+            ) VALUES (%s, %s, 'span', %s, 'enter', '{}'::jsonb, clock_timestamp())
+            """,
+            (iid, seq, span),
+        )
+    cur.connection.commit()
+    wcur = wconn.cursor()
+    wcur.execute("SET LOCAL lock_timeout = '2s'")
+    wcur.execute("SET LOCAL statement_timeout = '30s'")
+    try:
+        wcur.execute(
+            "SELECT v15.v15_finish_exec(%s, 1, %s)",
+            (iid, OWNER),
+        )
+        wconn.commit()
+    except psycopg2.Error:
+        wconn.rollback()
+    cur.execute("SELECT status FROM v15.invokes WHERE invoke_id = %s", (iid,))
+    return iid, cur.fetchone()[0]
 
 
 def test_timeout(server, wconn, cur) -> None:

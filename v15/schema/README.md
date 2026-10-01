@@ -2,7 +2,7 @@
 
 Gate: `uv run python v15/schema/test_schema.py`（退出码 0 = 通过）
 
-库名 `agent_v15_schema`。这是前缀 gate 库，不是合运行时。合运行时只在 `SQL_LOAD_ORDER` 十个文件都加载之后。
+库名 `agent_v15_schema`。这是前缀 gate 库，不是合运行时。合运行时只在 `SQL_LOAD_ORDER` 十二个文件都加载之后。
 
 `setup_db.py` 先删掉每一个 `starts_with(datname, 'agent_v15_')` 的库，再重建集群角色，然后 `CREATE DATABASE` 并 `load_stage(..., "schema")`。角色语句不在 `v15_schema.sql` 里。加载结束后 `v15_bootstrap` 改为 `NOLOGIN`。
 

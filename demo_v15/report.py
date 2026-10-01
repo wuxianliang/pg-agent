@@ -73,6 +73,8 @@ def render_report(result: dict, meta: dict) -> str:
         f"- relay_flags: {', '.join(result.get('relay_flags') or []) or '-'}",
         f"- recall_ok: {result.get('recall_ok')}",
         f"- recall_flags: {', '.join(result.get('recall_flags') or []) or '-'}",
+        f"- csi_ok: {result.get('csi_ok')}",
+        f"- csi_flags: {', '.join(result.get('csi_flags') or []) or '-'}",
         f"- warning_ok: {result.get('warning_ok')}",
         "",
     ]
