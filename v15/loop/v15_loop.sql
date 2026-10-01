@@ -847,7 +847,15 @@ BEGIN
        WHERE s.invoke_id = p_invoke_id
          AND s.iteration = v_it.iteration
          AND s.status = 'failed'
-         AND s.stmt_index >= v_ret_at
+         AND (
+           s.stmt_index >= v_ret_at
+           OR coalesce(s.error->>'code', '') NOT IN (
+             'V15_TOOL_BINDING',
+             'V15_TOOL_FAILED',
+             'V15_TOOL_EXHAUSTED',
+             'V15_TOOL_UNAUTHORIZED'
+           )
+         )
      ) THEN
     v_kind := 'return';
   ELSIF v_raise_at IS NOT NULL

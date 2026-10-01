@@ -270,11 +270,12 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 |---|---|---|---|---|
 | 13.1 | §15 十三文件 | ✅ | `v15/tools/test_tools.py` | `len(SQL_LOAD_ORDER)==13`，末项 `v15_tools.sql`，`files_through("tools")==SQL_LOAD_ORDER`，前 12 项等于 `files_through("replay")` |
 | 13.2 | §3.16 / §4 `tool_wait` | ✅ | 同上 | 规范 `bind_tool` 后 invoke 为 `tool_wait`，不是 `suspended`；无子 invoke、无树边；`v15_claim` 对 `tool_wait` 返回 NULL；回滚前断言 status/fence 仍是 `tool_wait`；`v15_next_runnable` 不返回该行 |
-| 13.3 | §6.2 `bind_tool` | ✅ | `v15/protocol/test_protocol.py`、`v15/tools/test_tools.py` | 五字段 Classification 相等；四元组不相等（`as_core()` 才是旧形）。规范形识别七键 payload。字面量/注释/dollar-quote 内的名字不分类。`arg_sql` 含 `INSERT` 为 `V15_INVOKE_FORM`。六键 `bind_tool` 存语句 `P1524`。直接执行 `jaz.bind_tool` 为 `V15_INVOKE_FORM`。超 `max_invoke_input_length` 预闸 `P1524`，不挂起 |
+| 13.3 | §6.2 `bind_tool` | ✅ | `v15/protocol/test_protocol.py`、`v15/tools/test_tools.py` | 五字段 Classification 相等；四元组不相等（`as_core()` 才是旧形）。规范形识别七键 payload。字面量/注释/dollar-quote 内的名字不分类。`arg_sql` 含 `INSERT` 为 `V15_INVOKE_FORM`。带引号 `"INTO"` 与大小写混合 `Insert` 同为 `V15_INVOKE_FORM`；带引号 `"Nextval"` 亦然。六键 `bind_tool` 存语句 `P1524`。直接执行 `jaz.bind_tool` 为 `V15_INVOKE_FORM`。超 `max_invoke_input_length` 预闸 `P1524`，不挂起 |
 | 13.4 | §13 `P1543`/`P1544`/`P1545` | ✅ | `v15/tools/test_tools.py` | `external=false` 的 `bind_tool` → `P1543`（`V15_TOOL_BINDING`），同迭代下一条 plain 继续。FakeTool `{"ok":false}` 与异常 → `P1544`（整行七元组严格比），不写 binding，observation 含 `[v15 exception V15_TOOL_FAILED]`。不可 JSON 编码/非布尔 `ok` 收成 `{"ok":false}` 再 settle。`n` 将越 `governance_io` → `P1545`。同步 `jaz.tool` 对 `external=true` 仍 `P1517`（code 与 sqlstate 都要），`tool_attempts=0` |
 | 13.5 | §3.7 送达 | ✅ | 同上 | 成功：`kind=var`、`provenance=delivery`、`show_in_prompt=true`，同迭代可读，该迭代 `llm_requests` 仍 1。更新已有 var 行也把 `show_in_prompt` 设回 true。名字被 `scope` 占用则 FakeTool 仍被调、attempt `settled`、binding 不改、语句 `P1527`/`V15_DELIVERY_CONFLICT` |
-| 13.6 | §4.14 回收与 FakeTool | ✅ | 同上 | 未 mark 过期 → attempt `failed` 不计 calls；已 mark 过期 → `unknown` 计 1；invoke 仍 `tool_wait`。`tool_retry` payload 含 `new_attempt_id: null`。stage-13 上 reclaim 子送达分支仍走通；子 invoke 池耗尽时父不留 `suspended`。mark 阶段 P1502 不调 FakeTool；settle 非 P1502 异常只隔离该 invoke。FakeTool 只在 `call_started` 提交后、会话无打开事务时调用。gate 与 FakeTool 不建 socket |
+| 13.6 | §4.14 回收与 FakeTool | ✅ | 同上 | 未 mark 过期 → attempt `failed` 不计 calls；已 mark 过期 → `unknown` 计 1；invoke 仍 `tool_wait`。`tool_retry` payload 含 `new_attempt_id: null`。stage-13 上 reclaim 子送达分支仍走通；子 invoke 池耗尽时父不留 `suspended`。mark 阶段 P1502 不调 FakeTool；settle 非 P1502 异常只隔离该 invoke。FakeTool 只在 `call_started` 提交后、会话无打开事务时调用。`_run_one_tool` 在 `tool.call` 前读 `tool_attempts.lease_until`：mark 已提交且租约已过期则不调 FakeTool、attempt 保持 leased 待 reclaim。`v15_begin_tool` 的 P1523（已有 leased attempt）视为本轮未抢到，后到 worker 继续其它 invoke，不退出 `drive_tools`。gate 与 FakeTool 不建 socket |
 | 13.7 | 导出拒绝 | ✅ | 同上 | 含 `bind_tool` / `tool_wait` 的树 `v15_replay_export` → `P1524`，不产文件。无 `bind_tool`、无 `fake_search` grant 的已完成树导出 `version=1` 且 `invokes` 非空，不抛 P1524。旧 replay 夹具仍过 |
+| 13.8 | §4.9 return 跳过失败行 | ✅ | `v15/loop/test_loop.py`、`v15/tools/test_tools.py` | 同迭代 return 前失败行仅当码属于 `{V15_TOOL_BINDING, V15_TOOL_FAILED, V15_TOOL_EXHAUSTED, V15_TOOL_UNAUTHORIZED}` 时可跳过。普通语句失败（如 `DO`/`V15_DIALECT`）后同迭代 return 不得 return-completed。`external=false` → `P1543` 后同迭代 return 仍 completed |
 
 ## M3 · §14
 
@@ -303,7 +304,7 @@ M2 补齐封闭 DSL、`return_type` handler、`validate_return` 注册协议与�
 | V15-D21 | `v15/govern/test_govern.py` | `supply_llm_response` 使阶段回滚。非 baseline 抛出的异常才只留审计 |
 | V15-D22 | `v15/namespace/test_namespace.py` | 隔离证据是第二个 invoke 的行集，不是 `EXPLAIN` |
 | V15-D23 | `v15/tree/test_tree.py` | local hook 不复制给子。子只接 propagating 行 |
-| V15-D24 | `v15/repl/test_repl.py`、`v15/tree/test_tree.py` | bind 实参只授 `USAGE`。写记号和 scratch 写都是 `V15_INVOKE_FORM` |
+| V15-D24 | `v15/repl/test_repl.py`、`v15/tree/test_tree.py`、`v15/protocol/test_protocol.py` | bind 实参只授 `USAGE`。写记号（含带引号 `"INTO"`、大小写混合 `Insert`）和 scratch 写都是 `V15_INVOKE_FORM` |
 | V15-D25 | `v15/protocol/test_protocol.py` | `DO` 被拒绝。语句内部的迭代只走 `WITH RECURSIVE` |
 | V15-D26 | `v15/govern/test_govern.py` | exit 上的 abort 回滚，outcome 行不留下。exit 只能写黑板 |
 | V15-D33 | `v15/tools/test_tools.py` | `bind_tool` 仅 `external=true` 异步延续；同步 `jaz.tool` 仍 `V15_EXTERNAL_TOOL`、不写 `tool_attempts`；D14 回收不插 attempt；FakeTool 在 `call_started` 提交之后 |

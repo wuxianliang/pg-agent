@@ -11,7 +11,7 @@ Gate: `uv run python v15/protocol/test_protocol.py`（退出码 0 = 通过）
 `v15_protocol.sql` 只有注释。切分与渲染不在库内，加载成功且不建表。
 
 - `split_sql(source) -> list[str] | SplitFailure`：§6.1 词法切分。未闭合返回 `SplitFailure`，不产生部分列表。正文含 NUL 时先换成六字符 `\u0000`，`reject_code = V15_VALUE_INVALID`，不再报未闭合。
-- `classify_statement(sql) -> Classification`：五字段 `(kind, bind_name, arg_sql, reject_code, tool_name)`，顺序以 §6.2 为准。对象相等是五字段合同。需要旧四元组时用 `as_core()`。空的 `reject_code` / `bind_name` / `arg_sql` / `tool_name` 是 `None`。
+- `classify_statement(sql) -> Classification`：五字段 `(kind, bind_name, arg_sql, reject_code, tool_name)`，顺序以 §6.2 为准。对象相等是五字段合同。需要旧四元组时用 `as_core()`。空的 `reject_code` / `bind_name` / `arg_sql` / `tool_name` 是 `None`。写记号与序列函数名匹配大小写不敏感，带引号标识符同样计入（`"INTO"`、`Insert`、`"Nextval"` → `V15_INVOKE_FORM`）。
 - `timeout_pragma_ms(sql)`：合法的第一行 `-- timeout:` 返回 `floor(秒 * 1000)`，否则 `None`。非法 pragma 由分类器写成 `V15_VALUE_INVALID`，已有方言/DDL/形式拒绝码时不覆盖。
 - `sql_without_timeout_pragma(sql)`：执行文本去掉第一行 timeout 注释。存放文本仍保留该行。
 - `render_system` / `render_inputs` / `truncate_text` / `truncate_base` / `render_base`：§6.5。`recursion_available = false` 时删去两处 `bind_invoke` 教学。长度按码点，与 `char_length` 一致。不计算 `logical_digest`。

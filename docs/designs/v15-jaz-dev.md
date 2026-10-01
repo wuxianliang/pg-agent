@@ -1334,7 +1334,7 @@ prepare 对这种语句只授予 scratch 的 `USAGE`，不授予 `CREATE`，不�
 
 一个事务。先按 §4.1 取锁，并校验 fence、`p_owner` 与状态。若存在 `done` 的 `return` 或 `raise` 语句，`cut` 等于该语句的 `stmt_index`；否则 `cut = resume_stmt`（失败路径停在失败行上；全部完成或零语句的 continue 路径上 `resume_stmt` 即语句条数，`cut` 不选中任何行）。skip 只作用于 `stmt_index > cut` 的 `pending` 与 `failed`（preclassified）行。不得用 `resume_stmt` 作为 return/raise 情形的切点。执行环（return / raise / continue）内的 skip 唯一执行者是本函数；§4.8 的送达与 fatal 事务在同事务内自行 skip，不经过本函数。然后才做候选校验。`p_owner` 等于 `lease_owner`。invoke `leased`、栅栏匹配、租约未过期；迭代 `executing`；`repl_exec` 已打开。本函数服从子终态清单。三条互斥候选，否则 `V15_INVALID_TRANSITION`：
 
-1. **return。** 存在一条 `kind = return` 且 `done`，没有 `failed`，没有 `pending` 且 `error IS NULL` 的行，也没有 `running`。`invokes.return_value` 非空。后继可以是 `skipped`。
+1. **return。** 存在一条 `kind = return` 且 `done`，没有 `failed`，没有 `pending` 且 `error IS NULL` 的行，也没有 `running`。`invokes.return_value` 非空。后继可以是 `skipped`。return 切点之前的失败行仅当 `error.code` 属于工具拒绝族 `{V15_TOOL_BINDING, V15_TOOL_FAILED, V15_TOOL_EXHAUSTED, V15_TOOL_UNAUTHORIZED}` 时视为可跳过；其它失败码不得 return-completed。
 2. **raise。** 与 return 对称，`kind = raise`，`invokes.error` 非空。
 3. **continue。** 没有 `return` 或 `raise` 的 `done` 行。要么全部是 `done`（含零条语句），要么恰好一条 `failed`，且它是下标最小的错误；更大下标皆 `skipped`（含到达执行边界时已改记的 preclassified `failed`），更小下标皆 `done`。仍留着未来 preclassified `failed`、而当前边界尚未到它，不是这个形状（§4.12）。
 
@@ -1645,7 +1645,7 @@ SELECT jaz.assign('<ident>', <jsonb-expr>);
 
 `<ident>` 只允许标准字符串字面量（`'` … `'`，`''` 转义），内容符合 §5.2，且不是保留字。`E''`、`U&''`、dollar-quote、表达式，都不是这个位置的合法写法。`<jsonb-expr>` 与 `<text-expr>` 是一条表达式：分类器只检查括号、字符串、注释与 dollar-quote 之下的顶层逗号个数，不解释表达式的类型。抽出来的表达式文本原样写入 `arg_sql`。规范控制语句抽不出表达式时，`reject_code = V15_INVOKE_FORM`。
 
-同一套词法还要扫描 `bind_invoke` 与 `bind_tool` 的 `arg_sql`。在字符串、注释与 dollar-quote 之外若出现记号 `INSERT`、`UPDATE`、`DELETE`、`MERGE`、`TRUNCATE`、`COPY` 或 `INTO`，整条的 `reject_code = V15_INVOKE_FORM`。同一记号流还拒绝 `(` 前标识符匹配 `nextval`/`setval`/`currval`（含 `pg_catalog.` 限定），同样是 `V15_INVOKE_FORM`。这是序列变异防护。表的属主只要有 schema `USAGE` 就能写自己的表；词法检查是执行前的背书。写防护仍是 `pg_stat_xact_user_tables` 加上仅 `USAGE`、无 `CREATE`（§4.7、§4.14）。
+同一套词法还要扫描 `bind_invoke` 与 `bind_tool` 的 `arg_sql`。在字符串、注释与 dollar-quote 之外若出现记号 `INSERT`、`UPDATE`、`DELETE`、`MERGE`、`TRUNCATE`、`COPY` 或 `INTO`，整条的 `reject_code = V15_INVOKE_FORM`。同一记号流还拒绝 `(` 前标识符匹配 `nextval`/`setval`/`currval`（含 `pg_catalog.` 限定），同样是 `V15_INVOKE_FORM`。写记号与序列函数名的匹配大小写不敏感，带引号标识符同样计入。这是序列变异防护。表的属主只要有 schema `USAGE` 就能写自己的表；词法检查是执行前的背书。写防护仍是 `pg_stat_xact_user_tables` 加上仅 `USAGE`、无 `CREATE`（§4.7、§4.14）。
 
 这套记号流也是 §0.18 的权威：控制名只有出现在字符串、注释与 dollar-quote **之外**才算命中。字面量里的同样字符不是 `V15_INVOKE_FORM`。
 

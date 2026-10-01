@@ -1101,6 +1101,30 @@ EXCEPTION
 END;
 $fn$;
 
+CREATE FUNCTION v15.v15_tool_lease_covers(p_attempt_id uuid) RETURNS boolean
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $fn$
+DECLARE
+  v_until timestamptz;
+BEGIN
+  PERFORM v15.v15_repl_require_worker();
+  IF p_attempt_id IS NULL THEN
+    RAISE EXCEPTION 'V15_VALUE_INVALID' USING ERRCODE = 'P1524';
+  END IF;
+  SELECT a.lease_until
+    INTO v_until
+  FROM v15.tool_attempts a
+  WHERE a.attempt_id = p_attempt_id;
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+  RETURN v_until IS NOT NULL AND v_until > pg_catalog.clock_timestamp();
+END;
+$fn$;
+
 CREATE FUNCTION v15.v15_settle_tool(
   p_attempt_id uuid,
   p_fence bigint,
@@ -1646,6 +1670,7 @@ ALTER FUNCTION v15.v15_tool_fail_wrap(uuid, integer, integer, text, bigint) OWNE
 ALTER FUNCTION v15.v15_next_tool() OWNER TO v15_owner;
 ALTER FUNCTION v15.v15_begin_tool(uuid, text, interval) OWNER TO v15_owner;
 ALTER FUNCTION v15.v15_mark_tool_started(uuid, bigint, text) OWNER TO v15_owner;
+ALTER FUNCTION v15.v15_tool_lease_covers(uuid) OWNER TO v15_owner;
 ALTER FUNCTION v15.v15_settle_tool(uuid, bigint, text, jsonb) OWNER TO v15_owner;
 ALTER FUNCTION v15.v15_io_reclaim_invoke(uuid) OWNER TO v15_owner;
 ALTER FUNCTION v15.v15_reclaim_expired() OWNER TO v15_owner;
@@ -1655,6 +1680,7 @@ REVOKE ALL ON FUNCTION v15.v15_tool_fail_wrap(uuid, integer, integer, text, bigi
 REVOKE ALL ON FUNCTION v15.v15_next_tool() FROM PUBLIC;
 REVOKE ALL ON FUNCTION v15.v15_begin_tool(uuid, text, interval) FROM PUBLIC;
 REVOKE ALL ON FUNCTION v15.v15_mark_tool_started(uuid, bigint, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION v15.v15_tool_lease_covers(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION v15.v15_settle_tool(uuid, bigint, text, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION v15.v15_io_reclaim_invoke(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION v15.v15_reclaim_expired() FROM PUBLIC;
@@ -1663,6 +1689,7 @@ GRANT EXECUTE ON FUNCTION v15.v15_prepare_statement(uuid, bigint, text, integer)
 GRANT EXECUTE ON FUNCTION v15.v15_next_tool() TO v15_worker;
 GRANT EXECUTE ON FUNCTION v15.v15_begin_tool(uuid, text, interval) TO v15_worker;
 GRANT EXECUTE ON FUNCTION v15.v15_mark_tool_started(uuid, bigint, text) TO v15_worker;
+GRANT EXECUTE ON FUNCTION v15.v15_tool_lease_covers(uuid) TO v15_worker;
 GRANT EXECUTE ON FUNCTION v15.v15_settle_tool(uuid, bigint, text, jsonb) TO v15_worker;
 GRANT EXECUTE ON FUNCTION v15.v15_reclaim_expired() TO v15_worker;
 

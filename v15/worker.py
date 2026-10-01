@@ -361,7 +361,12 @@ class Worker:
                 )
             )
 
-        opened = self._run(begin)
+        try:
+            opened = self._run(begin)
+        except psycopg2.Error as exc:
+            if exc.pgcode == "P1523":
+                return
+            raise
         if opened.get("action") != "proceed":
             leftover = opened.get("attempt_id")
             if leftover:
@@ -387,6 +392,15 @@ class Worker:
             if retryable_sqlstate(exc.pgcode):
                 raise
             self._cleanup_tool_attempt(attempt_id, attempt_fence, marked=False)
+            return
+        still_leased = self._run(
+            lambda conn: self._fetch(
+                conn,
+                "SELECT v15.v15_tool_lease_covers(%s)",
+                (attempt_id,),
+            )
+        )
+        if still_leased is not True:
             return
         self._assert_idle()
         try:

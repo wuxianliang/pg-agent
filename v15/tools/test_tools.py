@@ -1583,6 +1583,82 @@ def open_invoke(conn, invoke_id: str, *, pool_id=None, user=None) -> None:
     conn.commit()
 
 
+def test_tool_lease_cover(server, admin, worker) -> None:
+    cur = admin.cursor()
+    iid, _ = seed_wait(admin, worker)
+    tool = FakeTool()
+    w = Worker(server.get_uri(DB), Script([]), OWNER, faketool=tool)
+    orig = w._run
+    seen = {"n": 0, "attempt_id": None}
+
+    def wrapped(fn):
+        result = orig(fn)
+        seen["n"] += 1
+        if seen["n"] == 1 and isinstance(result, dict) and result.get("attempt_id"):
+            seen["attempt_id"] = str(result["attempt_id"])
+        if seen["n"] == 2 and seen["attempt_id"]:
+            expire_tool_attempt(cur, seen["attempt_id"])
+            admin.commit()
+        return result
+
+    try:
+        w._run = wrapped
+        w._run_one_tool(iid, tool)
+    finally:
+        w.close()
+    check("expired lease skips FakeTool", tool.calls == [], tool.calls)
+    cur.execute(
+        """
+        SELECT status, call_started, result IS NULL
+        FROM v15.tool_attempts
+        WHERE attempt_id = %s
+        """,
+        (seen["attempt_id"],),
+    )
+    row = cur.fetchone()
+    check("expired lease leaves attempt unsettled", row == ("leased", True, True), row)
+
+
+def test_begin_tool_race_continues(server, admin, worker) -> None:
+    iid_a, _ = seed_wait(admin, worker)
+    iid_b, _ = seed_wait(admin, worker)
+    opened = begin_tool(worker, iid_a)
+    check("first begin proceeds", opened.get("action") == "proceed", opened)
+    tool = FakeTool()
+    later = Worker(server.get_uri(DB), Script([]), "tools-owner-2", faketool=tool)
+    try:
+        later._run_one_tool(iid_a, tool)
+        check("lost begin race skips FakeTool", tool.calls == [], tool.calls)
+        later._run_one_tool(iid_b, tool)
+    finally:
+        later.close()
+    check("lost begin race continues other invokes", len(tool.calls) == 1, tool.calls)
+    cur = admin.cursor()
+    cur.execute(
+        """
+        SELECT a.status
+        FROM v15.tool_attempts a
+        JOIN v15.tool_requests r ON r.request_id = a.request_id
+        WHERE r.invoke_id = %s
+        """,
+        (iid_b,),
+    )
+    check("other invoke attempt settled", cur.fetchone()[0] == "settled")
+    cur.execute(
+        """
+        SELECT a.status, a.call_started
+        FROM v15.tool_attempts a
+        JOIN v15.tool_requests r ON r.request_id = a.request_id
+        WHERE r.invoke_id = %s
+        """,
+        (iid_a,),
+    )
+    check(
+        "lost race leaves first attempt leased",
+        cur.fetchone() == ("leased", False),
+    )
+
+
 def test_worker_loop_and_replay(server) -> None:
     setup_db()
     admin = connect(server)
@@ -2493,6 +2569,8 @@ def main() -> int:
         test_settle_errors(admin, worker)
         test_reclaim_homomorphism(admin, worker)
         test_reclaim_child_delivery(admin, worker)
+        test_tool_lease_cover(server, admin, worker)
+        test_begin_tool_race_continues(server, admin, worker)
     finally:
         worker.close()
         admin.close()

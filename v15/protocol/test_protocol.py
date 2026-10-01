@@ -567,6 +567,39 @@ def test_classify() -> None:
         "bind arg INTO",
     )
     expect_class(
+        'SELECT jaz.bind_invoke(\'n\', (SELECT 1 "INTO" t))',
+        "bind_invoke",
+        "n",
+        ' (SELECT 1 "INTO" t)',
+        "V15_INVOKE_FORM",
+        "bind arg quoted INTO",
+    )
+    expect_class(
+        "SELECT jaz.bind_invoke('n', (Insert))",
+        "bind_invoke",
+        "n",
+        " (Insert)",
+        "V15_INVOKE_FORM",
+        "bind arg mixed-case Insert",
+    )
+    expect_class(
+        'SELECT jaz.bind_tool(\'out\',\'t\',(SELECT 1 "INTO" t))',
+        "bind_tool",
+        "out",
+        '(SELECT 1 "INTO" t)',
+        "V15_INVOKE_FORM",
+        "bind_tool arg quoted INTO",
+        "t",
+    )
+    expect_class(
+        'SELECT jaz.bind_invoke(\'n\', (SELECT "Nextval"(\'s\')))',
+        "bind_invoke",
+        "n",
+        " (SELECT \"Nextval\"('s'))",
+        "V15_INVOKE_FORM",
+        "bind arg quoted Nextval",
+    )
+    expect_class(
         "SELECT jaz.bind_invoke('n', (SELECT nextval('s')))",
         "bind_invoke",
         "n",

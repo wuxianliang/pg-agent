@@ -542,8 +542,7 @@ def _arg_has_write(arg_sql: str) -> bool:
         if tok.kind == "ident" and tok.text.casefold() in _WRITE_WORDS:
             return True
         if tok.kind == "qident" and (tok.content or "").casefold() in _WRITE_WORDS:
-            if tok.content in _WRITE_WORDS:
-                return True
+            return True
         if _seq_call(sig, i):
             return True
         i += 1
@@ -573,8 +572,10 @@ def _seq_call(sig: list[Tok], i: int) -> bool:
 def _func_name(tok: Tok) -> str | None:
     if tok.kind == "ident":
         return tok.text.casefold()
-    if tok.kind == "qident" and tok.content in _SEQ_FUNCS | {"pg_catalog"}:
-        return tok.content
+    if tok.kind == "qident":
+        name = (tok.content or "").casefold()
+        if name in _SEQ_FUNCS | {"pg_catalog"}:
+            return name
     return None
 
 
