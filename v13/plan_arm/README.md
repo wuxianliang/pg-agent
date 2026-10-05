@@ -26,6 +26,7 @@ Phase A 第三段。唯一一份 `CREATE OR REPLACE v13_advance`。它是 govern
 - root stopped 且存储 failed 为 false/0/空串/文本时，新早退块不补记；null/缺键可补记。这不是 direct advance 零调用的证明，也不改变旧非阻断臂。
 - receipt 提前提交后，下一轮 spawn/plan prefix 可因 session-local 配额临界而等待；测试用真实 receipt 与合法 human response 做 allowed=1/宽松配额对照，不改 should_run/quota 实现，不声称 PC-4。
 - `R0_DECL_BEGIN/END`、`R0_RECEIPT_BEGIN/END` 是唯一新增区。去掉两区后 SQL bytes 必须与 `fb295ac6c7459bb98dac57e37883af549d2d8a4c` 完全一致；测试还冻结原功能测试/模块设置。缺 git 基线对象时明确失败，不以 HEAD 干净替代。
+- 冻结中心放行的新跟踪文件只在 `v13/goal_supervisor/`、`v13/fair_claim/`、`v13/fair_driver/`。这些已知文件钉 `78e77c7` 的字节。`v13/load.py` 不钉整文件：只允许两表表尾的规范追加，`r1_load_append_ok` 用内存变异做正向失败证明。`v13/goal_supervisor/test_goal_supervisor.py` 与 `v13/fair_claim/test_fair_claim.py` 只放开 `test_stage_bytes`；fair 这份测试不得另增顶层函数。
 - stage 32 测试不依赖 Phase C SQL。stage 38 另测 wrapper、workspace、统计调用数及并发锁交错。运行结果统一记在 Phase C 覆盖矩阵的 R0 新行；不覆盖历史 M1/M2。
 
 R0 只证明 material 记账，不证明 blocker 已解除、finish 已 closeout 或 M3 续行已通。R1 点名入口是 `LoopDriver.settle_once`；本目录 SQL 仍不改。

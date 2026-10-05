@@ -62,6 +62,16 @@
 - `goal_supervisor` 的 `test_stage_bytes` 中 `git diff R1 -- v13/load.py` 为空一条，改为调用 `r1_load_append_ok`（load 基线 `R1`，追加项须对应受跟踪 `v13/fair_claim/` 目录）。冻结目录相对 `R1` 的空 diff **保留**；开工时若该空 diff 已非空：停。
 - R0 哨兵还原、`CREATE OR REPLACE` 次数、`r1_driver_restore`、`r1_freeze_positive_proof`、返回基线串——全部不动。
 
+### 2.4 基线补记（2026-10-06，父同意）
+
+13 条实跑于 `b1faa27`（`v13/` 与 `78e77c7` 相同，stannum 0.5.1）。`extra` 恰 12 个文件，全部落在三前缀内。
+
+`r0_source_scope` 前缀断言红的调用方是 `plan_arm`、`loop_driver`、`frontier_gap`、`goal_supervise`、`goal_supervisor`。`loop_driver` 是第五个调用方，失败句与 §2.2 相同；修共享函数，不改 `v13/loop_driver/**`。
+
+`fair_claim` 的 `stage_bytes` 另红：干净树上 `git diff HEAD -- v13/load.py` 为空，谓词仍要求 diff 含 `fair_claim`，`tail_ok` 已真。父同意按 `frontier_gap` / `goal_supervise` 的干净树分支补进 `v13/fair_claim/test_fair_claim.py` 的 `test_stage_bytes`。known 字节钉因此增加第三例外：该文件只许 `test_stage_bytes` 不同于 `78e77c7`，不得新增或删除顶层函数，模块级非函数节点保持相等。其余 fair 文件仍逐字节钉死。
+
+提交②允许路径增加该测试文件与本补记。
+
 ## 3. 设计裁决
 
 | ID | 裁决 | 不是 | 依据 |
@@ -214,13 +224,14 @@ scenarios <每场景 stop_reason / rounds_used / settle_once / advance / receipt
 | `docs/plans/v13-unattended-continuation-authorization-plan-2026-10-01.md` | 本文件 | 父决定载体 | 无 |
 | `v13/plan_arm/test_plan_arm.py` | 改 | §2.3：`r0_source_scope` 前缀闭集 + load 追加式 + 新函数 `r1_phase_d_prefix_allowance`（从 `r0_source_scope` 体内调用） | 提交②；四 gate 依赖 |
 | `v13/plan_arm/README.md` | 改 | 冻结中心描述更新（三前缀 + 对应性追加式 + 正向失败证明） | 提交② |
+| `v13/fair_claim/test_fair_claim.py` | 改 | §2.4：`test_stage_bytes` 干净树分支；只放开该函数 | 提交② |
 | `v13/goal_supervisor/test_goal_supervisor.py` | 改 | §4.4 十一条 gate 侧断言 + `run()` 追加调用 + 新顶层扫描函数 `unattended_accept_script_scan`（`test_static` 不动，保持 §2.3 字节钉）；提交②只改 `test_stage_bytes` 的 R1-load 谓词为调用 `r1_load_append_ok`，提交③再加断言 | 提交②先落冻结修复 |
 | `v13/goal_supervisor/accept_unattended.py` | 新增 | §4.1–§4.3 | 依赖前缀放行（M3 已放行 `v13/goal_supervisor/`） |
 | `v13/goal_supervisor/README.md` | 改 | §4.6 | 断言名钉死后 |
 | `docs/reviews/v13-long-loop-phase-c-conformance-matrix-2026-09-29.md` | 改 | §6.4 新小节；历史行逐字保留 | 提交③实跑后 |
 | `docs/reviews/v13-long-loop-phase-c-deviation-ledger-2026-09-29.md` | 改 | §6.5 新段 + 预存红线归因（提交②记） | 同上 |
 
-明确不改：`v13/goal_supervisor/driver.py`、`v13/goal_supervisor/setup_db.py`、`v13/loop_driver/**`、`v13/plan_arm/v13_plan_arm.sql`、`v13/goal_supervise/**`、`v13/frontier_gap/**`、`v13/load.py`（零字节变化）、`v13/real_chain/**`、`v13/fair_claim/**`、`v13/fair_driver/**`、`v13/spawn/v13_spawn.sql`、stage 1–39 既有 SQL、历史计划、`uv.lock`、`AGENTS.md`（其中 `extra` 内文件已由 §2.3 字节钉到 `78e77c7` 机械保护）。
+明确不改：`v13/goal_supervisor/driver.py`、`v13/goal_supervisor/setup_db.py`、`v13/loop_driver/**`、`v13/plan_arm/v13_plan_arm.sql`、`v13/goal_supervise/**`、`v13/frontier_gap/**`、`v13/load.py`（零字节变化）、`v13/real_chain/**`、`v13/fair_claim/**`（§2.4 只放开 `test_fair_claim.py` 的 `test_stage_bytes`）、`v13/fair_driver/**`、`v13/spawn/v13_spawn.sql`、stage 1–39 既有 SQL、历史计划、`uv.lock`、`AGENTS.md`（其中 `extra` 内文件已由 §2.3 字节钉到 `78e77c7` 机械保护）。
 
 ## 6. 验收与命令
 
@@ -270,7 +281,7 @@ env -u V13_UNATTENDED_DB V13_UNATTENDED_AUTHORIZATION=1 UV_FROZEN=1 \
 ## 7. 提交边界与顺序（严格按 AGENTS.md：测试全绿 → 收尾工件 → 按路径 add → commit → push）
 
 1. **提交① 计划文档**：只 add 本文件。不冒充运行时 gate。
-2. **提交② 预存红线修复**（仅当 §6.1 确认红；若四 gate 实跑全绿则跳过并在台账点名「推断被推翻」）：`v13/plan_arm/test_plan_arm.py`、`v13/goal_supervisor/test_goal_supervisor.py`（仅 `test_stage_bytes` 的 load 谓词）、`v13/plan_arm/README.md`（冻结中心描述）、`docs/reviews/v13-long-loop-phase-c-deviation-ledger-2026-09-29.md`（红线归因段）。要求：四 gate 冻结断言转绿 + 十条回归 + fair 两 gate 全 exit 0 + `goal_supervisor` 仍 ASK_USER 形态。若 `frontier_gap`/`goal_supervise` 有自身 `stage_bytes` 变红且失败行不是 `r0_source_scope`：停，不顺手改。
+2. **提交② 预存红线修复**（仅当 §6.1 确认红；若四 gate 实跑全绿则跳过并在台账点名「推断被推翻」）：`v13/plan_arm/test_plan_arm.py`、`v13/goal_supervisor/test_goal_supervisor.py`（仅 `test_stage_bytes` 的 load 谓词）、`v13/fair_claim/test_fair_claim.py`（仅 `test_stage_bytes` 的干净树分支，§2.4）、`v13/plan_arm/README.md`（冻结中心描述）、本计划 §2.4、`docs/reviews/v13-long-loop-phase-c-deviation-ledger-2026-09-29.md`（红线归因段）。要求：五处前缀红转绿 + 十条回归 + fair 两 gate 全 exit 0 + `goal_supervisor` 仍 ASK_USER 形态。若 `frontier_gap`/`goal_supervise` 有自身 `stage_bytes` 变红且失败行不是 `r0_source_scope`：停，不顺手改。
 3. **提交③ 授权机器 + 收尾**：`v13/goal_supervisor/accept_unattended.py`、`v13/goal_supervisor/test_goal_supervisor.py`、`v13/goal_supervisor/README.md`、两个 review 文件。顺序：新增脚本 → gate 断言 → 未授权三态实跑 → 授权实跑 → **矩阵/台账/README 更新（含 `[dropped]` 具体标记证据）→ 原 gate 复跑**（ASK_USER 形态，N 增加；`unattended_matrix_row_requires_dropped` 此时后验绿——矩阵文本已先于 gate 复跑就位）→ 十条回归 → 按路径 add → staged 复查 → commit → push。提交③不得在提交②推送前开始（否则授权脚本失败与预存红混淆）。
 
 每笔 `git diff --cached --name-only` 必须恰等于该笔允许路径。禁止 `git add -A`/`git add .`、`--no-verify`、force-push、`reset --hard`；暂存区不得出现未跟踪调查、`prompt-exports/`、停放草稿（`prompt-exports/phase-c-m3-parked-2026-10-01/`）、`uv.lock`、凭据。提交信息沿 `<版本>: <祈使句>`：`v13: record unattended continuation authorization plan` / `v13: allow phase-d paths in the v13 source freeze` / `v13: add authorized fake unattended acceptance`。
@@ -291,9 +302,9 @@ env -u V13_UNATTENDED_DB V13_UNATTENDED_AUTHORIZATION=1 UV_FROZEN=1 \
 
 ## 10. 实施顺序
 
-1. **基线取证（零改动）**：§6.1 十三条 + 基线对象核对 + 文件哈希记录。红集合不是冻结红即停。
+1. **基线取证（零改动）**：§6.1 十三条 + 基线对象核对 + 文件哈希记录。红集合不是冻结红即停。2026-10-06 实跑见 §2.4：第五调用方与 `fair_claim` 干净树红已由父同意纳入提交②。
 2. **提交①**：本计划文件入库。
-3. **提交②代码**：`r0_source_scope` 定点扩展 + `goal_supervisor` load 谓词 + 正向失败证明。结束时四 gate 冻结断言绿。
+3. **提交②代码**：`r0_source_scope` 定点扩展 + `goal_supervisor` load 谓词 + `fair_claim` 干净树分支 + 正向失败证明。结束时五处前缀红转绿。
 4. **提交②验证**：十条 + fair 两 gate exit 0；`goal_supervisor` ASK_USER 形态；确认 frontier_gap/goal_supervise 无需改自身 `stage_bytes`。写台账红线归因，按路径提交推送。
 5. **提交③脚本与负例**：`accept_unattended.py` + gate 断言。先未授权三态（退出 2），再授权实跑；finish 第 2 轮非 `completed` 即停在本步。
 6. **提交③收尾**：授权命令 exit 0 的库名/计数/`[dropped]` 具体标记写入矩阵新行 `exit_0`；台账写边界；README 含声称句与硬子串；**然后**原 gate 复跑 ASK_USER 且 N 高于提交②（历史矩阵 62 不改；矩阵/README 已先更新，`unattended_matrix_row_requires_dropped` 后验绿）；十条再绿；按五路径提交推送。

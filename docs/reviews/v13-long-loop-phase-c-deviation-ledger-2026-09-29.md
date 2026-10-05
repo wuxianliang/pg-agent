@@ -36,3 +36,9 @@ M3 监督进程已按 §7.2 接受：其它断言通过后发出 `v13: superviso
 M3 按同一计划实现 `v13/goal_supervisor`。仅声称：单 goal、DB owner/superuser 确定性 Fake 夹具下，监督 tick 可以在人不回答时保持 `waiting` 且不为解卡而 skip；结算走 `settle_once`；unknown/cancel/stale 未付则失败 `v13: supervisor: unpaid_remaining`；`skipped_failed` 安全早退。`unattended_continuation` 仍是 ASK_USER，矩阵 `goal_supervisor` 行是 `expected_nonzero` 不是 `exit_0`。
 
 无 SQL、无 `load.py` 键、不调用 `v13_harness_settle`、不 import `run_turn`、不调用真实 provider。`r0_source_scope` 放行的新跟踪文件仅 `v13/goal_supervisor/` 前缀。不得声称人可以离开生产终端、PC-4、V11 auto-wake、unknown/cancel/stale 墙已被 advance 消化。
+
+## UA 预存红线归因（2026-10-06）
+
+基线在 `b1faa27` 实跑（`v13/` 与 `78e77c7` 相同，stannum 0.5.1）。`r0_source_scope` 的前缀断言红：`plan_arm`、`loop_driver`、`frontier_gap`、`goal_supervise`、`goal_supervisor`。`extra` 恰 12 个文件，全在 `v13/goal_supervisor/`、`v13/fair_claim/`、`v13/fair_driver/`。`loop_driver` 是同一断言的第五个调用方。`fair_driver` 当时 38 checks，退出 0。`fair_claim` 的 `stage_bytes` 另红：干净树上 `git diff HEAD -- v13/load.py` 为空，谓词仍要求 diff 含 `fair_claim`，`tail_ok` 为真。父同意按 `frontier_gap` 的干净树分支补上，并只放开该函数相对 `78e77c7` 的差异。
+
+提交②把冻结中心改成三前缀路径闭集、已知文件钉 `78e77c7`、`load.py` 只许表尾规范追加。不改 `load.py` 字节，不改 driver、setup_db、fair SQL。修复后、提交前：`plan_contract` 93、`plan_read` 11、`plan_arm` 104、`loop_driver` 91、`workflow_bind` 8、`real_chain` 24、`workspace_admit` 65、`workspace_exec` 54、`frontier_gap` 59、`goal_supervise` 172，均退出 0。`goal_supervisor` 62 checks 后发出 `v13: supervisor: ask_user`，退出 1。`frontier_gap` 与 `goal_supervise` 自身的 `stage_bytes` 未再变红。`fair_claim` / `fair_driver` 的 `stage_bytes` 比较 `git diff HEAD`，范围含本提交正在修改的 `v13/plan_arm`、`v13/goal_supervisor`、`v13/fair_claim`；`load.py` 的 diff 长度为 0。这两条在本提交成为 HEAD 之后复跑，退出 0 才推送。不得把 `goal_supervisor` 写成 `exit_0`，不得声称无人值守完成。

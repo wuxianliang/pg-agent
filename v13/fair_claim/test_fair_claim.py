@@ -374,7 +374,10 @@ def test_stage_bytes():
         and len(SQL_LOAD_ORDER) == 39
         and STAGE_THROUGH["fair_claim"] == 39
     )
-    load_ok = "fair_claim" in load and removed == [] and tail_ok
+    if load.strip():
+        load_ok = "fair_claim" in load and removed == [] and tail_ok
+    else:
+        load_ok = tail_ok and "fair_claim" in text
     check("stage_bytes", diff == b"" and load_ok, (removed, tail_ok, bool(load.strip())))
 
 

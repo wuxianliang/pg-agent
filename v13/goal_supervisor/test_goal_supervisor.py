@@ -227,11 +227,21 @@ def stripped_source(text):
 
 
 def test_stage_bytes():
-    from v13.plan_arm.test_plan_arm import r0_source_scope
+    from v13.plan_arm.test_plan_arm import r0_source_scope, r1_load_append_ok
     check("r0_source_scope",
           r0_source_scope() == "fb295ac6c7459bb98dac57e37883af549d2d8a4c")
-    load = subprocess.check_output(
-        ["git", "diff", R1, "--", "v13/load.py"], cwd=AGENT_ROOT)
+    base_load = subprocess.check_output(
+        ["git", "show", R1 + ":v13/load.py"], cwd=AGENT_ROOT).decode()
+    current_load = (AGENT_ROOT / "v13/load.py").read_text()
+    tracked = set(subprocess.check_output(
+        ["git", "ls-files", "--", "v13"], cwd=AGENT_ROOT).decode().splitlines())
+    load_detail = ""
+    try:
+        r1_load_append_ok(base_load, current_load, tracked)
+        load_ok = True
+    except AssertionError as exc:
+        load_ok = False
+        load_detail = str(exc)
     frozen = [
         "v13/schema", "v13/resolve", "v13/loop", "v13/twophase", "v13/envelope",
         "v13/manifest", "v13/chunks", "v13/recall", "v13/characterize", "v13/filter",
@@ -246,7 +256,7 @@ def test_stage_bytes():
         "v13/frontier_gap/v13_frontier_gap.sql",
     ]
     diff = subprocess.check_output(["git", "diff", R1, "--", *frozen], cwd=AGENT_ROOT)
-    check("stage_bytes", load == b"" and diff == b"", (load, diff[:200]))
+    check("stage_bytes", load_ok and diff == b"", (load_detail, diff[:200]))
 
 
 def test_static():

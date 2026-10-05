@@ -324,8 +324,316 @@ def r1_freeze_positive_proof():
     assert leak_failed, "v13_advance outside sentinel must fail"
 
 
+def r1_load_append_ok(base_text, current_text, tracked):
+    """Accept only a canonical tail append of v13/load.py. Inputs stay in memory."""
+    import difflib
+    import re
+
+    sql_line = re.compile(
+        r'^V13_ROOT / "([A-Za-z_][A-Za-z0-9_]*)" / "([A-Za-z_][A-Za-z0-9_]*\.sql)",$')
+    stage_line = re.compile(r'^"([A-Za-z_][A-Za-z0-9_]*)": ([0-9]+),$')
+    order_names = ("workspace_admit", "frontier_gap", "goal_supervise", "fair_claim")
+
+    def block(text, opener, closer):
+        start = text.find(opener)
+        assert start >= 0, "missing " + opener
+        start += len(opener)
+        end = text.find(closer, start)
+        assert end >= 0, "missing closer after " + opener
+        return text[start:end]
+
+    def items(text, opener, closer, pattern, label):
+        found = []
+        for raw in block(text, opener, closer).splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            match = pattern.match(line)
+            assert match, "noncanonical " + label + " line: " + line
+            found.append(match.groups())
+        return found
+
+    def parse(text):
+        sql = items(
+            text, "SQL_LOAD_ORDER: list[Path] = [", "\n]", sql_line, "SQL_LOAD_ORDER")
+        stage = [
+            (key, int(number)) for key, number in items(
+                text, "STAGE_THROUGH = {", "\n}", stage_line, "STAGE_THROUGH")]
+        return sql, stage
+
+    diff = difflib.unified_diff(
+        base_text.splitlines(), current_text.splitlines(),
+        fromfile="v13/load.py", tofile="v13/load.py", lineterm="")
+    plus = []
+    for line in diff:
+        if line.startswith("--- ") or line.startswith("+++ ") or line.startswith("@@"):
+            continue
+        assert not line.startswith("-"), "load diff deletes a line"
+        if line.startswith("+"):
+            body = line[1:].strip()
+            assert sql_line.match(body) or stage_line.match(body), (
+                "load diff plus line is not a canonical append: " + body)
+            plus.append(body)
+    base_sql, base_stage = parse(base_text)
+    cur_sql, cur_stage = parse(current_text)
+    assert cur_sql[:len(base_sql)] == base_sql, "SQL_LOAD_ORDER is not a pure tail append"
+    assert cur_stage[:len(base_stage)] == base_stage, "STAGE_THROUGH is not a pure tail append"
+    appended_sql = cur_sql[len(base_sql):]
+    appended_stage = cur_stage[len(base_stage):]
+    paths = [stage + "/" + filename for stage, filename in cur_sql]
+    assert len(paths) == len(set(paths)), "duplicate SQL path"
+    keys = [key for key, _number in cur_stage]
+    assert len(keys) == len(set(keys)), "duplicate stage key"
+    numbers = [number for _key, number in cur_stage]
+    assert len(numbers) == len(set(numbers)), "duplicate stage number"
+    expect = base_stage[-1][1] if base_stage else 0
+    for _key, number in appended_stage:
+        expect += 1
+        assert number == expect, "stage number is not the next contiguous value"
+    assert [stage for stage, _filename in appended_sql] == [key for key, _number in appended_stage], (
+        "STAGE_THROUGH keys do not match SQL append items")
+    for stage, _filename in appended_sql:
+        prefix = "v13/" + stage + "/"
+        assert any(path.startswith(prefix) for path in tracked), "append stage is not tracked: " + stage
+    positions = []
+    stages = [stage for stage, _filename in cur_sql]
+    for name in order_names:
+        assert name in stages, "missing ordered stage: " + name
+        positions.append(stages.index(name))
+    assert positions == sorted(positions) and len(set(positions)) == len(positions), "stage order"
+    expected = ['V13_ROOT / "%s" / "%s",' % item for item in appended_sql]
+    expected += ['"%s": %d,' % item for item in appended_stage]
+    assert plus == expected, "plus lines do not match append items"
+
+
+def r1_phase_d_prefix_allowance():
+    """Path closure, known-byte pins, and the in-memory failure proofs."""
+    import ast
+    import re
+
+    phase_d = "78e77c710bf06a0a1c771b822a3837c5db4c66d0"
+    base = "fb295ac6c7459bb98dac57e37883af549d2d8a4c"
+    prefixes = ("v13/goal_supervisor/", "v13/fair_claim/", "v13/fair_driver/")
+    fresh_ok = {"v13/goal_supervisor/accept_unattended.py"}
+    subprocess.check_call(["git", "cat-file", "-e", phase_d + "^{commit}"], cwd=AGENT_ROOT)
+    subprocess.check_call(["git", "cat-file", "-e", base + "^{commit}"], cwd=AGENT_ROOT)
+
+    def git_text(rev, path):
+        return subprocess.check_output(["git", "show", rev + ":" + path], cwd=AGENT_ROOT).decode()
+
+    def tree(rev):
+        return set(subprocess.check_output(
+            ["git", "ls-tree", "-r", "--name-only", rev, "--", "v13"],
+            cwd=AGENT_ROOT).decode().splitlines())
+
+    def goal_test_ok(before, after):
+        old_tree, new_tree = ast.parse(before), ast.parse(after)
+        old_functions = {n.name: n for n in old_tree.body if isinstance(n, ast.FunctionDef)}
+        new_functions = {n.name: n for n in new_tree.body if isinstance(n, ast.FunctionDef)}
+        for func, old_node in old_functions.items():
+            assert func in new_functions, func
+            if func == "test_stage_bytes":
+                continue
+            old_text = "\n".join(before.splitlines()[old_node.lineno - 1:old_node.end_lineno])
+            new_node = new_functions[func]
+            new_text = "\n".join(after.splitlines()[new_node.lineno - 1:new_node.end_lineno])
+            if func == "run":
+                new_text = "\n".join(
+                    line for line in new_text.splitlines()
+                    if not re.match(r"\s+unattended_[A-Za-z0-9_]+\(.*\)$", line))
+            assert old_text == new_text, "changed goal_supervisor test: " + func
+        normalize = lambda tree: [
+            ast.dump(n, include_attributes=False) for n in tree.body
+            if not isinstance(n, ast.FunctionDef)]
+        assert normalize(old_tree) == normalize(new_tree), "changed goal_supervisor module setup"
+
+    def fair_test_ok(before, after):
+        old_tree, new_tree = ast.parse(before), ast.parse(after)
+        old_functions = {n.name: n for n in old_tree.body if isinstance(n, ast.FunctionDef)}
+        new_functions = {n.name: n for n in new_tree.body if isinstance(n, ast.FunctionDef)}
+        assert set(new_functions) == set(old_functions), "fair_claim test added or dropped a function"
+        for func, old_node in old_functions.items():
+            if func == "test_stage_bytes":
+                continue
+            new_node = new_functions[func]
+            old_text = "\n".join(before.splitlines()[old_node.lineno - 1:old_node.end_lineno])
+            new_text = "\n".join(after.splitlines()[new_node.lineno - 1:new_node.end_lineno])
+            assert old_text == new_text, "changed fair_claim test: " + func
+        normalize = lambda tree: [
+            ast.dump(n, include_attributes=False) for n in tree.body
+            if not isinstance(n, ast.FunctionDef)]
+        assert normalize(old_tree) == normalize(new_tree), "changed fair_claim module setup"
+
+    def readme_ok(before, after):
+        assert after.startswith(before), "README is not a pure append"
+        suffix = after[len(before):].lstrip("\n")
+        assert suffix == "" or suffix.startswith("## 授权验收"), (
+            "README append is not the authorization section")
+
+    def allow(extra, known_names, blobs, current, load_base, load_current, tracked):
+        for name in extra:
+            assert name.startswith(prefixes), "outside the three prefixes: " + name
+        assert extra - known_names <= fresh_ok, "fresh file outside accept_unattended.py"
+        for name in known_names & extra:
+            blob, now = blobs[name], current[name]
+            if name == "v13/goal_supervisor/README.md":
+                readme_ok(blob.decode(), now.decode())
+            elif name == "v13/goal_supervisor/test_goal_supervisor.py":
+                goal_test_ok(blob.decode(), now.decode())
+            elif name == "v13/fair_claim/test_fair_claim.py":
+                fair_test_ok(blob.decode(), now.decode())
+            else:
+                assert now == blob, "known bytes changed: " + name
+        r1_load_append_ok(load_base, load_current, tracked)
+
+    def must_reject(call):
+        failed = False
+        try:
+            call()
+        except AssertionError:
+            failed = True
+        assert failed, "synthetic case must reject"
+
+    protected = tree(base)
+    phase_files = tree(phase_d)
+    tracked = set(subprocess.check_output(
+        ["git", "ls-files", "--", "v13"], cwd=AGENT_ROOT).decode().splitlines())
+    extra = tracked - protected
+    known_names = extra & phase_files
+    blobs = {
+        name: subprocess.check_output(["git", "show", phase_d + ":" + name], cwd=AGENT_ROOT)
+        for name in known_names}
+    current = {name: (AGENT_ROOT / name).read_bytes() for name in known_names}
+    load_base = git_text(base, "v13/load.py")
+    load_current = (AGENT_ROOT / "v13/load.py").read_text()
+    allow(extra, known_names, blobs, current, load_base, load_current, tracked)
+
+    goal_name = "v13/goal_supervisor/test_goal_supervisor.py"
+    fair_name = "v13/fair_claim/test_fair_claim.py"
+    readme_name = "v13/goal_supervisor/README.md"
+    driver_name = "v13/goal_supervisor/driver.py"
+    setup_name = "v13/goal_supervisor/setup_db.py"
+    fair_sql = "v13/fair_claim/v13_fair_claim.sql"
+    goal_before = blobs[goal_name].decode()
+    fair_before = blobs[fair_name].decode()
+
+    def reject_bytes(name):
+        mutated = dict(current)
+        mutated[name] = blobs[name] + b"\n"
+        must_reject(lambda: allow(
+            extra, known_names, blobs, mutated, load_base, load_current, tracked))
+
+    reject_bytes(driver_name)
+    reject_bytes(setup_name)
+    reject_bytes(fair_sql)
+    reject_bytes("v13/fair_driver/driver.py")
+    must_reject(lambda: allow(
+        extra | {"v13/not_allowed/x.py"}, known_names, blobs, current,
+        load_base, load_current, tracked))
+    accept_name = "v13/goal_supervisor/accept_unattended.py"
+    allow(extra | {accept_name}, known_names, blobs, current, load_base, load_current, tracked)
+    must_reject(lambda: allow(
+        extra | {accept_name, "v13/goal_supervisor/second_new.py"}, known_names, blobs, current,
+        load_base, load_current, tracked))
+    goal_mut = dict(current)
+    goal_mut[goal_name] = goal_before.replace("def test_static(", "def test_staticX(", 1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, goal_mut, load_base, load_current, tracked))
+    goal_run = dict(current)
+    goal_run[goal_name] = goal_before.replace("    test_static()\n", "", 1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, goal_run, load_base, load_current, tracked))
+    readme_mut = dict(current)
+    readme_mut[readme_name] = blobs[readme_name].replace(b"Gate", b"Gatf", 1)
+    must_reject(lambda: allow(
+        extra, known_names, blobs, readme_mut, load_base, load_current, tracked))
+    readme_ok_map = dict(current)
+    readme_ok_map[readme_name] = blobs[readme_name] + "\n## 授权验收\n".encode()
+    allow(extra, known_names, blobs, readme_ok_map, load_base, load_current, tracked)
+    fair_mut = dict(current)
+    fair_mut[fair_name] = fair_before.replace(
+        "def test_static_source(", "def test_static_sourceX(", 1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, fair_mut, load_base, load_current, tracked))
+
+    live = load_current
+    must_reject(lambda: r1_load_append_ok(
+        load_base, live.replace('"""Cumulative SQL load order', '"""Cumulative SQL', 1), tracked))
+    inserted = live.replace(
+        "def load_stage(server, database: str, stage: str) -> None:\n",
+        "def load_stage(server, database: str, stage: str) -> None:\n"
+        "    note = 'inserted'\n",
+        1)
+    must_reject(lambda: r1_load_append_ok(load_base, inserted, tracked))
+    canonical = live.replace(
+        "def load_stage(server, database: str, stage: str) -> None:\n",
+        "def load_stage(server, database: str, stage: str) -> None:\n"
+        '    V13_ROOT / "fair_claim" / "v13_fair_claim.sql",\n',
+        1)
+    must_reject(lambda: r1_load_append_ok(load_base, canonical, tracked))
+    must_reject(lambda: r1_load_append_ok(load_base, live + "\ndef r1_extra():\n    return 1\n", tracked))
+    inverted = load_base.replace(
+        '    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",\n',
+        '    V13_ROOT / "fair_claim" / "v13_fair_claim.sql",\n'
+        '    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",\n',
+        1).replace(
+        '    "goal_supervise": 38,\n',
+        '    "goal_supervise": 38,\n    "fair_claim": 39,\n',
+        1)
+    must_reject(lambda: r1_load_append_ok(load_base, inverted, tracked))
+    must_reject(lambda: r1_load_append_ok(load_base, live, tracked - {p for p in tracked if p.startswith("v13/fair_claim/")}))
+    key_only = live.replace(
+        '    "fair_claim": 39,\n',
+        '    "fair_claim": 39,\n    "ghost": 40,\n',
+        1)
+    must_reject(lambda: r1_load_append_ok(load_base, key_only, tracked | {"v13/ghost/v13_ghost.sql"}))
+    sql_only = live.replace(
+        '    V13_ROOT / "fair_claim" / "v13_fair_claim.sql",\n',
+        '    V13_ROOT / "fair_claim" / "v13_fair_claim.sql",\n'
+        '    V13_ROOT / "fair_driver" / "v13_fair_driver.sql",\n',
+        1)
+    must_reject(lambda: r1_load_append_ok(load_base, sql_only, tracked))
+    must_reject(lambda: r1_load_append_ok(
+        load_base, live.replace('    "fair_claim": 39,\n', '    "fair_claim": 39,\n    "fair_claim": 40,\n', 1),
+        tracked))
+    skipped = load_base.replace(
+        '    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",\n',
+        '    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",\n'
+        '    V13_ROOT / "fair_claim" / "v13_fair_claim.sql",\n',
+        1).replace('    "goal_supervise": 38,\n', '    "goal_supervise": 38,\n    "fair_claim": 41,\n', 1)
+    must_reject(lambda: r1_load_append_ok(load_base, skipped, tracked))
+    regressed = skipped.replace('"fair_claim": 41,', '"fair_claim": 10,', 1)
+    must_reject(lambda: r1_load_append_ok(load_base, regressed, tracked))
+    same_number = load_base.replace(
+        '    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",\n',
+        '    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",\n'
+        '    V13_ROOT / "fair_claim" / "v13_fair_claim.sql",\n'
+        '    V13_ROOT / "fair_driver" / "v13_fair_driver.sql",\n',
+        1).replace(
+        '    "goal_supervise": 38,\n',
+        '    "goal_supervise": 38,\n    "fair_claim": 39,\n    "fair_driver": 39,\n',
+        1)
+    must_reject(lambda: r1_load_append_ok(load_base, same_number, tracked))
+    twice = load_base.replace(
+        '    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",\n',
+        '    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",\n'
+        '    V13_ROOT / "fair_claim" / "v13_fair_claim.sql",\n'
+        '    V13_ROOT / "fair_claim" / "v13_fair_claim.sql",\n',
+        1).replace('    "goal_supervise": 38,\n', '    "goal_supervise": 38,\n    "fair_claim": 39,\n', 1)
+    must_reject(lambda: r1_load_append_ok(load_base, twice, tracked))
+    missing = load_base.replace(
+        '    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",\n',
+        '    V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",\n'
+        '    V13_ROOT / "missing_stage" / "v13_missing_stage.sql",\n',
+        1).replace(
+        '    "goal_supervise": 38,\n',
+        '    "goal_supervise": 38,\n    "missing_stage": 39,\n',
+        1)
+    must_reject(lambda: r1_load_append_ok(load_base, missing, tracked))
+
+
 def r0_source_scope():
-    """Fixed-base positive proof, shared by the three affected stage gates."""
+    """Fixed-base positive proof, shared by the affected stage gates."""
     import ast
     import re
 
@@ -374,16 +682,10 @@ def r0_source_scope():
         "docs/plans/v13-long-loop-phase-a-plan-2026-09-29.md",
         "docs/plans/v13-long-loop-phase-b-plan-2026-09-29.md",
         "docs/plans/v13-long-loop-phase-c-plan-2026-09-29.md"], cwd=AGENT_ROOT).decode().splitlines()
-    tracked = set(subprocess.check_output(["git", "ls-files", "--", "v13"], cwd=AGENT_ROOT).decode().splitlines())
-    extra = tracked - set(protected)
-    assert extra <= {n for n in extra if n.startswith("v13/goal_supervisor/")}, (
-        "new tracked v13 file outside R0 scope or v13/goal_supervisor/")
-    for name in extra:
-        assert name.startswith("v13/goal_supervisor/"), name
-        assert (AGENT_ROOT / name).is_file()
     for name in protected:
-        if name not in tests | readmes | {path, driver_path}:
+        if name not in tests | readmes | {path, driver_path, "v13/load.py"}:
             assert (AGENT_ROOT / name).read_bytes() == original(name), "protected bytes: " + name
+    r1_phase_d_prefix_allowance()
     r1_driver_restore((AGENT_ROOT / driver_path).read_bytes(), original(driver_path))
     r1_freeze_positive_proof()
     # Keep existing functions byte-for-byte; only stage guards and added r0_/r1_ calls are exceptions.
