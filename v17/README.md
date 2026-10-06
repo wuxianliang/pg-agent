@@ -17,7 +17,9 @@ v17/
   queue/             G3: SBCL worker vs v12 G6 seven scenarios — GREEN
   lisptools/         G4: world daemon (lisp_eval / lisp_develop / `lisp:`
                      tools), scan-driven, crash-safe — GREEN
-  develop/           G5: agent-grown tools full chain (placeholder)
+  develop/           G5: agent-grown tools full chain (turn -> llm ->
+                     develop job -> later turn's tool job to the new Lisp
+                     function) — GREEN
   repair/            G6: condition/restart repair over the journal (placeholder)
   lisp/
     v17.asd          systems v17/kernel, v17/pgstore, v17/worker, v17/tests,
@@ -27,6 +29,8 @@ v17/
                      V17_PUMP_MODE once/daemon, V17_WORKER_ID, fake/real
                      Jev+LLM backends)
     run-worldd.lisp  sbcl --script entry for the world daemon
+    develop/lisp/lisp-sql.lisp  G5: drives a rollback through the session
+                     API (the kernel's rollback is worker-only)
                      (V17_WORLDD_ID / IDLE_EXIT_MS / POLL_MS / LIMIT /
                      LEASE_SECONDS / DEBUG / ALLOW_SUICIDE)
     src/             kernel.lisp (world/session/attempt/condition-loop/
@@ -53,5 +57,6 @@ state.
 |---|---|
 | G1 store | **green** — `v17/store/test_store.py` (DDL / fiveam store suite over forked SBCL / ancestry corruption / concurrent publish / crash-no-half-revision) |
 | G2 world | **green** — `v17/world/test_world.py` (twice example / preview restore / error→checkpoint / unrecorded-change refusal / cross-process byte-identical capture / catalogue export→import identity / fiveam world suite) |
+| G5 develop | **green** — `v17/develop/test_develop.py` (grow-a-tool full chain / invariant-rejected develop / explicit rollback / restart) |
 | G4 lisptools | **green** — `v17/lisptools/test_lisptools.py` (eval / develop durability across a fresh process / preview / unmet goal / invariant violation / crash-mid-claim reclaim exactly-once / unknown wall / `lisp:` tool with unicode params) |
 | G3 queue | **green** — `v17/queue/test_queue.py` (v12 G6 seven scenarios rerun against the Lisp worker + jsonb canary + python/lisp cross-language race) |

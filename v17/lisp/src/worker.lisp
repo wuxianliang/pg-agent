@@ -58,6 +58,12 @@
 (defun %env (name &optional default)
   (or (uiop:getenv name) default))
 
+(defun %present-p (value)
+  "True when a single-column SELECT found a row with a non-NULL value
+  (postmodern returns Lisp NIL for a zero-row result, the keyword :null for
+  an SQL NULL column)."
+  (and value (not (eq value :null))))
+
 (defun %truncate (text limit)
   (if (> (length text) limit) (subseq text 0 limit) text))
 
@@ -170,12 +176,26 @@ non-DB error is caught at this boundary and becomes outcome 'failed'
     (error (e)
       (values nil "failed" (%truncate (princ-to-string e) 400)))))
 
+(defun %lisp-owned-job-p (job-id)
+  "True when a job belongs to the world daemon: its tools row names a
+`lisp:` handler. The queue worker then ARCHIVES the wake-up without
+claiming, so the two workers never race for the same effect — the daemon
+finds its own work by scanning the table."
+  (let ((handler (postmodern:query
+                  "SELECT t.handler FROM jobs j JOIN tools t ON t.name = j.kind
+                    WHERE j.job_id = $1::uuid" job-id :single)))
+    (and (%present-p handler)
+         (>= (length handler) 5)
+         (string= "lisp:" handler :end2 (min 5 (length handler))))))
+
 (defun do-job (llm msg-id job-id worker-id)
   "Claim and execute one job through the fence/lease discipline. Returns
 true when the message is done (archive)."
   (let ((row (postmodern:query
               "SELECT kind, payload::text, status FROM jobs
                 WHERE job_id = $1::uuid" job-id :row)))
+    (when (%lisp-owned-job-p job-id)
+      (return-from do-job t))       ; the world daemon owns this effect
     (if (or (null row) (member (third row) *settled-statuses* :test #'equal))
         t                               ; gone, or settled: stale wake-up
         (destructuring-bind (kind payload-json status) row
