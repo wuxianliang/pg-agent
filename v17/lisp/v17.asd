@@ -25,19 +25,32 @@
                 :serial t
                 :components ((:file "pgstore")))))
 
+(asdf:defsystem "v17/worker"
+  :description "v17 queue worker: pgmq wake-up protocol, Jev/LLM clients, pump"
+  :license "MIT"
+  :serial t
+  :depends-on ("v17/pgstore" "dexador" "babel")
+  :components ((:module "src"
+                :serial t
+                :components ((:file "pgmq")
+                             (:file "jev")
+                             (:file "llm")
+                             (:file "worker")))))
+
 (asdf:defsystem "v17/tests"
   :description "v17 fiveam suites"
   :license "MIT"
   :serial t
-  :depends-on ("v17/kernel" "v17/pgstore" "fiveam" "check-it")
+  :depends-on ("v17/kernel" "v17/pgstore" "v17/worker" "fiveam" "check-it")
   :components ((:module "tests"
                 :serial t
                 :components ((:file "suite")
                              (:file "store-suite")
-                             (:file "world-suite")))))
+                             (:file "world-suite")
+                             (:file "queue-suite")))))
 
 ;; Umbrella so (ql:quickload "v17") loads the whole worker stack.
 (asdf:defsystem "v17"
   :description "v17 SBCL worker (umbrella system)"
   :license "MIT"
-  :depends-on ("v17/kernel" "v17/pgstore"))
+  :depends-on ("v17/kernel" "v17/pgstore" "v17/worker"))
