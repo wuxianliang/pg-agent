@@ -918,9 +918,237 @@ def test_interleave_settle_holds(cur, server):
         cur.connection.commit()
 
 
+def unattended_accept_script_scan(server):
+    import ast
+    import os
+    import re
+
+    script = AGENT_ROOT / "v13/goal_supervisor/accept_unattended.py"
+    script_text = script.read_text()
+    driver_text = (ROOT / "driver.py").read_text()
+    tests = Path(__file__).read_text()
+    readme = (ROOT / "README.md").read_text()
+    matrix_path = (
+        AGENT_ROOT / "docs/reviews"
+        / "v13-long-loop-phase-c-conformance-matrix-2026-09-29.md")
+    matrix = matrix_path.read_text()
+    auth_name = "V13_UNATTENDED_" + "AUTHOR" + "IZATION"
+    message = "v13: unattended continuation not authorized"
+    head = script_text.split("def authorized_main", 1)[0]
+    head_banned = (
+        "urllib", "socket", "requests", "http.client", "openai", "anthropic",
+        "deepseek", "psycopg2", "server", "GoalSupervisor", "v13.load",
+    )
+    check(
+        "unattended_script_head_has_no_network",
+        all(token not in head for token in head_banned),
+        [token for token in head_banned if token in head])
+    check(
+        "accept_script_under_goal_supervisor_prefix",
+        script.is_file()
+        and script.relative_to(AGENT_ROOT).as_posix()
+        == "v13/goal_supervisor/accept_unattended.py")
+    wake = "v13_wake_" + "is_satisfied_v1"
+    cron = "pg_" + "cron"
+    check("accept_script_no_wake_token", wake not in script_text)
+    check(
+        "accept_script_no_sleep_no_cron",
+        "time.sleep" not in script_text
+        and "while True" not in script_text
+        and cron not in script_text
+        and "threading" not in script_text)
+    check(
+        "accept_script_no_provider_tokens",
+        all(token not in script_text
+            for token in ("openai", "anthropic", "deepseek", "requests")))
+    check(
+        "accept_script_round_cap_is_two",
+        "UNATTENDED_ACCEPT_ROUNDS = 2" in script_text
+        and "SUPERVISOR_MAX_TICKS = 2" in driver_text)
+    compact = tests.replace(" ", "").replace("\n", "")
+    check(
+        "unattended_fake_gate_does_not_set_authorization",
+        (auth_name + "=1") not in compact
+        and (auth_name + '="1"') not in tests
+        and 'ASK_USER = "v13: supervisor: ask_user"' in tests
+        and "raise SystemExit(ASK_USER)" in tests)
+    prior = {
+        "r0_source_scope", "stage_bytes", "static_check",
+        "driver_does_not_write_material_spent", "settle_once_not_run_turn",
+        "named_entry_is_settle_once", "unattended_not_claimed_by_loop_alone",
+        "no_real_provider", "no_parked_draft_import",
+        "phase_a_prefix_has_no_unpaid_helper", "recover_not_on_claim_path",
+        "b6_rows_present", "fourth_duty_none_or_live_name",
+        "execute_vs_control_operator_separated", "policy_version_still_3",
+        "no_lease_loop", "replan_insert_before_stop_only",
+        "quiet_does_not_call_advance", "connection_idle_after_settle_once",
+        "notify_dto_no_event", "observe_no_answer",
+        "recover_return_does_not_enqueue",
+        "provider_word_does_not_start_second_machine",
+        "unpaid_progress_calls_advance_once", "t0_same_txn_root_lock",
+        "second_settlement_no_second_receipt", "fake_hop_persists_then_observed",
+        "unpaid_finish_calls_advance_once", "wait_reject_not_settled",
+        "stopped_failed_snap_no_advance",
+        "skipped_failed_safe_return_no_lease_recover_replan",
+        "stopped_without_failed_key_still_settles",
+        "human_pending_does_not_skip_settlement",
+        "human_ready_claimed_settles_then_waits", "human_wait_no_skip",
+        "request_stop_not_consumed_on_human_wait", "request_stop_does_not_hop",
+        "human_unknown_does_not_count_as_success",
+        "waiting_with_unpaid_remaining_is_failure",
+        "multiple_unpaid_candidates", "planning_does_not_call_advance",
+        "monitor_quiet_does_not_call_advance",
+        "workspace_complete_does_not_call_advance",
+        "settlement_does_not_dispatch_claimed_workspace",
+        "hold_skips_accept_recover_lease_hop",
+        "stop_advance_interleave_stop_wins",
+        "stop_advance_interleave_settle_holds",
+    }
+    found = set(re.findall(r'check\("([^"]+)"', tests))
+    check(
+        "unattended_prior_asserts_retained",
+        prior <= found, sorted(prior - found))
+
+    def listed():
+        conn = psycopg2.connect(server.get_uri("postgres"))
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT datname FROM pg_database WHERE datname LIKE %s",
+                ("ll_unattended_%",))
+            return {row[0] for row in cur.fetchall()}
+        finally:
+            conn.close()
+
+    def run_unauth(value):
+        env = os.environ.copy()
+        env.pop(auth_name, None)
+        env.pop("V13_UNATTENDED_DB", None)
+        if value is not None:
+            env[auth_name] = value
+        return subprocess.run(
+            [sys.executable, str(script)],
+            cwd=str(AGENT_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    before = listed()
+    refusals = []
+    for value in (None, "0", "invalid"):
+        proc = run_unauth(value)
+        out = proc.stdout.strip()
+        refusals.append((
+            value, proc.returncode, out, proc.stderr,
+            "authorization 1" not in proc.stdout and "[ready]" not in proc.stdout))
+    after = listed()
+    check(
+        "unattended_script_refuses",
+        after == before
+        and all(
+            code == 2 and out == message and err == "" and clean
+            for _value, code, out, err, clean in refusals),
+        (refusals, sorted(after - before)))
+
+    kept = "[kept] " + "ll_unattended_preset_"
+    dropped = "[dropped] " + "ll_unattended_accept_"
+    ua = matrix.split("## UA 授权增补（2026-10-01）", 1)
+    auth_rows = []
+    neg_rows = []
+    if len(ua) == 2:
+        for line in ua[1].splitlines():
+            if "unattended_authorized_exit_0" in line:
+                auth_rows.append(line)
+            if line.startswith("| UA 未授权负例"):
+                neg_rows.append(line)
+    readme_ua = readme.split("## 授权验收", 1)
+    check(
+        "unattended_matrix_row_requires_dropped",
+        len(ua) == 2 and len(auth_rows) == 1 and len(readme_ua) == 2
+        and "env -u V13_UNATTENDED_DB" in auth_rows[0]
+        and dropped in auth_rows[0]
+        and kept not in ua[1] and kept not in readme
+        and "env -u V13_UNATTENDED_DB" in readme_ua[1])
+    auth_status = auth_rows[0] if auth_rows else ""
+    neg_status = neg_rows[0] if neg_rows else ""
+    check(
+        "unauthorized_never_fills_authorized_row",
+        "| exit_0 |" in auth_status
+        and dropped in auth_status
+        and "expected_nonzero" in neg_status
+        and "exit_0" not in neg_status)
+
+    allowed_sql = {
+        "v13_open_session", "v13_submit_override", "v13_enqueue_effect",
+        "v13_complete", "v13_goal_stop", "v13_cancel", "v13_append_event",
+        "v13_probe", "v13_unpaid_harness_turn",
+    }
+    forbidden_calls = {
+        "v13_advance", "v13_harness_settle", "run_turn", "serve",
+        "v13_plan_writer", wake, "v13_claim_fair",
+    }
+    tree = ast.parse(script_text)
+    parents = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+
+    def enclosing(node):
+        cur = parents.get(node)
+        while cur is not None and not isinstance(cur, ast.FunctionDef):
+            cur = parents.get(cur)
+        return "" if cur is None else cur.name
+
+    def root_name(node):
+        cur = node
+        while isinstance(cur, ast.Attribute):
+            cur = cur.value
+        if isinstance(cur, ast.Call):
+            return root_name(cur.func)
+        return cur.id if isinstance(cur, ast.Name) else ""
+
+    problems = []
+    if any(isinstance(node, ast.While) for node in ast.walk(tree)):
+        problems.append("while")
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        called = node.func.id if isinstance(node.func, ast.Name) else (
+            node.func.attr if isinstance(node.func, ast.Attribute) else "")
+        if called in forbidden_calls:
+            problems.append("call " + called)
+        owner = enclosing(node)
+        if (owner == "drive_rounds" and isinstance(node.func, ast.Attribute)
+                and root_name(node.func.value) == "sup"
+                and node.func.attr not in ("tick", "close")):
+            problems.append("supervisor " + node.func.attr)
+        if called not in ("execute", "fixture_q"):
+            continue
+        for arg in node.args:
+            if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str):
+                continue
+            bare = re.sub(r"'(?:''|[^'])*'", "''", arg.value)
+            if re.search(
+                    r"\binsert\s+into\s+(?:public\.)?"
+                    r"(?:effects|events|sessions|artifacts)\b",
+                    bare, re.I):
+                problems.append("insert " + owner)
+            if re.search(r"\bupdate\b", bare, re.I) and not owner.startswith("fixture_"):
+                problems.append("update " + owner)
+            if cron in bare or re.search(r"api[_-]?key", bare, re.I):
+                problems.append("secret " + owner)
+            for name in re.findall(r"\b(v13_[a-z0-9_]+)\s*\(", bare):
+                if name not in allowed_sql or not owner.startswith("fixture_"):
+                    problems.append("sql " + owner + " " + name)
+    check("unattended_accept_script_scan", problems == [], problems)
+
+
 def run(cur, server):
     test_static()
     test_runtime(cur, server)
+    unattended_accept_script_scan(server)
 
 
 def main() -> int:

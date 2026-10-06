@@ -1,7 +1,7 @@
 """Authorized unattended acceptance. Not the fake gate.
 
 Unauthorized: exit 2, one fixed line, no database import.
-Authorized: a two-round Fake loop over GoalSupervisor.tick.
+Authorized: a two-round Fake loop, one tick each round.
 """
 from __future__ import annotations
 
@@ -206,12 +206,26 @@ def run_scenarios(cur, connect):
     sid, eid, _hid = fixture_unpaid(cur)
     before = fixture_spent(cur, eid)
     def progress_ok(stop, trace):
+        hid = trace[0]["human"][0] if trace and trace[0]["human"] else None
+        status = None if hid is None else fixture_q(
+            cur, "SELECT status FROM effects WHERE effect_id=%s", (hid,))
+        reason = None if hid is None else fixture_q(
+            cur, "SELECT request->>'reason' FROM effects WHERE effect_id=%s", (hid,))
+        stopped = fixture_q(
+            cur, "SELECT count(*) FROM events WHERE session_id=%s AND type=%s",
+            (sid, "goal/stopped"))
         return (
-            stop == "stable_waiting" and len(trace) == 2
+            stop == "human_pending" and len(trace) == 2
+            and trace[0]["word"] == "waiting" and trace[1]["word"] == "waiting"
             and trace[0]["settle_once"] == 1 and trace[0]["advance"] == 1
             and fixture_spent(cur, eid) == before + 1
             and trace[1]["unpaid"] == [] and trace[1]["settle_once"] == 0
-            and trace[1]["advance"] == 0 and fixture_spent(cur, eid) == before + 1)
+            and trace[1]["advance"] == 0 and fixture_spent(cur, eid) == before + 1
+            and trace[1]["human"] == trace[0]["human"] and bool(trace[0]["human"])
+            and status == "ready" and reason == "low_intent_confidence"
+            and int(stopped) == 0
+            and trace[0]["request_stop_consumed"] is False
+            and trace[1]["request_stop_consumed"] is False)
     one("accept_progress_second_round_quiet", {"sid": sid}, progress_ok)
 
     sid, eid, _hid = fixture_unpaid(cur, result=finish_result())

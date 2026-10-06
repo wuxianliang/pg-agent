@@ -56,3 +56,13 @@ M3 新增 `v13/goal_supervisor/`（无 SQL、无加载键）。唯一结算者�
 | M3 监督 gate | `UV_FROZEN=1 uv run python v13/goal_supervisor/test_goal_supervisor.py` | 其它断言 62 checks 通过；库 `ll_goal_supervisor_73942_ac67b1`（跑完已 DROP）；进程最后打印并 `SystemExit` `v13: supervisor: ask_user`。这是 `unattended_continuation` 的接受形态，不是其它断言失败。 | expected_nonzero |
 | M3 十条回归 | 同 §7.1 | `plan_contract` exit 0 / `ll_plan_contract_74371` / 93；`plan_read` exit 0 / `ll_plan_read_74467` / 11；`plan_arm` exit 0 / `ll_plan_arm_74565` / 104；`loop_driver` exit 0 / `ll_loop_driver_74906` / 91；`workflow_bind` exit 0 / `ll_workflow_bind_75315` / 8；`real_chain` exit 0 / `ll_real_chain_75421_7e5166` / 24；`workspace_admit` exit 0 / `ll_workspace_admit_75534_015dfc` / 65；`workspace_exec` exit 0 / `ll_workspace_exec_75642_00f0ef` / 54；`frontier_gap` exit 0 / `ll_frontier_gap_75810_ad82a1` / 59；`goal_supervise` exit 0 / `ll_goal_supervise_76471_64ab48` + owned `ll_r0_gs_76471_12f623` / 172。所有测试库均已 DROP。 | exit_0 |
 | `unattended_continuation` | `goal_supervisor` | 一跳已点名且 T0 拒绝已由 `stopped_failed_snap_no_advance` 证明之后，仍发出 `v13: supervisor: ask_user`。 | expected_nonzero |
+
+## UA 授权增补（2026-10-01）
+
+父决定后的授权验收。上面的 `goal_supervisor` 行与 M3 三行保持 `expected_nonzero`。纯 progress 的第二轮是 `human_pending`：收据加一后活体路由留下 human，不 skip，第二轮不再结算。
+
+| UA 项目 | 命令/库 | 实际证据 | 状态 |
+|---|---|---|---|
+| `unattended_authorized_exit_0` | env -u V13_UNATTENDED_DB V13_UNATTENDED_AUTHORIZATION=1 UV_FROZEN=1 uv run python v13/goal_supervisor/accept_unattended.py | 退出码 0；库 `ll_unattended_accept_3039_aa76fb`（跑完已 DROP）；stdout 含 `[dropped] ll_unattended_accept_3039_aa76fb`；rounds_cap 2；provider_calls 0；quiet `stable_waiting` rounds=1；progress `human_pending` rounds=2 且收据仍 1；finish `terminal` rounds=2 且 status completed；human pending 与 human unknown 均为 `human_pending` rounds=2；skipped_failed rounds=1；三道 unpaid_remaining rounds=1；§8 声称句 | exit_0 |
+| UA 未授权负例 | UV_FROZEN=1 uv run python v13/goal_supervisor/accept_unattended.py | 缺变量、`0`、`invalid` 均退出 2，stdout 恰一行 `v13: unattended continuation not authorized`；未建库 | expected_nonzero |
+| UA 预存红线修复 | 提交 `998901f` | 冻结前缀红已在该提交转绿。修复后十条与 fair 两 gate 退出 0，计数见台账「UA 预存红线归因」。`goal_supervisor` 仍是 62 checks 后 `v13: supervisor: ask_user` | exit_0 |

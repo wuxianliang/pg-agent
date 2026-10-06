@@ -44,3 +44,21 @@ Phase A 行名与持久语义所有者不变。「监督进程允许」只写本
 `UV_FROZEN=1 uv run python v13/goal_supervisor/test_goal_supervisor.py`
 
 其它断言通过之后，进程发出 `v13: supervisor: ask_user` 并非零退出。该非零是 `unattended_continuation` 的接受形态，不是整门失败。其它失败仍是那个失败。
+
+## 授权验收
+
+假 gate 仍以 `v13: supervisor: ask_user` 结束。两轮循环在 `accept_unattended.py`，不在监督类里。
+
+未授权（变量缺省、`0` 或其它值）退出 2，stdout 恰一行 `v13: unattended continuation not authorized`，不建库。
+
+自建库取证命令：
+
+```
+env -u V13_UNATTENDED_DB V13_UNATTENDED_AUTHORIZATION=1 UV_FROZEN=1 uv run python v13/goal_supervisor/accept_unattended.py
+```
+
+退出 0 只代表这句：单 goal、DB owner/superuser、Fake 夹具、轮数上界 2、无真实 provider：授权脚本可以 exit 0；人不回答时保持 waiting 且不 skip。这不是人可以离开生产终端。
+
+自建支在 stdout 打印 `[dropped]`，库名以 `ll_unattended_accept_` 开头，跑完即删。`V13_UNATTENDED_DB` 只能指向已经装到 goal_supervise、且名字以 `ll_unattended_preset_` 开头的库。那一支保留原库，并另行打印 `[kept]`。它不是矩阵证据。
+
+`UNATTENDED_ACCEPT_ROUNDS` 与 `SUPERVISOR_MAX_TICKS` 都是 2。每一轮新建一个实例，只 tick 一次。人不回答时保持 waiting，不 skip、不 complete、不 cancel。脚本不调用 wake 函数。V11 未读。无人值守 skip 与 `plan_commit` 仍未授权。纯 progress 付完一次收据后，活体路由会留下 human，第二轮是 `human_pending`，收据不再增加。

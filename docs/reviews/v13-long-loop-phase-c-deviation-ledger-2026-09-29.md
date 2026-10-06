@@ -42,3 +42,11 @@ M3 按同一计划实现 `v13/goal_supervisor`。仅声称：单 goal、DB owner
 基线在 `b1faa27` 实跑（`v13/` 与 `78e77c7` 相同，stannum 0.5.1）。`r0_source_scope` 的前缀断言红：`plan_arm`、`loop_driver`、`frontier_gap`、`goal_supervise`、`goal_supervisor`。`extra` 恰 12 个文件，全在 `v13/goal_supervisor/`、`v13/fair_claim/`、`v13/fair_driver/`。`loop_driver` 是同一断言的第五个调用方。`fair_driver` 当时 38 checks，退出 0。`fair_claim` 的 `stage_bytes` 另红：干净树上 `git diff HEAD -- v13/load.py` 为空，谓词仍要求 diff 含 `fair_claim`，`tail_ok` 为真。父同意按 `frontier_gap` 的干净树分支补上，并只放开该函数相对 `78e77c7` 的差异。
 
 提交②把冻结中心改成三前缀路径闭集、已知文件钉 `78e77c7`、`load.py` 只许表尾规范追加。不改 `load.py` 字节，不改 driver、setup_db、fair SQL。修复后、提交前：`plan_contract` 93、`plan_read` 11、`plan_arm` 104、`loop_driver` 91、`workflow_bind` 8、`real_chain` 24、`workspace_admit` 65、`workspace_exec` 54、`frontier_gap` 59、`goal_supervise` 172，均退出 0。`goal_supervisor` 62 checks 后发出 `v13: supervisor: ask_user`，退出 1。`frontier_gap` 与 `goal_supervise` 自身的 `stage_bytes` 未再变红。`fair_claim` / `fair_driver` 的 `stage_bytes` 比较 `git diff HEAD`，范围含本提交正在修改的 `v13/plan_arm`、`v13/goal_supervisor`、`v13/fair_claim`；`load.py` 的 diff 长度为 0。这两条在本提交成为 HEAD 之后复跑，退出 0 才推送。不得把 `goal_supervisor` 写成 `exit_0`，不得声称无人值守完成。
+
+## UA 授权增补偏差与边界（2026-10-01）
+
+父决定允许一条授权验收命令退出 0。裁决仍是：旧 gate 末尾保持 `v13: supervisor: ask_user`；轮数上界 2；冻结放宽保持提交②的三前缀、已知字节钉与 load 追加式。2026-10-06 父指令「提交代码，然后继续」之后，纯 progress 场景按活体记录为 `human_pending`：`v13_advance` 与 `_snap_with` 都不改。收据仍只加一次，第二轮不再结算，human 保持 `ready`，原因是 `low_intent_confidence`，不 skip。
+
+循环在 `accept_unattended.py`。每一轮新建一个监督实例，只 tick 一次。停止原因只有 `stable_waiting`、`human_pending`、`skipped_failed`、`terminal`、`unpaid_remaining`、`round_cap`。人不回答时保持 waiting。unknown、cancel、stale 未付仍使 tick 失败，消息仍是 `v13: supervisor: unpaid_remaining`。脚本不读 wake，不调用 `v13_wake_is_satisfied_v1`。
+
+仍未成立：人可以离开生产终端；产品 EXECUTE 角色；真实 provider；PC-4；V11 auto-wake；无人值守 skip；无人值守 `plan_commit`；多 goal 公平、全局并发帽、多日 soak。历史 `goal_supervisor` 行仍是 `expected_nonzero`，不是 `exit_0`。授权退出 0 只覆盖单 goal、DB owner/superuser、Fake 夹具、轮数上界 2、无真实 provider。原 gate 在新增断言之后是 74 checks，然后仍发出 `v13: supervisor: ask_user`。
