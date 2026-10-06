@@ -20,7 +20,8 @@ v17/
   develop/           G5: agent-grown tools full chain (turn -> llm ->
                      develop job -> later turn's tool job to the new Lisp
                      function) — GREEN
-  repair/            G6: condition/restart repair over the journal (placeholder)
+  repair/            G6: condition/restart repair — pause, repair form,
+                     resume, original call completes — GREEN
   lisp/
     v17.asd          systems v17/kernel, v17/pgstore, v17/worker, v17/tests,
                      umbrella v17
@@ -57,6 +58,7 @@ state.
 |---|---|
 | G1 store | **green** — `v17/store/test_store.py` (DDL / fiveam store suite over forked SBCL / ancestry corruption / concurrent publish / crash-no-half-revision) |
 | G2 world | **green** — `v17/world/test_world.py` (twice example / preview restore / error→checkpoint / unrecorded-change refusal / cross-process byte-identical capture / catalogue export→import identity / fiveam world suite) |
+| G6 repair | **green** — `v17/repair/test_repair.py` (pause→repair→resume / journal records the repair / failing repair restores / crash inside the paused repair → unknown wall / no-recipe pause settles failed) |
 | G5 develop | **green** — `v17/develop/test_develop.py` (grow-a-tool full chain / invariant-rejected develop / explicit rollback / restart) |
 | G4 lisptools | **green** — `v17/lisptools/test_lisptools.py` (eval / develop durability across a fresh process / preview / unmet goal / invariant violation / crash-mid-claim reclaim exactly-once / unknown wall / `lisp:` tool with unicode params) |
 | G3 queue | **green** — `v17/queue/test_queue.py` (v12 G6 seven scenarios rerun against the Lisp worker + jsonb canary + python/lisp cross-language race) |

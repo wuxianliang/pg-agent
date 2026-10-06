@@ -96,3 +96,21 @@ preview 不发布、goal 未过指名、invariant 违反恢复、扫描认领条
 | 2. quickload 与引用分置顶层 form | ✅ 所有 `--script` runner 分四个 form |
 | 3. pgmq 参数显式 cast | ✅ `pgmq.read($1::text,$2::int,$3::int)` 等 |
 | 4. env 传 PGSOCKETDIR/PGDATABASE | ✅ gate 侧 `SOCKET_DIR`，worker 经 `V17_*` env 注入 |
+
+## 计划 §5 G6 repair
+
+| 计划断言 | gate 覆盖 | 位置 |
+|---|---|---|
+| 带 restart 的错误 → condition 菜单经 journal 出栈 → 同 worker 提交 repair form + resume → 原调用完成 | ✅ 场景 1/2：pause→repair→resume 返回 84；journal 记 condition/restart/evaluated/invariants；repair 的状态变化耐久 | `v17/repair/test_repair.py` |
+| 崩溃于暂停中 → checkpoint 恢复 + job unknown（断言明示边界，不假装持久化活栈） | ✅ 场景 4：repair 执行中被杀 → job 停 claimed、只有 baseline、无痕迹；仅显式 unknown → resolve 可推动 | 同上 |
+
+## 收尾：六个 gate 全绿（2026-10-07）
+
+| Gate | 断言数 | 结果 |
+|---|---|---|
+| G1 store | 22 + fiveam 46 | exit 0 |
+| G2 world | 8 + fiveam | exit 0 |
+| G3 queue | 52 | exit 0 |
+| G4 lisptools | 66 | exit 0 |
+| G5 develop | 27 | exit 0 |
+| G6 repair | 23 | exit 0 |

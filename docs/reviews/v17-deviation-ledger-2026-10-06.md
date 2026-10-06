@@ -119,3 +119,25 @@ invariant 仍在内核 attempt 内。jiti 语义的「goal 只报告」在交互
 `V17-WORLD-<name>-<n>`，同时让「Lisp 状态不跨 job 携带」在设计上成立
 （连进程内也不携带）。
 
+
+---
+
+## G5/G6 追加（2026-10-07）
+
+### D-17-11 · restart 按名字/序号指定，不按菜单 id — `fixed`（实现缺陷）
+
+菜单 id 含 pause 计数，repair 让 condition-loop 重入即重建菜单，上一帧
+解析出的 id 在动作被消费时已失效 → resume 静默 no-op → 预算烧穿
+（`EXHAUSTED`）。改为调用方给名字或序号，daemon 每次提交前重读当前菜单。
+
+### D-17-12 · 提交后的 journal 事件另起事务补写 — `accepted`
+
+`:accepted` / `:operation-finish` 在内核里 emit 于 attempt 返回之后，
+按构造进不了 publish 事务。补写用独立事务，安全性方向不变（只可能在
+publish 成功后出现，崩溃最多让 journal 少一个结果）。
+
+### D-17-13 · 无 recipe 的暂停立即结算 failed（计划未规定）— `accepted`
+
+计划 §5 G6 只写「崩溃于暂停中」。实现选择：没有 repair 配方的暂停没有
+人能推进，立即按 failed 结算（condition 与 pause 落 journal 供事后分析）；
+要崩溃场景就用带 recipe 的 job，在 repair 执行中被杀（gate 场景 4）。

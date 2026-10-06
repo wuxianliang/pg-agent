@@ -156,7 +156,16 @@ re-offered as soon as its lease lapses. Settled jobs are never offered."
 ;;; job payload -> one form plus its checks
 ;;; -------------------------------------------------------------------------
 
-(defstruct plan source goals invariants world)
+(defstruct plan
+  "One job's work: the form to evaluate, its acceptance checks, and
+optionally a repair recipe.
+
+REPAIR-SOURCE / RESUME-RESTART carry a caller's repair recipe: when the
+attempt PAUSES on a condition, the daemon evaluates REPAIR-SOURCE inside
+the paused dynamic extent and then invokes the named restart. The recipe is
+part of the acceptance contract - the model supplies the repair, the daemon
+only performs it."
+  source goals invariants world repair-source resume-restart)
 
 (defun %params-alist-text (params)
   "JSON params object -> READABLE Lisp alist text with keyword keys, so a
@@ -214,7 +223,9 @@ the job is not lisp-owned."
         :world (%get "world" payload)
         :source (%get "source" payload)
         :goals (%get "goals" payload)
-        :invariants (%get "invariants" payload)))
+        :invariants (%get "invariants" payload)
+        :repair-source (%get "repair" payload)
+        :resume-restart (%get "resume_restart" payload)))
       ((%lisp-p (pending-job-handler job))
        (multiple-value-bind (world fn)
            (%parse-lisp-handler (pending-job-handler job))
@@ -396,6 +407,24 @@ settle~%" label)
 ;;; executing one job
 ;;; -------------------------------------------------------------------------
 
+(defun %flush-journal-remainder (cell world-id)
+  "Append the events the attempt emitted AFTER its commit. The kernel emits
+:accepted and :operation-finish once the attempt returns, which is by
+construction after the publishing transaction committed, so they cannot
+join it; they are appended in their own transaction instead.
+
+That is safe in the direction that matters: these rows can only exist after
+a successful publish, so a crash can leave the journal short of an outcome
+(never a phantom one), and the next scan sees no queued job either way."
+  (when (attempt-cell-events cell)
+    (handler-case
+        (v17-pgstore:with-store-connection ()
+          (v17-pgstore:with-store-transaction
+            (%flush-journal cell world-id)))
+      (postmodern:database-error (c)
+        (declare (ignore c))
+        nil))))
+
 (defun %settle-succeeded (cell world-id job-id fence result)
   "Settle a job whose attempt did NOT change the managed state, or which
 ended in an explicit preview. Such an attempt never fires the kernel's
@@ -429,6 +458,65 @@ view carries the last goal/invariant results the kernel reported."
     (let ((failed (remove-if (lambda (entry) (eq (getf entry :status) :pass))
                              checks)))
       (or failed "(none reported)"))))
+
+(defun %resolve-restart-id (menu spec)
+  "Resolve a caller's restart spec against the CURRENT menu. A menu id
+carries the pause count (\"3/0\"), so it changes with every cycle a repair
+causes; names do not. A spec is a restart NAME (case-insensitive) or a
+zero-based index."
+  (cond ((null spec) nil)
+        ((null menu) nil)
+        ((and (stringp spec) (every (lambda (c) (digit-char-p c)) spec))
+         (let ((entry (nth (parse-integer spec) menu)))
+           (and entry (getf entry :id))))
+        (t (let ((entry (find spec menu :key (lambda (m) (getf m :name))
+                              :test #'string-equal)))
+             (and entry (getf entry :id))))))
+
+(defun %repair-loop (job-id session plan view)
+  "While the attempt is PAUSED, drive the caller's repair recipe: evaluate
+REPAIR-SOURCE inside the paused dynamic extent, then invoke the named
+restart. Each step is a new view, so the loop continues until the attempt
+leaves the paused state (accepted, restored, or the budget runs out).
+
+BOUNDARY (documented, not fixed): a crash while paused loses the live
+dynamic extent, so the job settles failed and the world stays at its last
+revision. jiti has the same property - a paused restart is not durable
+state, only the checkpoint is."
+  (loop
+    (let ((status (getf view :status))
+          (menu (getf view :restarts)))
+      (unless (eq status :paused)
+        (return view))
+      (%debug "attempt ~a: paused, menu has ~d entries: ~s"
+              job-id (length menu)
+              (mapcar (lambda (m) (list (getf m :id) (getf m :name))) menu))
+      (%debug "attempt ~a: resolving spec ~s -> ~s" job-id
+              (plan-resume-restart plan)
+              (%resolve-restart-id menu (plan-resume-restart plan)))
+      ;; NB: not named STEP - shadowing SBCL's locked CL:STEP symbol
+      ;; is a package-lock violation at compile time.
+      (flet ((%submit (action)
+               (let ((next (v17-kernel:session-step session action)))
+                 (setf view next)
+                 (getf next :status))))
+        (when (plan-repair-source plan)
+          (%submit (list :action :develop
+                         :source (plan-repair-source plan)
+                         :generation (getf view :generation)))
+          ;; The repair re-enters condition-loop, which increments the pause
+          ;; count and REBUILDS the menu - so the ids resolved a moment ago
+          ;; are stale. Re-read it.
+          (setf menu (getf view :restarts)))
+        (let ((restart-id (%resolve-restart-id menu
+                                               (plan-resume-restart plan))))
+          (when restart-id
+            (%submit (list :action :resume
+                           :restart-id restart-id
+                           :arguments "nil"
+                           :generation (getf view :generation)))))
+        (unless (and (plan-repair-source plan) (plan-resume-restart plan))
+          (return view))))))
 
 (defun %run-attempt (job-id kind world-id fence plan preview)
   "Execute one job's plan under the kernel, starting from the durable world.
@@ -469,9 +557,11 @@ Returns (values status outcome)."
                                :preview preview
                                :generation (getf ready :generation)))))
              (%debug "attempt ~a: view ~s" job-id (getf view :status))
+             (setf view (%repair-loop job-id session plan view))
              (let ((outcome (getf view :outcome)))
                (cond
                  ((eq (getf outcome :commit) :accepted)
+                  (%flush-journal-remainder cell world-id)
                   ;; The kernel's publish hook already committed goal
                   ;; enforcement, publish, journal and complete_job when the
                   ;; world changed. A no-change evaluation never calls it,
@@ -492,6 +582,7 @@ Returns (values status outcome)."
                          (cons "preview" t)))
                   (values :accepted outcome))
                  ((eq (getf outcome :commit) :restored)
+                  (%flush-journal-remainder cell world-id)
                   (%settle-failed
                    cell world-id job-id fence
                    (or (attempt-cell-failure cell)
@@ -500,6 +591,7 @@ Returns (values status outcome)."
                                (%failed-checks view))))
                   (values :failed outcome))
                  (t
+                  (%flush-journal-remainder cell world-id)
                   (%settle-failed
                    cell world-id job-id fence
                    (format nil "unsettled attempt: ~s" view))
