@@ -9,12 +9,21 @@
 
 (in-package :v17-tests)
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (require :sb-posix))
+
+(defvar *tmp-counter* 0)
+
 (def-suite queue :description "v17 queue worker (fake clients, json)" :in v17)
 
 (in-suite queue)
 
 (defun %tmp (name)
-  (format nil "/tmp/v17-queue-suite-~a-~36r" name (random (expt 36 8))))
+  ;; PID + a counter, NOT a random draw: SBCL's default seed reproduces the
+  ;; same sequence every run, so a random suffix would collide with the
+  ;; previous run's state file and every call-count assertion would drift.
+  (format nil "/tmp/v17-queue-suite-~a-~d-~d"
+          name (sb-posix:getpid) (incf *tmp-counter*)))
 
 (defun %write (path text)
   (ensure-directories-exist path)

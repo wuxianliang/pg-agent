@@ -37,6 +37,15 @@
                              (:file "llm")
                              (:file "worker")))))
 
+(asdf:defsystem "v17/worldd"
+  :description "v17 world daemon: lisp_eval / lisp_develop / `lisp:` tools"
+  :license "MIT"
+  :serial t
+  :depends-on ("v17/kernel" "v17/pgstore")
+  :components ((:module "src"
+                :serial t
+                :components ((:file "worldd")))))
+
 (asdf:defsystem "v17/tests"
   :description "v17 fiveam suites"
   :license "MIT"

@@ -88,3 +88,34 @@ operation-start/finish 的 record.id/status 校验（见收尾说明）。
 `pgstore:load-revision` 与（lisp-implementation-version）对比，不符抛
 `revision-version-mismatch`。brew SBCL 版本浮动风险已按计划 §7.4 关闭。
 gate 输出记录 `lisp-implementation-version`。**无偏差。**
+
+---
+
+## G4 追加（2026-10-07）
+
+### D-17-08 · goal 门的位置与 jiti 语义差一步 — `accepted`
+
+计划 §3.2 引 jiti 的验收合同时说「未过 goal 允许安全中间进展」。那对
+**交互会话**成立（jiti 的 worker-main 只在非交互模式下把 goal 当退出条件）。
+对 **job** 不成立：调用方点名要了能力，发布了没有它的 world 就是把失败
+effect 当成成功交付。
+
+实现把 goal 门放进 publish 钩子（拒绝 → attempt abort → 恢复 → job failed），
+invariant 仍在内核 attempt 内。jiti 语义的「goal 只报告」在交互路径未被
+改动。已在 G4 README 与 worldd 头注释记录。
+
+### D-17-09 · `lisp:` 工具的 params 以 quote 传入 — `noted`
+
+计划 §3.2 说「params 转成一个 alist 参数」。实现组装的形式是
+`(<fn> '((:PARAM . "v")))`——alist 必须 quote，否则会被当函数调用形式求值
+（关键字当操作符，SBCL 只报 `illegal function call`）。README 与代码注释
+都写明了这一点。
+
+### D-17-10 · 每 job 新包（而非每 world 稳定包）— `accepted`
+
+最初按「每 world 一个稳定包名」实现（revision 里的 defun 需要可读回）。
+实践中进程内复用 adapter 会引入跨 job 的残留状态，且稳定名并无必要：
+导出文本不带包前缀，读进哪个包都行。改为每 job 新包
+`V17-WORLD-<name>-<n>`，同时让「Lisp 状态不跨 job 携带」在设计上成立
+（连进程内也不携带）。
+

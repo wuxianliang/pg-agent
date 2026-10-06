@@ -10,7 +10,7 @@
 | G1 store | `uv run python v17/store/test_store.py` | exit 0（2026-10-06） |
 | G2 world | `uv run python v17/world/test_world.py` | exit 0（2026-10-06） |
 | G3 queue | `uv run python v17/queue/test_queue.py` | exit 0（2026-10-06） |
-| G4–G6 | — | 未开工（计划 §5，placeholder） |
+| G4 lisptools | exit 0（2026-10-07） |
 
 ## 计划 §5 G1 store
 
@@ -35,6 +35,26 @@
 | managed-state 跨进程字节一致 | ✅ 两 sbcl 进程同操作序列 → bytea 逐字节比对 | `v17/world/lisp/capture-bytes.lisp` |
 | catalogue export→import 行为同一 | ✅ publish → 新进程 load → 调用结果与 catalogue 相同 | `publish-world.lisp` + `load-world.lisp` |
 | fiveam world 套件随 gate 跑 | ✅ policy gate / capture / session 协议 / preview-error-restore / export-import / pgstore 往返 | `v17/lisp/tests/world-suite.lisp` |
+
+## 计划 §5 G4 lisptools
+
+| 计划断言 | gate 覆盖 | 位置 |
+|---|---|---|
+| `handler='lisp:...'` job 端到端 | ✅ 场景 1/8：`lisp_eval` settled、值与 journal 完整；`lisp:` 工具 params alist 直达 Lisp 函数（unicode 无损） | `v17/lisptools/test_lisptools.py` |
+| 崩溃于 claim 后 complete 前 → 租约过期 → 第二 worker reclaim → 可见效果恰好一次 | ✅ 场景 6：source 带 sleep，kill 落在 attempt 内；reclaim 后恰好两个 revision、状态是 5 不是 10 | 场景 6 |
+| unknown 墙：工具在第二连接写哨兵行后自杀 → unknown → 两路解决 | ✅ 场景 7：副作用恰好一次、盲目重投被拒、仅 `v12_resolve_unknown` 可动 | 场景 7 |
+
+计划 §5 G5/G6 之外，G4 的实际覆盖面（计划原文只列三条）：develop 跨进程耐久性、
+preview 不发布、goal 未过指名、invariant 违反恢复、扫描认领条件与
+`v12_claim_job` 逐字一致、混部无竞争（lisp job 的队列唤醒只归档）。
+
+## 计划 §3.2 world 面（实现情况）
+
+| 计划要求 | 实现 |
+|---|---|
+| 不加新 pgmq kind、不加新表 | ✅ `v17_world.sql` 仍只有约定注释；G4 零新 SQL 文件（load.py 的 `queue`/`lisptools`/`develop`/`repair` 都复用 world stage） |
+| `tools.handler='lisp:...'` / `jobs.kind='lisp_eval'` / `lisp_develop` | ✅ G4 落地（payload/goal/invariant 契约见 stage README） |
+| 「SBCL 管执行与演化」 | ✅ world daemon 扫描驱动 + 崩溃安全组合点 |
 
 ## 计划 §5 G3 queue（v12 G6 七场景 + 2）
 

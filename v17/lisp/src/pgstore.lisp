@@ -21,6 +21,7 @@
            #:with-store-connection
            ;; transactions (the crash-safety composition point)
            #:with-store-transaction
+           #:encode-json #:json-text
            ;; conditions
            #:store-error #:store-error-message
            #:revision-version-mismatch
@@ -123,13 +124,109 @@ transaction-status byte); autocommit calls have no handle bound."
 ;;; JSON helpers (objects as alists with string keys)
 ;;; -------------------------------------------------------------------------
 
+;;; The encoder is hand-written because yason's *list-encoder* recursion
+;;; breaks at the third nesting level: yason 20250622 emits
+;;;   {"record":{"outcome":{"values":{"(text . 5)":null}}}}
+;;; for a three-level alist (and errors outright on symbol keys). Journal
+;;; events are routinely four levels deep, so the store cannot rely on it.
+;;; Parsing is unaffected — yason reads these documents fine.
+
+(defun %keyword-plist-p (value)
+  "A symbol-keyed plist, e.g. the kernel's event and record plists."
+  (and (consp value) (keywordp (car value)) (evenp (length value))))
+
+(defun %plist-list-p (value)
+  "A list OF plists (printed-value records, for instance), which an alist
+test would mistake for a list of pairs."
+  (and (consp value)
+       (every (lambda (item) (and (consp item) (keywordp (car item))))
+              value)))
+
+(defun %pair-alist-p (value)
+  "A list of (key . value) pairs."
+  (and (consp value)
+       (every (lambda (item)
+                (and (consp item) (not (consp (car item)))))
+              value)))
+
+(defun %json-escape (text out)
+  (write-char #\" out)
+  (loop for ch across text
+        do (case ch
+             (#\" (write-string "\\\"" out))
+             (#\\ (write-string "\\\\" out))
+             (#\Newline (write-string "\\n" out))
+             (#\Return (write-string "\\r" out))
+             (#\Tab (write-string "\\t" out))
+             (otherwise (if (< (char-code ch) 32)
+                            (format out "\\u~4,'0x" (char-code ch))
+                            (write-char ch out)))))
+  (write-char #\" out))
+
+(defun %json-key (key)
+  (typecase key
+    (string key)
+    (symbol (string-downcase (symbol-name key)))
+    (t (princ-to-string key))))
+
+(defun encode-json (value &optional (out *standard-output*))
+  "Encode any Lisp value as a JSON string to OUT. Plists become objects
+with lowercased keys, lists of plists become arrays of objects, other
+proper lists become arrays, symbols become their downcased names, and
+UTF-8 text passes through unchanged."
+  (flet ((comma-out (first)
+           (unless first (write-char #\, out))))
+    (cond ((null value) (write-string "null" out))
+          ((eq value t) (write-string "true" out))
+          ((stringp value) (%json-escape value out))
+          ((numberp value) (princ value out))
+          ((%keyword-plist-p value)
+           (write-char #\{ out)
+           (loop for (k v) on value by #'cddr
+                 for first = t then nil
+                 do (comma-out first)
+                    (%json-escape (%json-key k) out)
+                    (write-char #\: out)
+                    (encode-json v out))
+           (write-char #\} out))
+          ((%plist-list-p value)
+           (write-char #\[ out)
+           (loop for item in value
+                 for first = t then nil
+                 do (comma-out first)
+                    (encode-json item out))
+           (write-char #\] out))
+          ((%pair-alist-p value)
+           (write-char #\{ out)
+           (loop for pair in value
+                 for first = t then nil
+                 do (comma-out first)
+                    (%json-escape (%json-key (car pair)) out)
+                    (write-char #\: out)
+                    (encode-json (cdr pair) out))
+           (write-char #\} out))
+          ((consp value)
+           (write-char #\[ out)
+           (loop for item in value
+                 for first = t then nil
+                 do (comma-out first)
+                    (encode-json item out))
+           (write-char #\] out))
+          ((pathnamep value) (%json-escape (namestring value) out))
+          ((symbolp value) (%json-escape (string-downcase (symbol-name value)) out))
+          (t (%json-escape (princ-to-string value) out))))
+  value)
+
 (defun %to-json (alist)
-  "Encode an alist of string keys to a JSON object string. Nested alists
-encode as nested objects (yason's default *list-encoder* would treat them
-as arrays and choke on the dotted pairs); plain lists fall through to
-arrays via encode-alist's failsafe, and vectors are always arrays."
-  (let ((yason:*list-encoder* #'yason:encode-alist))
-    (yason:with-output-to-string* () (yason:encode-alist alist))))
+  "Encode an alist (or any Lisp value) to a JSON object string."
+  (with-output-to-string (out) (encode-json alist out)))
+
+(defun json-text (value)
+  "Public spelling of %TO-JSON. ENCODE-JSON writes to a stream and returns
+the VALUE it encoded (handy when streaming), so a caller that wants the
+string must wrap it — that asymmetry is exactly what once sent a raw Lisp
+alist to cl-postgres as a bind parameter."
+  (%to-json value))
 
 (defun %from-json (text)
   "Parse a JSON string; objects become alists, arrays become lists."
