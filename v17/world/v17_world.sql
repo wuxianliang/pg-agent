@@ -1,0 +1,32 @@
+-- v17 G2: world operations enter the effect bus (plan §3.2).
+--
+-- This stage intentionally adds NO tables and NO pgmq message kinds. World
+-- operations are ordinary v12 jobs routed by naming convention, so all of
+-- v12's claim/fence/lease/unknown machinery applies unchanged.
+--
+-- Naming conventions (consumed by the SBCL worker, documented here because
+-- this file is where the world stage lands in the load order):
+--
+--   tools.handler = 'lisp:<function-name>'
+--       tool jobs route to the persistent Lisp world's evaluator; the
+--       function must exist in the world's catalogue (unrecorded defuns are
+--       refused).
+--
+--   jobs.kind = 'lisp_eval'
+--       payload {"world": <uuid>, "source": "..."} — evaluate source in the
+--       world (preview restores the checkpoint afterwards).
+--
+--   jobs.kind = 'lisp_develop'
+--       payload {"world": <uuid>, "source": "...",
+--                "goals": ["(= (twice 2) 4)", ...],
+--                "invariants": ["...", ...]}
+--       goals/invariants are caller-supplied executable checks (jiti's
+--       acceptance contract): an unmet goal permits safe intermediate
+--       progress, a violated invariant refuses the revision and restores
+--       the checkpoint.
+--
+-- Success publishes a revision: one DB transaction containing
+-- v17_publish_revision + v12_complete_job (plan §4). Failure restores the
+-- checkpoint and completes the job 'failed'. Crash = lease expiry + reclaim
+-- by another worker; effect_id idempotence bounds visible effects to at
+-- most once.

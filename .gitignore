@@ -52,3 +52,6 @@ v13/pi_parity/node_modules/
 v13/pi_parity/pig_driver/read_pig
 v13/pi_parity/piswift_driver/.build/
 v13/pi_parity/piswift_driver/.swiftpm/
+
+# v17 project-local Quicklisp env (bootstrapped per host; never commit)
+v17/lisp/quicklisp/
