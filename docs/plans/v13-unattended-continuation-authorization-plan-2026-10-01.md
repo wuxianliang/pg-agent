@@ -165,7 +165,7 @@ scenarios <每场景 stop_reason / rounds_used / settle_once / advance / receipt
 | 断言名 | 场景与期望 |
 |---|---|
 | `accept_quiet_stable_waiting` | 只有根无未付：`stable_waiting`，`rounds_used=1`，`settle_once=0`，`v13_advance=0` |
-| `accept_progress_second_round_quiet` | 未付 `progress`：第 1 轮 `settle_once=1`/`advance=1`/该 effect 收据 0→1；第 2 轮未付空、双计数 0、收据仍 1；`stable_waiting`，`rounds_used=2` |
+| `accept_progress_second_round_quiet` | 未付 `progress`：第 1 轮 `settle_once=1`/`advance=1`/该 effect 收据 0→1；第 2 轮未付空、双计数 0、收据仍 1。停止原因按 §9.2 是 `human_pending`（活体路由留下 `low_intent_confidence` 的 human，status 仍 `ready`，`goal/stopped` 为 0，两轮 `request_stop_consumed=false`），`rounds_used=2`。不改 `v13_advance` / `_snap_with` 去凑 `stable_waiting` |
 | `accept_finish_observed_next_round` | 未付 `finish`：第 1 轮 `advance=1`、收据 1；第 2 轮 `sessions.status` 必须 `completed`、`word`=该 status、`settle_once=0`、`terminal`。第 2 轮不是 `completed` 即停，不改期望迁就 |
 | `accept_human_pending_no_skip` | 未付 `progress` + human `ready`，每轮 `request_stop=True`：两轮 `word=waiting`；第 1 轮结算一次收据 +1、human 仍 `ready`；第 2 轮 `settle_once=0`；两轮 `request_stop_consumed=false`；`goal/stopped` 计数 0；human 未被 complete/skip/cancel、status 不变 `unknown/succeeded/failed`；`human_pending`，`rounds_used=2`，退出 0 |
 | `accept_round_cap_stops` | 同上夹具观测：`rounds_used` 恰 2，不开第 3 轮 |
@@ -307,6 +307,10 @@ env -u V13_UNATTENDED_DB V13_UNATTENDED_AUTHORIZATION=1 UV_FROZEN=1 \
 原因在现有 SQL，不在循环规则。stage 38 的活体 `v13_advance` 是 `v13/control/v13_control.sql` 的替换体。纯 `progress`（无 `repair/required` / `replan/required`）会写下 `turn/material_spent` 后落入通用路由（约 1245–1349 行，不在此处返回）。`settle_once` 的快照信封只有 `{"sid": sid}`（`v13/loop_driver/driver.py` 的 `_snap_with`）。`v13_cycle_no` 数的是 `turn/route`，预算种子 `max_cycles` 为 3，这次检查时周期仍是 0；`remaining` 为 0。随后 `v13_route` 对无 `needed` / intent 的信封走 `action=human`、`reason=low_intent_confidence`（`v13/loop/advance.sql`）。第 2 轮因此命中 §4.2 规则 5，不是规则 6。
 
 要让该场景变成 `stable_waiting`，必须改 `v13_advance` 的 progress 落点，或改 `_snap_with` 的信封。两者都是本节的停止条件。期望未改，`driver.py` 未改，gate / README / 矩阵 / 台账未改。本提交只记录这个停点和当时的验收脚本 `v13/goal_supervisor/accept_unattended.py`（`authorized_main` 内把仓库根插入 `sys.path`，否则 `server` 导入失败）。授权命令仍是退出 1。这不是 `v13: add authorized fake unattended acceptance`。复审前不要把该失败改记成 `human_pending` 然后标绿。
+
+### 9.2 父继续（2026-10-06）
+
+停点提交 `9981645` 已推送。父指令「提交代码，然后继续」：不改 `v13_advance`，不改 `driver.py` 的 `_snap_with`。`accept_progress_second_round_quiet` 改为记录活体行为：收据仍 0→1 且第 2 轮不再结算，停止原因是 `human_pending`，human 请求原因是 `low_intent_confidence`、status 仍 `ready`、不 skip。这不是把失败盖成成功；`stable_waiting` 在这条夹具上不可达，继续使用它会要求本节禁止的 SQL/驱动改动。其余场景期望不变。授权命令随后实跑退出 0，库 `ll_unattended_accept_3039_aa76fb` 已 DROP，矩阵该行因此写 `exit_0`。`goal_supervisor` gate 为 74 checks 后仍 `v13: supervisor: ask_user`。同窗口十条回归退出 0：`plan_contract` 93、`plan_read` 11、`plan_arm` 104、`loop_driver` 91、`workflow_bind` 8、`real_chain` 24、`workspace_admit` 65、`workspace_exec` 54、`frontier_gap` 59、`goal_supervise` 172。
 
 ## 10. 实施顺序
 
