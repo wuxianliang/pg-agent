@@ -300,6 +300,14 @@ env -u V13_UNATTENDED_DB V13_UNATTENDED_AUTHORIZATION=1 UV_FROZEN=1 \
 
 出现任一即停并更新计划复审，不得标绿、删断言或提交绕过：需要改 `settle_once`/`run_turn`/`serve`/`take_exit`/`decide`/R0 收据哨兵/`v13_advance` 任何分支；需要 `load.py` 新键或把 `goal_supervisor` 写成 stage；需要从 Phase A 前缀调 stage 38 helper；需要复制 B1 出口机或包装 `run_turn`；需要恢复停放草稿；需要自动 skip/complete/cancel human；需要调用 `v13_wake_is_satisfied_v1` 或声称 auto-wake；需要 `time.sleep` 决定锁胜者或等 `not_before`；需要用 ASK_USER、exit 0 或授权盖住真实失败；需要把冻结放宽成整个 `v13/` 任意新增或把 load 从追加式放宽成任意 diff；需要把 §2.3 的 known 字节钉、load 规范形态穷尽或 AST 追加式放宽成更弱检查（如退回纯前缀/纯无删除行）；开工实跑的红断言不是 §2.2 描述的冻结失败；`git diff 93a49cd -- <`test_goal_supervisor.py` 的 `frozen` 目录列表> 非空（该列表不含 `v13/load.py` 与 `fair_claim`/`fair_driver`——load 走对应性追加谓词、fair 目录走前缀闭集）；finish 场景第 2 轮 status 不是 `completed`；实现发现必须改 `driver.py` 才能在第 2 轮看见终态或 human；一次性库创建成功但清理无法确认。
 
+### 9.1 已触发的停点（2026-10-06，提交③未入库）
+
+未授权三态（缺变量 / `0` / `invalid`）均退出 2，stdout 恰一行 `v13: unattended continuation not authorized`。授权自建命令 `env -u V13_UNATTENDED_DB V13_UNATTENDED_AUTHORIZATION=1` 退出 1。库 `ll_unattended_accept_82689_c66274` 已 DROP（`[PASS] accept_database_dropped`）。`accept_finish_observed_next_round` 通过：第 2 轮 `sessions.status=completed`、`word` 为该状态、`terminal`。同轮通过的还有 quiet、human pending、round cap、human unknown、skipped_failed、三道 unpaid 墙、每轮 settle/advance 上界、无真实 provider。失败断言只有 `accept_progress_second_round_quiet`：停止原因是 `human_pending`，不是 `stable_waiting`。第 1 轮 `settle_once=1`、`advance=1`、`settle_word=waiting`、结算前未付非空、结算后未付空，且 human 列表已有一条；第 2 轮未付空、human 仍在、双计数 0、`word=waiting`。
+
+原因在现有 SQL，不在循环规则。stage 38 的活体 `v13_advance` 是 `v13/control/v13_control.sql` 的替换体。纯 `progress`（无 `repair/required` / `replan/required`）会写下 `turn/material_spent` 后落入通用路由（约 1245–1349 行，不在此处返回）。`settle_once` 的快照信封只有 `{"sid": sid}`（`v13/loop_driver/driver.py` 的 `_snap_with`）。`v13_cycle_no` 数的是 `turn/route`，预算种子 `max_cycles` 为 3，这次检查时周期仍是 0；`remaining` 为 0。随后 `v13_route` 对无 `needed` / intent 的信封走 `action=human`、`reason=low_intent_confidence`（`v13/loop/advance.sql`）。第 2 轮因此命中 §4.2 规则 5，不是规则 6。
+
+要让该场景变成 `stable_waiting`，必须改 `v13_advance` 的 progress 落点，或改 `_snap_with` 的信封。两者都是本节的停止条件。期望未改，`driver.py` 未改，gate / README / 矩阵 / 台账未改。本提交只记录这个停点和当时的验收脚本 `v13/goal_supervisor/accept_unattended.py`（`authorized_main` 内把仓库根插入 `sys.path`，否则 `server` 导入失败）。授权命令仍是退出 1。这不是 `v13: add authorized fake unattended acceptance`。复审前不要把该失败改记成 `human_pending` 然后标绿。
+
 ## 10. 实施顺序
 
 1. **基线取证（零改动）**：§6.1 十三条 + 基线对象核对 + 文件哈希记录。红集合不是冻结红即停。2026-10-06 实跑见 §2.4：第五调用方与 `fair_claim` 干净树红已由父同意纳入提交②。
