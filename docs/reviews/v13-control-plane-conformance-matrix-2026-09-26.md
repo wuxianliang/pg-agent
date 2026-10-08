@@ -110,3 +110,9 @@
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
 | 86 | stage 40 `agentctl_observe`：STABLE INVOKER 只读工具；形状失败不 RAISE；未授权整批空成功；Fake parse→advance 打到 sql 臂；`spawn_subsession.enabled` 仍为 true | ✅ | 2026-10-08 `UV_FROZEN=1 uv run python v13/agentctl/test_agentctl.py` 退出码 0（577 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明 CE 进程 wait/poll、wake、目标工作流或无人值守。不实现 stage 41–45 |
+
+## Stage 41
+
+| # | 条文 | 状态 | 测试落点 | 缺口 |
+|---|---|---|---|---|
+| 87 | stage 41 生产者：三个 VOLATILE DEFINER 写动词 `v13_agentctl_steer` / `v13_agentctl_answer` / `v13_agentctl_cancel`，冻结 `controller` version 1，`controller_surface` version 1，Fake 根夹具打到 sql 臂，以及 D-3 的身份、授权、零写、watermark。`spawn_subsession.enabled` 仍为 true。退出码 0 只表示生产者已交付 | ✅ | 2026-10-08 `UV_FROZEN=1 uv run python v13/agentctl_verbs/test_agentctl_verbs.py` 退出码 0（1017 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 正文消费未闭合。注入 `steer/injected` 不证明 `payload.text` 被消费。R11 未被取代。不证明 CE 进程控制、wake 或无人值守。不实现 stage 42–45。不实现 `actl_driver_demoted`。不得写成「D-3 已闭合」或「S2 全链 gate 已满足 D-3」 |

@@ -244,6 +244,8 @@ R1–R13 是 D3 已记录的未做项。它们造成的对照缺口如下。不�
 
 **D-2 勘误（2026-10-08，stage 40 追加，不改上表原句）。** R6（约第 236 行）写 `spawn_subsession` 保持 `enabled=false`。该句已过时：活体插入值为 true（`v13/spawn/v13_spawn.sql:1760`）。stage 40 保持 true，不把「维持 true」写成功能交付，也不把原文涂改成从未写过 false。R11（约第 240 行）不在本次勘误范围。
 
+**R11 勘误（2026-10-08，stage 41 生产者追加，不改上表原句）。** R11（约第 240 行）写「steer 正文未写 / 已裁 P1 不做」。该句作为 P1 历史事实保留，不涂改。stage 41 的 `v13_agentctl_steer` 在数字 `schema_version` 1 的载荷里写入 `text` 与字面量 `source_principal=controller`，所以「正文未写」不再描述这个生产者。正文消费未交付。注入事件不证明 `payload.text` 进入后续判断、工具参数、goal 或 effect。原句不改写。F2、R3b §7.3 与 D-3 原句不改写。这里不用「取代」。
+
 三件原未裁的去向（2026-09-27 更新：全部闭环，不再送裁）：
 
 1. **repair_cap × tail gap——已闭环。** R6 已裁 has-event only（stage 21 D11 交付 `v13_tail_gap_cap_exempt`，`e925ebe`+`d68f37a`；台账 F24 接受残留）。原送裁建议撤销。

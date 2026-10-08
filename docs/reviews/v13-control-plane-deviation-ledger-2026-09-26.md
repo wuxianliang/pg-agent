@@ -160,3 +160,11 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 |---|---|---|
 | S40-1 | stage 40 只交付 `agentctl_observe` 这一个 STABLE INVOKER 只读工具。不建 `controller` 政策，不登记写动词，不改 stage 1–39 函数 | 接受。路由证明用测试库 `agentctl_observe_probe` version 1，随库消失 |
 | S40-D2 | parity §6 R6（`docs/reviews/v13-control-plane-parity-rpce-loopx-2026-09-26.md:236`）写 `spawn_subsession` 保持 `enabled=false`。活体 `v13/spawn/v13_spawn.sql:1760` 为 true。这不是已关闭的 F22：F22 是 catalog VOLATILE/parse | 勘误追加，不改 R6 原句，不改 F22 原行。本 stage 保持 true，不把「翻成 true」记作交付。R11 不进这次勘误 |
+
+## Stage 41
+
+| # | 事实 | 处置 |
+|---|---|---|
+| S41-1 | stage 41 交付三个 DEFINER 写动词、冻结 `controller` / 1、`controller_surface` / 1。`v13_named_sql_writer` 与 `v13_spawn_writer_ok` 只在新 SQL 文件里替换。`v13/spawn/v13_spawn.sql` 字节未改 | 接受。本次提交不是「D-3 已闭合」，也不是「S2 全链 gate 已满足 D-3」 |
+| S41-2 | 2026-10-03 双车道复访，父签认关闭。本次扩 `v13_named_sql_writer` 不重开 spawn 档 | 接受。不改 F22 |
+| S41-D3 | `steer/injected.payload.text` 未被消费。`CONSUMER` 未设置。九个非消费者是 `v13/control/test_control.py:516-524`、`demo_v13/parity/g_steer.py:98`、`v13/plan_contract/test_plan_contract.py:459-460`、`v13/resolve` canonical state、`v13/envelope/v13_envelope.sql:519,551`、`v13/memory/v13_memory.sql:113-127`、`v13/triage/v13_triage.sql:161-164`、`v13/observe/v13_observe.sql:130-171` 的 `v13_session_log`、`v13_triage_steer` 名字碰撞。读回事件行、审计三联、watermark/stale、`actl_chain_full` 都不是消费 | 未关闭。不发明消费者。不改 memory、triage、envelope 或水位谓词。L4 仍要求加入 `steer/injected` 字面前先 `ASK_USER`。不写「已取代 R11」 |

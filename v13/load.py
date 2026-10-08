@@ -55,6 +55,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",
     V13_ROOT / "fair_claim" / "v13_fair_claim.sql",
     V13_ROOT / "agentctl" / "v13_agentctl.sql",
+    V13_ROOT / "agentctl_verbs" / "v13_agentctl_verbs.sql",
 ]
 
 STAGE_THROUGH = {
@@ -98,6 +99,7 @@ STAGE_THROUGH = {
     "goal_supervise": 38,
     "fair_claim": 39,
     "agentctl": 40,
+    "agentctl_verbs": 41,
 }
 
 
