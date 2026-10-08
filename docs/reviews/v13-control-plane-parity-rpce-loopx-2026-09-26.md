@@ -242,6 +242,8 @@ R1–R13 是 D3 已记录的未做项。它们造成的对照缺口如下。不�
 | R12 `artifacts.kind` 无 CHECK | `worktree_binding` 字面写入 | 不改变 F23 的已裁投影点 |
 | R13 无「无条件让出」 | 无源功能对应 | 台账判伪缺口。不进对照桶 |
 
+**D-2 勘误（2026-10-08，stage 40 追加，不改上表原句）。** R6（约第 236 行）写 `spawn_subsession` 保持 `enabled=false`。该句已过时：活体插入值为 true（`v13/spawn/v13_spawn.sql:1760`）。stage 40 保持 true，不把「维持 true」写成功能交付，也不把原文涂改成从未写过 false。R11（约第 240 行）不在本次勘误范围。
+
 三件原未裁的去向（2026-09-27 更新：全部闭环，不再送裁）：
 
 1. **repair_cap × tail gap——已闭环。** R6 已裁 has-event only（stage 21 D11 交付 `v13_tail_gap_cap_exempt`，`e925ebe`+`d68f37a`；台账 F24 接受残留）。原送裁建议撤销。

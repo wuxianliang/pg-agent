@@ -104,3 +104,9 @@
 | 83 | 折叠只在 `v13_goal_fold`；`v13_goal_lifecycle` 薄包装；空会话 `running` 非 NULL；attention 增 `lifecycle` 列，stopped 行 `blocked_by=goal_stopped` 且秩先于 quota 兄弟 | ✅ | 同上 | 索引 `ix_events_goal_lifecycle` 非 UNIQUE |
 | 84 | stage 29 `test_govern.py` | ✅ | 2026-09-27 `uv run python v13/govern/test_govern.py` 退出码 0（228 checks） | RED 基线记 `v13/govern/README.md`（HEAD `8678ebf`，`v13: spawn budget cap`） |
 | 85 | stage 1–29 回归 | ✅ | 2026-09-27 schema…govern 全部 `test_*.py` 串行退出码均 0（30 脚本，含 mgraph 两脚本） | 无 |
+
+## Stage 40
+
+| # | 条文 | 状态 | 测试落点 | 缺口 |
+|---|---|---|---|---|
+| 86 | stage 40 `agentctl_observe`：STABLE INVOKER 只读工具；形状失败不 RAISE；未授权整批空成功；Fake parse→advance 打到 sql 臂；`spawn_subsession.enabled` 仍为 true | ✅ | 2026-10-08 `UV_FROZEN=1 uv run python v13/agentctl/test_agentctl.py` 退出码 0（577 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明 CE 进程 wait/poll、wake、目标工作流或无人值守。不实现 stage 41–45 |

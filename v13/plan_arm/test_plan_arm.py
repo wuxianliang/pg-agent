@@ -404,6 +404,15 @@ def r1_load_append_ok(base_text, current_text, tracked):
     expected = ['V13_ROOT / "%s" / "%s",' % item for item in appended_sql]
     expected += ['"%s": %d,' % item for item in appended_stage]
     assert plus == expected, "plus lines do not match append items"
+    approved = [
+        ("fair_claim", "v13_fair_claim.sql", "fair_claim", 39),
+        ("agentctl", "v13_agentctl.sql", "agentctl", 40),
+    ]
+    got = [
+        (stage, filename, key, number)
+        for (stage, filename), (key, number) in zip(appended_sql, appended_stage)]
+    assert got == approved, (
+        "append is not fair_claim/39 then agentctl/40: " + str(got))
 
 
 def r1_phase_d_prefix_allowance():
@@ -415,6 +424,12 @@ def r1_phase_d_prefix_allowance():
     base = "fb295ac6c7459bb98dac57e37883af549d2d8a4c"
     prefixes = ("v13/goal_supervisor/", "v13/fair_claim/", "v13/fair_driver/")
     fresh_ok = {"v13/goal_supervisor/accept_unattended.py"}
+    stage40 = {
+        "v13/agentctl/v13_agentctl.sql",
+        "v13/agentctl/setup_db.py",
+        "v13/agentctl/test_agentctl.py",
+        "v13/agentctl/README.md",
+    }
     subprocess.check_call(["git", "cat-file", "-e", phase_d + "^{commit}"], cwd=AGENT_ROOT)
     subprocess.check_call(["git", "cat-file", "-e", base + "^{commit}"], cwd=AGENT_ROOT)
 
@@ -472,8 +487,12 @@ def r1_phase_d_prefix_allowance():
 
     def allow(extra, known_names, blobs, current, load_base, load_current, tracked):
         for name in extra:
-            assert name.startswith(prefixes), "outside the three prefixes: " + name
-        assert extra - known_names <= fresh_ok, "fresh file outside accept_unattended.py"
+            assert name.startswith(prefixes) or name in stage40, (
+                "outside the three prefixes: " + name)
+        assert extra - known_names - stage40 <= fresh_ok, (
+            "fresh file outside accept_unattended.py")
+        missing = stage40 - set(tracked)
+        assert not missing, "stage 40 path is not tracked: " + str(sorted(missing))
         for name in known_names & extra:
             blob, now = blobs[name], current[name]
             if name == "v13/goal_supervisor/README.md":
@@ -630,6 +649,68 @@ def r1_phase_d_prefix_allowance():
         '    "goal_supervise": 38,\n    "missing_stage": 39,\n',
         1)
     must_reject(lambda: r1_load_append_ok(load_base, missing, tracked))
+
+    def reject_reason(call, needle):
+        try:
+            call()
+        except AssertionError as exc:
+            assert needle in str(exc), str(exc)
+            return
+        raise AssertionError("synthetic case must reject: " + needle)
+
+    live = load_current
+    reject_reason(
+        lambda: allow(
+            extra | {"v13/not_allowed/x.py"}, known_names, blobs, current,
+            load_base, load_current, tracked),
+        "outside the three prefixes")
+    reject_reason(
+        lambda: allow(
+            extra | {"v13/agentctl/extra.py"}, known_names, blobs, current,
+            load_base, load_current, tracked),
+        "outside the three prefixes")
+    reject_reason(
+        lambda: allow(
+            extra, known_names, blobs, current, load_base, load_current,
+            tracked - {"v13/agentctl/v13_agentctl.sql"}),
+        "stage 40 path is not tracked")
+    reject_reason(
+        lambda: allow(
+            (extra - {"v13/agentctl/test_agentctl.py"}) | {"v13/agentctl/extra.py"},
+            known_names, blobs, current, load_base, load_current, tracked),
+        "outside the three prefixes")
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base, live.replace('    "agentctl": 40,\n', '    "agentctl": 40a,\n', 1), tracked),
+        "load diff plus line is not a canonical append")
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base, live.replace('    "agentctl": 40,\n', '    "agentctl": 41,\n', 1), tracked),
+        "stage number is not the next contiguous value")
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base,
+            live.replace("v13_agentctl.sql", "v13_agentctl_extra.sql", 1),
+            tracked),
+        "append is not fair_claim/39 then agentctl/40")
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base,
+            live.replace('    "agentctl": 40,\n', '    "agentctl_verbs": 40,\n', 1),
+            tracked),
+        "STAGE_THROUGH keys do not match SQL append items")
+    future = live.replace(
+        '    V13_ROOT / "agentctl" / "v13_agentctl.sql",\n',
+        '    V13_ROOT / "agentctl" / "v13_agentctl.sql",\n'
+        '    V13_ROOT / "agentctl_verbs" / "v13_agentctl_verbs.sql",\n',
+        1).replace(
+        '    "agentctl": 40,\n',
+        '    "agentctl": 40,\n    "agentctl_verbs": 41,\n',
+        1)
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base, future, tracked | {"v13/agentctl_verbs/v13_agentctl_verbs.sql"}),
+        "append is not fair_claim/39 then agentctl/40")
 
 
 def r0_source_scope():
