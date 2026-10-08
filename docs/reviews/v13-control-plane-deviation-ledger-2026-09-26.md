@@ -168,3 +168,12 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | S41-1 | stage 41 交付三个 DEFINER 写动词、冻结 `controller` / 1、`controller_surface` / 1。`v13_named_sql_writer` 与 `v13_spawn_writer_ok` 只在新 SQL 文件里替换。`v13/spawn/v13_spawn.sql` 字节未改 | 接受。本次提交不是「D-3 已闭合」，也不是「S2 全链 gate 已满足 D-3」 |
 | S41-2 | 2026-10-03 双车道复访，父签认关闭。本次扩 `v13_named_sql_writer` 不重开 spawn 档 | 接受。不改 F22 |
 | S41-D3 | `steer/injected.payload.text` 未被消费。`CONSUMER` 未设置。九个非消费者是 `v13/control/test_control.py:516-524`、`demo_v13/parity/g_steer.py:98`、`v13/plan_contract/test_plan_contract.py:459-460`、`v13/resolve` canonical state、`v13/envelope/v13_envelope.sql:519,551`、`v13/memory/v13_memory.sql:113-127`、`v13/triage/v13_triage.sql:161-164`、`v13/observe/v13_observe.sql:130-171` 的 `v13_session_log`、`v13_triage_steer` 名字碰撞。读回事件行、审计三联、watermark/stale、`actl_chain_full` 都不是消费 | 未关闭。不发明消费者。不改 memory、triage、envelope 或水位谓词。L4 仍要求加入 `steer/injected` 字面前先 `ASK_USER`。不写「已取代 R11」 |
+
+## Stage 42
+
+| # | 事实 | 处置 |
+|---|---|---|
+| S42-1 | stage 42 只新增 STABLE INVOKER 函数 `v13_macro_suggestion`。场景是 Fake 四次 advance，词序列 `waiting`、`progressed`、`waiting`、`waiting`。`controller` / 1 只消费不重定义。`driver.py` 哨兵外字节未改 | 接受。不是无人值守，不是真实 provider，不交付 stage 43–45，不闭合 D-3 |
+| S42-2 | `suggested_should_run` 丢弃。`admitted` 由 `v13_should_run AND v13_quota_eligible` 重算。缺会话不调用两个谓词。函数零写 | 接受。形状与 missing 是三键 jsonb，不 RAISE |
+| S42-3 | human pending 的停止不是任务解决。stage 45 不交付。`read_file_py` 是 subject 读取，不是控制文件，也不是 file sink | 接受。不 skip、不 complete、不 cancel 那条 human effect |
+| S42-4 | 计划 §3.8 写保留 `"agentctl_verbs": 42` 不连续负例。活体尾已经是 `goal_workflow: 42`，该替换先撞上 `duplicate stage number`（编号唯一先于连续编号）。合成替换改为 44，needle 仍是 `stage number is not the next contiguous value` | 接受。不改 `r1_load_append_ok` 检查顺序，不放宽 `r0_source_scope` |

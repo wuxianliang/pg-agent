@@ -116,3 +116,9 @@
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
 | 87 | stage 41 生产者：三个 VOLATILE DEFINER 写动词 `v13_agentctl_steer` / `v13_agentctl_answer` / `v13_agentctl_cancel`，冻结 `controller` version 1，`controller_surface` version 1，Fake 根夹具打到 sql 臂，以及 D-3 的身份、授权、零写、watermark。`spawn_subsession.enabled` 仍为 true。退出码 0 只表示生产者已交付 | ✅ | 2026-10-08 `UV_FROZEN=1 uv run python v13/agentctl_verbs/test_agentctl_verbs.py` 退出码 0（1017 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 正文消费未闭合。注入 `steer/injected` 不证明 `payload.text` 被消费。R11 未被取代。不证明 CE 进程控制、wake 或无人值守。不实现 stage 42–45。不实现 `actl_driver_demoted`。不得写成「D-3 已闭合」或「S2 全链 gate 已满足 D-3」 |
+
+## Stage 42
+
+| # | 条文 | 状态 | 测试落点 | 缺口 |
+|---|---|---|---|---|
+| 88 | stage 42 `goal_workflow`。生产新增只有 `public.v13_macro_suggestion`。单 goal、测试超级用户、Fake 夹具、场景自有 advance 上界 4（常数只活在 `v13/goal_workflow/test_goal_workflow.py`）、无真实 provider、唯一推进者是一个 `LoopDriver`：宏观门放行后，`workflow_template` version 1 / `first_real_chain` 展开成一条 advancement todo、一个子会话、一次 `read_file_py`、根上归档为 done，根与子都没有 human effect。已有 human pending 时场景停在非终态、不 skip、不 complete、不 cancel。这不是人可以离开生产终端。 | ✅ | 2026-10-09 `UV_FROZEN=1 uv run python v13/goal_workflow/test_goal_workflow.py` 退出码 0（460 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明无人值守、真实 provider、LoopX quota / outcome_floor / writeback、wake、CE 进程控制。不实现 stage 43–45。不实现 `actl_driver_demoted`。不调用四个 agentctl 动词。不闭合 D-3。不新增 `effects.kind`。 |
