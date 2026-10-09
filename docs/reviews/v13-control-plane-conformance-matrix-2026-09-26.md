@@ -122,3 +122,9 @@
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
 | 88 | stage 42 `goal_workflow`。生产新增只有 `public.v13_macro_suggestion`。单 goal、测试超级用户、Fake 夹具、场景自有 advance 上界 4（常数只活在 `v13/goal_workflow/test_goal_workflow.py`）、无真实 provider、唯一推进者是一个 `LoopDriver`：宏观门放行后，`workflow_template` version 1 / `first_real_chain` 展开成一条 advancement todo、一个子会话、一次 `read_file_py`、根上归档为 done，根与子都没有 human effect。已有 human pending 时场景停在非终态、不 skip、不 complete、不 cancel。这不是人可以离开生产终端。 | ✅ | 2026-10-09 `UV_FROZEN=1 uv run python v13/goal_workflow/test_goal_workflow.py` 退出码 0（460 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明无人值守、真实 provider、LoopX quota / outcome_floor / writeback、wake、CE 进程控制。不实现 stage 43–45。不实现 `actl_driver_demoted`。不调用四个 agentctl 动词。不闭合 D-3。不新增 `effects.kind`。 |
+
+## Stage 43
+
+| # | 条文 | 状态 | 测试落点 | 缺口 |
+|---|---|---|---|---|
+| 89 | stage 43 `external_exec`。生产新增是 `v13_external_exec_classify` 与 `external_executor` version 1。夹具绑定的现存 `p_sid`、`external_executor` version 1、STABLE INVOKER 函数 `v13_external_exec_classify`：允许动词返回七键且 `executed=false`；`source_principal`、未知键、列表外动词、空会话或不存在会话返回两键 `unsupported` 且零写。真正执行仍是既有 parse → advance 的 sql 臂，快照仍是 `controller` / 1。这不是可信产品入口，不是注册身份，不是 task lease。 | ✅ | 2026-10-09 `UV_FROZEN=1 uv run python v13/external_exec/test_external_exec.py` 退出码 0（471 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明注册身份、可信 bind、task lease、`claimedProcessID`、五表 authority store、CE 进程控制、wake、无人值守。不实现 stage 44 的映射语义，不实现 stage 45。不改 `driver.py`、信封、`v13_advance`。不把 `external_executor` 写入 route 快照。不闭合 D-3。不消费 stage 42 场景能力。 |

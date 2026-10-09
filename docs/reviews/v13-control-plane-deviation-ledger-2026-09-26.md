@@ -177,3 +177,12 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | S42-2 | `suggested_should_run` 丢弃。`admitted` 由 `v13_should_run AND v13_quota_eligible` 重算。缺会话不调用两个谓词。函数零写 | 接受。形状与 missing 是三键 jsonb，不 RAISE |
 | S42-3 | human pending 的停止不是任务解决。stage 45 不交付。`read_file_py` 是 subject 读取，不是控制文件，也不是 file sink | 接受。不 skip、不 complete、不 cancel 那条 human effect |
 | S42-4 | 计划 §3.8 写保留 `"agentctl_verbs": 42` 不连续负例。活体尾已经是 `goal_workflow: 42`，该替换先撞上 `duplicate stage number`（编号唯一先于连续编号）。合成替换改为 44，needle 仍是 `stage number is not the next contiguous value` | 接受。不改 `r1_load_append_ok` 检查顺序，不放宽 `r0_source_scope` |
+
+## Stage 43
+
+| # | 事实 | 处置 |
+|---|---|---|
+| S43-1 | 只新增 STABLE INVOKER 分类函数与 `external_executor` version 1。执行证明是一条 `agentctl_steer` 的既有 sql 臂。不是可信产品入口。 | 接受。不是注册身份，不是 task lease |
+| S43-2 | 动词列表只来自当次 active value。函数体不写四个名字。shape 与 unsupported 是两键 jsonb、零写。两条 RAISE 文案按终裁。`policy_version` 只在成功返回值，且等于读到的行。 | 接受 |
+| S43-3 | D-A.1 的政策版本不靠改信封实现。parse 快照仍是 `controller` / 1。无身份列，无控制文件。 | 接受 |
+| S43-4 | 合成负例从 `external_exec`/43 前移到 `ce_map` / `v13_ce_map.sql` / 44。`"goal_workflow": 43` 会先撞 duplicate stage number，故改为 45，needle 仍是连续编号那句。不改 `r1_load_append_ok` 的检查顺序，不放宽 `r0_source_scope`。 | 接受。不改 `r1_load_append_ok` 的检查顺序，不放宽 `r0_source_scope` |
