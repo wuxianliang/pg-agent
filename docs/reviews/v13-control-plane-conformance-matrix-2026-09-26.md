@@ -128,3 +128,9 @@
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
 | 89 | stage 43 `external_exec`。生产新增是 `v13_external_exec_classify` 与 `external_executor` version 1。夹具绑定的现存 `p_sid`、`external_executor` version 1、STABLE INVOKER 函数 `v13_external_exec_classify`：允许动词返回七键且 `executed=false`；`source_principal`、未知键、列表外动词、空会话或不存在会话返回两键 `unsupported` 且零写。真正执行仍是既有 parse → advance 的 sql 臂，快照仍是 `controller` / 1。这不是可信产品入口，不是注册身份，不是 task lease。 | ✅ | 2026-10-09 `UV_FROZEN=1 uv run python v13/external_exec/test_external_exec.py` 退出码 0（471 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明注册身份、可信 bind、task lease、`claimedProcessID`、五表 authority store、CE 进程控制、wake、无人值守。不实现 stage 44 的映射语义，不实现 stage 45。不改 `driver.py`、信封、`v13_advance`。不把 `external_executor` 写入 route 快照。不闭合 D-3。不消费 stage 42 场景能力。 |
+
+## Stage 44
+
+| # | 条文 | 状态 | 测试落点 | 缺口 |
+|---|---|---|---|---|
+| 90 | stage 44 在连续装载 1–43 之后提供 `public.v13_ce_map()`。它是 `LANGUAGE sql`、`STABLE`、`SECURITY INVOKER`、非 `STRICT` 的零参函数，返回 oracle 那一份静态 jsonb。`map` 把父计划 E2 的 CE 原语指到既有 PG 签名，或把 `shutdown` 写成字符串 `unsupported`。调用它不执行这些签名，不读 `external_executor`，不是 CE 会话运行时，不交付 stage 45。gate 分开查六个 `to_regprocedure`、一参 cancel 存在但不映射、五参 complete 存在但不是格子、两列的 `data_type`、`v13_ce_shutdown` 行数 0、安装窗口与调用窗口的五表行数不变。 | ✅ | 2026-10-09 `UV_FROZEN=1 uv run python v13/ce_map/test_ce_map.py` 退出码 0（63 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明 CE 会话运行时、进程恢复、stage 42 启动、wake、task lease、注册身份、`claimedProcessID`、worktree、auto-wake、oracle lanes、`request_attention`；不消费 `external_executor`；不实现 stage 45；不闭合 D-3。 |

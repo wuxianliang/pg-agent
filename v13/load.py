@@ -58,6 +58,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "agentctl_verbs" / "v13_agentctl_verbs.sql",
     V13_ROOT / "goal_workflow" / "v13_goal_workflow.sql",
     V13_ROOT / "external_exec" / "v13_external_exec.sql",
+    V13_ROOT / "ce_map" / "v13_ce_map.sql",
 ]
 
 STAGE_THROUGH = {
@@ -104,6 +105,7 @@ STAGE_THROUGH = {
     "agentctl_verbs": 41,
     "goal_workflow": 42,
     "external_exec": 43,
+    "ce_map": 44,
 }
 
 

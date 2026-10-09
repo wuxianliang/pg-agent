@@ -186,3 +186,13 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | S43-2 | 动词列表只来自当次 active value。函数体不写四个名字。shape 与 unsupported 是两键 jsonb、零写。两条 RAISE 文案按终裁。`policy_version` 只在成功返回值，且等于读到的行。 | 接受 |
 | S43-3 | D-A.1 的政策版本不靠改信封实现。parse 快照仍是 `controller` / 1。无身份列，无控制文件。 | 接受 |
 | S43-4 | 合成负例从 `external_exec`/43 前移到 `ce_map` / `v13_ce_map.sql` / 44。`"goal_workflow": 43` 会先撞 duplicate stage number，故改为 45，needle 仍是连续编号那句。不改 `r1_load_append_ok` 的检查顺序，不放宽 `r0_source_scope`。 | 接受。不改 `r1_load_append_ok` 的检查顺序，不放宽 `r0_source_scope` |
+
+## Stage 44
+
+| # | 事实 | 处置 |
+|---|---|---|
+| S44-1 | 生产新增只有零参 STABLE INVOKER SQL 函数 `v13_ce_map()`。无 `tools` 行，无政策行，无 `INSERT`。不是 CE 运行时 | 接受 |
+| S44-2 | 返回值是 oracle 闭集。`shutdown` 是字符串 `unsupported`。返回值无 `v13_agentctl_answer`。两链不合并，session-link 无 `forcePoll` | 接受。`notes` 两值各含一个分号，`cmap_prosrc_one_select` 只放行这两处，其余分号仍失败。`worktree_merge`（含 routed `confirm_preview` 拒绝）不进 jsonb 新键 |
+| S44-3 | `to_regprocedure` 与 `information_schema.columns` 分开。一参 cancel 存在但不映射。六参 complete 是格子。`lease_owner` 是 `text`，`lease_until` 是 `timestamp with time zone`。列不是 task lease，也不是 stage 42 的建会话路径 | 接受 |
+| S44-4 | `load_stage(..., "external_exec")` 与 `files_through` 使 43 在库里，函数定义与返回值都不引用 `external_executor` 或 `v13_external_exec_classify`。装载前置不是功能消费 | 接受 |
+| S44-5 | 合成负例从 `ce_map`/44 前移到 `not_scheduled` / `v13_not_scheduled.sql` / 45。哨兵不进 `approved`、允许集或 `SQL_LOAD_ORDER`。不创建 `workflow_project`。`"external_exec": 44` 与 `"agentctl_verbs": 44` 改为 45，因为否则先撞重复编号。`"goal_workflow": 45` 不动。不改 `r1_load_append_ok` 的检查顺序，不放宽 `r0_source_scope` | 接受。不改 `r1_load_append_ok` 的检查顺序，不放宽 `r0_source_scope` |
