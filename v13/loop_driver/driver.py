@@ -551,3 +551,50 @@ class LoopDriver:
             raise RuntimeError("v13: settle_once: not idle")
         return word
     # R1_SETTLE_ONCE_END
+
+    def run_controller_once(self, sid, target, *, snap=None, target_seq_before):
+        from uuid import UUID
+        from v13.loop_driver.controller import (
+            _normalized_row, decide_controller_disposition)
+
+        for value, name in ((sid, "sid"), (target, "target")):
+            try:
+                parsed = UUID(value)
+            except (ValueError, AttributeError, TypeError):
+                raise ValueError("controller: invalid " + name) from None
+            if str(parsed) != value:
+                raise ValueError("controller: invalid " + name)
+        if (isinstance(target_seq_before, bool)
+                or not isinstance(target_seq_before, int)
+                or target_seq_before < -1):
+            raise ValueError("controller: invalid target_seq_before")
+
+        word = self.advance(sid, snap) if snap is not None else self.advance(sid)
+        if word not in ("waiting", "terminal", "stale", "progressed"):
+            raise ValueError("controller: unsupported advance word: " + str(word))
+        observe = None
+        readback = None
+        if word == "progressed":
+            rows = self._read(
+                "SELECT public.v13_agentctl_observe(%s::uuid, %s::jsonb)",
+                (sid, json.dumps({"ids": [target], "hint": False})))
+            observe = as_obj(rows[0][0]) if rows else None
+            if isinstance(observe, dict) and observe.get("ok") is True:
+                observed_rows = observe.get("rows")
+                if isinstance(observed_rows, list) and len(observed_rows) == 1:
+                    readback = _normalized_row(observed_rows[0])
+
+        receipt = {
+            "schema_version": 1,
+            "caller": sid,
+            "target": target,
+            "advance_word": word,
+            "target_seq_before": target_seq_before,
+            "observe": observe,
+            "readback": readback,
+            "repair_required": False,
+            "replan_required": False,
+        }
+        disposition = decide_controller_disposition(receipt)
+        receipt["disposition"] = disposition
+        return receipt

@@ -196,3 +196,12 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | S44-3 | `to_regprocedure` 与 `information_schema.columns` 分开。一参 cancel 存在但不映射。六参 complete 是格子。`lease_owner` 是 `text`，`lease_until` 是 `timestamp with time zone`。列不是 task lease，也不是 stage 42 的建会话路径 | 接受 |
 | S44-4 | `load_stage(..., "external_exec")` 与 `files_through` 使 43 在库里，函数定义与返回值都不引用 `external_executor` 或 `v13_external_exec_classify`。装载前置不是功能消费 | 接受 |
 | S44-5 | 合成负例从 `ce_map`/44 前移到 `not_scheduled` / `v13_not_scheduled.sql` / 45。哨兵不进 `approved`、允许集或 `SQL_LOAD_ORDER`。不创建 `workflow_project`。`"external_exec": 44` 与 `"agentctl_verbs": 44` 改为 45，因为否则先撞重复编号。`"goal_workflow": 45` 不动。不改 `r1_load_append_ok` 的检查顺序，不放宽 `r0_source_scope` | 接受。不改 `r1_load_append_ok` 的检查顺序，不放宽 `r0_source_scope` |
+
+## Controller thin cut
+
+| # | 事实 | 处置 |
+|---|---|---|
+| TC-1 | 六词纯函数，固定优先级；repair/replan 是内存事实。`blocked_unknown` 在序号前进且无 human 时落 `run_now`，不新增词 | 接受。不扫描 SQL。不引入 `capability_action_required` |
+| TC-2 | 信封 → `v13_parse` → 一次 `v13_advance` → sql `agentctl_steer` | 接受。不是 FakeLLM tool_calls |
+| TC-3 | observe 证明目标身份、序号前进、`last_event_type=steer/injected`；无 serve/complete | 接受。正文只由测试读 `events`。不闭合 S41-D3 |
+| TC-4 | 精确两个新文件放行；loader 不变；无 stage 45；不声称 provider 或无人值守 | 接受。gate 只装载一次 stage 41；各场景以不同 mock model 名隔离全库 judgment_cache 的 UUID 回答，不改生产缓存或 SQL |

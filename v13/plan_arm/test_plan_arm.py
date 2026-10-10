@@ -273,8 +273,57 @@ def test_stage_bytes():
 
 
 def r1_driver_restore(current, original):
-    """Strip the unique R1 settle_once sentinel pair; remainder must equal fb295ac."""
+    """Strip the unique R1 settle_once sentinel pair and controller method."""
     import re
+
+    APPROVED_CONTROLLER_METHOD = (
+        b"    def run_controller_once(self, sid, target, *, snap=None, target_seq_before):\n"
+        b"        from uuid import UUID\n"
+        b"        from v13.loop_driver.controller import (\n"
+        b"            _normalized_row, decide_controller_disposition)\n"
+        b"\n"
+        b"        for value, name in ((sid, \"sid\"), (target, \"target\")):\n"
+        b"            try:\n"
+        b"                parsed = UUID(value)\n"
+        b"            except (ValueError, AttributeError, TypeError):\n"
+        b"                raise ValueError(\"controller: invalid \" + name) from None\n"
+        b"            if str(parsed) != value:\n"
+        b"                raise ValueError(\"controller: invalid \" + name)\n"
+        b"        if (isinstance(target_seq_before, bool)\n"
+        b"                or not isinstance(target_seq_before, int)\n"
+        b"                or target_seq_before < -1):\n"
+        b"            raise ValueError(\"controller: invalid target_seq_before\")\n"
+        b"\n"
+        b"        word = self.advance(sid, snap) if snap is not None else self.advance(sid)\n"
+        b"        if word not in (\"waiting\", \"terminal\", \"stale\", \"progressed\"):\n"
+        b"            raise ValueError(\"controller: unsupported advance word: \" + str(word))\n"
+        b"        observe = None\n"
+        b"        readback = None\n"
+        b"        if word == \"progressed\":\n"
+        b"            rows = self._read(\n"
+        b"                \"SELECT public.v13_agentctl_observe(%s::uuid, %s::jsonb)\",\n"
+        b"                (sid, json.dumps({\"ids\": [target], \"hint\": False})))\n"
+        b"            observe = as_obj(rows[0][0]) if rows else None\n"
+        b"            if isinstance(observe, dict) and observe.get(\"ok\") is True:\n"
+        b"                observed_rows = observe.get(\"rows\")\n"
+        b"                if isinstance(observed_rows, list) and len(observed_rows) == 1:\n"
+        b"                    readback = _normalized_row(observed_rows[0])\n"
+        b"\n"
+        b"        receipt = {\n"
+        b"            \"schema_version\": 1,\n"
+        b"            \"caller\": sid,\n"
+        b"            \"target\": target,\n"
+        b"            \"advance_word\": word,\n"
+        b"            \"target_seq_before\": target_seq_before,\n"
+        b"            \"observe\": observe,\n"
+        b"            \"readback\": readback,\n"
+        b"            \"repair_required\": False,\n"
+        b"            \"replan_required\": False,\n"
+        b"        }\n"
+        b"        disposition = decide_controller_disposition(receipt)\n"
+        b"        receipt[\"disposition\"] = disposition\n"
+        b"        return receipt"
+    )
     start, end = b"# R1_SETTLE_ONCE_BEGIN", b"# R1_SETTLE_ONCE_END"
     assert current.count(start) == current.count(end) == 1, "r1 sentinel pair"
     assert start not in original and end not in original
@@ -283,9 +332,17 @@ def r1_driver_restore(current, original):
     assert match, "r1 sentinel block"
     block = match.group()
     assert b"def settle_once" in block, "settle_once must live inside the R1 sentinel"
+    method_pattern = rb"(?m)^    def run_controller_once\(.*?\Z"
+    method_match = re.search(method_pattern, current, re.S)
+    assert current.count(b"def run_controller_once") == 1, "controller method count"
+    assert method_match, "controller method missing"
+    assert method_match.start() > match.end(), "controller method inside R1 sentinel"
+    method = method_match.group().removesuffix(b"\n")
+    assert method == APPROVED_CONTROLLER_METHOD, "controller method bytes"
     sess_lock = b"FROM sessions WHERE session_id = %s FOR UPDATE"
     assert block.count(sess_lock) == 1, "sessions FOR UPDATE once in sentinel"
-    restored = current[:match.start()] + current[match.end():]
+    assert current[match.end():method_match.start()] == b"\n", "controller method separator"
+    restored = current[:match.start()]
     assert restored == original, "R1 removal must restore ALL baseline driver.py bytes"
     assert b"FOR UPDATE" not in restored, "FOR UPDATE only inside the R1 sentinel"
     return restored, block
@@ -293,6 +350,7 @@ def r1_driver_restore(current, original):
 
 def r1_freeze_positive_proof():
     """Mutated copies must fail the R1 restore; the live tree must pass."""
+    import re
     base = "fb295ac6c7459bb98dac57e37883af549d2d8a4c"
     original = subprocess.check_output(
         ["git", "show", base + ":v13/loop_driver/driver.py"], cwd=AGENT_ROOT)
@@ -322,6 +380,37 @@ def r1_freeze_positive_proof():
     except AssertionError:
         leak_failed = True
     assert leak_failed, "v13_advance outside sentinel must fail"
+    method_match = re.search(rb"(?m)^    def run_controller_once\(.*?\Z", current, re.S)
+    method = method_match.group().rstrip(b"\n")
+    missing = current.replace(method, b"", 1)
+    missing_failed = False
+    try:
+        r1_driver_restore(missing, original)
+    except AssertionError:
+        missing_failed = True
+    assert missing_failed, "missing controller method must fail"
+    duplicate = current + b"\n" + method + b"\n"
+    duplicate_failed = False
+    try:
+        r1_driver_restore(duplicate, original)
+    except AssertionError:
+        duplicate_failed = True
+    assert duplicate_failed, "duplicate controller method must fail"
+    moved = current.replace(method, b"", 1).replace(
+        b"    # R1_SETTLE_ONCE_END\n", method + b"\n    # R1_SETTLE_ONCE_END\n", 1)
+    moved_failed = False
+    try:
+        r1_driver_restore(moved, original)
+    except AssertionError:
+        moved_failed = True
+    assert moved_failed, "controller method inside sentinel must fail"
+    changed_method = current.replace(b"return receipt\n", b"return receiptX\n", 1)
+    changed_failed = False
+    try:
+        r1_driver_restore(changed_method, original)
+    except AssertionError:
+        changed_failed = True
+    assert changed_failed, "controller method byte mutation must fail"
 
 
 def r1_load_append_ok(base_text, current_text, tracked):
@@ -458,6 +547,10 @@ def r1_phase_d_prefix_allowance():
         "v13/ce_map/test_ce_map.py",
         "v13/ce_map/README.md",
     }
+    controller_files = {
+        "v13/loop_driver/controller.py",
+        "v13/loop_driver/test_controller_vertical.py",
+    }
     subprocess.check_call(["git", "cat-file", "-e", phase_d + "^{commit}"], cwd=AGENT_ROOT)
     subprocess.check_call(["git", "cat-file", "-e", base + "^{commit}"], cwd=AGENT_ROOT)
 
@@ -515,9 +608,11 @@ def r1_phase_d_prefix_allowance():
 
     def allow(extra, known_names, blobs, current, load_base, load_current, tracked):
         for name in extra:
-            assert name.startswith(prefixes) or name in stage40 or name in stage41 or name in stage42 or name in stage43 or name in stage44, (
+            assert (name.startswith(prefixes) or name in stage40 or name in stage41
+                    or name in stage42 or name in stage43 or name in stage44
+                    or name in controller_files), (
                 "outside the three prefixes: " + name)
-        assert extra - known_names - stage40 - stage41 - stage42 - stage43 - stage44 <= fresh_ok, (
+        assert extra - known_names - stage40 - stage41 - stage42 - stage43 - stage44 - controller_files <= fresh_ok, (
             "fresh file outside accept_unattended.py")
         missing = stage40 - set(tracked)
         assert not missing, "stage 40 path is not tracked: " + str(sorted(missing))
@@ -698,6 +793,11 @@ def r1_phase_d_prefix_allowance():
     reject_reason(
         lambda: allow(
             extra | {"v13/not_allowed/x.py"}, known_names, blobs, current,
+            load_base, load_current, tracked),
+        "outside the three prefixes")
+    reject_reason(
+        lambda: allow(
+            extra | {"v13/loop_driver/third_controller_file.py"}, known_names, blobs, current,
             load_base, load_current, tracked),
         "outside the three prefixes")
     reject_reason(

@@ -78,3 +78,29 @@ B1 出口只调用已有动词或什么都不调用。本表不授权无人值�
 R1 追加：`named_entry_is_settle_once`；`settle_once_not_run_turn`；`phase_a_prefix_driver_has_no_unpaid_helper`；`r1_sessions_for_update_once_in_sentinel`；`r0_source_scope`；`phase_a_prefix_has_no_unpaid_helper`；`quiet_does_not_call_advance`；`connection_idle_after_settle_once`；`r1_unpaid_predicate_matches_predecessor`；`unpaid_progress_calls_advance_once`；`t0_same_txn_root_lock`；`second_settlement_no_second_receipt`；`unpaid_finish_calls_advance_once`；`wait_reject_not_settled`；`stopped_failed_snap_no_advance`；`stopped_without_failed_key_still_settles`；`stopped_failed_null_still_settles`；`human_ready_claimed_settles_then_waits`；`waiting_with_unpaid_remaining_unknown`；`waiting_with_unpaid_remaining_cancel`；`waiting_with_unpaid_remaining_stale`；`r1_open_transaction_fails_zero_sql`；`r1_advance_raise_rolls_back_idle`；`r1_next_settle_relocks_after_rollback`；`r1_child_fails_zero_advance`；`stop_advance_interleave_stop_wins`；`stop_advance_interleave_settle_holds`。
 
 超级用户夹具不是产品角色证明。Fake 退出码 0 不是产品可用。
+
+## Controller thin cut
+
+`LoopDriver.run_controller_once(sid, target, *, snap=None, target_seq_before)` 是一条 sibling hop：调用方传入 `v13_parse` 的整份结果，不是 `parsed["snap"]`；省略 snap 时仍使用原有 `snap_of`。stale 必须传入写入前的旧 snap；方法自抓的新 snap 看不到活体 stale。合法 hop 恰好调用一次既有 `v13_advance`，只在 `progressed` 后以 `{ids: [target], hint: false}` 读一次既有 `v13_agentctl_observe`。advance 与 observe 分别提交；不调用 `serve`，不进入 `run_turn`，不启动生产循环。
+
+`decide_controller_disposition` 是不碰数据库的纯函数。回执九键闭集是 `schema_version`、`caller`、`target`、`advance_word`、`target_seq_before`、`observe`、`readback`、`repair_required`、`replan_required`。方法先判定，后加 `disposition`。六词固定优先级为 `repair` → `terminal` → `user_action_required` → `replan` → `run_now` → `wait`；形状坏先抛逐字合同 `ValueError`。`blocked_unknown` 在序号前进且无 human 时落 `run_now`，不另开词。`repair` / `replan` 是内存事实，不扫描 SQL。observe 不携带 steer 正文，`pointers` 不是正文交付；正文只由 gate 直接读目标 events。
+
+本切只证明冻结信封 → 一次 SQL `agentctl_steer` → durable `steer/injected` → observe 读回，**不**证明 provider 消费正文，不关闭 S41-D3，不授权无人值守，不证明多入口共存或 wait/poll/steer host。loader 仍是 44 个 stage，没有 stage 45。超级用户 gate 不证明产品角色。
+
+纵向 gate 断言名：
+
+`controller_chain_progressed`；`controller_chain_route_sql`；`controller_chain_tool_effect`；`controller_chain_observe_ok`；`controller_chain_target_match`；`controller_chain_last_event_type`；`controller_chain_last_event_seq_moved`；`controller_chain_steer_text`；`controller_chain_no_serve`；`controller_chain_no_complete`；`controller_chain_one_advance`；`controller_chain_disposition`。
+
+`controller_waiting_word`；`controller_waiting_disposition`；`controller_waiting_triage`；`controller_waiting_no_observe`；`controller_waiting_no_serve`；`controller_waiting_no_complete`。
+
+`controller_stale_word`；`controller_stale_disposition`；`controller_stale_supplied_snapshot`；`controller_stale_no_observe`；`controller_stale_no_serve`；`controller_stale_no_complete`；`controller_stale_zero_write`；`controller_stale_seq_plus_one`；`controller_stale_tokens`。
+
+`controller_disposition_run_now`；`controller_disposition_wait`；`controller_disposition_user_action_required`；`controller_disposition_repair`；`controller_disposition_replan`；`controller_disposition_terminal`；`controller_disposition_unknown_shape`；`controller_disposition_unknown_advance_word`。
+
+`controller_priority_repair_over_terminal`；`controller_priority_terminal_over_human`；`controller_priority_human_over_replan`；`controller_priority_replan_over_run_now`；`controller_priority_cancel_pending_ignored`。
+
+补充边界断言：`controller_chain_authorized`；`controller_chain_one_observe`；`controller_chain_idle`；`controller_receipt_invalid_schema_version`；`controller_receipt_invalid_caller`；`controller_receipt_invalid_target`；`controller_receipt_invalid_advance_word`；`controller_receipt_invalid_target_seq_before`；`controller_receipt_invalid_repair_required`；`controller_receipt_invalid_replan_required`；`controller_receipt_missing_key`；`controller_receipt_disposition_not_input`；`controller_receipt_observe_shape`；`controller_receipt_readback_shape`；`controller_receipt_nonprogressed_readback`；`controller_receipt_observe_readback_mismatch`；`controller_receipt_unavailable_rows`；`controller_receipt_observe_failed`；`controller_receipt_semantic_repair`；`controller_receipt_identity_sequence_repair`；`controller_receipt_nonterminal_status`；`controller_receipt_terminal_status`；`controller_receipt_terminal_flag`；`controller_receipt_terminal_word`；`controller_receipt_wait_replan`；`controller_receipt_extra_row_fields`；`controller_receipt_pure_no_mutation`；`controller_driver_invalid_zero_sql`；`controller_driver_nonprogressed_no_observe`；`controller_driver_unknown_word`；`controller_driver_unknown_no_observe`；`controller_driver_exception_propagates`；`controller_driver_exception_no_retry`；`controller_driver_empty_readback_repair`；`controller_static_no_legacy_calls`；`controller_static_no_network_imports`；`controller_static_no_alternate_judgment`。
+
+Gate 只创建一个 `ll_controller_vertical_<pid>_<six-hex>` 库，一次装到 stage 41；拒绝删除已存在的库，finally 只清理本次创建的库。各场景以不同 mock model 名隔离数据库级 `judgment_cache` 的 UUID 回答，仍走既有 `mock_from_needed` / `set_mock`，不修改生产 SQL 或不可变缓存。
+
+运行：`UV_FROZEN=1 uv run python v13/loop_driver/test_controller_vertical.py`。

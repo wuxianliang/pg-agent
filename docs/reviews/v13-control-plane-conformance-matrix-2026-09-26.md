@@ -134,3 +134,9 @@
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
 | 90 | stage 44 在连续装载 1–43 之后提供 `public.v13_ce_map()`。它是 `LANGUAGE sql`、`STABLE`、`SECURITY INVOKER`、非 `STRICT` 的零参函数，返回 oracle 那一份静态 jsonb。`map` 把父计划 E2 的 CE 原语指到既有 PG 签名，或把 `shutdown` 写成字符串 `unsupported`。调用它不执行这些签名，不读 `external_executor`，不是 CE 会话运行时，不交付 stage 45。gate 分开查六个 `to_regprocedure`、一参 cancel 存在但不映射、五参 complete 存在但不是格子、两列的 `data_type`、`v13_ce_shutdown` 行数 0、安装窗口与调用窗口的五表行数不变。 | ✅ | 2026-10-09 `UV_FROZEN=1 uv run python v13/ce_map/test_ce_map.py` 退出码 0（63 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明 CE 会话运行时、进程恢复、stage 42 启动、wake、task lease、注册身份、`claimedProcessID`、worktree、auto-wake、oracle lanes、`request_attention`；不消费 `external_executor`；不实现 stage 45；不闭合 D-3。 |
+
+## Controller thin cut
+
+| # | 条文 | 状态 | 测试落点 | 缺口 |
+|---|---|---|---|---|
+| 91 | Controller thin cut：判断信封驱动一次既有 `v13_advance` sql 臂执行 `agentctl_steer`，目标经既有 `v13_agentctl_observe` 读回，纯函数返回六词之一。无 FakeLLM，无 serve，无生产循环，无新 SQL，无 stage 45。 | ✅ | 2026-10-10：`UV_FROZEN=1 uv run python v13/loop_driver/test_controller_vertical.py`、`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py`、`UV_FROZEN=1 uv run python v13/agentctl_verbs/test_agentctl_verbs.py`、`UV_FROZEN=1 uv run python v13/loop_driver/test_loop_driver.py` 均实跑退出码 0 | 不证明 provider 交付、无人值守、多入口共存、wait/poll/steer host、D-3 正文消费。超级用户调用不是产品角色 ACL 证明。 |
