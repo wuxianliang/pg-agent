@@ -25,7 +25,7 @@ from psycopg2.extensions import TRANSACTION_STATUS_IDLE, make_dsn, parse_dsn
 
 from v23.disposition import canonical_uuid, integer
 from v23.worker import (MAX_RESULT_BYTES, TurnReceipt, WorkerRequest, WorkerContractError,
-                        WorkerExecutionError, validate_request, validate_receipt)
+                        WorkerExecutionError, validate_request, validate_receipt, storage_safe_json)
 
 OPS = frozenset({"start", "poll", "wait", "cancel", "steer", "respond"})
 CHANNEL = "v23_run_changed"
@@ -104,24 +104,8 @@ class _CommitUncertain(Exception):
 
 
 def _canonical(value: Any) -> bytes:
-    def finite(item: Any) -> None:
-        kind = type(item)
-        if item is None or kind in (str, bool, int):
-            return
-        if kind is float and math.isfinite(item):
-            return
-        if kind is list:
-            for child in item:
-                finite(child)
-            return
-        if kind is dict and all(type(key) is str for key in item):
-            for child in item.values():
-                finite(child)
-            return
-        raise ValueError("finite JSON required")
-    finite(value)
-    return json.dumps(value, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False, allow_nan=False).encode("utf-8")
+    # Request digests and the frozen T2 receipt share the Worker DTO storage boundary.
+    return storage_safe_json(value)
 
 
 def _digest(value: Any) -> str:

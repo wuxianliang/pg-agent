@@ -38,6 +38,7 @@ CREATE TABLE v23_runs (
     CHECK ((active_operation_id IS NULL AND active_base_revision IS NULL AND active_input_digest IS NULL)
            OR (active_operation_id IS NOT NULL AND active_base_revision IS NOT NULL
                AND active_base_revision > 0 AND active_base_revision <= revision
+               AND active_input_digest IS NOT NULL
                AND active_input_digest ~ '^[0-9a-f]{64}$')),
     CHECK (status <> 'waiting_input' OR
            (latest_receipt IS NOT NULL AND latest_receipt->>'outcome' = 'needs_input'

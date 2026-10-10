@@ -64,30 +64,68 @@ class TurnReceipt:
         }
 
 
-def _finite_json(value: Any) -> None:
-    kind = type(value)
-    if value is None or kind in (str, bool, int):
-        return
-    if kind is float and math.isfinite(value):
-        return
-    if kind is list:
-        for item in value:
-            _finite_json(item)
-        return
-    if kind is dict and all(type(key) is str for key in value):
-        for item in value.values():
-            _finite_json(item)
-        return
-    raise WorkerContractError("value must be finite JSON")
+def _safe_text(value: str) -> bool:
+    # Inspect decoded characters, not literal backslash escape text.
+    return not any(ord(char) == 0 or 0xD800 <= ord(char) <= 0xDFFF for char in value)
+
+
+def storage_safe_json(value: Any, *, limit: int = 4 * MAX_RESULT_BYTES) -> bytes:
+    """Bounded canonical UTF-8 JSON safe for PostgreSQL jsonb (including keys)."""
+    remaining = limit
+
+    def visit(item: Any, depth: int = 0) -> None:
+        nonlocal remaining
+        remaining -= 1
+        if remaining < 0 or depth > 128:
+            raise WorkerContractError("JSON traversal bound exceeded")
+        kind = type(item)
+        if item is None or kind is bool:
+            return
+        if kind is str:
+            remaining -= len(item)
+            if remaining < 0 or not _safe_text(item):
+                raise WorkerContractError("JSON string is not storage-safe")
+            return
+        if kind is int:
+            # jsonb uses numeric: at most 131072 digits before the decimal.
+            # Bound conversion first, including when Python's digit limit is disabled.
+            if item.bit_length() > 435412:
+                raise WorkerContractError("JSON number exceeds jsonb numeric range")
+            digits = len(str(abs(item)))
+            remaining -= digits
+            if digits > 131072 or remaining < 0:
+                raise WorkerContractError("JSON number exceeds storage bound")
+            return
+        if kind is float and math.isfinite(item):
+            return  # Every finite Python float fits PostgreSQL numeric's range/scale.
+        if kind in (list, dict):
+            if len(item) > remaining:
+                raise WorkerContractError("JSON traversal bound exceeded")
+            if kind is dict:
+                for key, child in item.items():
+                    if type(key) is not str:
+                        raise WorkerContractError("JSON object keys must be strings")
+                    visit(key, depth + 1)
+                    visit(child, depth + 1)
+            else:
+                for child in item:
+                    visit(child, depth + 1)
+            return
+        raise WorkerContractError("value must be finite JSON")
+
+    try:
+        visit(value)
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=False, allow_nan=False).encode("utf-8")
+        if len(encoded) > limit:
+            raise WorkerContractError("JSON byte bound exceeded")
+        return encoded
+    except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+        raise WorkerContractError("value must be bounded storage-safe JSON") from exc
 
 
 def _json(value: Any) -> bytes:
-    try:
-        _finite_json(value)
-        return json.dumps(value, sort_keys=True, separators=(",", ":"),
-                          ensure_ascii=False, allow_nan=False).encode("utf-8")
-    except (TypeError, ValueError, OverflowError, RecursionError) as exc:
-        raise WorkerContractError("value must be serializable finite JSON") from exc
+    return storage_safe_json(value)
 
 
 def _json_bytes(value: Any) -> int:
@@ -95,7 +133,7 @@ def _json_bytes(value: Any) -> int:
 
 
 def _bounded(value: Any, limit: int, label: str) -> bytes:
-    encoded = _json(value)
+    encoded = storage_safe_json(value, limit=limit + 1)
     if len(encoded) > limit:
         raise WorkerContractError(f"{label} is too large")
     return encoded
@@ -238,7 +276,8 @@ class FakeTool:
 
 def _failure_record(index: int, name: str, encoded_input: bytes, code: str) -> dict[str, Any]:
     # UTF-8 truncation also bounds multi-byte names, without leaking raw inputs/outputs.
-    short_name = name.encode("utf-8")[:128].decode("utf-8", errors="ignore").strip() or "<tool>"
+    short_name = name.encode("utf-8", errors="replace")[:128].decode("utf-8", errors="ignore")
+    short_name = "".join(char if _safe_text(char) else "?" for char in short_name).strip() or "<tool>"
     while _json_bytes(short_name) > 128:
         short_name = short_name[:-1]
     record = {"call_id": index, "name": short_name, "input_digest": hashlib.sha256(encoded_input).hexdigest(),
