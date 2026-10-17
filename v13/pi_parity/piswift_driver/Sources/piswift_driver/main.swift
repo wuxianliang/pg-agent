@@ -332,7 +332,7 @@ for event in recorder.events {
     case .agent(.turnEnd):
         builder.rawRow("turn_end")
     case .agentSettled:
-        builder.rawRow("agent_settled")
+        if finishSeq == nil { builder.rawRow("agent_settled") }
     case .autoCompactionStart:
         builder.rawRow("auto_compaction_start")
     case .autoCompactionEnd:

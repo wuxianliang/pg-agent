@@ -239,6 +239,7 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | S40-22 | `~/.duckdb/extensions/v1.5.5/osx_arm64` 钉版扩展缓存（sitting_duck/duck_block_utils）从未落地，read_tools duck/ring 面按 skip 语义 exit 2；此前所有 read_tools 证据均未真跑 duck 面 | 实跑被批准的 `v13/read_tools/duck_bringup.py`：INSTALL FROM community、两个扩展 sha256 钉版校验通过、loaded=true；随后 #36 首次真跑 duck 面与 E4 嵌套全量全绿。证据 `prompt-exports/w4-v99-attempt02-duck-absent/` |
 | S40-23 | economy H1 根因至今未建立；序列内红绿交替（红：§2.3 隔离序列、complete47 attempt-04；绿：prior、attempt-02/03、两次隔离复测、v99 三次序列） | 不改断言、不调环境、不追认历史红灯；v99 预提交三次序列内均绿，作为本里程碑通过证据；根因留作后续独立诊断（原单次有界复现授权已用尽） |
 | S40-24 | 提交后净树复验首红（#30 pi_parity `historical_frozen`）：里程碑提交使 §10.8 body-only 适配过的 `v13/pi_ports/test_pi_ports.py`、`v13/read_tools/test_read_tools.py` 进入 committed_names 而被旧检查拒绝——设计缺口而非越界改动；首红前 #1–29 全绿 | §10.12 修正：`run_guard` 体内本地具名集合恰放行该两文件（字节由各自 pin 基线 4436cd8/30cdfd6 证明）；其余 frozen-prefix/`v8/` 已提交改动仍拒。修正后重跑、追加修复提交、同一 49 项清单净树复验后推送；证据 `prompt-exports/w4-v99-postcommit-20261017/` |
+| S40-25 | 第二次净树复验 #36 read_tools 首红：E4 嵌套的 pi_parity（byte-stable）、pi_ports/workspace_admit/plan_arm（经 `r0_source_scope` 保护字节断言）连环红；根因为 piswift driver 对收尾 `agentSettled` 事件的采集竞态——捕获时 trace 15 行变脏（基线 14 行），postcommit2 顶层 #30 采到、嵌套跑未采到，跨进程字节不一致 | §10.13 修复：driver `agentSettled` 加 `finishSeq == nil` 守卫（恒 14 行 == 基线）；`r0_source_scope` 对 driver 具名豁免 + 精确字节证明（恰一处批准改动，其余偏差仍拒）；竞态残迹按基线恢复；单条实跑 pi_parity exit 0 且 trace 自愈回基线。追加修复提交、同清单净树复验后推送；证据 `prompt-exports/w4-v99-postcommit2-20261017/` |
 
 ### S40 dirty-tree freeze amendment
 

@@ -149,7 +149,7 @@ Legacy validation logs: `prompt-exports/stage40-final-*.log`. Eleven affected le
 
 ## Stage 40 (`ce_run`, 新实现)
 
-**最新实跑（2026-10-17，v99 预提交全绿）：** 全部 47 条保留脚本独立顺序执行 exit 0，goal_supervisor 两探针按契约 exit 1（ask_user 拒绝尾部）/exit 2（建库前 usage）；CE 16/16 组、665 检查、零独立失败；read_tools 首次真跑 duck 面与 E4 嵌套全量。环境、两次阻断尝试（PiSwift pull 漂移经用户裁决回滚至 bfccb32；duck 钉版扩展经 duck_bringup 落地）与完整证据见偏差台账 S40-21/S40-22 与计划 §2.4、`prompt-exports/w4-v99-precommit-20261017/`。下表 16 组行与逐组计数保留历史口径（最新为 665 检查）。提交后净树复验首红于 pi_parity historical_frozen（§10.12 设计缺口，台账 S40-24），修正后复验见同处。
+**最新实跑（2026-10-17，v99 预提交全绿）：** 全部 47 条保留脚本独立顺序执行 exit 0，goal_supervisor 两探针按契约 exit 1（ask_user 拒绝尾部）/exit 2（建库前 usage）；CE 16/16 组、665 检查、零独立失败；read_tools 首次真跑 duck 面与 E4 嵌套全量。环境、两次阻断尝试（PiSwift pull 漂移经用户裁决回滚至 bfccb32；duck 钉版扩展经 duck_bringup 落地）与完整证据见偏差台账 S40-21/S40-22 与计划 §2.4、`prompt-exports/w4-v99-precommit-20261017/`。下表 16 组行与逐组计数保留历史口径（最新为 665 检查）。提交后净树复验两次首红：先 pi_parity historical_frozen（§10.12 缺口，台账 S40-24），修复提交后 read_tools E4 嵌套连环红（piswift driver settled 竞态，§10.13，台账 S40-25）；两次均按 §8.1.6 修正后重跑。
 
 **历史阻塞记录（2026-10-17，已被上述 v99 全绿覆盖，不抹去）：** 最终工作树与隔离副本逐文件 SHA-256 相等；完整 47 条清单顺序执行前 7 条 exit 0，CE 实际 16/16 组、665 检查；第 8 条 economy H1 `out_a == 'accepted'` exit 1，余下 39 条及 goal-supervisor 三模式未运行。原失败未打印 receipt；单次独立诊断又在观察器错误函数签名查询处失败，未捕获 receipt，根因未明。只读版本检查不是 gate。新的完整命令/输出与冻结基线：`prompt-exports/w4-final-precommit-20261017/`；诊断及全部路径：`prompt-exports/w4-economy-h1-handoff-20261017.md`。下表的旧检查数保留历史，不代表最终 665 检查的逐组计数；新 CE 各组原始输出以 `04-v13-ce_run-test_ce_run.log` 为准。没有全量/最终 nested trace/goal-supervisor 验收，也未达集成 Oracle review、提交或推送条件。
 

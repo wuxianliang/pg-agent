@@ -1075,8 +1075,18 @@ def r0_source_scope():
         "docs/plans/v13-long-loop-phase-a-plan-2026-09-29.md",
         "docs/plans/v13-long-loop-phase-b-plan-2026-09-29.md",
         "docs/plans/v13-long-loop-phase-c-plan-2026-09-29.md"], cwd=AGENT_ROOT).decode().splitlines()
+    # §10.13: the piswift parity driver takes the settled-guard change (drop
+    # the racy post-finish agent_settled row); bytes must equal base plus
+    # exactly that one approved change, and nothing else.
+    piswift_driver_path = "v13/pi_parity/piswift_driver/Sources/piswift_driver/main.swift"
+    piswift_expected = original(piswift_driver_path).replace(
+        b'    case .agentSettled:\n        builder.rawRow("agent_settled")\n',
+        b'    case .agentSettled:\n        if finishSeq == nil { builder.rawRow("agent_settled") }\n',
+    )
+    assert (AGENT_ROOT / piswift_driver_path).read_bytes() == piswift_expected, \
+        "piswift driver is not base plus the exact approved settled guard"
     for name in protected:
-        if name not in tests | readmes | {path, driver_path, "v13/load.py"}:
+        if name not in tests | readmes | {path, driver_path, "v13/load.py", piswift_driver_path}:
             assert (AGENT_ROOT / name).read_bytes() == original(name), "protected bytes: " + name
     r1_phase_d_prefix_allowance()
     r1_driver_restore((AGENT_ROOT / driver_path).read_bytes(), original(driver_path))
