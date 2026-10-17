@@ -259,90 +259,30 @@ def test_stage_bytes():
     ]
     diff = subprocess.check_output(["git", "diff", "HEAD", "--", *paths], cwd=AGENT_ROOT)
     load = subprocess.check_output(["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
-    head_load = subprocess.check_output(
-        ["git", "show", "HEAD:v13/load.py"], cwd=AGENT_ROOT).decode()
-    removed = [
-        line for line in load.splitlines()
-        if line.startswith("-") and not line.startswith("---")
-    ]
-    check(
-        "stage_bytes",
-        diff == b"" and removed == [] and "plan_arm" in (load + head_load),
-        (removed, load, "plan_arm" in head_load))
+    base_load = subprocess.check_output(
+        ["git", "diff", "fb295ac6c7459bb98dac57e37883af549d2d8a4c", "--", "v13/load.py"],
+        cwd=AGENT_ROOT).decode()
+    r1_load_retirement_ok(base_load, load)
+    check("stage_bytes", diff == b"", diff)
     check("r0_source_scope", r0_source_scope() == "fb295ac6c7459bb98dac57e37883af549d2d8a4c")
 
 
 def r1_driver_restore(current, original):
-    """Strip the unique R1 settle_once sentinel pair and controller method."""
+    """Strip only the unique R1 settle_once sentinel pair."""
     import re
 
-    APPROVED_CONTROLLER_METHOD = (
-        b"    def run_controller_once(self, sid, target, *, snap=None, target_seq_before):\n"
-        b"        from uuid import UUID\n"
-        b"        from v13.loop_driver.controller import (\n"
-        b"            _normalized_row, decide_controller_disposition)\n"
-        b"\n"
-        b"        for value, name in ((sid, \"sid\"), (target, \"target\")):\n"
-        b"            try:\n"
-        b"                parsed = UUID(value)\n"
-        b"            except (ValueError, AttributeError, TypeError):\n"
-        b"                raise ValueError(\"controller: invalid \" + name) from None\n"
-        b"            if str(parsed) != value:\n"
-        b"                raise ValueError(\"controller: invalid \" + name)\n"
-        b"        if (isinstance(target_seq_before, bool)\n"
-        b"                or not isinstance(target_seq_before, int)\n"
-        b"                or target_seq_before < -1):\n"
-        b"            raise ValueError(\"controller: invalid target_seq_before\")\n"
-        b"\n"
-        b"        word = self.advance(sid, snap) if snap is not None else self.advance(sid)\n"
-        b"        if word not in (\"waiting\", \"terminal\", \"stale\", \"progressed\"):\n"
-        b"            raise ValueError(\"controller: unsupported advance word: \" + str(word))\n"
-        b"        observe = None\n"
-        b"        readback = None\n"
-        b"        if word == \"progressed\":\n"
-        b"            rows = self._read(\n"
-        b"                \"SELECT public.v13_agentctl_observe(%s::uuid, %s::jsonb)\",\n"
-        b"                (sid, json.dumps({\"ids\": [target], \"hint\": False})))\n"
-        b"            observe = as_obj(rows[0][0]) if rows else None\n"
-        b"            if isinstance(observe, dict) and observe.get(\"ok\") is True:\n"
-        b"                observed_rows = observe.get(\"rows\")\n"
-        b"                if isinstance(observed_rows, list) and len(observed_rows) == 1:\n"
-        b"                    readback = _normalized_row(observed_rows[0])\n"
-        b"\n"
-        b"        receipt = {\n"
-        b"            \"schema_version\": 1,\n"
-        b"            \"caller\": sid,\n"
-        b"            \"target\": target,\n"
-        b"            \"advance_word\": word,\n"
-        b"            \"target_seq_before\": target_seq_before,\n"
-        b"            \"observe\": observe,\n"
-        b"            \"readback\": readback,\n"
-        b"            \"repair_required\": False,\n"
-        b"            \"replan_required\": False,\n"
-        b"        }\n"
-        b"        disposition = decide_controller_disposition(receipt)\n"
-        b"        receipt[\"disposition\"] = disposition\n"
-        b"        return receipt"
-    )
     start, end = b"# R1_SETTLE_ONCE_BEGIN", b"# R1_SETTLE_ONCE_END"
     assert current.count(start) == current.count(end) == 1, "r1 sentinel pair"
     assert start not in original and end not in original
+    assert b"def run_controller_once" not in current, "retired controller method"
     pattern = rb"(?m)^[ \t]*" + start + rb"\n.*?^[ \t]*" + end + rb"\n"
     match = re.search(pattern, current, re.S)
     assert match, "r1 sentinel block"
     block = match.group()
     assert b"def settle_once" in block, "settle_once must live inside the R1 sentinel"
-    method_pattern = rb"(?m)^    def run_controller_once\(.*?\Z"
-    method_match = re.search(method_pattern, current, re.S)
-    assert current.count(b"def run_controller_once") == 1, "controller method count"
-    assert method_match, "controller method missing"
-    assert method_match.start() > match.end(), "controller method inside R1 sentinel"
-    method = method_match.group().removesuffix(b"\n")
-    assert method == APPROVED_CONTROLLER_METHOD, "controller method bytes"
     sess_lock = b"FROM sessions WHERE session_id = %s FOR UPDATE"
     assert block.count(sess_lock) == 1, "sessions FOR UPDATE once in sentinel"
-    assert current[match.end():method_match.start()] == b"\n", "controller method separator"
-    restored = current[:match.start()]
+    restored = current[:match.start()] + current[match.end():]
     assert restored == original, "R1 removal must restore ALL baseline driver.py bytes"
     assert b"FOR UPDATE" not in restored, "FOR UPDATE only inside the R1 sentinel"
     return restored, block
@@ -350,67 +290,70 @@ def r1_driver_restore(current, original):
 
 def r1_freeze_positive_proof():
     """Mutated copies must fail the R1 restore; the live tree must pass."""
-    import re
     base = "fb295ac6c7459bb98dac57e37883af549d2d8a4c"
     original = subprocess.check_output(
         ["git", "show", base + ":v13/loop_driver/driver.py"], cwd=AGENT_ROOT)
     current = (AGENT_ROOT / "v13/loop_driver/driver.py").read_bytes()
     r1_driver_restore(current, original)
-    empty = original + b"    # R1_SETTLE_ONCE_BEGIN\n    # R1_SETTLE_ONCE_END\n"
-    empty_failed = False
-    try:
-        r1_driver_restore(empty, original)
-    except AssertionError:
-        empty_failed = True
-    assert empty_failed, "empty R1 sentinel must fail"
-    mutated = current.replace(b"def run_turn", b"def run_turn_x", 1)
-    run_turn_failed = False
-    try:
-        r1_driver_restore(mutated, original)
-    except AssertionError:
-        run_turn_failed = True
-    assert run_turn_failed, "run_turn edit outside sentinel must fail"
-    leaked = current + (
+
+    def must_reject(mutated):
+        try:
+            r1_driver_restore(mutated, original)
+        except AssertionError:
+            return
+        raise AssertionError("mutated R1 driver must fail")
+
+    must_reject(original + b"    # R1_SETTLE_ONCE_BEGIN\n    # R1_SETTLE_ONCE_END\n")
+    must_reject(current.replace(b"def run_turn", b"def run_turn_x", 1))
+    must_reject(current + (
         b"\n    def _r1_leak(self, sid):\n"
         b"        self._sql('v13_advance', 'SELECT v13_advance(%s::uuid, %s::jsonb)',"
-        b" (sid, '{}'), sid)\n")
-    leak_failed = False
-    try:
-        r1_driver_restore(leaked, original)
-    except AssertionError:
-        leak_failed = True
-    assert leak_failed, "v13_advance outside sentinel must fail"
-    method_match = re.search(rb"(?m)^    def run_controller_once\(.*?\Z", current, re.S)
-    method = method_match.group().rstrip(b"\n")
-    missing = current.replace(method, b"", 1)
-    missing_failed = False
-    try:
-        r1_driver_restore(missing, original)
-    except AssertionError:
-        missing_failed = True
-    assert missing_failed, "missing controller method must fail"
-    duplicate = current + b"\n" + method + b"\n"
-    duplicate_failed = False
-    try:
-        r1_driver_restore(duplicate, original)
-    except AssertionError:
-        duplicate_failed = True
-    assert duplicate_failed, "duplicate controller method must fail"
-    moved = current.replace(method, b"", 1).replace(
-        b"    # R1_SETTLE_ONCE_END\n", method + b"\n    # R1_SETTLE_ONCE_END\n", 1)
-    moved_failed = False
-    try:
-        r1_driver_restore(moved, original)
-    except AssertionError:
-        moved_failed = True
-    assert moved_failed, "controller method inside sentinel must fail"
-    changed_method = current.replace(b"return receipt\n", b"return receiptX\n", 1)
-    changed_failed = False
-    try:
-        r1_driver_restore(changed_method, original)
-    except AssertionError:
-        changed_failed = True
-    assert changed_failed, "controller method byte mutation must fail"
+        b" (sid, '{}'), sid)\n"))
+    controller = b"    def run_controller_once(self):\n        return None\n"
+    must_reject(current + b"\n" + controller)
+    must_reject(current.replace(
+        b"    # R1_SETTLE_ONCE_END\n", controller + b"    # R1_SETTLE_ONCE_END\n", 1))
+
+
+def r1_load_retirement_ok(base_diff, head_diff):
+    """Allow the exact retired ten-line multiset, never base deletions."""
+    retired_load_lines = [
+        '    V13_ROOT / "agentctl" / "v13_agentctl.sql",',
+        '    V13_ROOT / "agentctl_verbs" / "v13_agentctl_verbs.sql",',
+        '    V13_ROOT / "goal_workflow" / "v13_goal_workflow.sql",',
+        '    V13_ROOT / "external_exec" / "v13_external_exec.sql",',
+        '    V13_ROOT / "ce_map" / "v13_ce_map.sql",',
+        '    "agentctl": 40,',
+        '    "agentctl_verbs": 41,',
+        '    "goal_workflow": 42,',
+        '    "external_exec": 43,',
+        '    "ce_map": 44,',
+    ]
+
+    def validate(base, head):
+        removed_vs_base = [line[1:] for line in base.splitlines()
+                           if line.startswith("-") and not line.startswith("---")]
+        removed = [line[1:] for line in head.splitlines()
+                   if line.startswith("-") and not line.startswith("---")]
+        assert removed_vs_base == [], "load deletes baseline lines"
+        assert not removed or sorted(removed) == sorted(retired_load_lines), (
+            "load retirement is not the exact ten-line multiset: " + str(removed))
+
+    validate(base_diff, head_diff)
+    exact = "\n".join("-" + line for line in retired_load_lines)
+    validate("", exact)
+    validate("", "")
+    for base, head in (
+        ('-    "goal_supervise": 38,', exact),
+        ("", exact + "\n-" + retired_load_lines[0]),
+        ("", "\n".join(exact.splitlines()[:-1])),
+        ("", exact.replace('"agentctl": 40', '"agentctl": 400', 1)),
+    ):
+        try:
+            validate(base, head)
+        except AssertionError:
+            continue
+        raise AssertionError("mutated retirement diff must fail")
 
 
 def r1_load_append_ok(base_text, current_text, tracked):
@@ -483,7 +426,12 @@ def r1_load_append_ok(base_text, current_text, tracked):
         "STAGE_THROUGH keys do not match SQL append items")
     for stage, _filename in appended_sql:
         prefix = "v13/" + stage + "/"
-        assert any(path.startswith(prefix) for path in tracked), "append stage is not tracked: " + stage
+        if not any(path.startswith(prefix) for path in tracked):
+            # goal_supervisor's historical guard supplies cached-only names;
+            # the sole permitted dirty-tree exception is the exact CE SQL file.
+            ce_sql = "v13/ce_run/v13_ce_run.sql"
+            assert (stage, _filename) == ("ce_run", "v13_ce_run.sql") and (
+                AGENT_ROOT / ce_sql).is_file(), "append stage is not tracked: " + stage
     positions = []
     stages = [stage for stage, _filename in cur_sql]
     for name in order_names:
@@ -495,17 +443,13 @@ def r1_load_append_ok(base_text, current_text, tracked):
     assert plus == expected, "plus lines do not match append items"
     approved = [
         ("fair_claim", "v13_fair_claim.sql", "fair_claim", 39),
-        ("agentctl", "v13_agentctl.sql", "agentctl", 40),
-        ("agentctl_verbs", "v13_agentctl_verbs.sql", "agentctl_verbs", 41),
-        ("goal_workflow", "v13_goal_workflow.sql", "goal_workflow", 42),
-        ("external_exec", "v13_external_exec.sql", "external_exec", 43),
-        ("ce_map", "v13_ce_map.sql", "ce_map", 44),
+        ("ce_run", "v13_ce_run.sql", "ce_run", 40),
     ]
     got = [
         (stage, filename, key, number)
         for (stage, filename), (key, number) in zip(appended_sql, appended_stage)]
     assert got == approved, (
-        "append is not fair_claim/39 then agentctl/40 then agentctl_verbs/41 then goal_workflow/42 then external_exec/43 then ce_map/44: " + str(got))
+        "append is not fair_claim/39 then ce_run/40: " + str(got))
 
 
 def r1_phase_d_prefix_allowance():
@@ -518,38 +462,10 @@ def r1_phase_d_prefix_allowance():
     prefixes = ("v13/goal_supervisor/", "v13/fair_claim/", "v13/fair_driver/")
     fresh_ok = {"v13/goal_supervisor/accept_unattended.py"}
     stage40 = {
-        "v13/agentctl/v13_agentctl.sql",
-        "v13/agentctl/setup_db.py",
-        "v13/agentctl/test_agentctl.py",
-        "v13/agentctl/README.md",
-    }
-    stage41 = {
-        "v13/agentctl_verbs/v13_agentctl_verbs.sql",
-        "v13/agentctl_verbs/setup_db.py",
-        "v13/agentctl_verbs/test_agentctl_verbs.py",
-        "v13/agentctl_verbs/README.md",
-    }
-    stage42 = {
-        "v13/goal_workflow/v13_goal_workflow.sql",
-        "v13/goal_workflow/setup_db.py",
-        "v13/goal_workflow/test_goal_workflow.py",
-        "v13/goal_workflow/README.md",
-    }
-    stage43 = {
-        "v13/external_exec/v13_external_exec.sql",
-        "v13/external_exec/setup_db.py",
-        "v13/external_exec/test_external_exec.py",
-        "v13/external_exec/README.md",
-    }
-    stage44 = {
-        "v13/ce_map/v13_ce_map.sql",
-        "v13/ce_map/setup_db.py",
-        "v13/ce_map/test_ce_map.py",
-        "v13/ce_map/README.md",
-    }
-    controller_files = {
-        "v13/loop_driver/controller.py",
-        "v13/loop_driver/test_controller_vertical.py",
+        "v13/ce_run/v13_ce_run.sql",
+        "v13/ce_run/setup_db.py",
+        "v13/ce_run/test_ce_run.py",
+        "v13/ce_run/README.md",
     }
     subprocess.check_call(["git", "cat-file", "-e", phase_d + "^{commit}"], cwd=AGENT_ROOT)
     subprocess.check_call(["git", "cat-file", "-e", base + "^{commit}"], cwd=AGENT_ROOT)
@@ -566,9 +482,37 @@ def r1_phase_d_prefix_allowance():
         old_tree, new_tree = ast.parse(before), ast.parse(after)
         old_functions = {n.name: n for n in old_tree.body if isinstance(n, ast.FunctionDef)}
         new_functions = {n.name: n for n in new_tree.body if isinstance(n, ast.FunctionDef)}
+        approved = {"test_stage_bytes", "main"}
+        phase_d_new = {"unattended_accept_script_scan"}
+        assert set(new_functions) - set(old_functions) <= phase_d_new, (
+            "unexpected goal_supervisor function: " + str(set(new_functions) - set(old_functions)))
+
+        def header(text, node):
+            lines = text.splitlines(keepends=True)
+            start = min([node.lineno] + [item.lineno for item in node.decorator_list])
+            return "".join(lines[start - 1:node.body[0].lineno - 1])
+
+        def without(text, tree):
+            lines = text.splitlines(keepends=True)
+            drop = set()
+            for node in tree.body:
+                if isinstance(node, ast.FunctionDef) and node.name in approved:
+                    drop.update(range(node.body[0].lineno - 1, node.end_lineno))
+                if isinstance(node, ast.FunctionDef) and node.name in phase_d_new:
+                    drop.update(range(node.lineno - 1, node.end_lineno))
+            result = "".join(line for index, line in enumerate(lines) if index not in drop)
+            result = re.sub(
+                r"(?m)^[ \t]*unattended_accept_script_scan\(.*\)\n?", "", result)
+            result = re.sub(r"\n{3,}def run\(", "\n\ndef run(", result)
+            return re.sub(
+                r"(?m)(    test_runtime\(cur, server\))\n{2,}(?=def run\()",
+                r"\1\n\n", result)
+
         for func, old_node in old_functions.items():
             assert func in new_functions, func
-            if func == "test_stage_bytes":
+            if func in approved:
+                assert header(before, old_node) == header(after, new_functions[func]), (
+                    "changed goal_supervisor guard signature: " + func)
                 continue
             old_text = "\n".join(before.splitlines()[old_node.lineno - 1:old_node.end_lineno])
             new_node = new_functions[func]
@@ -582,23 +526,168 @@ def r1_phase_d_prefix_allowance():
             ast.dump(n, include_attributes=False) for n in tree.body
             if not isinstance(n, ast.FunctionDef)]
         assert normalize(old_tree) == normalize(new_tree), "changed goal_supervisor module setup"
+        assert without(before, old_tree) == without(after, new_tree), (
+            "goal_supervisor change escaped approved guard body")
+        old_main = ast.get_source_segment(before, old_functions["main"])
+        main_body = ast.get_source_segment(after, new_functions["main"]) or ""
+        if main_body != old_main or "--unattended-continuation" in main_body:
+            import contextlib
+            import io
+            import sys
+            from types import SimpleNamespace
+
+            for needle in ("ASK_USER", "--unattended-continuation", "accept_unattended.py", "SystemExit"):
+                assert needle in main_body, "goal_supervisor main missing semantic needle: " + needle
+            usage = "usage: test_goal_supervisor.py [--unattended-continuation]\n"
+            gate_line = "[gate] Fake checks only; unattended authorization remains accept_unattended.py\n"
+            ask = "v13: supervisor: ask_user"
+            for args, fault in (
+                    ([], None), (["--unattended-continuation"], None),
+                    (["--unattended"], None), (["--help"], None),
+                    (["--unattended-continuation", "extra"], None),
+                    (["--unattended-continuation"] * 2, None),
+                    ([], "stage"), ([], "setup"), ([], "run"),
+                    (["--unattended-continuation"], "stage"),
+                    (["--unattended-continuation"], "setup"),
+                    (["--unattended-continuation"], "run")):
+                events = []
+
+                def record(name, result=None):
+                    def call(*unused):
+                        events.append(name)
+                        if fault == name and name != "setup":
+                            raise RuntimeError(name)
+                        return 1 if fault == "setup" and name == "setup" else result
+                    return call
+
+                conn = SimpleNamespace(cursor=record("cursor", object()),
+                                       commit=record("commit"), close=record("close"))
+                namespace = {"DB": "fake_gate_contract", "N": 74, "ASK_USER": ask,
+                             "test_stage_bytes": record("stage"),
+                             "setup_db": record("setup", 0),
+                             "get_server": record("server", object()),
+                             "connect": record("connect", conn), "run": record("run"),
+                             "setup_mod": SimpleNamespace(CREATED=True),
+                             "run_psql": record("drop")}
+                exec(compile(ast.Module(body=[new_functions["main"]], type_ignores=[]),
+                             "<goal-main-contract>", "exec"), namespace)
+                output = io.StringIO()
+                saved_argv = sys.argv
+                raised = None
+                result = None
+                try:
+                    sys.argv = ["test_goal_supervisor.py"] + args
+                    with contextlib.redirect_stdout(output):
+                        try:
+                            result = namespace["main"]()
+                        except (SystemExit, RuntimeError) as exc:
+                            raised = exc
+                finally:
+                    sys.argv = saved_argv
+                text = output.getvalue()
+                if args not in ([], ["--unattended-continuation"]):
+                    assert result == 2 and raised is None and events == [] and text == usage, (args, events, text)
+                elif fault == "stage":
+                    assert isinstance(raised, RuntimeError) and events == ["stage"]
+                    assert "[ok]" not in text and ask not in text and gate_line not in text
+                elif fault == "setup":
+                    assert result == 1 and raised is None and events == ["stage", "setup"]
+                    assert "[ok]" not in text and ask not in text and gate_line not in text
+                elif fault == "run":
+                    assert result == 1 and raised is None
+                    assert events == ["stage", "setup", "server", "connect", "cursor", "run", "close", "drop"]
+                    assert "[ok]" not in text and ask not in text and gate_line not in text
+                else:
+                    assert events == ["stage", "setup", "server", "connect", "cursor", "run", "commit", "close", "drop"]
+                    assert "[ok] 74 checks\n" in text
+                    if args:
+                        assert isinstance(raised, SystemExit) and raised.code == ask and result is None
+                        assert text.endswith("[FAIL] unattended_continuation: " + ask + "\n" + ask + "\n")
+                        assert gate_line not in text
+                    else:
+                        assert result == 0 and raised is None and text.endswith(gate_line)
+                        assert ask not in text and "[FAIL] unattended_continuation:" not in text
 
     def fair_test_ok(before, after):
         old_tree, new_tree = ast.parse(before), ast.parse(after)
         old_functions = {n.name: n for n in old_tree.body if isinstance(n, ast.FunctionDef)}
         new_functions = {n.name: n for n in new_tree.body if isinstance(n, ast.FunctionDef)}
         assert set(new_functions) == set(old_functions), "fair_claim test added or dropped a function"
+        def header(text, node):
+            lines = text.splitlines(keepends=True)
+            start = min([node.lineno] + [item.lineno for item in node.decorator_list])
+            return "".join(lines[start - 1:node.body[0].lineno - 1])
+
+        loader_old = """    check(
+        "load_tail_goal_supervise",
+        SQL_LOAD_ORDER[-2].name == "v13_goal_supervise.sql"
+        and SQL_LOAD_ORDER[-1].name == "v13_fair_claim.sql",
+        SQL_LOAD_ORDER[-2].name)
+"""
+        loader_new = """    check(
+        "load_tail_goal_supervise",
+        SQL_LOAD_ORDER[37].name == "v13_goal_supervise.sql"
+        and SQL_LOAD_ORDER[38].name == "v13_fair_claim.sql"
+        and SQL_LOAD_ORDER[39].name == "v13_ce_run.sql"
+        and files_through("fair_claim")[-1].name == "v13_fair_claim.sql",
+        [path.name for path in SQL_LOAD_ORDER[37:]])
+"""
         for func, old_node in old_functions.items():
-            if func == "test_stage_bytes":
-                continue
             new_node = new_functions[func]
+            assert header(before, old_node) == header(after, new_node), (
+                "changed fair_claim test signature/decorator: " + func)
             old_text = "\n".join(before.splitlines()[old_node.lineno - 1:old_node.end_lineno])
             new_text = "\n".join(after.splitlines()[new_node.lineno - 1:new_node.end_lineno])
+            if func == "test_stage_bytes":
+                continue
+            if func == "test_reread":
+                assert old_text.count(loader_old.rstrip("\n")) == 1, (
+                    "phase-D reread loader assertion anchor missing")
+                expected = old_text.replace(loader_old.rstrip("\n"), loader_new.rstrip("\n"), 1)
+                assert new_text == expected, "changed fair_claim reread outside loader-tail assertion"
+                continue
             assert old_text == new_text, "changed fair_claim test: " + func
         normalize = lambda tree: [
             ast.dump(n, include_attributes=False) for n in tree.body
             if not isinstance(n, ast.FunctionDef)]
         assert normalize(old_tree) == normalize(new_tree), "changed fair_claim module setup"
+
+    def fair_driver_test_ok(before, after):
+        old_tree, new_tree = ast.parse(before), ast.parse(after)
+        old_functions = {n.name: n for n in old_tree.body if isinstance(n, ast.FunctionDef)}
+        new_functions = {n.name: n for n in new_tree.body if isinstance(n, ast.FunctionDef)}
+        assert set(new_functions) == set(old_functions), "fair_driver test added or dropped a function"
+        approved = {"test_stage_bytes", "test_static"}
+
+        def without(text, tree):
+            lines = text.splitlines(keepends=True)
+            drop = set()
+            for node in tree.body:
+                if isinstance(node, ast.FunctionDef) and node.name in approved:
+                    drop.update(range(node.body[0].lineno - 1, node.end_lineno))
+            return "".join(line for index, line in enumerate(lines) if index not in drop)
+
+        def header(text, node):
+            lines = text.splitlines(keepends=True)
+            start = min([node.lineno] + [item.lineno for item in node.decorator_list])
+            return "".join(lines[start - 1:node.body[0].lineno - 1])
+
+        for func, old_node in old_functions.items():
+            if func in approved:
+                new_node = new_functions[func]
+                assert header(before, old_node) == header(after, new_node), (
+                    "changed fair_driver guard signature: " + func)
+                continue
+            new_node = new_functions[func]
+            old_text = "\n".join(before.splitlines()[old_node.lineno - 1:old_node.end_lineno])
+            new_text = "\n".join(after.splitlines()[new_node.lineno - 1:new_node.end_lineno])
+            assert old_text == new_text, "changed fair_driver test: " + func
+        normalize = lambda tree: [
+            ast.dump(n, include_attributes=False) for n in tree.body
+            if not isinstance(n, ast.FunctionDef)]
+        assert normalize(old_tree) == normalize(new_tree), "changed fair_driver module setup"
+        assert without(before, old_tree) == without(after, new_tree), (
+            "fair_driver change escaped approved guard bodies")
 
     def readme_ok(before, after):
         assert after.startswith(before), "README is not a pure append"
@@ -608,22 +697,14 @@ def r1_phase_d_prefix_allowance():
 
     def allow(extra, known_names, blobs, current, load_base, load_current, tracked):
         for name in extra:
-            assert (name.startswith(prefixes) or name in stage40 or name in stage41
-                    or name in stage42 or name in stage43 or name in stage44
-                    or name in controller_files), (
+            assert name.startswith(prefixes) or name in stage40, (
                 "outside the three prefixes: " + name)
-        assert extra - known_names - stage40 - stage41 - stage42 - stage43 - stage44 - controller_files <= fresh_ok, (
+        assert extra - known_names - stage40 <= fresh_ok, (
             "fresh file outside accept_unattended.py")
         missing = stage40 - set(tracked)
         assert not missing, "stage 40 path is not tracked: " + str(sorted(missing))
-        missing41 = stage41 - set(tracked)
-        assert not missing41, "stage 41 path is not tracked: " + str(sorted(missing41))
-        missing42 = stage42 - set(tracked)
-        assert not missing42, "stage 42 path is not tracked: " + str(sorted(missing42))
-        missing43 = stage43 - set(tracked)
-        assert not missing43, "stage 43 path is not tracked: " + str(sorted(missing43))
-        missing44 = stage44 - set(tracked)
-        assert not missing44, "stage 44 path is not tracked: " + str(sorted(missing44))
+        missing_phase = known_names - set(tracked)
+        assert not missing_phase, "phase D protected path missing: " + str(sorted(missing_phase))
         for name in known_names & extra:
             blob, now = blobs[name], current[name]
             if name == "v13/goal_supervisor/README.md":
@@ -632,6 +713,8 @@ def r1_phase_d_prefix_allowance():
                 goal_test_ok(blob.decode(), now.decode())
             elif name == "v13/fair_claim/test_fair_claim.py":
                 fair_test_ok(blob.decode(), now.decode())
+            elif name == "v13/fair_driver/test_fair_driver.py":
+                fair_driver_test_ok(blob.decode(), now.decode())
             else:
                 assert now == blob, "known bytes changed: " + name
         r1_load_append_ok(load_base, load_current, tracked)
@@ -647,9 +730,11 @@ def r1_phase_d_prefix_allowance():
     protected = tree(base)
     phase_files = tree(phase_d)
     tracked = set(subprocess.check_output(
-        ["git", "ls-files", "--", "v13"], cwd=AGENT_ROOT).decode().splitlines())
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "v13"],
+        cwd=AGENT_ROOT).decode().splitlines())
+    tracked = {name for name in tracked if (AGENT_ROOT / name).is_file()}
     extra = tracked - protected
-    known_names = extra & phase_files
+    known_names = phase_files - protected
     blobs = {
         name: subprocess.check_output(["git", "show", phase_d + ":" + name], cwd=AGENT_ROOT)
         for name in known_names}
@@ -660,12 +745,14 @@ def r1_phase_d_prefix_allowance():
 
     goal_name = "v13/goal_supervisor/test_goal_supervisor.py"
     fair_name = "v13/fair_claim/test_fair_claim.py"
+    fair_driver_name = "v13/fair_driver/test_fair_driver.py"
     readme_name = "v13/goal_supervisor/README.md"
     driver_name = "v13/goal_supervisor/driver.py"
     setup_name = "v13/goal_supervisor/setup_db.py"
     fair_sql = "v13/fair_claim/v13_fair_claim.sql"
     goal_before = blobs[goal_name].decode()
     fair_before = blobs[fair_name].decode()
+    fair_driver_before = blobs[fair_driver_name].decode()
 
     def reject_bytes(name):
         mutated = dict(current)
@@ -693,6 +780,54 @@ def r1_phase_d_prefix_allowance():
     goal_run[goal_name] = goal_before.replace("    test_static()\n", "", 1).encode()
     must_reject(lambda: allow(
         extra, known_names, blobs, goal_run, load_base, load_current, tracked))
+    goal_comment = dict(current)
+    goal_comment[goal_name] = (goal_before + "\n# unrelated module mutation\n").encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, goal_comment, load_base, load_current, tracked))
+    goal_function = dict(current)
+    goal_function[goal_name] = goal_before.replace(
+        "def test_static(", "def test_staticX(", 1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, goal_function, load_base, load_current, tracked))
+    goal_main_signature = dict(current)
+    goal_main_signature[goal_name] = current[goal_name].decode().replace(
+        "def main() -> int:", "def main():", 1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, goal_main_signature, load_base, load_current, tracked))
+    goal_main_probe = dict(current)
+    goal_live = current[goal_name].decode()
+    goal_main_node = next(n for n in ast.parse(goal_live).body
+                          if isinstance(n, ast.FunctionDef) and n.name == "main")
+    goal_main_text = ast.get_source_segment(goal_live, goal_main_node)
+    goal_main_probe[goal_name] = goal_live.replace(
+        goal_main_text, goal_main_text.replace("ASK_USER", "REFUSAL_REMOVED"), 1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, goal_main_probe, load_base, load_current, tracked))
+    goal_main_flag = dict(current)
+    goal_main_flag[goal_name] = goal_live.replace(
+        goal_main_text, goal_main_text.replace(
+            "--unattended-continuation", "--removed-probe"), 1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, goal_main_flag, load_base, load_current, tracked))
+    for old, new in (
+            ("    if probe:\n", "    if False:  # probe disabled\n"),
+            ("        raise SystemExit(ASK_USER)", "        return 0  # SystemExit(ASK_USER)"),
+            ("        return 2\n", "        return 0\n"),
+            ("    test_stage_bytes()\n", "    pass  # test_stage_bytes()\n"),
+            ("        run(cur, server)\n", "        pass  # run(cur, server)\n"),
+            ("        conn.commit()\n", "        pass  # conn.commit()\n"),
+            ("        conn.close()\n", "        pass  # conn.close()\n"),
+            ("    if failed is not None:\n", "    if False:  # failure ignored\n"),
+            ("        return 2\n", "        setup_db()\n        return 2\n")):
+        assert old in goal_main_text, ("missing mutation anchor", old)
+        mutated = goal_main_text.replace(old, new, 1)
+        must_reject(lambda: goal_test_ok(
+            goal_before, goal_live.replace(goal_main_text, mutated, 1)))
+    goal_extra_function = dict(current)
+    goal_extra_function[goal_name] = (current[goal_name].decode() +
+        "\ndef extra_helper():\n    pass\n").encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, goal_extra_function, load_base, load_current, tracked))
     readme_mut = dict(current)
     readme_mut[readme_name] = blobs[readme_name].replace(b"Gate", b"Gatf", 1)
     must_reject(lambda: allow(
@@ -705,6 +840,42 @@ def r1_phase_d_prefix_allowance():
         "def test_static_source(", "def test_static_sourceX(", 1).encode()
     must_reject(lambda: allow(
         extra, known_names, blobs, fair_mut, load_base, load_current, tracked))
+    fair_live = current[fair_name].decode()
+    reread_new_anchor = """    check(
+        \"load_tail_goal_supervise\",
+        SQL_LOAD_ORDER[37].name == \"v13_goal_supervise.sql\"
+        and SQL_LOAD_ORDER[38].name == \"v13_fair_claim.sql\"
+        and SQL_LOAD_ORDER[39].name == \"v13_ce_run.sql\"
+        and files_through(\"fair_claim\")[-1].name == \"v13_fair_claim.sql\",
+        [path.name for path in SQL_LOAD_ORDER[37:]])
+"""
+    fair_reread_assertion = dict(current)
+    fair_reread_assertion[fair_name] = fair_live.replace(
+        reread_new_anchor,
+        reread_new_anchor.replace(
+            "and SQL_LOAD_ORDER[39].name == \"v13_ce_run.sql\"\n        ", "", 1),
+        1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, fair_reread_assertion, load_base, load_current, tracked))
+    fair_reread_signature = dict(current)
+    fair_reread_signature[fair_name] = fair_live.replace(
+        "def test_reread(cur):", "def test_reread(cur, extra=None):", 1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, fair_reread_signature, load_base, load_current, tracked))
+    fair_reread_decorator = dict(current)
+    fair_reread_decorator[fair_name] = fair_live.replace(
+        "def test_reread(cur):", "@staticmethod\ndef test_reread(cur):", 1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, fair_reread_decorator, load_base, load_current, tracked))
+    fair_driver_mut = dict(current)
+    fair_driver_mut[fair_driver_name] = fair_driver_before.replace(
+        "def test_runtime(", "def test_runtimeX(", 1).encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, fair_driver_mut, load_base, load_current, tracked))
+    fair_driver_comment = dict(current)
+    fair_driver_comment[fair_driver_name] = (fair_driver_before + "\n# unrelated module mutation\n").encode()
+    must_reject(lambda: allow(
+        extra, known_names, blobs, fair_driver_comment, load_base, load_current, tracked))
 
     live = load_current
     must_reject(lambda: r1_load_append_ok(
@@ -789,159 +960,52 @@ def r1_phase_d_prefix_allowance():
             return
         raise AssertionError("synthetic case must reject: " + needle)
 
+    for name in sorted(known_names):
+        reject_reason(
+            lambda: allow(extra - {name}, known_names, blobs, current,
+                          load_base, load_current, tracked - {name}),
+            "phase D protected path missing")
+
     live = load_current
-    reject_reason(
-        lambda: allow(
-            extra | {"v13/not_allowed/x.py"}, known_names, blobs, current,
-            load_base, load_current, tracked),
-        "outside the three prefixes")
-    reject_reason(
-        lambda: allow(
-            extra | {"v13/loop_driver/third_controller_file.py"}, known_names, blobs, current,
-            load_base, load_current, tracked),
-        "outside the three prefixes")
-    reject_reason(
-        lambda: allow(
-            extra | {"v13/agentctl/extra.py"}, known_names, blobs, current,
-            load_base, load_current, tracked),
-        "outside the three prefixes")
-    reject_reason(
-        lambda: allow(
-            extra, known_names, blobs, current, load_base, load_current,
-            tracked - {"v13/agentctl/v13_agentctl.sql"}),
-        "stage 40 path is not tracked")
-    reject_reason(
-        lambda: allow(
-            (extra - {"v13/agentctl/test_agentctl.py"}) | {"v13/agentctl/extra.py"},
-            known_names, blobs, current, load_base, load_current, tracked),
-        "outside the three prefixes")
+    for name in ("v13/not_allowed/x.py", "v13/loop_driver/controller.py",
+                 "v13/ce_run/extra.py", "v13/not_scheduled/test_not_scheduled.py"):
+        reject_reason(
+            lambda: allow(extra | {name}, known_names, blobs, current,
+                          load_base, load_current, tracked),
+            "outside the three prefixes")
+    for name in sorted(stage40):
+        reject_reason(
+            lambda: allow(extra - {name}, known_names, blobs, current,
+                          load_base, load_current, tracked - {name}),
+            "stage 40 path is not tracked")
     reject_reason(
         lambda: r1_load_append_ok(
-            load_base, live.replace('    "agentctl": 40,\n', '    "agentctl": 40a,\n', 1), tracked),
+            load_base, live.replace('    "ce_run": 40,\n', '    "ce_run": 40a,\n', 1), tracked),
         "load diff plus line is not a canonical append")
     reject_reason(
         lambda: r1_load_append_ok(
-            load_base, live.replace('    "agentctl": 40,\n', '    "agentctl": 41,\n', 1), tracked),
-        "duplicate stage number")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base,
-            live.replace("v13_agentctl.sql", "v13_agentctl_extra.sql", 1),
-            tracked),
-        "append is not fair_claim/39 then agentctl/40 then agentctl_verbs/41 then goal_workflow/42 then external_exec/43 then ce_map/44")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base,
-            live.replace('    "agentctl": 40,\n', '    "agentctl_verbs": 40,\n', 1),
-            tracked),
-        "duplicate stage key")
-    reject_reason(
-        lambda: allow(
-            extra | {"v13/agentctl_verbs/extra.py"}, known_names, blobs, current,
-            load_base, load_current, tracked),
-        "outside the three prefixes")
-    reject_reason(
-        lambda: allow(
-            extra | {"v13/not_scheduled/test_not_scheduled.py"}, known_names, blobs, current,
-            load_base, load_current, tracked),
-        "outside the three prefixes")
-    reject_reason(
-        lambda: allow(
-            extra, known_names, blobs, current, load_base, load_current,
-            tracked - {"v13/agentctl_verbs/v13_agentctl_verbs.sql"}),
-        "stage 41 path is not tracked")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base, live.replace('    "agentctl_verbs": 41,\n', '    "agentctl_verbs": 45,\n', 1), tracked),
+            load_base, live.replace('    "ce_run": 40,\n', '    "ce_run": 41,\n', 1), tracked),
         "stage number is not the next contiguous value")
     reject_reason(
         lambda: r1_load_append_ok(
-            load_base, live.replace('    "agentctl_verbs": 41,\n', '    "agentctl_verbs": 41a,\n', 1), tracked),
-        "load diff plus line is not a canonical append")
+            load_base, live.replace("v13_ce_run.sql", "v13_ce_run_extra.sql", 1), tracked),
+        "append is not fair_claim/39 then ce_run/40")
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base, live.replace('    "ce_run": 40,\n', '    "fair_claim": 40,\n', 1), tracked),
+        "duplicate stage key")
     future = live.replace(
-        '    V13_ROOT / "ce_map" / "v13_ce_map.sql",\n',
-        '    V13_ROOT / "ce_map" / "v13_ce_map.sql",\n'
+        '    V13_ROOT / "ce_run" / "v13_ce_run.sql",\n',
+        '    V13_ROOT / "ce_run" / "v13_ce_run.sql",\n'
         '    V13_ROOT / "not_scheduled" / "v13_not_scheduled.sql",\n',
         1).replace(
-        '    "ce_map": 44,\n',
-        '    "ce_map": 44,\n    "not_scheduled": 45,\n',
+        '    "ce_run": 40,\n',
+        '    "ce_run": 40,\n    "not_scheduled": 41,\n',
         1)
     reject_reason(
         lambda: r1_load_append_ok(
             load_base, future, tracked | {"v13/not_scheduled/v13_not_scheduled.sql"}),
-        "append is not fair_claim/39 then agentctl/40 then agentctl_verbs/41 then goal_workflow/42 then external_exec/43 then ce_map/44")
-    reject_reason(
-        lambda: allow(
-            extra | {"v13/goal_workflow/extra.py"}, known_names, blobs, current,
-            load_base, load_current, tracked),
-        "outside the three prefixes")
-    reject_reason(
-        lambda: allow(
-            extra, known_names, blobs, current, load_base, load_current,
-            tracked - {"v13/goal_workflow/v13_goal_workflow.sql"}),
-        "stage 42 path is not tracked")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base, live.replace('    "goal_workflow": 42,\n', '    "goal_workflow": 45,\n', 1), tracked),
-        "stage number is not the next contiguous value")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base, live.replace('    "goal_workflow": 42,\n', '    "goal_workflow": 42a,\n', 1), tracked),
-        "load diff plus line is not a canonical append")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base,
-            live.replace("v13_goal_workflow.sql", "v13_goal_workflow_extra.sql", 1),
-            tracked),
-        "append is not fair_claim/39 then agentctl/40 then agentctl_verbs/41 then goal_workflow/42 then external_exec/43 then ce_map/44")
-    reject_reason(
-        lambda: allow(
-            extra | {"v13/external_exec/extra.py"}, known_names, blobs, current,
-            load_base, load_current, tracked),
-        "outside the three prefixes")
-    reject_reason(
-        lambda: allow(
-            extra, known_names, blobs, current, load_base, load_current,
-            tracked - {"v13/external_exec/v13_external_exec.sql"}),
-        "stage 43 path is not tracked")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base, live.replace('    "external_exec": 43,\n', '    "external_exec": 45,\n', 1), tracked),
-        "stage number is not the next contiguous value")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base, live.replace('    "external_exec": 43,\n', '    "external_exec": 43a,\n', 1), tracked),
-        "load diff plus line is not a canonical append")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base,
-            live.replace("v13_external_exec.sql", "v13_external_exec_extra.sql", 1),
-            tracked),
-        "append is not fair_claim/39 then agentctl/40 then agentctl_verbs/41 then goal_workflow/42 then external_exec/43 then ce_map/44")
-    reject_reason(
-        lambda: allow(
-            extra | {"v13/ce_map/extra.py"}, known_names, blobs, current,
-            load_base, load_current, tracked),
-        "outside the three prefixes")
-    reject_reason(
-        lambda: allow(
-            extra, known_names, blobs, current, load_base, load_current,
-            tracked - {"v13/ce_map/v13_ce_map.sql"}),
-        "stage 44 path is not tracked")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base, live.replace('    "ce_map": 44,\n', '    "ce_map": 45,\n', 1), tracked),
-        "stage number is not the next contiguous value")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base, live.replace('    "ce_map": 44,\n', '    "ce_map": 44a,\n', 1), tracked),
-        "load diff plus line is not a canonical append")
-    reject_reason(
-        lambda: r1_load_append_ok(
-            load_base,
-            live.replace("v13_ce_map.sql", "v13_ce_map_extra.sql", 1),
-            tracked),
-        "append is not fair_claim/39 then agentctl/40 then agentctl_verbs/41 then goal_workflow/42 then external_exec/43 then ce_map/44")
+        "append is not fair_claim/39 then ce_run/40")
 
 
 def r0_source_scope():
@@ -950,6 +1014,7 @@ def r0_source_scope():
     import re
 
     base = "fb295ac6c7459bb98dac57e37883af549d2d8a4c"
+    phase_d = "78e77c710bf06a0a1c771b822a3837c5db4c66d0"
     subprocess.check_call(["git", "cat-file", "-e", base + "^{commit}"], cwd=AGENT_ROOT)
 
     def original(path):
@@ -984,7 +1049,23 @@ def r0_source_scope():
         assert token not in blocks["RECEIPT"], token
     tests = {"v13/plan_arm/test_plan_arm.py", "v13/frontier_gap/test_frontier_gap.py",
              "v13/goal_supervise/test_goal_supervise.py",
-             "v13/loop_driver/test_loop_driver.py"}
+             "v13/loop_driver/test_loop_driver.py",
+             "v13/workspace_admit/test_workspace_admit.py",
+             "v13/pi_parity/test_pi_parity.py",
+             "v13/pi_ports/test_pi_ports.py",
+             "v13/read_tools/test_read_tools.py"}
+    body_only = {
+        "v13/workspace_admit/test_workspace_admit.py": {"test_stage_bytes"},
+        "v13/pi_parity/test_pi_parity.py": {"protected_dirty", "run_guard"},
+        "v13/pi_ports/test_pi_ports.py": {"protected_dirty", "run_guard"},
+        "v13/read_tools/test_read_tools.py": {"protected_dirty", "run_g", "run_e4"},
+    }
+    body_pins = {
+        "v13/workspace_admit/test_workspace_admit.py": "2f7d515fbc915500d14d3e635a63c0127a3c4178",
+        "v13/pi_parity/test_pi_parity.py": "fcec59d32d3277bf5225c0e5d9bf471867e1947a",
+        "v13/pi_ports/test_pi_ports.py": "4436cd8860b3bb370669568b6773b9e48d76cc64",
+        "v13/read_tools/test_read_tools.py": "30cdfd63b1c7bbb209eedd299b7d5b8a2c7c0b6c",
+    }
     readmes = {"v13/plan_arm/README.md", "v13/frontier_gap/README.md",
                "v13/goal_supervise/README.md", "v13/loop_driver/README.md"}
     driver_path = "v13/loop_driver/driver.py"
@@ -1000,21 +1081,184 @@ def r0_source_scope():
     r1_phase_d_prefix_allowance()
     r1_driver_restore((AGENT_ROOT / driver_path).read_bytes(), original(driver_path))
     r1_freeze_positive_proof()
+    def body_only_ok(before, after, approved):
+        old_tree, new_tree = ast.parse(before), ast.parse(after)
+        old_functions = {n.name: n for n in old_tree.body if isinstance(n, ast.FunctionDef)}
+        new_functions = {n.name: n for n in new_tree.body if isinstance(n, ast.FunctionDef)}
+        assert set(old_functions) == set(new_functions), "body-only function set changed"
+        assert approved <= set(old_functions), "body-only approved function missing"
+
+        def header(text, node):
+            lines = text.splitlines(keepends=True)
+            start = min([node.lineno] + [item.lineno for item in node.decorator_list])
+            body_start = node.body[0].lineno if node.body else node.end_lineno
+            return "".join(lines[start - 1:body_start - 1])
+
+        def without(text, tree):
+            lines = text.splitlines(keepends=True)
+            drop = set()
+            for node in tree.body:
+                if isinstance(node, ast.FunctionDef) and node.name in approved:
+                    body_start = node.body[0].lineno if node.body else node.end_lineno
+                    drop.update(range(body_start - 1, node.end_lineno))
+            return "".join(line for index, line in enumerate(lines) if index not in drop)
+
+        for func in approved:
+            assert header(before, old_functions[func]) == header(after, new_functions[func]), (
+                "approved guard signature/decorator changed: " + func)
+        assert without(before, old_tree) == without(after, new_tree), (
+            "body-only change escaped approved function bodies")
+
+    def must_reject(call, label):
+        try:
+            call()
+        except AssertionError:
+            return
+        raise AssertionError("body-only negative must reject: " + label)
+
+    def e4_restore_ok(text):
+        import tempfile
+        from types import SimpleNamespace
+
+        node = next(n for n in ast.parse(text).body
+                    if isinstance(n, ast.FunctionDef) and n.name == "run_e4")
+        code = compile(ast.Module(body=[node], type_ignores=[]), "<run_e4-proof>", "exec")
+        children = ["v13/pi_parity/test_pi_parity.py",
+                    "v13/workspace_admit/test_workspace_admit.py"]
+        scenarios = (
+            ("normal", 0, 0, "write"),
+            ("first_failure", 7, 0, "write"),
+            ("timeout", "timeout", 0, "write"),
+            ("prewrite_error", "error", 0, "prewrite_error"),
+            ("untouched", 0, 0, "untouched"),
+            ("deleted", 0, 0, "delete"),
+            ("second_failure", 0, 7, "write"),
+        )
+        for initial in (None, b"", b"pre-existing user trace\r\n"):
+            for label, first_outcome, second_outcome, trace_action in scenarios:
+                with tempfile.TemporaryDirectory(prefix="e4-restore-proof-") as raw:
+                    root = Path(raw)
+                    trace = root / "v13/pi_parity/traces/pg.jsonl"
+                    trace.parent.mkdir(parents=True)
+                    if initial is not None:
+                        trace.write_bytes(initial)
+                        trace.chmod(0o640)
+                    calls = []
+                    failures = []
+                    generated = b"generated parity evidence\n"
+
+                    def fake_run(argv, **kwargs):
+                        calls.append((argv, kwargs))
+                        assert kwargs["cwd"] == root
+                        if len(calls) == 1:
+                            assert argv == ["bash", "-lc", "discover"]
+                            assert kwargs == dict(cwd=root, capture_output=True, text=True)
+                            return SimpleNamespace(returncode=0, stdout="\n".join(children), stderr="")
+                        index = len(calls) - 2
+                        assert argv == ["uv", "run", "python", children[index]]
+                        assert kwargs == dict(cwd=root, timeout=600,
+                                              env={"USER_SENTINEL": "preserved", "UV_FROZEN": "1"})
+                        assert trace.exists() == (initial is not None)
+                        if initial is not None:
+                            assert trace.read_bytes() == initial
+                            assert trace.stat().st_mode & 0o777 == 0o640
+                        outcome = first_outcome if index == 0 else second_outcome
+                        if index == 0 and trace_action == "prewrite_error":
+                            raise OSError("child launch failure")
+                        if trace_action == "untouched":
+                            return SimpleNamespace(returncode=outcome)
+                        if trace_action == "delete":
+                            trace.unlink(missing_ok=True)
+                            return SimpleNamespace(returncode=outcome)
+                        trace.write_bytes(generated)
+                        trace.chmod(0o600)
+                        if outcome == "timeout":
+                            raise subprocess.TimeoutExpired(argv, 600)
+                        return SimpleNamespace(returncode=outcome)
+
+                    def fake_check(label_name, condition, detail=""):
+                        if not condition:
+                            failures.append(detail)
+                            raise AssertionError("E4 child failure")
+
+                    namespace = dict(Path=Path, AGENT_ROOT=root, E4_DISCOVER="discover",
+                                     subprocess=SimpleNamespace(run=fake_run, TimeoutExpired=subprocess.TimeoutExpired),
+                                     os=SimpleNamespace(environ={"USER_SENTINEL": "preserved"}),
+                                     time=SimpleNamespace(time_ns=lambda: len(calls)), check=fake_check,
+                                     print=lambda *args: None)
+                    exec(code, namespace)
+                    raised = None
+                    try:
+                        namespace["run_e4"]()
+                    except (AssertionError, OSError) as exc:
+                        raised = exc
+                    assert trace.exists() == (initial is not None), "E4 existence not restored"
+                    if initial is not None:
+                        assert trace.read_bytes() == initial, "E4 bytes not restored"
+                        assert trace.stat().st_mode & 0o777 == 0o640, "E4 mode not restored"
+                    evidence = list((root / "prompt-exports").glob("e4-pg-*.jsonl"))
+                    evidence_expected = trace_action == "write"
+                    assert bool(evidence) == evidence_expected, "E4 evidence shape changed: " + label
+                    if evidence_expected:
+                        assert all(p.read_bytes() == generated for p in evidence), "E4 evidence lost"
+                    if label == "prewrite_error":
+                        assert isinstance(raised, OSError) and len(calls) == 2, "E4 launch error swallowed"
+                        continue
+                    assert len(calls) == 3, "E4 child enumeration changed"
+                    expected = []
+                    if first_outcome not in (0, "timeout"):
+                        expected.append((children[0], first_outcome))
+                    if second_outcome not in (0, "timeout"):
+                        expected.append((children[1], second_outcome))
+                    if first_outcome == "timeout":
+                        expected.append((children[0], "timeout"))
+                    assert failures == ([expected] if expected else []), (
+                        "E4 child failure swallowed: " + label + " " + repr(failures))
+                    assert (raised is None) == (not expected)
+
     # Keep existing functions byte-for-byte; only stage guards and added r0_/r1_ calls are exceptions.
+    phase_names = set(subprocess.check_output(
+        ["git", "ls-tree", "-r", "--name-only", phase_d, "--", "v13"],
+        cwd=AGENT_ROOT).decode().splitlines())
     for name in tests:
-        before = original(name).decode()
+        source_rev = body_pins.get(name, phase_d if name in phase_names else base)
+        before = subprocess.check_output(
+            ["git", "show", source_rev + ":" + name], cwd=AGENT_ROOT).decode()
         after = (AGENT_ROOT / name).read_text()
+        if name in body_only:
+            body_only_ok(before, after, body_only[name])
+            if name == "v13/read_tools/test_read_tools.py":
+                e4_restore_ok(after)
+                for old, new, label in (
+                    ("trace_path.write_bytes(trace_bytes)", "pass", "restore-bytes"),
+                    ("trace_path.unlink(missing_ok=True)", "pass", "restore-absence"),
+                    ("trace_path.chmod(trace_mode)", "pass", "restore-mode"),
+                    ("failed.append((path, child.returncode))", "pass", "child-returncode"),
+                    ("failed.append((path, \"timeout\"))", "pass", "child-timeout"),
+                ):
+                    assert after.count(old) == 1, "E4 negative target missing: " + label
+                    mutant = after.replace(old, new, 1)
+                    must_reject(lambda: e4_restore_ok(mutant), name + ":" + label)
+            bad_comment = before + "\n# forbidden module-level mutation\n"
+            must_reject(lambda: body_only_ok(before, bad_comment, body_only[name]), name + ":comment")
+            old_functions = {
+                n.name: n for n in ast.parse(before).body if isinstance(n, ast.FunctionDef)}
+            victim = next(func for func in old_functions if func not in body_only[name])
+            bad_function = before.replace("def " + victim + "(", "def " + victim + "_changed(", 1)
+            must_reject(lambda: body_only_ok(before, bad_function, body_only[name]), name + ":function")
+            continue
         old_tree, new_tree = ast.parse(before), ast.parse(after)
         old_functions = {n.name: n for n in old_tree.body if isinstance(n, ast.FunctionDef)}
         new_functions = {n.name: n for n in new_tree.body if isinstance(n, ast.FunctionDef)}
         for func, old_node in old_functions.items():
             assert func in new_functions, (name, func)
             new_node = new_functions[func]
-            if func == "test_stage_bytes":
+            if (func == "test_stage_bytes" or func.startswith("r0_")
+                    or func.startswith("r1_") or func in body_only.get(name, set())):
                 continue
             old_text = "\n".join(before.splitlines()[old_node.lineno - 1:old_node.end_lineno])
             new_text = "\n".join(after.splitlines()[new_node.lineno - 1:new_node.end_lineno])
-            if func in ("main", "run"):
+            if source_rev == base and func in ("main", "run"):
                 new_text = "\n".join(
                     line for line in new_text.splitlines()
                     if not re.match(r"\s+r[01]_[a-z_]+\(.*\)$", line))

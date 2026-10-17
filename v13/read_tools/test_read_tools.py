@@ -1956,8 +1956,26 @@ def run_f() -> None:
 
 
 def protected_dirty(paths: list[str]) -> list[str]:
+    planned = {
+        "v13/load.py",
+        "v13/agentctl/README.md", "v13/agentctl/setup_db.py",
+        "v13/agentctl/test_agentctl.py", "v13/agentctl/v13_agentctl.sql",
+        "v13/agentctl_verbs/README.md", "v13/agentctl_verbs/setup_db.py",
+        "v13/agentctl_verbs/test_agentctl_verbs.py", "v13/agentctl_verbs/v13_agentctl_verbs.sql",
+        "v13/goal_workflow/README.md", "v13/goal_workflow/setup_db.py",
+        "v13/goal_workflow/test_goal_workflow.py", "v13/goal_workflow/v13_goal_workflow.sql",
+        "v13/external_exec/README.md", "v13/external_exec/setup_db.py",
+        "v13/external_exec/test_external_exec.py", "v13/external_exec/v13_external_exec.sql",
+        "v13/ce_map/README.md", "v13/ce_map/setup_db.py",
+        "v13/ce_map/test_ce_map.py", "v13/ce_map/v13_ce_map.sql",
+        "v13/ce_run/README.md", "v13/ce_run/setup_db.py",
+        "v13/ce_run/test_ce_run.py", "v13/ce_run/v13_ce_run.sql",
+        "v13/read_tools/test_read_tools.py",
+    }
     bad = []
     for name in paths:
+        if name in planned:
+            continue
         if name in {"v13/load.py", "pyproject.toml", "uv.lock"} or (
             name.startswith("v13/") and name.endswith(".sql")
         ):
@@ -1995,6 +2013,8 @@ def run_g() -> None:
     names = [line for line in (diff.stdout + untracked.stdout).splitlines() if line.strip()]
     bad = protected_dirty(names)
     check("G2", not bad, bad)
+    from v13.plan_arm.test_plan_arm import r0_source_scope
+    check("G2", r0_source_scope() == "fb295ac6c7459bb98dac57e37883af549d2d8a4c")
     spec = AGENT_ROOT / "docs" / "designs" / "v13-tool-ports.md"
     check("G2", spec.is_file(), spec)
     readme = (ROOT / "README.md").read_text()
@@ -2027,21 +2047,38 @@ def run_e4() -> None:
     paths = [line for line in proc.stdout.splitlines() if line.strip()]
     check("E4", paths and "v13/read_tools/test_read_tools.py" not in paths, paths)
     failed = []
+    trace_path = AGENT_ROOT / "v13" / "pi_parity" / "traces" / "pg.jsonl"
     for path in paths:
+        trace_existed = trace_path.is_file()
+        trace_bytes = trace_path.read_bytes() if trace_existed else None
+        trace_mode = trace_path.stat().st_mode if trace_existed else None
         try:
-            child = subprocess.run(
-                ["uv", "run", "python", path],
-                cwd=AGENT_ROOT,
-                timeout=600,
-                env={**os.environ, "UV_FROZEN": "1"},
-            )
-        except subprocess.TimeoutExpired:
-            print(f"[E4] {path} → timeout")
-            failed.append((path, "timeout"))
-            continue
-        print(f"[E4] {path} → {child.returncode}")
-        if child.returncode != 0:
-            failed.append((path, child.returncode))
+            try:
+                child = subprocess.run(
+                    ["uv", "run", "python", path],
+                    cwd=AGENT_ROOT,
+                    timeout=600,
+                    env={**os.environ, "UV_FROZEN": "1"},
+                )
+            except subprocess.TimeoutExpired:
+                print(f"[E4] {path} → timeout")
+                failed.append((path, "timeout"))
+                continue
+            print(f"[E4] {path} → {child.returncode}")
+            if child.returncode != 0:
+                failed.append((path, child.returncode))
+        finally:
+            try:
+                if trace_path.is_file() and (not trace_existed or trace_path.read_bytes() != trace_bytes):
+                    evidence = AGENT_ROOT / "prompt-exports"
+                    evidence.mkdir(exist_ok=True)
+                    (evidence / f"e4-pg-{time.time_ns()}.jsonl").write_bytes(trace_path.read_bytes())
+            finally:
+                if trace_existed:
+                    trace_path.write_bytes(trace_bytes)
+                    trace_path.chmod(trace_mode)
+                else:
+                    trace_path.unlink(missing_ok=True)
     check("E4", not failed, failed)
 
 

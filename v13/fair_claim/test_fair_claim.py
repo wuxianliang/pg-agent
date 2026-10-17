@@ -355,30 +355,68 @@ def test_stage_bytes():
         "v13/plan_contract", "v13/plan_read", "v13/frontier_gap",
         "v13/goal_supervise", "v13/goal_supervisor",
     ]
-    diff = subprocess.check_output(["git", "diff", "HEAD", "--", *paths], cwd=AGENT_ROOT)
+    from v13.plan_arm.test_plan_arm import r0_source_scope, r1_load_retirement_ok
+
+    allowed = {
+        "v13/plan_arm/test_plan_arm.py",
+        "v13/loop_driver/driver.py",
+        "v13/loop_driver/README.md",
+        "v13/loop_driver/controller.py",
+        "v13/loop_driver/test_controller_vertical.py",
+        "v13/load.py",
+        "v13/frontier_gap/test_frontier_gap.py",
+        "v13/goal_supervise/test_goal_supervise.py",
+        "v13/workspace_admit/test_workspace_admit.py",
+        "v13/goal_supervisor/test_goal_supervisor.py",
+        "v13/goal_supervisor/README.md",
+    }
+    diff = subprocess.check_output(
+        ["git", "diff", "HEAD", "--", *paths,
+         *(":(exclude)" + name for name in sorted(allowed))], cwd=AGENT_ROOT)
+    readme_base = subprocess.check_output(
+        ["git", "show", "HEAD:v13/goal_supervisor/README.md"], cwd=AGENT_ROOT)
+    readme_now = (AGENT_ROOT / "v13/goal_supervisor/README.md").read_bytes()
+
+    def readme_append_ok(before, after):
+        if not after.startswith(before):
+            return False
+        suffix = after[len(before):].lstrip(b"\n")
+        return not suffix or suffix.startswith("## 授权验收".encode())
+
+    readme_ok = readme_append_ok(readme_base, readme_now)
+    readme_mutation = readme_base.replace(b"Gate", b"Gatf", 1)
+    check("readme_mutation_rejected",
+          readme_mutation != readme_base
+          and not readme_append_ok(readme_base, readme_mutation)
+          and not readme_append_ok(readme_base, readme_base[:-1])
+          and not readme_append_ok(readme_base, readme_base + b"\n## unrelated\n"))
     load = subprocess.check_output(
         ["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
-    removed = [
-        line for line in load.splitlines()
-        if line.startswith("-") and not line.startswith("---")
-    ]
-    text = (AGENT_ROOT / "v13/load.py").read_text()
-    order = text.split("STAGE_THROUGH", 1)[0]
-    through = text.split("STAGE_THROUGH", 1)[1]
+    base = "fb295ac6c7459bb98dac57e37883af549d2d8a4c"
+    phase_d = "78e77c710bf06a0a1c771b822a3837c5db4c66d0"
+    base_load = subprocess.check_output(
+        ["git", "diff", base, "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
+    r1_load_retirement_ok(base_load, load)
     tail_ok = (
-        order.rfind("goal_supervise") < order.rfind("fair_claim")
-        and through.rfind('"goal_supervise": 38') < through.rfind('"fair_claim": 39')
-        and "fair_claim" not in order[:order.rfind("goal_supervise")]
-        and files_through("fair_claim")[-1].name == "v13_fair_claim.sql"
+        files_through("fair_claim")[-1].name == "v13_fair_claim.sql"
         and len(files_through("fair_claim")) == 39
-        and len(SQL_LOAD_ORDER) == 39
+        and len(SQL_LOAD_ORDER) == 40
         and STAGE_THROUGH["fair_claim"] == 39
+        and STAGE_THROUGH["ce_run"] == 40
     )
-    if load.strip():
-        load_ok = "fair_claim" in load and removed == [] and tail_ok
-    else:
-        load_ok = tail_ok and "fair_claim" in text
-    check("stage_bytes", diff == b"" and load_ok, (removed, tail_ok, bool(load.strip())))
+    check("stage_bytes", diff == b"" and tail_ok and readme_ok, (diff, tail_ok, readme_ok))
+    for path in SQL_LOAD_ORDER[:39]:
+        name = path.relative_to(AGENT_ROOT).as_posix()
+        rev = phase_d if name == "v13/fair_claim/v13_fair_claim.sql" else base
+        original = subprocess.check_output(["git", "show", rev + ":" + name], cwd=AGENT_ROOT)
+        current = path.read_bytes()
+        if name == "v13/plan_arm/v13_plan_arm.sql":
+            for kind in ("DECL", "RECEIPT"):
+                current = re.sub(
+                    rb"(?m)^[ \t]*-- R0_" + kind.encode() + rb"_BEGIN\n.*?"
+                    rb"^[ \t]*-- R0_" + kind.encode() + rb"_END\n", b"", current, flags=re.S)
+        check("frozen_sql_" + path.name, current == original, name)
+    check("r0_source_scope", r0_source_scope() == base)
 
 
 def test_static_source():
@@ -458,9 +496,11 @@ def test_static_source():
 def test_reread(cur):
     check(
         "load_tail_goal_supervise",
-        SQL_LOAD_ORDER[-2].name == "v13_goal_supervise.sql"
-        and SQL_LOAD_ORDER[-1].name == "v13_fair_claim.sql",
-        SQL_LOAD_ORDER[-2].name)
+        SQL_LOAD_ORDER[37].name == "v13_goal_supervise.sql"
+        and SQL_LOAD_ORDER[38].name == "v13_fair_claim.sql"
+        and SQL_LOAD_ORDER[39].name == "v13_ce_run.sql"
+        and files_through("fair_claim")[-1].name == "v13_fair_claim.sql",
+        [path.name for path in SQL_LOAD_ORDER[37:]])
     names = (
         "v13_claim_fair", "v13_fair_root", "v13_fair_eligible",
         "v13_fair_snapshot", "v13_path_conflict_locked",

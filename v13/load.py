@@ -54,11 +54,7 @@ SQL_LOAD_ORDER: list[Path] = [
     V13_ROOT / "frontier_gap" / "v13_frontier_gap.sql",
     V13_ROOT / "goal_supervise" / "v13_goal_supervise.sql",
     V13_ROOT / "fair_claim" / "v13_fair_claim.sql",
-    V13_ROOT / "agentctl" / "v13_agentctl.sql",
-    V13_ROOT / "agentctl_verbs" / "v13_agentctl_verbs.sql",
-    V13_ROOT / "goal_workflow" / "v13_goal_workflow.sql",
-    V13_ROOT / "external_exec" / "v13_external_exec.sql",
-    V13_ROOT / "ce_map" / "v13_ce_map.sql",
+    V13_ROOT / "ce_run" / "v13_ce_run.sql",
 ]
 
 STAGE_THROUGH = {
@@ -101,11 +97,7 @@ STAGE_THROUGH = {
     "frontier_gap": 37,
     "goal_supervise": 38,
     "fair_claim": 39,
-    "agentctl": 40,
-    "agentctl_verbs": 41,
-    "goal_workflow": 42,
-    "external_exec": 43,
-    "ce_map": 44,
+    "ce_run": 40,
 }
 
 

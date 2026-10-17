@@ -263,13 +263,26 @@ def test_stage_bytes():
         "v13/should_run", "v13/quota_window", "v13/attention", "v13/govern",
         "docs/plans/v13-long-loop-phase-a-plan-2026-09-29.md",
     ]
-    diff = subprocess.check_output(["git", "diff", "HEAD", "--", *paths], cwd=AGENT_ROOT)
+    from v13.plan_arm.test_plan_arm import r0_source_scope, r1_load_retirement_ok
+    base = r0_source_scope()
+    allowed = {
+        "v13/workspace_admit/test_workspace_admit.py",
+        "v13/plan_arm/test_plan_arm.py",
+        "v13/loop_driver/README.md",
+        "v13/loop_driver/controller.py",
+        "v13/loop_driver/driver.py",
+        "v13/loop_driver/test_loop_driver.py",
+        "v13/loop_driver/test_controller_vertical.py",
+        "v13/load.py",
+    }
+    diff = subprocess.check_output(
+        ["git", "diff", "HEAD", "--", *paths,
+         *(":(exclude)" + name for name in sorted(allowed))], cwd=AGENT_ROOT)
     load = subprocess.check_output(
         ["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
-    removed = [
-        line for line in load.splitlines()
-        if line.startswith("-") and not line.startswith("---")
-    ]
+    base_load = subprocess.check_output(
+        ["git", "diff", base, "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
+    r1_load_retirement_ok(base_load, load)
     text = (AGENT_ROOT / "v13/load.py").read_text()
     order = text.split("STAGE_THROUGH", 1)[0]
     through = text.split("STAGE_THROUGH", 1)[1]
@@ -278,11 +291,8 @@ def test_stage_bytes():
         and through.rfind('"real_chain": 35') < through.rfind('"workspace_admit": 36')
         and "workspace_admit" not in order[:order.rfind("real_chain")]
     )
-    if load.strip():
-        load_ok = "workspace_admit" in load and removed == [] and tail_ok
-    else:
-        load_ok = tail_ok and "workspace_admit" in text
-    check("stage_bytes", diff == b"" and load_ok, (removed, tail_ok, bool(load.strip())))
+    load_ok = tail_ok and "workspace_admit" in text
+    check("stage_bytes", diff == b"" and load_ok, (diff, tail_ok))
 
 
 def test_policy_and_hashes(cur, server):

@@ -79,28 +79,74 @@ R1 追加：`named_entry_is_settle_once`；`settle_once_not_run_turn`；`phase_a
 
 超级用户夹具不是产品角色证明。Fake 退出码 0 不是产品可用。
 
-## Controller thin cut
+## P1 retirement preflight (2026-10-17)
 
-`LoopDriver.run_controller_once(sid, target, *, snap=None, target_seq_before)` 是一条 sibling hop：调用方传入 `v13_parse` 的整份结果，不是 `parsed["snap"]`；省略 snap 时仍使用原有 `snap_of`。stale 必须传入写入前的旧 snap；方法自抓的新 snap 看不到活体 stale。合法 hop 恰好调用一次既有 `v13_advance`，只在 `progressed` 后以 `{ids: [target], hint: false}` 读一次既有 `v13_agentctl_observe`。advance 与 observe 分别提交；不调用 `serve`，不进入 `run_turn`，不启动生产循环。
+W1 rechecked `test_loop_driver.py`: no `controller` or `run_controller_once` reference. Its frozen imports, constants and existing functions were not changed. The retired controller entry is not a compatibility API. W1/W2 alone are not the completed Stage 40 milestone.
 
-`decide_controller_disposition` 是不碰数据库的纯函数。回执九键闭集是 `schema_version`、`caller`、`target`、`advance_word`、`target_seq_before`、`observe`、`readback`、`repair_required`、`replan_required`。方法先判定，后加 `disposition`。六词固定优先级为 `repair` → `terminal` → `user_action_required` → `replan` → `run_now` → `wait`；形状坏先抛逐字合同 `ValueError`。`blocked_unknown` 在序号前进且无 human 时落 `run_now`，不另开词。`repair` / `replan` 是内存事实，不扫描 SQL。observe 不携带 steer 正文，`pointers` 不是正文交付；正文只由 gate 直接读目标 events。
+Dependency/source audit found no discrepancy with the plan. Stage 1-38 SQL matches `fb295ac6c7459bb98dac57e37883af549d2d8a4c` after stripping the two existing R0 blocks from `v13_plan_arm.sql`; Stage 39 SQL matches `78e77c710bf06a0a1c771b822a3837c5db4c66d0`. Independent inspection (not the self-checking gate) compared 223 non-exempt protected files byte-for-byte, the four base test files' existing functions/module setup, and fair_claim's Phase D function/module closed set. Only the planned test exceptions and new `r0_*`/`r1_*` helpers are permitted. Driver bytes with the single R1 block stripped match base exactly.
 
-本切只证明冻结信封 → 一次 SQL `agentctl_steer` → durable `steer/injected` → observe 读回，**不**证明 provider 消费正文，不关闭 S41-D3，不授权无人值守，不证明多入口共存或 wait/poll/steer host。loader 仍是 44 个 stage，没有 stage 45。超级用户 gate 不证明产品角色。
+Targeted validation on 2026-10-17:
 
-纵向 gate 断言名：
+- `UV_FROZEN=1 uv run python -` preflight: exit 0; pre-edit live `r0_source_scope()` and existing negative proofs passed.
+- `UV_FROZEN=1 uv run python -` static/independent audits: exit 0; AST syntax, R1 live/empty/rename/advance-leak/controller-inside/controller-outside proofs, exact dirty/clean load multiset and duplicate/missing/near-match/base-deletion negatives passed. Exact deletion set is 22; index remained empty.
+- `UV_FROZEN=1 uv run python -` synthetic candidate proof: exit 0; `r1_phase_d_prefix_allowance` was compiled in memory with only its candidate set extended by the four planned ce_run paths. All existing known-byte/load negatives and new missing-path/extra.py/41/40a/not_scheduled negatives passed, including deletion of each existing Phase D protected path after deleted-path filtering. No files or index entries were created. This is NOT a live-tree or full clean-tree gate pass.
 
-`controller_chain_progressed`；`controller_chain_route_sql`；`controller_chain_tool_effect`；`controller_chain_observe_ok`；`controller_chain_target_match`；`controller_chain_last_event_type`；`controller_chain_last_event_seq_moved`；`controller_chain_steer_text`；`controller_chain_no_serve`；`controller_chain_no_complete`；`controller_chain_one_advance`；`controller_chain_disposition`。
+### Stage 40 dirty-tree amendment
 
-`controller_waiting_word`；`controller_waiting_disposition`；`controller_waiting_triage`；`controller_waiting_no_observe`；`controller_waiting_no_serve`；`controller_waiting_no_complete`。
+Freeze compatibility is limited to exact named guard bodies and exact path exclusions. `body_only` preserves decorators/signatures and compares every remaining byte, with module-comment and unrelated-function negative mutations. The parity/ports/read-tools `protected_dirty` allowances are named because those guards must recognize the other amended guard files; no runtime or SQL invariant is relaxed. Baseline pin rationale and commit evidence are recorded in the Stage 40 plan amendment §10.8.
+- `UV_FROZEN=1 uv run python -` fair_claim targeted `test_static_source()` + `test_reread()` with its normal Stage 39 setup/cleanup: exit 0, 29 checks. All 18 `HASH_FNS` remained unchanged on fair SQL reapply. Live `v13_named_sql_writer` and `v13_spawn_writer_ok` bodies equal the spawn SQL baseline; no controller policy or agentctl tools remain in this rebuilt Stage 39 database.
+- The full loop_driver/fair_claim/plan_arm scripts below remain red solely at the missing ce_run four-file closure. fair_claim's stage/load check and all 39 frozen SQL checks passed before that failure. ce_run itself is absent, not a passing gate. No placeholder, early staging, commit, push, or full clean-tree claim was used.
 
-`controller_stale_word`；`controller_stale_disposition`；`controller_stale_supplied_snapshot`；`controller_stale_no_observe`；`controller_stale_no_serve`；`controller_stale_no_complete`；`controller_stale_zero_write`；`controller_stale_seq_plus_one`；`controller_stale_tokens`。
+Actual regression inventory was 52 scripts before retirement. Exactly six were removed: `agentctl/test_agentctl.py`, `agentctl_verbs/test_agentctl_verbs.py`, `goal_workflow/test_goal_workflow.py`, `external_exec/test_external_exec.py`, `ce_map/test_ce_map.py`, and `loop_driver/test_controller_vertical.py` (all under `v13/`). There are now 46 existing scripts; adding the single ce_run gate gives 47. The complete expected command inventory follows. `not_run` means not run in this W1/W2 work package, not an exemption. W4 must run all 47 before and after the milestone commit and record actual final results in ce_run's README.
 
-`controller_disposition_run_now`；`controller_disposition_wait`；`controller_disposition_user_action_required`；`controller_disposition_repair`；`controller_disposition_replan`；`controller_disposition_terminal`；`controller_disposition_unknown_shape`；`controller_disposition_unknown_advance_word`。
+```bash
+UV_FROZEN=1 uv run python v13/acl/test_acl.py                         # exit 0; 197 checks
+UV_FROZEN=1 uv run python v13/attention/test_attention.py             # not_run
+UV_FROZEN=1 uv run python v13/catalog/test_catalog.py                 # not_run
+UV_FROZEN=1 uv run python v13/ce_run/test_ce_run.py                    # absent; exit 2
+UV_FROZEN=1 uv run python v13/characterize/test_characterize.py       # not_run
+UV_FROZEN=1 uv run python v13/chunks/test_chunks.py                   # not_run
+UV_FROZEN=1 uv run python v13/control/test_control.py                 # not_run
+UV_FROZEN=1 uv run python v13/economy/test_economy.py                 # not_run
+UV_FROZEN=1 uv run python v13/envelope/test_envelope.py               # not_run
+UV_FROZEN=1 uv run python v13/fair_claim/test_fair_claim.py           # exit 1; missing ce_run closure
+UV_FROZEN=1 uv run python v13/fair_driver/test_fair_driver.py         # not_run
+UV_FROZEN=1 uv run python v13/fanout/test_fanout.py                   # not_run
+UV_FROZEN=1 uv run python v13/filter/test_filter.py                   # not_run
+UV_FROZEN=1 uv run python v13/frontier_gap/test_frontier_gap.py       # not_run
+UV_FROZEN=1 uv run python v13/goal_supervise/test_goal_supervise.py   # not_run
+UV_FROZEN=1 uv run python v13/goal_supervisor/test_goal_supervisor.py # not_run
+UV_FROZEN=1 uv run python v13/govern/test_govern.py                   # not_run
+UV_FROZEN=1 uv run python v13/handoff/test_handoff.py                 # not_run
+UV_FROZEN=1 uv run python v13/loop/test_loop.py                       # not_run
+UV_FROZEN=1 uv run python v13/loop_driver/test_loop_driver.py         # exit 1; missing ce_run closure
+UV_FROZEN=1 uv run python v13/manifest/test_manifest.py               # not_run
+UV_FROZEN=1 uv run python v13/memory/test_memory.py                   # not_run
+UV_FROZEN=1 uv run python v13/mgraph/test_mgraph.py                   # not_run
+UV_FROZEN=1 uv run python v13/mgraph/test_stannum_usage.py             # not_run
+UV_FROZEN=1 uv run python v13/mgraph_assembly/test_mgraph_assembly.py # not_run
+UV_FROZEN=1 uv run python v13/observe/test_observe.py                 # not_run
+UV_FROZEN=1 uv run python v13/periphery/test_periphery.py             # not_run
+UV_FROZEN=1 uv run python v13/pi_parity/test_pi_parity.py             # not_run
+UV_FROZEN=1 uv run python v13/pi_ports/test_pi_ports.py               # not_run
+UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py               # exit 1; missing ce_run closure
+UV_FROZEN=1 uv run python v13/plan_contract/test_plan_contract.py     # not_run
+UV_FROZEN=1 uv run python v13/plan_read/test_plan_read.py             # not_run
+UV_FROZEN=1 uv run python v13/quota_window/test_quota_window.py       # not_run
+UV_FROZEN=1 uv run python v13/read_tools/test_read_tools.py           # not_run
+UV_FROZEN=1 uv run python v13/real_chain/test_real_chain.py           # not_run
+UV_FROZEN=1 uv run python v13/recall/test_recall.py                   # not_run
+UV_FROZEN=1 uv run python v13/resolve/test_resolve.py                 # not_run
+UV_FROZEN=1 uv run python v13/schema/test_schema.py                   # not_run
+UV_FROZEN=1 uv run python v13/seam/test_seam.py                       # not_run
+UV_FROZEN=1 uv run python v13/should_run/test_should_run.py           # not_run
+UV_FROZEN=1 uv run python v13/spawn/test_spawn.py                     # exit 0
+UV_FROZEN=1 uv run python v13/summary/test_summary.py                 # not_run
+UV_FROZEN=1 uv run python v13/triage/test_triage.py                   # not_run
+UV_FROZEN=1 uv run python v13/twophase/test_twophase.py               # exit 0
+UV_FROZEN=1 uv run python v13/workflow_bind/test_workflow_bind.py     # not_run
+UV_FROZEN=1 uv run python v13/workspace_admit/test_workspace_admit.py # not_run
+UV_FROZEN=1 uv run python v13/workspace_exec/test_workspace_exec.py   # not_run
+```
 
-`controller_priority_repair_over_terminal`；`controller_priority_terminal_over_human`；`controller_priority_human_over_replan`；`controller_priority_replan_over_run_now`；`controller_priority_cancel_pending_ignored`。
-
-补充边界断言：`controller_chain_authorized`；`controller_chain_one_observe`；`controller_chain_idle`；`controller_receipt_invalid_schema_version`；`controller_receipt_invalid_caller`；`controller_receipt_invalid_target`；`controller_receipt_invalid_advance_word`；`controller_receipt_invalid_target_seq_before`；`controller_receipt_invalid_repair_required`；`controller_receipt_invalid_replan_required`；`controller_receipt_missing_key`；`controller_receipt_disposition_not_input`；`controller_receipt_observe_shape`；`controller_receipt_readback_shape`；`controller_receipt_nonprogressed_readback`；`controller_receipt_observe_readback_mismatch`；`controller_receipt_unavailable_rows`；`controller_receipt_observe_failed`；`controller_receipt_semantic_repair`；`controller_receipt_identity_sequence_repair`；`controller_receipt_nonterminal_status`；`controller_receipt_terminal_status`；`controller_receipt_terminal_flag`；`controller_receipt_terminal_word`；`controller_receipt_wait_replan`；`controller_receipt_extra_row_fields`；`controller_receipt_pure_no_mutation`；`controller_driver_invalid_zero_sql`；`controller_driver_nonprogressed_no_observe`；`controller_driver_unknown_word`；`controller_driver_unknown_no_observe`；`controller_driver_exception_propagates`；`controller_driver_exception_no_retry`；`controller_driver_empty_readback_repair`；`controller_static_no_legacy_calls`；`controller_static_no_network_imports`；`controller_static_no_alternate_judgment`。
-
-Gate 只创建一个 `ll_controller_vertical_<pid>_<six-hex>` 库，一次装到 stage 41；拒绝删除已存在的库，finally 只清理本次创建的库。各场景以不同 mock model 名隔离数据库级 `judgment_cache` 的 UUID 回答，仍走既有 `mock_from_needed` / `set_mock`，不修改生产 SQL 或不可变缓存。
-
-运行：`UV_FROZEN=1 uv run python v13/loop_driver/test_controller_vertical.py`。
+W3 handoff: create exactly the four planned ce_run files (untracked files are accepted without `git add`); do not restore the retired directories or controller entry. `v13/load.py` already registers ce_run/40 but its SQL does not exist yet. Keep old stage setup prefixes unchanged. ce_run setup must load fair_claim/39 once, apply the planned dedicated-database ACL restrictions, capture before state, then locally load only ce_run SQL and capture after state. All Stage 1-39 frozen functions and protected module-level imports/constants remain pinned. W4 owns final ce_run documentation/matrix/ledger, full integration review, complete dirty/clean regression, and the single milestone commit/push.

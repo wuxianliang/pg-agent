@@ -217,9 +217,36 @@ class WrapCursor:
 
 
 def test_stage_bytes():
-    diff = subprocess.check_output(["git", "diff", "HEAD", "--", *STAGE_PATHS], cwd=AGENT_ROOT)
+    from v13.plan_arm.test_plan_arm import r0_source_scope, r1_load_retirement_ok
+
+    allowed = {
+        "v13/fair_claim/test_fair_claim.py",
+        "v13/frontier_gap/test_frontier_gap.py",
+        "v13/goal_supervise/test_goal_supervise.py",
+        "v13/goal_supervisor/test_goal_supervisor.py",
+        "v13/goal_supervisor/README.md",
+        "v13/plan_arm/test_plan_arm.py",
+        "v13/loop_driver/README.md",
+        "v13/loop_driver/controller.py",
+        "v13/loop_driver/driver.py",
+        "v13/loop_driver/test_controller_vertical.py",
+        "v13/workspace_admit/test_workspace_admit.py",
+        "v13/load.py",
+        "v13/plan_arm/README.md",
+        "v13/plan_arm/v13_plan_arm.sql",
+        "v13/frontier_gap/README.md",
+        "v13/goal_supervise/README.md",
+    }
+    diff = subprocess.check_output(
+        ["git", "diff", "HEAD", "--", *STAGE_PATHS,
+         *(":(exclude)" + name for name in sorted(allowed))], cwd=AGENT_ROOT)
     load = subprocess.check_output(["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT)
-    check("stage_bytes", diff == b"" and load == b"", (len(diff), len(load)))
+    base = "fb295ac6c7459bb98dac57e37883af549d2d8a4c"
+    base_load = subprocess.check_output(
+        ["git", "diff", base, "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
+    r1_load_retirement_ok(base_load, load.decode())
+    r0_source_scope()
+    check("stage_bytes", diff == b"", len(diff))
 
 
 def test_static():
@@ -271,11 +298,49 @@ def test_static():
         "live_claim_not_called_by_driver",
         re.search(r"\bv13_claim\b", body) is None)
     sup = subprocess.check_output(
-        ["git", "diff", "HEAD", "--", "v13/goal_supervisor"], cwd=AGENT_ROOT)
+        ["git", "diff", "HEAD", "--", "v13/goal_supervisor",
+         ":(exclude)v13/goal_supervisor/test_goal_supervisor.py",
+         ":(exclude)v13/goal_supervisor/README.md"], cwd=AGENT_ROOT)
+    sup_base = subprocess.check_output(
+        ["git", "show", "HEAD:v13/goal_supervisor/test_goal_supervisor.py"],
+        cwd=AGENT_ROOT).decode()
+    sup_now = (AGENT_ROOT / "v13/goal_supervisor/test_goal_supervisor.py").read_text()
+    import ast
+
+    def sup_without_bodies(text):
+        tree = ast.parse(text)
+        drop = set()
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name in {"test_stage_bytes", "main"}:
+                drop.update(range(node.body[0].lineno - 1, node.end_lineno))
+        return "".join(line for index, line in enumerate(text.splitlines(keepends=True))
+                       if index not in drop)
+
+    sup_guard_ok = sup_without_bodies(sup_base) == sup_without_bodies(sup_now)
+    readme_base = subprocess.check_output(
+        ["git", "show", "HEAD:v13/goal_supervisor/README.md"], cwd=AGENT_ROOT).decode()
+    readme_now = (AGENT_ROOT / "v13/goal_supervisor/README.md").read_text()
+    readme_suffix = readme_now[len(readme_base):].lstrip("\n")
+    sup_readme_ok = (readme_now.startswith(readme_base)
+                     and (not readme_suffix or readme_suffix.startswith("## 授权验收")))
     check(
         "supervisor_allowlist_not_edited",
-        (AGENT_ROOT / "v13" / "goal_supervisor").is_dir() and sup == b"",
-        len(sup))
+        (AGENT_ROOT / "v13" / "goal_supervisor").is_dir() and sup == b""
+        and sup_guard_ok and sup_readme_ok,
+        (len(sup), sup_guard_ok, sup_readme_ok))
+    check("supervisor_allowlist_negative_main_signature",
+          sup_without_bodies(sup_now.replace("def main() -> int:", "def main():", 1))
+          != sup_without_bodies(sup_now))
+    check("supervisor_allowlist_negative_comment",
+          sup_without_bodies(sup_now + "\n# unrelated module mutation\n")
+          != sup_without_bodies(sup_now))
+    check("supervisor_allowlist_negative_function",
+          sup_without_bodies(sup_now.replace("def test_runtime(", "def test_runtime_changed(", 1))
+          != sup_without_bodies(sup_now))
+    # The phase-D comparator owns the executable fake-contract mutations; this
+    # guard independently proves fair-driver's local allowlist boundary.
+    check("supervisor_main_body_and_readme_boundary",
+          sup_guard_ok and sup_readme_ok)
     blob_drv_readme = DRV + README
     check(
         "c4_multilane_absent",

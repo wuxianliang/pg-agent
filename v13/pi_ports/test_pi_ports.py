@@ -56,8 +56,26 @@ def pi_lines(text: str) -> list[str]:
 
 
 def protected_dirty(paths: list[str]) -> list[str]:
+    planned = {
+        "v13/load.py",
+        "v13/agentctl/README.md", "v13/agentctl/setup_db.py",
+        "v13/agentctl/test_agentctl.py", "v13/agentctl/v13_agentctl.sql",
+        "v13/agentctl_verbs/README.md", "v13/agentctl_verbs/setup_db.py",
+        "v13/agentctl_verbs/test_agentctl_verbs.py", "v13/agentctl_verbs/v13_agentctl_verbs.sql",
+        "v13/goal_workflow/README.md", "v13/goal_workflow/setup_db.py",
+        "v13/goal_workflow/test_goal_workflow.py", "v13/goal_workflow/v13_goal_workflow.sql",
+        "v13/external_exec/README.md", "v13/external_exec/setup_db.py",
+        "v13/external_exec/test_external_exec.py", "v13/external_exec/v13_external_exec.sql",
+        "v13/ce_map/README.md", "v13/ce_map/setup_db.py",
+        "v13/ce_map/test_ce_map.py", "v13/ce_map/v13_ce_map.sql",
+        "v13/ce_run/README.md", "v13/ce_run/setup_db.py",
+        "v13/ce_run/test_ce_run.py", "v13/ce_run/v13_ce_run.sql",
+        "v13/pi_ports/test_pi_ports.py", "v13/read_tools/test_read_tools.py",
+    }
     bad = []
     for name in paths:
+        if name in planned:
+            continue
         if name in {"v13/load.py", "pyproject.toml", "uv.lock"} or (
             name.startswith("v13/") and name.endswith(".sql")
         ):
@@ -99,6 +117,8 @@ def run_guard() -> None:
         names.extend(line for line in proc.stdout.splitlines() if line.strip())
     bad = protected_dirty(names)
     check("G2", not bad, bad)
+    from v13.plan_arm.test_plan_arm import r0_source_scope
+    check("G2", r0_source_scope() == "fb295ac6c7459bb98dac57e37883af549d2d8a4c")
 
 
 def run_plane(invoke, argv, tag, needles) -> None:

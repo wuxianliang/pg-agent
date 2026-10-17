@@ -62,3 +62,7 @@ env -u V13_UNATTENDED_DB V13_UNATTENDED_AUTHORIZATION=1 UV_FROZEN=1 uv run pytho
 自建支在 stdout 打印 `[dropped]`，库名以 `ll_unattended_accept_` 开头，跑完即删。`V13_UNATTENDED_DB` 只能指向已经装到 goal_supervise、且名字以 `ll_unattended_preset_` 开头的库。那一支保留原库，并另行打印 `[kept]`。它不是矩阵证据。
 
 `UNATTENDED_ACCEPT_ROUNDS` 与 `SUPERVISOR_MAX_TICKS` 都是 2。每一轮新建一个实例，只 tick 一次。人不回答时保持 waiting，不 skip、不 complete、不 cancel。脚本不调用 wake 函数。V11 未读。无人值守 skip 与 `plan_commit` 仍未授权。纯 progress 付完一次收据后，活体路由会留下 human，第二轮是 `human_pending`，收据不再增加。
+
+## 授权验收补充
+
+**本节为 APPEND ONLY 勘误，并明确取代本 README 较早关于默认命令 exit 1 的表述。** 默认 Gate 命令运行全部 Fake 检查并返回 exit 0；这只证明本地假检查通过，不构成无人值守授权。显式探针命令 `UV_FROZEN=1 uv run python v13/goal_supervisor/test_goal_supervisor.py --unattended-continuation` 是拒绝证据：它复现遗留拒绝尾部，预期 exit 1 且尾行仍为 `v13: supervisor: ask_user`。任意其他参数（包括截断旗标）在数据库/检查启动前返回 exit 2，仅打印 usage。真正的无人值守授权路径仍只有 `accept_unattended.py`，其环境授权规则不变。

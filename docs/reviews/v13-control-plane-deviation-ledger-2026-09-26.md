@@ -205,3 +205,46 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | TC-2 | 信封 → `v13_parse` → 一次 `v13_advance` → sql `agentctl_steer` | 接受。不是 FakeLLM tool_calls |
 | TC-3 | observe 证明目标身份、序号前进、`last_event_type=steer/injected`；无 serve/complete | 接受。正文只由测试读 `events`。不闭合 S41-D3 |
 | TC-4 | 精确两个新文件放行；loader 不变；无 stage 45；不声称 provider 或无人值守 | 接受。gate 只装载一次 stage 41；各场景以不同 mock model 名隔离全库 judgment_cache 的 UUID 回答，不改生产缓存或 SQL |
+
+## Stage 40 (`ce_run`) 实施期偏差与裁决
+
+**最新阻塞记录（2026-10-17，覆盖下方旧执行状态）：** 最终工作树复制并核对 SHA-256 后在隔离 workspace/PGDATA 顺序执行 47 清单，前 7 条 exit 0（CE 16/16 组、665），第 8 条 economy H1 期望 `accepted` 的断言 exit 1，剩余 39 条及 goal-supervisor 三模式未运行。原始 receipt 未打印；唯一一次有界诊断因观察器误查 `v13_claim(text)` 而失败，真实签名为 `v13_claim(text,integer)`，receipt 在异常前未写证据，不能编造观察值/根因。只读检查验证 PG 18.4/Stannum 0.4.0，未执行结算或额外 gate。精确环境等价性、冻结哈希、旧进程仅确认非运行而非退出码、诊断缺口及全部工件路径见 `prompt-exports/w4-economy-h1-handoff-20261017.md`。未降级共享环境、未修改冻结业务测试/SQL/授权/v20；无提交/推送，根因未明前不恢复 complete47，也未达到协调者集成 Oracle 审核边界。
+
+本节记录计划 §7、§10.5、§10.6、§10.7 的 Stage 40 约束。2026-10-17 第 7 轮 `UV_FROZEN=1 uv run python v13/ce_run/test_ce_run.py` 实跑 exit 0，16/16 组、517 断言，wake 期望恢复为权威 `[1,1,1,2]`。此前采用错误 `[1,1,2,3]` 的第 5/6 轮及顺序回归 CE 行不计有效验收。完整 47 条在第 11 条 fair_driver exit 1 后停止，剩余 36 条未运行；W4/Stage 40 仍未完成。命令/退出码/检查数/原始失败输出见 `prompt-exports/w4-ce-run-actual-results-2026-10-17.md`。
+
+| # | 事实/偏差 | 处置与证据边界 |
+|---|---|---|
+| S40-P1 | P1 退役旧 Stage 40–44 与 controller thin cut，共 22 文件；旧 #86–#91 不能作为新实现通过证明 | 接受。单一 Stage 40 `ce_run` 收口；矩阵旧行标记 `P1 退役`，不保留旧 gate 等价性 |
+| S40-1 | `run_id=session_id` 是 headless 身份，不是 CE app/agent_manage 身份 | 接受。README 只声明 headless 范围，不宣称完整产品等价 |
+| S40-2 | start 的 root/child 创建必须经唯一私有 `v13_ce_insert_session(uuid,uuid,bigint) RETURNS uuid` bridge；既有 sessions owner trigger 仍保留，超级用户直接 INSERT 也应被拒绝 | §10.5 裁决。helper 只做 INSERT/RETURNING；授权、父锁、cutoff 在外层 start。setup 要核验 helper owner/ACL、直调 42501、宿主不能 SET ROLE owner；第 7 轮 probe 4/10 已验证 |
+| S40-3 | child cutoff 不是 spawn 样板的近似值，而是父锁内 `next_seq−1` 的包含上界；父 `next_seq=0` 必须零写 `parent_prefix_empty`；同 request replay 不重算 cutoff | §10.5 裁决。第 7 轮 probe 4 已验证真实双连接串行、cutoff 与异常整体回滚 |
+| S40-4 | caller 不能取 SECURITY DEFINER 的 `current_user`；需识别真实 `SET ROLE` 身份，否则 session_user，并区分 route/operator、self/parent、recall 读面 | 接受。非超级用户宿主是产品角色测试前提；第 7 轮 probe 10 的四类非超级用户 LOGIN/SET ROLE 已验证 |
+| S40-5 | wait 不是全局一次消费：固定八键返回携带 `wake_id`，每个 waiter 自携 `after_wake_id`；steering wake 优先 actionable snapshot，普通 snapshot 不能吞 steering | 接受并明确为 CE 与全局消费的偏差；第 7 轮 probe 6 已验证；self-origin 仍 interrupted，仅隐藏正文；reactivation wake 属旧 epoch |
+| S40-6 | active steer 同 epoch queued follow-up；旧 ready/claimed effect 可以真实结算但 driving token 禁止旧 publication；terminal steer 才新 epoch | 接受。不能把所有 steer 记成换 epoch，也不能声称 provider 被中断；第 7 轮 probe 8 已验证 |
+| S40-7 | cancel 是单 run 清槽并同步 sessions/CE；`session/cancelled` 与 `cancel/requested` 均保持严格事件格式，真实 actor/request 审计由独立 CE 审计事件持久化，防止 terminal steer 恢复 ready 后旧取消墙重现；不调用旧 `v13_cancel` 的递归子树语义，子 run 不受影响 | 接受为 CE/session 控制结算边界。它不终止事务外 claimed provider；迟到 receipt 按 tokens 结算/stale/unknown；第 7 轮 probe 7/13 已验证 |
+| S40-8 | 正常 T2 必须原子提交 receipt、后继 admit/promotion、publish；禁止 accept 单独 COMMIT 留下 running 空队列 | §10.4 P1 处置。第 7 轮 probe 12/15 已验证真实锁屏障、全 T2 回滚及丢 COMMIT 响应存储重放 |
+| S40-9 | 旧 LLM tool_calls 若未准入对应 operation，只做派生输入中的 `superseded` 普通历史投影；不伪造 tool result、不执行孤儿工具；已准入 operation 仍结算 | 接受。投影从既有 events/effects 来源连接，不裸读 CE operations；第 7 轮 probe 8/14 已验证 |
+| S40-10 | `tools.param_spec` 是提问模板，不是参数 schema；本阶段 schema 仅私有固定 `spawn_subsession/{task}` 闭集，Fake adapter 返回 simulated 结果且不创建 session | §10.6 裁决。不能清空 params 绕过 validator，也不能开放所有 enabled tools；第 7 轮 probe 14 已验证 |
+| S40-11 | worker 每轮独立短事务调用 `v13_ce_requeue_stale()` 包装，内部委托未修改的 `v13_requeue_stale()`，其作用域是全库；ce_wait 不触发回收；worker 停止无人重启不承诺自动回收 | 接受为部署/运行偏差。不能改写冻结函数或声称 scoped recovery；第 7 轮 probe 13 已验证另一 run 的过期 effect 也回收到 unknown |
+| S40-12 | unknown 没有 CE 恢复入口；steer/respond/admit/promotion 继续被会话级 unknown wall 阻断 | 接受。临时库 DROP/rebuild 不是生产恢复证明；不能以夹具销毁绕过偏差 |
+| S40-13 | 专用数据库必须收回宿主/继承角色的 TEMPORARY 与 public schema CREATE，避免 temp/public 同名对象遮蔽 SECURITY DEFINER 依赖；不泛化到其他 stage 库 | 接受为显式部署前提。schema owner 为受信超级用户且不与宿主共用；第 7 轮 probe 10/16 已验证真实 ACL 与精确生命周期 |
+| S40-14 | 单 run 单 CE driver 是部署纪律，不是数据库结构强制；scoped claim 防重复但不提供生产多 worker 接管保证 | 接受。README 不写成高可用 worker/agent_manage 证明 |
+| S40-15 | 保留 generation/continuity/related_follow_up/unrelated/expired/superseded 字段没有六动词 producer | 接受。reserved 夹具只能标 reserved，不计入覆盖矩阵的运行时能力 |
+| S40-16 | Fake-only、无真实 provider/socket/网络；外部 IO 必须在事务外，连接在 T1/T2 间 IDLE | 接受。helper 已完整实现且 import-safe；第 7 轮 16 组通过，47 条回归受下述 S40-19 阻断 |
+| S40-17 | 真实 route 直调冻结 `v13_requeue_stale()` 因 pgmq schema USAGE 失败；新增 `v13_ce_requeue_stale()` 受限 CE SECURITY DEFINER 宿主入口，route-only，返回 `{schema_version:1,ok:true,recovery:<原计数json>}`，仅委托原函数 | 接受 §10.7 接缝。独立短事务、全库作用域、不写 CE snapshot/revision/wake；不改旧 role/pgmq/base ACL，不新增控制动词；并入既定 `native_acl_roles`、`native_io_boundary`、`native_unknown_vs_archive`，第 7 轮已验证 |
+| S40-18 | 冻结边界独立只读审计：23 条顶层语句逐条相等、39 个既有受保护函数体全等；`run()` 三个 `r0_*` 调用来自既有 `a2cabf1`；driver 剥离后全等、load 纯尾追加、phase_d 39 个 SQL 零失配 | 记录为源码冻结证据，不作为数据库 gate 通过；maintenance probe 第 7 轮通过，47 条回归/W4 仍阻塞 |
+| S40-19 | 顺序回归第 11 条 `UV_FROZEN=1 uv run python v13/fair_driver/test_fair_driver.py` exit 1：`stage_bytes: (78432, 926)`；`test_stage_bytes` 定义于 219 行、断言 222 行、main 537 行调用，DB setup 前失败 | 原始三行输出与 7 个具体 diff 路径在实跑记录。检查要求 STAGE_PATHS 与 load.py 相对 HEAD 全空，撞上 P1 退役/冻结适配/文档脏树；不改冻结测试、不暂存/提交绕过。第 12–47 条全部未运行，协调者另行处理计划冲突；本轮停止回归 |
+| S40-20 | W4 曾误把 reactivation wake 期望从 `[1,1,1,2]` 改为 `[1,1,2,3]` 并错误称符合计划 | 已恢复权威旧 epoch 期望；原始第 4/5/6 轮及顺序回归 CE 输出保留并标注错误解释/无效验收，不能据 exit 0 追认通过。SQL owner 修正 wake_epoch 与 sessions=ready 在 promotion 前的顺序后，第 7 轮正确期望实跑通过；不补算已停止的 47 条序列 |
+| S40-21 | 外部 `/Users/wxl/Projects/PiSwift` 于 2026-10-17 12:54:56 被 `git pull` 自 bfccb32（2026-09-27，冻结 driver 合同基线）快进到 0f44e03：`createAgentSession` 变 `async throws`、`toolExecutionEnd` 四元组变五元组，v99 全新构建下冻结 driver 编译失败；主检出同晨全部绿证据均在 pull 之前且其构建缓存已被作废 | 经用户裁决回滚 PiSwift 至 bfccb32（detached，原分支指针保留 0f44e03）；随后 v99 序列 #30 pi_parity、#31 pi_ports 全绿。冻结 driver 适配 0f44e03 不并入本里程碑，留作独立后续变更；证据 `prompt-exports/w4-v99-attempt01-piswift-0f44e03/` |
+| S40-22 | `~/.duckdb/extensions/v1.5.5/osx_arm64` 钉版扩展缓存（sitting_duck/duck_block_utils）从未落地，read_tools duck/ring 面按 skip 语义 exit 2；此前所有 read_tools 证据均未真跑 duck 面 | 实跑被批准的 `v13/read_tools/duck_bringup.py`：INSTALL FROM community、两个扩展 sha256 钉版校验通过、loaded=true；随后 #36 首次真跑 duck 面与 E4 嵌套全量全绿。证据 `prompt-exports/w4-v99-attempt02-duck-absent/` |
+| S40-23 | economy H1 根因至今未建立；序列内红绿交替（红：§2.3 隔离序列、complete47 attempt-04；绿：prior、attempt-02/03、两次隔离复测、v99 三次序列） | 不改断言、不调环境、不追认历史红灯；v99 预提交三次序列内均绿，作为本里程碑通过证据；根因留作后续独立诊断（原单次有界复现授权已用尽） |
+
+### S40 dirty-tree freeze amendment
+
+Guard compatibility is limited to explicitly named function bodies/path exclusions. `protected_dirty` is allowed only in the parity/ports/read-tools guard bodies so those guards can recognize the other amended guard files; it does not allow arbitrary dirty paths. The four pinned baselines and parent/file evidence are recorded in plan §10.8. Full 47-script and post-commit validation remain coordinator-owned.
+
+Final legacy evidence is preserved in `prompt-exports/stage40-final-*.log`; CE gate validation is pending the independent runtime-review corrections and must be run once afterward.
+
+## Stage 40 预提交全绿记录（2026-10-17，v99）
+
+按用户指令在 `v99` 分支/worktree 续跑 FDFAED98 的 W4 收尾：主检出当前工作树 272 个冻结集文件逐文件 SHA-256 核对后 port 进 v99；依赖输入以真实拷贝落地；PGDATA 用被证明过的 pinned pgembed 785aa58（隔离 prefix、PG 18.4、Stannum 0.4.0）全新 initdb；node v24.13.1、go 1.24.5、swift 6.3.2 在场。顺序 runner（`prompt-exports/w4-v99-runner.py`）独立执行 47 条 + goal_supervisor 两探针，逐条恢复 pi_parity trace，首个无效即停。两次被保留的阻断尝试（S40-21 PiSwift 漂移、S40-22 duck 扩展缺席）处置后，最终序列 49 项全部有效：47 条 exit 0（CE 16/16 组、665 检查；read_tools 首次真跑 duck 面与 E4 嵌套全量；economy H1 序列内绿）、`--unattended-continuation` exit 1（ask_user 拒绝尾部）、`bad-args` exit 2（建库前 usage）。完整命令/退出码/耗时/日志/冻结清单：`prompt-exports/w4-v99-precommit-20261017/`。后续按计划 §8.1.6：消费集成静态 Oracle review → 提交前人工核对 plan_arm 受保护 diff → 按路径提交 → 同一 49 项清单净树复验 → push origin v99。

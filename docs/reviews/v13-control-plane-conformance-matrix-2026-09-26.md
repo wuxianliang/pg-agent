@@ -109,34 +109,67 @@
 
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
-| 86 | stage 40 `agentctl_observe`：STABLE INVOKER 只读工具；形状失败不 RAISE；未授权整批空成功；Fake parse→advance 打到 sql 臂；`spawn_subsession.enabled` 仍为 true | ✅ | 2026-10-08 `UV_FROZEN=1 uv run python v13/agentctl/test_agentctl.py` 退出码 0（577 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明 CE 进程 wait/poll、wake、目标工作流或无人值守。不实现 stage 41–45 |
+| 86 | 旧 Stage 40 `agentctl_observe` | P1 退役 | 旧 `v13/agentctl` 已删除；不作为 ce_run 证据 | 不保留旧实现通过证明；由单一 Stage 40 `ce_run` 收口 |
 
 ## Stage 41
 
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
-| 87 | stage 41 生产者：三个 VOLATILE DEFINER 写动词 `v13_agentctl_steer` / `v13_agentctl_answer` / `v13_agentctl_cancel`，冻结 `controller` version 1，`controller_surface` version 1，Fake 根夹具打到 sql 臂，以及 D-3 的身份、授权、零写、watermark。`spawn_subsession.enabled` 仍为 true。退出码 0 只表示生产者已交付 | ✅ | 2026-10-08 `UV_FROZEN=1 uv run python v13/agentctl_verbs/test_agentctl_verbs.py` 退出码 0（1017 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 正文消费未闭合。注入 `steer/injected` 不证明 `payload.text` 被消费。R11 未被取代。不证明 CE 进程控制、wake 或无人值守。不实现 stage 42–45。不实现 `actl_driver_demoted`。不得写成「D-3 已闭合」或「S2 全链 gate 已满足 D-3」 |
+| 87 | 旧 Stage 41 agentctl 写动词/controller | P1 退役 | 旧 `v13/agentctl_verbs` 已删除；不作为 ce_run 证据 | 不保留旧实现通过证明；`steer/respond/cancel` 由 ce_run 新入口重新验证 |
 
 ## Stage 42
 
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
-| 88 | stage 42 `goal_workflow`。生产新增只有 `public.v13_macro_suggestion`。单 goal、测试超级用户、Fake 夹具、场景自有 advance 上界 4（常数只活在 `v13/goal_workflow/test_goal_workflow.py`）、无真实 provider、唯一推进者是一个 `LoopDriver`：宏观门放行后，`workflow_template` version 1 / `first_real_chain` 展开成一条 advancement todo、一个子会话、一次 `read_file_py`、根上归档为 done，根与子都没有 human effect。已有 human pending 时场景停在非终态、不 skip、不 complete、不 cancel。这不是人可以离开生产终端。 | ✅ | 2026-10-09 `UV_FROZEN=1 uv run python v13/goal_workflow/test_goal_workflow.py` 退出码 0（460 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明无人值守、真实 provider、LoopX quota / outcome_floor / writeback、wake、CE 进程控制。不实现 stage 43–45。不实现 `actl_driver_demoted`。不调用四个 agentctl 动词。不闭合 D-3。不新增 `effects.kind`。 |
+| 88 | 旧 Stage 42 `goal_workflow` | P1 退役 | 旧 `v13/goal_workflow` 已删除；不作为 ce_run 证据 | 不保留 workflow/无人值守等价性结论 |
 
 ## Stage 43
 
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
-| 89 | stage 43 `external_exec`。生产新增是 `v13_external_exec_classify` 与 `external_executor` version 1。夹具绑定的现存 `p_sid`、`external_executor` version 1、STABLE INVOKER 函数 `v13_external_exec_classify`：允许动词返回七键且 `executed=false`；`source_principal`、未知键、列表外动词、空会话或不存在会话返回两键 `unsupported` 且零写。真正执行仍是既有 parse → advance 的 sql 臂，快照仍是 `controller` / 1。这不是可信产品入口，不是注册身份，不是 task lease。 | ✅ | 2026-10-09 `UV_FROZEN=1 uv run python v13/external_exec/test_external_exec.py` 退出码 0（471 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明注册身份、可信 bind、task lease、`claimedProcessID`、五表 authority store、CE 进程控制、wake、无人值守。不实现 stage 44 的映射语义，不实现 stage 45。不改 `driver.py`、信封、`v13_advance`。不把 `external_executor` 写入 route 快照。不闭合 D-3。不消费 stage 42 场景能力。 |
+| 89 | 旧 Stage 43 `external_exec` | P1 退役 | 旧 `v13/external_exec` 已删除；不作为 ce_run 证据 | 不保留 external executor/task lease 等价性结论 |
 
 ## Stage 44
 
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
-| 90 | stage 44 在连续装载 1–43 之后提供 `public.v13_ce_map()`。它是 `LANGUAGE sql`、`STABLE`、`SECURITY INVOKER`、非 `STRICT` 的零参函数，返回 oracle 那一份静态 jsonb。`map` 把父计划 E2 的 CE 原语指到既有 PG 签名，或把 `shutdown` 写成字符串 `unsupported`。调用它不执行这些签名，不读 `external_executor`，不是 CE 会话运行时，不交付 stage 45。gate 分开查六个 `to_regprocedure`、一参 cancel 存在但不映射、五参 complete 存在但不是格子、两列的 `data_type`、`v13_ce_shutdown` 行数 0、安装窗口与调用窗口的五表行数不变。 | ✅ | 2026-10-09 `UV_FROZEN=1 uv run python v13/ce_map/test_ce_map.py` 退出码 0（63 checks）；`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py` 退出码 0（104 checks） | 不证明 CE 会话运行时、进程恢复、stage 42 启动、wake、task lease、注册身份、`claimedProcessID`、worktree、auto-wake、oracle lanes、`request_attention`；不消费 `external_executor`；不实现 stage 45；不闭合 D-3。 |
+| 90 | 旧 Stage 44 `ce_map` | P1 退役 | 旧 `v13/ce_map` 已删除；不作为 ce_run 证据 | 不保留静态映射等价性结论 |
+
+## Stage 40 freeze amendment
+
+The dirty-tree compatibility exception is validator-only: exact named path exclusions plus body-only comparison for the four pinned guard files. Signatures/decorators, module comments, unrelated functions, SQL, setup, and runtime assertions remain frozen; negative mutation evidence is required. Baseline commit/parent evidence and the explicit `protected_dirty` rationale are in plan §10.8. This amendment is not a Stage 40 gate result.
+
+Legacy validation logs: `prompt-exports/stage40-final-*.log`. Eleven affected legacy scripts completed after the final validator edit; CE validation is pending independent runtime-review corrections and is not claimed here.
 
 ## Controller thin cut
 
 | # | 条文 | 状态 | 测试落点 | 缺口 |
 |---|---|---|---|---|
-| 91 | Controller thin cut：判断信封驱动一次既有 `v13_advance` sql 臂执行 `agentctl_steer`，目标经既有 `v13_agentctl_observe` 读回，纯函数返回六词之一。无 FakeLLM，无 serve，无生产循环，无新 SQL，无 stage 45。 | ✅ | 2026-10-10：`UV_FROZEN=1 uv run python v13/loop_driver/test_controller_vertical.py`、`UV_FROZEN=1 uv run python v13/plan_arm/test_plan_arm.py`、`UV_FROZEN=1 uv run python v13/agentctl_verbs/test_agentctl_verbs.py`、`UV_FROZEN=1 uv run python v13/loop_driver/test_loop_driver.py` 均实跑退出码 0 | 不证明 provider 交付、无人值守、多入口共存、wait/poll/steer host、D-3 正文消费。超级用户调用不是产品角色 ACL 证明。 |
+| 91 | Controller thin cut | P1 退役 | `v13/loop_driver/controller.py` 与 vertical test 已删除；不作为 ce_run 证据 | 不保留旧 controller 六词或多入口等价性结论 |
+
+## Stage 40 (`ce_run`, 新实现)
+
+**最新实跑（2026-10-17，v99 预提交全绿）：** 全部 47 条保留脚本独立顺序执行 exit 0，goal_supervisor 两探针按契约 exit 1（ask_user 拒绝尾部）/exit 2（建库前 usage）；CE 16/16 组、665 检查、零独立失败；read_tools 首次真跑 duck 面与 E4 嵌套全量。环境、两次阻断尝试（PiSwift pull 漂移经用户裁决回滚至 bfccb32；duck 钉版扩展经 duck_bringup 落地）与完整证据见偏差台账 S40-21/S40-22 与计划 §2.4、`prompt-exports/w4-v99-precommit-20261017/`。下表 16 组行与逐组计数保留历史口径（最新为 665 检查）；提交后净树复验按计划 §8.1.6。
+
+**历史阻塞记录（2026-10-17，已被上述 v99 全绿覆盖，不抹去）：** 最终工作树与隔离副本逐文件 SHA-256 相等；完整 47 条清单顺序执行前 7 条 exit 0，CE 实际 16/16 组、665 检查；第 8 条 economy H1 `out_a == 'accepted'` exit 1，余下 39 条及 goal-supervisor 三模式未运行。原失败未打印 receipt；单次独立诊断又在观察器错误函数签名查询处失败，未捕获 receipt，根因未明。只读版本检查不是 gate。新的完整命令/输出与冻结基线：`prompt-exports/w4-final-precommit-20261017/`；诊断及全部路径：`prompt-exports/w4-economy-h1-handoff-20261017.md`。下表的旧检查数保留历史，不代表最终 665 检查的逐组计数；新 CE 各组原始输出以 `04-v13-ce_run-test_ce_run.log` 为准。没有全量/最终 nested trace/goal-supervisor 验收，也未达集成 Oracle review、提交或推送条件。
+
+以下是计划 §8.2 的 16 组具名覆盖映射；maintenance 包装并入第 10、11、13 组。2026-10-17 第 7 轮 `UV_FROZEN=1 uv run python v13/ce_run/test_ce_run.py` 实跑 exit 0，16/16 组、517 断言，采用权威旧 epoch reactivation wake 期望 `[1,1,1,2]`。第 5/6 轮及顺序回归中的 CE 行采用错误期望，原始输出保留但不计有效验收。**仅新 gate 通过，完整里程碑仍阻塞**：47 条回归在第 11 条 fair_driver `test_stage_bytes:222` exit 1（78432/926 diff bytes）后停止，剩余 36 条未运行，不据历史结果补算通过。证据：`prompt-exports/w4-ce-run-actual-results-2026-10-17.md`。第 1–16 组检查数依次为 `48/3/3/48/7/37/16/31/36/90/23/34/31/66/26/18`。
+
+| 探针 | 覆盖范围 | 状态 | 证据/缺口 |
+|---|---|---|---|
+| 1 `native_load_untouched` | Stage 1–39 字节、函数/表/ACL 基线与 ce_run 前后差异 | 新 gate 通过 | 48 检查；仅精确 R0 例外，不扩大冻结豁免 |
+| 2 `native_plan_arm_closed_set` | 四文件闭集、缺失/extra.py/越界 stage 负例 | 新 gate 通过 | 第 7 轮实际通过；各组检查数见本节首段 |
+| 3 `native_frozen_driver_bytes` | R1 sentinel、哨兵外 base 字节、无 controller/第二 advance | 新 gate 通过 | 第 7 轮实际通过；各组检查数见本节首段 |
+| 4 `native_start_identity` | 12 入口中的 start 身份、私有 helper、parent/next_seq−1 cutoff、并发 request 与异常回滚 | 新 gate 通过 | 48 检查；真实 parent cutoff/双连接/非超级用户 |
+| 5 `native_poll_pure` | READ ONLY、零 revision/wake 写、expired 授权边界 | 新 gate 通过 | 第 7 轮实际通过；各组检查数见本节首段 |
+| 6 `native_wait_cursor` | 八键、steering 优先、epoch 追踪、每 waiter 游标、通知丢失重读；self-origin 仅隐藏 `snapshot.steering_message` 正文仍返回 interrupted/wake 游标 | 新 gate 通过 | 37 检查；wake 期望 `[1,1,1,2]`；`superseded` 仅 reserved 夹具 |
+| 7 `native_cancel_scope` | 单 run cancel、同步 sessions/CE、追加严格格式的本 session `session/cancelled` 与 `cancel/requested` 事件、由独立 CE 审计事件持久化真实 actor/request、claimed late receipt、子 run 不受影响 | 新 gate 通过 | 16 检查；这是 CE/session 控制结算，不终止事务外 claimed provider；不调用旧 `v13_cancel` 子树语义 |
+| 8 `native_steer_paths` | active queued steer、旧 ready/claimed driving 归档、terminal 复活/CAS/use_respond | 新 gate 通过 | 31 检查；旧 ready/claimed 真实结算与复活 |
+| 9 `native_respond_once` | human/CE interaction、one-of、一次消费、两通道续跑 | 新 gate 通过 | 第 7 轮实际通过；各组检查数见本节首段 |
+| 10 `native_acl_roles` | route/recall/worker/operator、SET ROLE、TEMP/public CREATE、helper owner 例外；maintenance route-only 非超级用户 ACL | 新 gate 通过 | 90 检查；四类真实 LOGIN/SET ROLE/maintenance ACL |
+| 11 `native_io_boundary` | T1/claim/T2 IDLE、scoped discovery/claim、queued promotion、maintenance 全库短事务 requeue 边界 | 新 gate 通过 | 23 检查；不证明多 worker 接管 |
+| 12 `native_receipt_fences` | request/replay/stale、两种锁交错、accept 前崩溃导致全 T2 回滚 | 新 gate 通过 | 34 检查；真实阻塞屏障、全 T2 回滚、丢 COMMIT 回应重放 |
+| 13 `native_unknown_vs_archive` | late known receipt、tokens 失配、unknown wall、各 enqueue 阻断；维护回收后的 unknown 墙 | 新 gate 通过 | 31 检查；真实租约回收/unknown 回执；unknown 无 CE 恢复 |
+| 14 `native_operation_handoff` | 同 epoch 多 operation、工具闭集/schema、孤儿 tool 投影、Fake spawn 不建 session | 新 gate 通过 | 66 检查；缺键/schema/envelope/来源/index/id 与原样 task |
+| 15 `native_snapshot_once` | publication replay/CAS、interaction_pending、精确 respond/instruction 消费 | 新 gate 通过 | 26 检查；新 publication 不得覆盖 interaction |
+| 16 `native_static_setup` | Fake-only、无网络/pg_sleep、库名/OID cleanup、创建失败不误删 | 新 gate 通过 | 18 检查；精确 name/OID 生命周期与 import-safe |

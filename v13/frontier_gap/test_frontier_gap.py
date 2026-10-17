@@ -341,17 +341,29 @@ def test_stage_bytes():
         "v13/loop_driver", "v13/real_chain", "v13/workflow_bind",
         "v13/plan_contract", "v13/plan_read",
     ]
-    from v13.plan_arm.test_plan_arm import r0_source_scope
+    from v13.plan_arm.test_plan_arm import r0_source_scope, r1_load_retirement_ok
     base = r0_source_scope()
-    # The fixed-base proof replaces the old whole-directory plan_arm freeze.
-    paths = [p for p in paths if p not in ("v13/plan_arm", "v13/loop_driver")]
-    diff = subprocess.check_output(["git", "diff", base, "--", *paths], cwd=AGENT_ROOT)
+    allowed = {
+        "v13/frontier_gap/test_frontier_gap.py",
+        "v13/plan_arm/test_plan_arm.py",
+        "v13/loop_driver/README.md",
+        "v13/loop_driver/controller.py",
+        "v13/loop_driver/driver.py",
+        "v13/loop_driver/test_loop_driver.py",
+        "v13/loop_driver/test_controller_vertical.py",
+        "v13/load.py",
+        "v13/plan_arm/README.md",
+        "v13/plan_arm/v13_plan_arm.sql",
+        "v13/workspace_admit/test_workspace_admit.py",
+    }
+    diff = subprocess.check_output(
+        ["git", "diff", base, "--", *paths,
+         *(":(exclude)" + name for name in sorted(allowed))], cwd=AGENT_ROOT)
     load = subprocess.check_output(
         ["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
-    removed = [
-        line for line in load.splitlines()
-        if line.startswith("-") and not line.startswith("---")
-    ]
+    base_load = subprocess.check_output(
+        ["git", "diff", base, "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
+    r1_load_retirement_ok(base_load, load)
     text = (AGENT_ROOT / "v13/load.py").read_text()
     order = text.split("STAGE_THROUGH", 1)[0]
     through = text.split("STAGE_THROUGH", 1)[1]
@@ -360,11 +372,8 @@ def test_stage_bytes():
         and through.rfind('"workspace_admit": 36') < through.rfind('"frontier_gap": 37')
         and "frontier_gap" not in order[:order.rfind("workspace_admit")]
     )
-    if load.strip():
-        load_ok = "frontier_gap" in load and removed == [] and tail_ok
-    else:
-        load_ok = tail_ok and "frontier_gap" in text
-    check("stage_bytes", diff == b"" and load_ok, (removed, tail_ok, bool(load.strip())))
+    load_ok = tail_ok and "frontier_gap" in text
+    check("stage_bytes", diff == b"" and load_ok, (diff, tail_ok))
     check("r0_source_scope", r0_source_scope() == "fb295ac6c7459bb98dac57e37883af549d2d8a4c")
     check(
         "advance_sql_not_replaced",
