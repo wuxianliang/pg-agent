@@ -238,6 +238,7 @@ e2e_report §后续④称「无信号 progress 的落回旧 route 没有非封�
 | S40-21 | 外部 `/Users/wxl/Projects/PiSwift` 于 2026-10-17 12:54:56 被 `git pull` 自 bfccb32（2026-09-27，冻结 driver 合同基线）快进到 0f44e03：`createAgentSession` 变 `async throws`、`toolExecutionEnd` 四元组变五元组，v99 全新构建下冻结 driver 编译失败；主检出同晨全部绿证据均在 pull 之前且其构建缓存已被作废 | 经用户裁决回滚 PiSwift 至 bfccb32（detached，原分支指针保留 0f44e03）；随后 v99 序列 #30 pi_parity、#31 pi_ports 全绿。冻结 driver 适配 0f44e03 不并入本里程碑，留作独立后续变更；证据 `prompt-exports/w4-v99-attempt01-piswift-0f44e03/` |
 | S40-22 | `~/.duckdb/extensions/v1.5.5/osx_arm64` 钉版扩展缓存（sitting_duck/duck_block_utils）从未落地，read_tools duck/ring 面按 skip 语义 exit 2；此前所有 read_tools 证据均未真跑 duck 面 | 实跑被批准的 `v13/read_tools/duck_bringup.py`：INSTALL FROM community、两个扩展 sha256 钉版校验通过、loaded=true；随后 #36 首次真跑 duck 面与 E4 嵌套全量全绿。证据 `prompt-exports/w4-v99-attempt02-duck-absent/` |
 | S40-23 | economy H1 根因至今未建立；序列内红绿交替（红：§2.3 隔离序列、complete47 attempt-04；绿：prior、attempt-02/03、两次隔离复测、v99 三次序列） | 不改断言、不调环境、不追认历史红灯；v99 预提交三次序列内均绿，作为本里程碑通过证据；根因留作后续独立诊断（原单次有界复现授权已用尽） |
+| S40-24 | 提交后净树复验首红（#30 pi_parity `historical_frozen`）：里程碑提交使 §10.8 body-only 适配过的 `v13/pi_ports/test_pi_ports.py`、`v13/read_tools/test_read_tools.py` 进入 committed_names 而被旧检查拒绝——设计缺口而非越界改动；首红前 #1–29 全绿 | §10.12 修正：`run_guard` 体内本地具名集合恰放行该两文件（字节由各自 pin 基线 4436cd8/30cdfd6 证明）；其余 frozen-prefix/`v8/` 已提交改动仍拒。修正后重跑、追加修复提交、同一 49 项清单净树复验后推送；证据 `prompt-exports/w4-v99-postcommit-20261017/` |
 
 ### S40 dirty-tree freeze amendment
 

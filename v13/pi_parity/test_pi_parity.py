@@ -183,9 +183,19 @@ def run_guard() -> None:
         (dirty_names, committed_names, untracked_names)[index].extend(found)
     bad = protected_dirty(dirty_names + untracked_names)
     check("P0", not bad, bad)
+    # §10.12 post-commit window: the Stage 40 milestone commit lands the
+    # §10.8 body-only amendments of these two guard files; their bytes are
+    # proven by their own pinned baselines in their own gates (pi_ports
+    # 4436cd8, read_tools 30cdfd6). Any other frozen-prefix or v8 committed
+    # change is still rejected.
+    stage40_committed_guards = {
+        "v13/pi_ports/test_pi_ports.py",
+        "v13/read_tools/test_read_tools.py",
+    }
     historical_frozen = [
         name for name in committed_names
-        if name.startswith(FROZEN_PREFIXES) or name.startswith("v8/")
+        if (name.startswith(FROZEN_PREFIXES) or name.startswith("v8/"))
+        and name not in stage40_committed_guards
     ]
     check("P0", not historical_frozen, historical_frozen)
     from v13.plan_arm.test_plan_arm import r0_source_scope

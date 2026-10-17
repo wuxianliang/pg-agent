@@ -100,7 +100,7 @@ W1/W2 的准确证据：独立保护文件/函数闭集审计通过；spawn、ac
 
 两次被保留的阻断尝试：attempt-01 停在 #30 pi_parity——当日 12:54:56 `/Users/wxl/Projects/PiSwift` 被 `git pull` 自 bfccb32（2026-09-27，v13 冻结 driver 的合同基线）快进到 0f44e03，`createAgentSession` 变 `async throws`、`toolExecutionEnd` 四元组变五元组，全新构建编译失败；主检出同晨绿证据均在 pull 之前且其缓存已被作废。经用户裁决回滚 PiSwift 至 bfccb32（detached，原分支指针保留 0f44e03），driver 适配新 API 不并入本里程碑、留作独立后续变更。attempt-02 停在 #36 read_tools——`~/.duckdb/extensions/v1.5.5/osx_arm64` 钉版扩展缓存从未落地，duck/ring 面按 skip 语义 exit 2；随后实跑被批准的 `v13/read_tools/duck_bringup.py`（INSTALL FROM community，sha256 钉版校验通过、loaded=true）。证据：`prompt-exports/w4-v99-attempt01-piswift-0f44e03/`、`prompt-exports/w4-v99-attempt02-duck-absent/`。
 
-最终序列 49 项全部有效：47 条脚本 exit 0（逐条真实退出码/耗时/日志见 `prompt-exports/w4-v99-precommit-20261017/results.json`；CE 为 16/16 组、665 检查、零独立失败；read_tools 首次真跑 duck 面与 E4 嵌套全量并含每条后 trace 恢复）；`--unattended-continuation` 探针 exit 1 且以既有 ask_user 拒绝尾部收尾；`bad-args` 探针 exit 2 且在任何建库前仅打印 usage。economy H1 根因仍未建立；v99 三次序列内该断言均绿，历史红灯不作追认。提交后按计划 §8.1.6 以同一 49 项清单净树复验并推送。
+最终序列 49 项全部有效：47 条脚本 exit 0（逐条真实退出码/耗时/日志见 `prompt-exports/w4-v99-precommit-20261017/results.json`；CE 为 16/16 组、665 检查、零独立失败；read_tools 首次真跑 duck 面与 E4 嵌套全量并含每条后 trace 恢复）；`--unattended-continuation` 探针 exit 1 且以既有 ask_user 拒绝尾部收尾；`bad-args` 探针 exit 2 且在任何建库前仅打印 usage。economy H1 根因仍未建立；v99 三次序列内该断言均绿，历史红灯不作追认。提交后净树复验首红于 pi_parity historical_frozen（§10.12 设计缺口，台账 S40-24），修正后按计划 §8.1.6 重跑并以同一 49 项清单净树复验后推送。
 
 ## 交付边界
 
