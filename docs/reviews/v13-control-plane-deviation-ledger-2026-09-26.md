@@ -250,3 +250,34 @@ Final legacy evidence is preserved in `prompt-exports/stage40-final-*.log`; CE g
 ## Stage 40 预提交全绿记录（2026-10-17，v99）
 
 按用户指令在 `v99` 分支/worktree 续跑 FDFAED98 的 W4 收尾：主检出当前工作树 272 个冻结集文件逐文件 SHA-256 核对后 port 进 v99；依赖输入以真实拷贝落地；PGDATA 用被证明过的 pinned pgembed 785aa58（隔离 prefix、PG 18.4、Stannum 0.4.0）全新 initdb；node v24.13.1、go 1.24.5、swift 6.3.2 在场。顺序 runner（`prompt-exports/w4-v99-runner.py`）独立执行 47 条 + goal_supervisor 两探针，逐条恢复 pi_parity trace，首个无效即停。两次被保留的阻断尝试（S40-21 PiSwift 漂移、S40-22 duck 扩展缺席）处置后，最终序列 49 项全部有效：47 条 exit 0（CE 16/16 组、665 检查；read_tools 首次真跑 duck 面与 E4 嵌套全量；economy H1 序列内绿）、`--unattended-continuation` exit 1（ask_user 拒绝尾部）、`bad-args` exit 2（建库前 usage）。完整命令/退出码/耗时/日志/冻结清单：`prompt-exports/w4-v99-precommit-20261017/`。后续按计划 §8.1.6：消费集成静态 Oracle review → 提交前人工核对 plan_arm 受保护 diff → 按路径提交 → 同一 49 项清单净树复验 → push origin v99。
+
+## Stage 41 (registry) 偏差台账
+
+2026-10-18 P1 修复前历史预提交序列 `prompt-exports/w4-registry-precommit3-20261018/`：
+48 脚本 exit 0，goal_supervisor 两额外探针 exit 1（ask_user 拒绝尾部）/2
+（仅 usage），50 项全部符合预期，每条后 trace 精确恢复。registry 独立与 E4
+嵌套均 16/16、473 checks；CE 665、plan_arm 104、fair_claim 137、goal_supervisor 74。
+完整命令/路径/退出码见 registry README 与原始 results.json。
+历史首次序列在第 16 项中断；第二次在第 17 项因 ignored runner 错误要求 FAIL
+标记为最后一行而中断，实际 exit 1 且尾部 ask_user 正确。仅修 runner 的尾部识别后
+从第 1 项重跑，不过滤或拼接序列。默认 parity 的 node_modules plane skip 如实记录，
+不作 strict/all-plane 证明。集成静态 review 已完成，设计中单 revision 缓存残留
+已修正；另发现 setup 字符串库名连接使用旧角色、与 TestDatabase 临时角色不一致的
+P1；Oracle 追加裁决纳入本里程碑，已修复并补八项真实身份/精确错误探针，独立 registry 16/16、481 checks。修复后 precommit4-p1 从第 1 项完整重跑 50 项均符合预期（48×0 + 1/2），每项 trace 恢复，独立与 E4 registry 均 16/16、481；原始记录 prompt-exports/w4-registry-precommit4-p1-20261018/results.json。上一轮 50 项仅为修复前历史；未暂存/提交/净树复验/推送。
+review 导出：`prompt-exports/oracle-review-2026-10-18-145510-untitled-chat-e8a84c-9ab2.md`。
+
+| # | 事实/偏差 | 处置与证据边界 |
+|---|---|---|
+| S41R-1 | 全局时钟取代每 scope 寻址计数；meta 降级诊断 | 接受；探针 3/4/9/10 对账、单调与历史证明 |
+| S41R-2 | `tools_revision` 第二 fence 入 hash | 接受；探针 9/16；tools 无历史时间轴 |
+| S41R-3 | 读面两角色 recall/route，resolve 拒绝 | 有意收窄，非旧三角色读面同构；探针 13 |
+| S41R-4 | caller/read_ok 复刻 CE 形态但零 `v13_ce_*` 调用 | 接受；探针 1/13 |
+| S41R-5 | 上行 cap 32 + 环截断，与下行 cap 64/RAISE 不同 | 有意读面 fail-closed；探针 8；环仅静态防御证明，不冒充运行时环覆盖 |
+| S41R-6 | claim 加键留设计 §11.5，fair_claim SIX 不动 | 消费侧后续提案，本阶段不强制 worker 钉版 |
+| S41R-7 | 注册事件推进 max_event_seq，令在途 advance stale | 有意安全方向；探针 14 只验证 probe 键变化，不跑 advance |
+| S41R-8 | `v13_interruptible()` 函数优先，profile 为覆盖面 | profile 本阶段无消费者；SQL 注释/README 与静态探针 |
+| S41R-9 | unresolved 入 hash | 诊断差异即世界差异；探针 11 |
+| S41R-10 | prompt_section 形状缓议 | 仅 object，留首个消费者定型；探针 12 |
+| S41R-11 | p_rev 负数 RAISE / 0 空注册面 / 大于时钟钳制 | tools 始终当前；探针 10 |
+| S41R-12 | ce_run registration_generation 映射仍可选 | 本阶段零触碰，留消费侧提案 |
+| S41R-13 | 六守卫精确适配，含 fresh-file 差集与 fair_claim 原有合取保留；validate_delta 名白名单显式增加公开 `v13_scope_chain`。两处旧 plan_arm 负例（ce_run:40→41、旧 future not_scheduled:41）变异不变，因 registry:41 撞号，reason 改为 `duplicate stage number`。首次 50 项在第 16 项 goal_supervisor cached-only 路径中断。 | Oracle 2026-10-18 裁决：allow() 合并 cached+untracked，goal_supervisor 直接传 cached-only；r1_load_append_ok 仅在 tracked 前缀全无时保留 CE 单 SQL 例外并新增精确 registry tuple+固定四文件全部 is_file 例外，不修改 tracked。纯内存 13 案例含四个缺文件、各单文件、错文件名、未知 stage、CE 存在/缺失；merged 与 cached-only 定向验证通过，plan_arm 104 checks。goal_supervisor 调用点、r0_source_scope 不变；P1 前完整重跑 50 项符合预期。追加 P1：原字符串入口选固定旧角色，与对象临时角色不同；删除 ROLE_ALIASES，对象使用 database.roles、字符串使用 _role_names(name)，None 省略 user、显式角色直通，失败原样传播。四 wrapper/default route/None-owner/显式 plain/缺 server 文案八项真实连接检查均绿，closing+idle 且只查身份，native_static_setup 31 checks、总 481。CE setup 与既有 r1 守卫不动；修复后提交前完整 50 项符合预期，见 precommit4-p1 results.json；提交后净树同清单证据在最终 closeout report 记录，不预填成功。 |

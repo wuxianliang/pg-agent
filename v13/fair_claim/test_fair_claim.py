@@ -400,9 +400,10 @@ def test_stage_bytes():
     tail_ok = (
         files_through("fair_claim")[-1].name == "v13_fair_claim.sql"
         and len(files_through("fair_claim")) == 39
-        and len(SQL_LOAD_ORDER) == 40
+        and len(SQL_LOAD_ORDER) == 41
         and STAGE_THROUGH["fair_claim"] == 39
         and STAGE_THROUGH["ce_run"] == 40
+        and STAGE_THROUGH["registry"] == 41
     )
     check("stage_bytes", diff == b"" and tail_ok and readme_ok, (diff, tail_ok, readme_ok))
     for path in SQL_LOAD_ORDER[:39]:

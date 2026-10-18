@@ -357,9 +357,44 @@ def r1_load_retirement_ok(base_diff, head_diff):
 
 
 def r1_load_append_ok(base_text, current_text, tracked):
-    """Accept only a canonical tail append of v13/load.py. Inputs stay in memory."""
+    """Accept a canonical tail append, with two exact dirty-tree exceptions."""
     import difflib
     import re
+
+    def dirty_append_ok(stage, filename, present_paths):
+        """Pure in-memory proof for the two cached-only disk exceptions."""
+        required = {
+            ("ce_run", "v13_ce_run.sql"): {"v13/ce_run/v13_ce_run.sql"},
+            ("registry", "v13_registry.sql"): {
+                "v13/registry/v13_registry.sql",
+                "v13/registry/setup_db.py",
+                "v13/registry/test_registry.py",
+                "v13/registry/README.md",
+            },
+        }
+        needed = required.get((stage, filename))
+        return needed is not None and needed <= set(present_paths)
+
+    registry_paths = {
+        "v13/registry/v13_registry.sql",
+        "v13/registry/setup_db.py",
+        "v13/registry/test_registry.py",
+        "v13/registry/README.md",
+    }
+    dirty_cases = [
+        (("registry", "v13_registry.sql"), registry_paths, True),
+        *[(("registry", "v13_registry.sql"), registry_paths - {path}, False)
+          for path in sorted(registry_paths)],
+        (("registry", "v13_registry_extra.sql"), registry_paths, False),
+        (("untracked", "v13_untracked.sql"), {"v13/untracked/v13_untracked.sql"}, False),
+        *[(("registry", "v13_registry.sql"), {path}, False)
+          for path in sorted(registry_paths)],
+        (("ce_run", "v13_ce_run.sql"), {"v13/ce_run/v13_ce_run.sql"}, True),
+        (("ce_run", "v13_ce_run.sql"), set(), False),
+    ]
+    for (stage, filename), present_paths, expected in dirty_cases:
+        assert dirty_append_ok(stage, filename, present_paths) is expected, (
+            "dirty exception proof", stage, filename, present_paths)
 
     sql_line = re.compile(
         r'^V13_ROOT / "([A-Za-z_][A-Za-z0-9_]*)" / "([A-Za-z_][A-Za-z0-9_]*\.sql)",$')
@@ -427,11 +462,15 @@ def r1_load_append_ok(base_text, current_text, tracked):
     for stage, _filename in appended_sql:
         prefix = "v13/" + stage + "/"
         if not any(path.startswith(prefix) for path in tracked):
-            # goal_supervisor's historical guard supplies cached-only names;
-            # the sole permitted dirty-tree exception is the exact CE SQL file.
-            ce_sql = "v13/ce_run/v13_ce_run.sql"
-            assert (stage, _filename) == ("ce_run", "v13_ce_run.sql") and (
-                AGENT_ROOT / ce_sql).is_file(), "append stage is not tracked: " + stage
+            # Cached-only callers may use only the exact CE SQL exception or a
+            # complete four-file registry package; structure stays in memory.
+            candidates = {
+                ("ce_run", "v13_ce_run.sql"): {"v13/ce_run/v13_ce_run.sql"},
+                ("registry", "v13_registry.sql"): registry_paths,
+            }.get((stage, _filename), set())
+            present_paths = {path for path in candidates if (AGENT_ROOT / path).is_file()}
+            assert dirty_append_ok(stage, _filename, present_paths), (
+                "append stage is not tracked: " + stage)
     positions = []
     stages = [stage for stage, _filename in cur_sql]
     for name in order_names:
@@ -444,12 +483,13 @@ def r1_load_append_ok(base_text, current_text, tracked):
     approved = [
         ("fair_claim", "v13_fair_claim.sql", "fair_claim", 39),
         ("ce_run", "v13_ce_run.sql", "ce_run", 40),
+        ("registry", "v13_registry.sql", "registry", 41),
     ]
     got = [
         (stage, filename, key, number)
         for (stage, filename), (key, number) in zip(appended_sql, appended_stage)]
     assert got == approved, (
-        "append is not fair_claim/39 then ce_run/40: " + str(got))
+        "append is not fair_claim/39 then ce_run/40 then registry/41: " + str(got))
 
 
 def r1_phase_d_prefix_allowance():
@@ -466,6 +506,12 @@ def r1_phase_d_prefix_allowance():
         "v13/ce_run/setup_db.py",
         "v13/ce_run/test_ce_run.py",
         "v13/ce_run/README.md",
+    }
+    stage41 = {
+        "v13/registry/v13_registry.sql",
+        "v13/registry/setup_db.py",
+        "v13/registry/test_registry.py",
+        "v13/registry/README.md",
     }
     subprocess.check_call(["git", "cat-file", "-e", phase_d + "^{commit}"], cwd=AGENT_ROOT)
     subprocess.check_call(["git", "cat-file", "-e", base + "^{commit}"], cwd=AGENT_ROOT)
@@ -697,12 +743,14 @@ def r1_phase_d_prefix_allowance():
 
     def allow(extra, known_names, blobs, current, load_base, load_current, tracked):
         for name in extra:
-            assert name.startswith(prefixes) or name in stage40, (
+            assert name.startswith(prefixes) or name in stage40 or name in stage41, (
                 "outside the three prefixes: " + name)
-        assert extra - known_names - stage40 <= fresh_ok, (
+        assert extra - known_names - stage40 - stage41 <= fresh_ok, (
             "fresh file outside accept_unattended.py")
         missing = stage40 - set(tracked)
         assert not missing, "stage 40 path is not tracked: " + str(sorted(missing))
+        missing41 = stage41 - set(tracked)
+        assert not missing41, "stage 41 path is not tracked: " + str(sorted(missing41))
         missing_phase = known_names - set(tracked)
         assert not missing_phase, "phase D protected path missing: " + str(sorted(missing_phase))
         for name in known_names & extra:
@@ -968,7 +1016,8 @@ def r1_phase_d_prefix_allowance():
 
     live = load_current
     for name in ("v13/not_allowed/x.py", "v13/loop_driver/controller.py",
-                 "v13/ce_run/extra.py", "v13/not_scheduled/test_not_scheduled.py"):
+                 "v13/ce_run/extra.py", "v13/registry/extra.py",
+                 "v13/not_scheduled/test_not_scheduled.py"):
         reject_reason(
             lambda: allow(extra | {name}, known_names, blobs, current,
                           load_base, load_current, tracked),
@@ -978,6 +1027,15 @@ def r1_phase_d_prefix_allowance():
             lambda: allow(extra - {name}, known_names, blobs, current,
                           load_base, load_current, tracked - {name}),
             "stage 40 path is not tracked")
+    for name in sorted(stage41):
+        reject_reason(
+            lambda: allow(extra - {name}, known_names, blobs, current,
+                          load_base, load_current, tracked - {name}),
+            "stage 41 path is not tracked")
+    reject_reason(
+        lambda: allow(extra | {"v13/fair_claim/fresh_new.py"}, known_names, blobs, current,
+                      load_base, load_current, tracked),
+        "fresh file outside accept_unattended.py")
     reject_reason(
         lambda: r1_load_append_ok(
             load_base, live.replace('    "ce_run": 40,\n', '    "ce_run": 40a,\n', 1), tracked),
@@ -985,7 +1043,7 @@ def r1_phase_d_prefix_allowance():
     reject_reason(
         lambda: r1_load_append_ok(
             load_base, live.replace('    "ce_run": 40,\n', '    "ce_run": 41,\n', 1), tracked),
-        "stage number is not the next contiguous value")
+        "duplicate stage number")
     reject_reason(
         lambda: r1_load_append_ok(
             load_base, live.replace("v13_ce_run.sql", "v13_ce_run_extra.sql", 1), tracked),
@@ -1005,7 +1063,35 @@ def r1_phase_d_prefix_allowance():
     reject_reason(
         lambda: r1_load_append_ok(
             load_base, future, tracked | {"v13/not_scheduled/v13_not_scheduled.sql"}),
-        "append is not fair_claim/39 then ce_run/40")
+        "duplicate stage number")
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base, live.replace('    "registry": 41,\n', '    "registry": 41a,\n', 1), tracked),
+        "load diff plus line is not a canonical append")
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base, live.replace('    "registry": 41,\n', '    "registry": 42,\n', 1), tracked),
+        "stage number is not the next contiguous value")
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base, live.replace("v13_registry.sql", "v13_registry_extra.sql", 1), tracked),
+        "append is not fair_claim/39 then ce_run/40 then registry/41")
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base, live.replace('    "registry": 41,\n', '    "ce_run": 41,\n', 1), tracked),
+        "duplicate stage key")
+    future = live.replace(
+        '    V13_ROOT / "registry" / "v13_registry.sql",\n',
+        '    V13_ROOT / "registry" / "v13_registry.sql",\n'
+        '    V13_ROOT / "not_scheduled" / "v13_not_scheduled.sql",\n',
+        1).replace(
+        '    "registry": 41,\n',
+        '    "registry": 41,\n    "not_scheduled": 42,\n',
+        1)
+    reject_reason(
+        lambda: r1_load_append_ok(
+            load_base, future, tracked | {"v13/not_scheduled/v13_not_scheduled.sql"}),
+        "append is not fair_claim/39 then ce_run/40 then registry/41")
 
 
 def r0_source_scope():

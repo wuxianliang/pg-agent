@@ -173,3 +173,45 @@ Legacy validation logs: `prompt-exports/stage40-final-*.log`. Eleven affected le
 | 14 `native_operation_handoff` | 同 epoch 多 operation、工具闭集/schema、孤儿 tool 投影、Fake spawn 不建 session | 新 gate 通过 | 66 检查；缺键/schema/envelope/来源/index/id 与原样 task |
 | 15 `native_snapshot_once` | publication replay/CAS、interaction_pending、精确 respond/instruction 消费 | 新 gate 通过 | 26 检查；新 publication 不得覆盖 interaction |
 | 16 `native_static_setup` | Fake-only、无网络/pg_sleep、库名/OID cleanup、创建失败不误删 | 新 gate 通过 | 18 检查；精确 name/OID 生命周期与 import-safe |
+
+## Stage 41 (registry, 新实现)
+
+2026-10-18 预提交最终完整顺序回归：48 脚本 exit 0，goal_supervisor
+`--unattended-continuation` exit 1（ask_user 拒绝尾部）、`bad-args` exit 2
+（建库前仅 usage），共 50 项全部符合预期。每项独立执行
+`UV_FROZEN=1 uv run python <path> [args]`，逐条恢复 parity trace。
+完整路径/命令/退出码见 `v13/registry/README.md`；原始记录为
+`prompt-exports/w4-registry-precommit4-p1-20261018/results.json`。
+P1 修复后 registry 独立 gate 与 E4 嵌套均 exit 0、16/16、481 checks、零独立
+用例失败；字符串入口真实身份八项全绿；CE 665、plan_arm 104、fair_claim 137、
+goal_supervisor 74。read_tools exit 0。上一轮 precommit3（473 checks）仅为
+修复前历史证据；提交后同清单净树复验/推送尚待执行，不预填结果。
+
+下表按落地计划 §9.2 全 16 探针逐项映射设计 §11 第 3 项（§11.3）接受断言。
+“补充”表示 §11.3 没有独立对应断言，明确列出权威落点，不冒称直接覆盖。
+检查数为本次独立 registry 日志的具名组计数，不含其调用的内部自证断言计数。
+
+| §9.2 探针 | checks / 实跑 | 设计 §11.3 断言映射 | 证据边界/缺口 |
+|---|---|---|---|
+| 1 `native_load_untouched` | 49 / PASS | 纯增量、零既有对象改动、loader 尾追加；ACL 矩阵 | Stage 1–39 与 CE SQL/setup/README 字节钉；CE test 仅 loader-tail hunk；三表/八函数/零序列 delta，既有对象/角色/ACL 不变 |
+| 2 `native_plan_arm_closed_set` | 3 / PASS | 纯增量边界；闭集负例为计划 §5.3/§9.2 补充 | 执行真实闭集及缺文件/extra.py/未来尾/重复/连续性负例；Oracle registry 四文件例外的 13 纯内存案例随 r1 校验执行 |
+| 3 `native_register_happy` | 9 / PASS | 时钟单调，仅成功分配 +1 | 三 kind 四键返回；触发器夹具验证事件/clock/meta 先于行；meta 对事件 max revision 对账 |
+| 4 `native_retire_no_gap` | 4 / PASS | retire 唯一 UPDATE、同事务 register+retire 无空档 | 两事件 revision 恰差 1，严格半开区间，from 可见/to 不见 |
+| 5 `native_already_live_not_live` | 12 / PASS | 两结构化零写且时钟不动 | 重复调用精确返回身份/键；clock/meta/行/事件/session fingerprint 全等 |
+| 6 `native_frozen_matrix` | 21 / PASS | frozen 全列名单（含 registration_id）、退役唯一 UPDATE | 八不可变列、DELETE、NULL/重复/倒退退役均拒；宿主拒直接 UPDATE，属主运维退役可达 |
+| 7 `native_one_live_concurrency` | 4 / PASS | at-most-one live、成功调用才推进时钟 | 双连接真实阻塞屏障，一胜一 already_live，仅一 revision；23505 唯一索引背板 |
+| 8 `native_chain` | 6 / PASS | chain 环截断与 depth cap | 根/叶→根、32/33 深链实跑；环分支仅源码 path guard 静态证明，未伪造不可达环，运行时环覆盖为明确缺口 |
+| 9 `native_context_determinism` | 30 / PASS | 两独立连接同 (scope,rev) 逐字节/hash 等 | 近端遮蔽、排序/provenance；后续祖先注册不改旧 child bytes，live 可见；不依赖诊断 meta |
+| 10 `native_as_of_boundaries` | 12 / PASS | as_of 边界、p_rev <0/=0/>clock 三边界、revision 0 空面 | N-1/N/M-1/M；负数 RAISE、零面但 tools 当前、未来值钳制到 current bytes |
+| 11 `native_unresolved` | 16 / PASS | unresolved 不 RAISE | 缺依赖/传递缺依赖/依赖环/补齐与排序；hash 入参单改 unresolved 即变 hash，原 A/B 行不变 |
+| 12 `native_value_shape` | 135 / PASS | §11.3 无独立 shape 条目；补充设计 §4.5 与计划 §9.2 | 全负例/1 MiB/非 service depends_on/上限正例；拒绝前后全状态相等 |
+| 13 `native_acl_roles` | 130 / PASS | route 写、recall+route 读、resolve/PUBLIC 拒、clock 零角色；规范空形 vs 已知空形 | 真实 LOGIN/SET ROLE、表 DML/SELECT、全部函数 resolve 42501；actor self/parent/越界分支、十键逐键比较 |
+| 14 `native_events_and_probe` | 8 / PASS | §11.3 无独立事件/probe 条目；补充设计 §4.2 与计划 §6.3/§9.2 | 精确 type/payload/scope/NULL source；两 stale fence 前移、其余五键不变；不跑 advance |
+| 15 `native_static_setup` | 31 / PASS | §11.3 无独立生命周期条目；补充计划 §9.2 与设计 §4.2 种子纪律 | 四 wrapper 字符串入口真实临时身份、默认 route、None=owner、显式 plain 直通、缺 server 精确文案（closing+idle、只查身份）；import-safe/无网络无 sleep、name/OID/失败不误删/cleanup 保留原异常、种子缺失写读 RAISE；profile 静态注释不是消费能力 |
+| 16 `native_tools_revision` | 11 / PASS | p_rev=0 注册空面但 tools 当前；补充设计 §4.4 双 fence | enabled/disabled 六键原样输出；旧 rev 仍见新 tools，tools_revision/hash 同步变化；不证明历史 tools 时间轴 |
+
+验收边界：默认 parity exit 0，但 node_modules plane 报 toolchain_absent skip；
+未要求/未启用 PI_PARITY_REQUIRE_ALL，不宣称 strict/all-plane 通过。设计 §11.4
+worker-parity、§11.5 消费侧 claim 加键/advance 第八键/双标量强制钉版/superseded
+均为后续提案，不属于本阶段运行时覆盖。首次第 16 项 cached-only 首红与第二次
+第 17 项 runner 尾部误判保留在 README/台账，不把中止序列拼成全绿。

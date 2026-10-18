@@ -612,8 +612,8 @@ def native_load_untouched(g):
         new = g.db.after[key]
         g.check("Stage 39 immutable " + key, all(row in new for row in old))
     load = load_module(ROOT / "load.py", "ce_gate_v13_load")
-    g.check("loader tail exactly Stage 39 then CE/40", len(load.SQL_LOAD_ORDER) == 40
-            and [p.name for p in load.SQL_LOAD_ORDER[-2:]] == ["v13_fair_claim.sql", "v13_ce_run.sql"])
+    g.check("loader tail exactly Stage 39 then CE/40", len(load.SQL_LOAD_ORDER) == 41
+            and [p.name for p in load.SQL_LOAD_ORDER[-2:]] == ["v13_ce_run.sql", "v13_registry.sql"])
     for path in load.SQL_LOAD_ORDER[:39]:
         rel = str(path.relative_to(REPO))
         revision = PHASE_D if "fair_claim/" in rel else BASE
