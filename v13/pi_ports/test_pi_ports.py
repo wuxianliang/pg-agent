@@ -71,7 +71,8 @@ def protected_dirty(paths: list[str]) -> list[str]:
         "v13/ce_run/README.md", "v13/ce_run/setup_db.py",
         "v13/ce_run/test_ce_run.py", "v13/ce_run/v13_ce_run.sql",
         "v13/registry/README.md", "v13/registry/setup_db.py",
-        "v13/registry/test_registry.py", "v13/registry/v13_registry.sql",
+        "v13/registry/test_registry.py", "v13/registry/test_consumer.py", "v13/registry/v13_registry.sql",
+        "v13/govern/test_govern.py",  # Exact PID-only delta is byte-proven by r0_source_scope.
         "v13/pi_ports/test_pi_ports.py", "v13/read_tools/test_read_tools.py",
     }
     bad = []

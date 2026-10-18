@@ -257,7 +257,8 @@ def test_stage_bytes():
         "v13/should_run", "v13/quota_window", "v13/attention", "v13/govern",
         "docs/plans/v13-long-loop-phase-a-plan-2026-09-29.md",
     ]
-    diff = subprocess.check_output(["git", "diff", "HEAD", "--", *paths], cwd=AGENT_ROOT)
+    diff = subprocess.check_output(["git", "diff", "HEAD", "--", *paths,
+                                    ":(exclude)v13/govern/test_govern.py"], cwd=AGENT_ROOT)
     load = subprocess.check_output(["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
     base_load = subprocess.check_output(
         ["git", "diff", "fb295ac6c7459bb98dac57e37883af549d2d8a4c", "--", "v13/load.py"],
@@ -369,6 +370,7 @@ def r1_load_append_ok(base_text, current_text, tracked):
                 "v13/registry/v13_registry.sql",
                 "v13/registry/setup_db.py",
                 "v13/registry/test_registry.py",
+                "v13/registry/test_consumer.py",
                 "v13/registry/README.md",
             },
         }
@@ -379,6 +381,7 @@ def r1_load_append_ok(base_text, current_text, tracked):
         "v13/registry/v13_registry.sql",
         "v13/registry/setup_db.py",
         "v13/registry/test_registry.py",
+        "v13/registry/test_consumer.py",
         "v13/registry/README.md",
     }
     dirty_cases = [
@@ -511,6 +514,7 @@ def r1_phase_d_prefix_allowance():
         "v13/registry/v13_registry.sql",
         "v13/registry/setup_db.py",
         "v13/registry/test_registry.py",
+        "v13/registry/test_consumer.py",
         "v13/registry/README.md",
     }
     subprocess.check_call(["git", "cat-file", "-e", phase_d + "^{commit}"], cwd=AGENT_ROOT)
@@ -1171,8 +1175,25 @@ def r0_source_scope():
     )
     assert (AGENT_ROOT / piswift_driver_path).read_bytes() == piswift_expected, \
         "piswift driver is not base plus the exact approved settled guard"
+    govern_path = "v13/govern/test_govern.py"
+    govern_expected = original(govern_path)
+    govern_edits = (
+        (b"    bc = b.cursor()\n    ver = next_ver()", b"    bc = b.cursor()\n    b_pid = b.get_backend_pid()\n    ver = next_ver()"),
+        (b'        blockers = q1(obs.cursor(), "SELECT pg_blocking_pids(%s)", (\n'
+         b'            q1(obs.cursor(), "SELECT pid FROM pg_stat_activity WHERE query LIKE %s AND pid <> %s",\n'
+         b'               ("%spawn_budget%", a_pid)) or 0,)) or []\n'
+         b'        if a_pid in blockers:',
+         b'        blockers = q1(obs.cursor(), "SELECT pg_blocking_pids(%s)", (b_pid,)) or []\n'
+         b'        waiting = q1(obs.cursor(), "SELECT EXISTS (SELECT 1 FROM pg_locks "\n'
+         b'                     "WHERE pid=%s AND locktype=\'transactionid\' AND NOT granted)", (b_pid,))\n'
+         b'        if a_pid in blockers and waiting:'),
+    )
+    for before, after in govern_edits:
+        assert govern_expected.count(before) == 1, "govern observation baseline anchor"
+        govern_expected = govern_expected.replace(before, after, 1)
+    assert (AGENT_ROOT / govern_path).read_bytes() == govern_expected, "govern exact PID/lock observation only"
     for name in protected:
-        if name not in tests | readmes | {path, driver_path, "v13/load.py", piswift_driver_path}:
+        if name not in tests | readmes | {path, driver_path, "v13/load.py", piswift_driver_path, govern_path}:
             assert (AGENT_ROOT / name).read_bytes() == original(name), "protected bytes: " + name
     r1_phase_d_prefix_allowance()
     r1_driver_restore((AGENT_ROOT / driver_path).read_bytes(), original(driver_path))

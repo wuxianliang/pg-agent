@@ -1218,6 +1218,7 @@ def test_policy_flip_blocks(server):
     a_pid = q1(ac, "SELECT pg_backend_pid()")
     b = connect(server)
     bc = b.cursor()
+    b_pid = b.get_backend_pid()
     ver = next_ver()
     bc.execute(
         "INSERT INTO v13_policies (name, version, value, active) "
@@ -1240,10 +1241,10 @@ def test_policy_flip_blocks(server):
     obs = connect(server)
     obs.autocommit = True
     for _ in range(40):
-        blockers = q1(obs.cursor(), "SELECT pg_blocking_pids(%s)", (
-            q1(obs.cursor(), "SELECT pid FROM pg_stat_activity WHERE query LIKE %s AND pid <> %s",
-               ("%spawn_budget%", a_pid)) or 0,)) or []
-        if a_pid in blockers:
+        blockers = q1(obs.cursor(), "SELECT pg_blocking_pids(%s)", (b_pid,)) or []
+        waiting = q1(obs.cursor(), "SELECT EXISTS (SELECT 1 FROM pg_locks "
+                     "WHERE pid=%s AND locktype='transactionid' AND NOT granted)", (b_pid,))
+        if a_pid in blockers and waiting:
             seen = True
             break
         if box["done"] or box["err"]:

@@ -8,6 +8,7 @@ OID created by that call.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -30,6 +31,55 @@ EXPECTED_TABLES = {
     "public.v13_registry_clock",
     "public.v13_registry_meta",
 }
+EXPECTED_STAGE42_TABLES = {
+    "public.v13_effect_context_pins",
+    "public.v13_effect_context_event_pins",
+}
+EXPECTED_STAGE42_FUNCTIONS = {
+    "v13_effect_context_pin_frozen",
+    "v13_effect_context_event_pin_frozen",
+    "v13_effect_context_event_capture",
+    "v13_registry_fences",
+    "v13_effect_context_pin_insert",
+    "v13_effect_context_pin_lookup",
+    "v13_effect_context_pin_matches",
+    "v13_effect_context_event_current",
+    "v13_effect_context_effect_current",
+    "v13_complete_contextual",
+    "v13_complete",
+}
+
+STAGE42_REPLACEMENTS = {
+    "v13_claim(text,integer)", "v13_claim_fair(text,integer)",
+    "v13_complete(uuid,uuid,integer,bigint,text,jsonb)",
+    "v13_probe(uuid)", "v13_judgment_envelope(uuid)", "v13_snap_of(jsonb)",
+    "v13_effect_envelope(jsonb)", "v13_advance(uuid,jsonb)",
+    "v13_route(uuid,jsonb)", "v13_canonical_state(uuid)", "v13_parse(uuid)",
+    "v13_triage_fold_reason(uuid)", "v13_triage_block_explore_spawn(uuid)",
+    "v13_recover_idle()", "v13_scheduler_hint(uuid)",
+    "v13_cap_answer_anchor(uuid,uuid)", "v13_cap_human_answered(uuid,uuid)",
+    "v13_harness_tail_gap(uuid,uuid)", "v13_tail_gap_cap_exempt(uuid,uuid)",
+    "v13_closeout(uuid,text,text,boolean)",
+}
+STAGE42_COMPLETION = {
+    "v13_complete(uuid,uuid,integer,bigint,text,jsonb,bigint)",
+    "v13_complete_contextual(uuid,uuid,integer,bigint,text,jsonb,bigint,boolean)",
+}
+STAGE42_SIGNATURES = STAGE42_COMPLETION | {
+    "v13_effect_context_pin_frozen()", "v13_effect_context_event_pin_frozen()",
+    "v13_effect_context_event_capture()", "v13_registry_fences()",
+    "v13_effect_context_pin_insert(uuid,integer,bigint,uuid,bigint,bigint)",
+    "v13_effect_context_pin_lookup(uuid,integer,bigint)",
+    "v13_effect_context_pin_matches(uuid,integer,bigint,bigint)",
+    "v13_effect_context_event_current(uuid,bigint)",
+    "v13_effect_context_effect_current(uuid)",
+}
+
+STAGE42_BEGIN = "-- STAGE42_CONSUMER_OVERLAY_BEGIN\n"
+STAGE42_END = "-- STAGE42_CONSUMER_OVERLAY_END\n"
+# The Stage 41 bytes are an installation boundary.  The hash is deliberately
+# checked over the exact byte prefix, including its final newline.
+STAGE41_PREFIX_SHA256 = "e5222e1499001f3a734292d8456d2b431fcfcd2a5862952bfcc38137caee34d4"
 
 
 @dataclass(frozen=True)
@@ -43,6 +93,8 @@ class TestDatabase:
     role_oids: dict[str, int]
     before: dict | None = None
     after: dict | None = None
+    prefix: dict | None = None
+    overlay_after: dict | None = None
 
     @property
     def uri(self) -> str:
@@ -154,8 +206,32 @@ def probe_extension(server) -> None:
         raise RuntimeError("missing extensions: " + ",".join(sorted(missing)))
 
 
+def _registry_sql_parts() -> tuple[str, str]:
+    path = ROOT / "v13_registry.sql"
+    source = path.read_text()
+    if source.count(STAGE42_BEGIN) != 1 or source.count(STAGE42_END) != 1:
+        raise RuntimeError("registry SQL must contain one Stage 42 overlay boundary")
+    prefix, rest = source.split(STAGE42_BEGIN, 1)
+    overlay, tail = rest.split(STAGE42_END, 1)
+    if tail.strip():
+        raise RuntimeError("unexpected SQL after Stage 42 overlay")
+    if hashlib.sha256(prefix.encode()).hexdigest() != STAGE41_PREFIX_SHA256:
+        raise RuntimeError("Stage 41 SQL prefix bytes changed")
+    return prefix, overlay
+
+
+def load_registry_prefix(server, database: str) -> None:
+    prefix, _ = _registry_sql_parts()
+    run_psql(server, database, prefix, on_error_stop=True)
+
+
+def load_registry_overlay(server, database: str) -> None:
+    _, overlay = _registry_sql_parts()
+    run_psql(server, database, overlay, on_error_stop=True)
+
+
 def load_registry(server, database: str) -> None:
-    """Apply only Stage 41 SQL; the cumulative prefix is loaded once."""
+    """Apply the complete registry SQL after the cumulative prefix is loaded."""
     path = ROOT / "v13_registry.sql"
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -171,7 +247,8 @@ def _fetch_snapshot(server, database: str) -> dict:
                 SELECT p.oid::regprocedure::text, pg_get_functiondef(p.oid),
                        pg_get_userbyid(p.proowner), coalesce(p.proacl::text,''),
                        p.prorettype::regtype::text, l.lanname, p.provolatile,
-                       p.prosecdef, p.proisstrict, coalesce(p.proconfig::text,'')
+                       p.prosecdef, p.proisstrict, p.pronargdefaults,
+                       coalesce(p.proconfig::text,'')
                 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
                 JOIN pg_language l ON l.oid=p.prolang
                 WHERE n.nspname='public' ORDER BY 1
@@ -297,6 +374,168 @@ def _registry_function_rows(after: dict, before: dict) -> list[tuple]:
     return [r for r in after["functions"] if r[0] not in old]
 
 
+def _function_name(signature: str) -> str:
+    return signature.split("(", 1)[0].split(".")[-1]
+
+
+def _validate_function_contracts(after: dict, before: dict, allowed_names: set[str]) -> list[tuple]:
+    additions = _registry_function_rows(after, before)
+    observed = {_function_name(row[0]) for row in additions}
+    if observed != allowed_names:
+        raise RuntimeError(f"unexpected registry function delta: {sorted(observed ^ allowed_names)}")
+    role_rows = {r[0]: r for r in after["roles"]}
+    owner_oids = {_role_oid(after, role) for role in ("v13_route", "v13_recall", "v13_resolve", "v13_spawn_owner", "v13_worker")}
+    for row in additions:
+        oid, definition, owner, acl, rettype, language, volatility, definer, strict, defaults, config = row
+        role = role_rows.get(owner)
+        function_name = _function_name(oid)
+        expected_volatility = {
+            "v13_registrations_frozen": "v", "v13_registry_caller_role": "s",
+            "v13_registry_read_ok": "s", "v13_registry_chain_inner": "s",
+            "v13_scope_chain": "s", "v13_registry_register": "v",
+            "v13_registry_retire": "v", "v13_registry_context": "s",
+            "v13_effect_context_pin_frozen": "v",
+            "v13_effect_context_event_pin_frozen": "v",
+            "v13_effect_context_event_capture": "v",
+            "v13_registry_fences": "s", "v13_effect_context_pin_insert": "v",
+            "v13_effect_context_pin_lookup": "s", "v13_effect_context_pin_matches": "s",
+            "v13_effect_context_event_current": "s",
+            "v13_effect_context_effect_current": "s",
+            "v13_complete_contextual": "v",
+            "v13_complete": "v",
+        }[function_name]
+        expected_defaults = {
+            "v13_scope_chain": 1,
+            "v13_registry_register": 1,
+            "v13_registry_context": 2,
+        }.get(_function_name(oid), 0)
+        expected_definer = function_name not in {"v13_complete", "v13_complete_contextual"}
+        if (role is None or role[1] is not True or definer != expected_definer or not _fixed_search_path(config)
+                or volatility != expected_volatility or defaults != expected_defaults):
+            raise RuntimeError(f"function contract missing for {oid}")
+        owner_oid = _role_oid(after, owner)
+        for grantee, privilege, grantable in _acl_entries(after["function_acl"].get(oid, "[]")):
+            if grantee == owner_oid:
+                continue
+            if privilege != "EXECUTE" or grantable or grantee == 0 or grantee not in owner_oids:
+                raise RuntimeError(f"unexpected function ACL for {oid}")
+    return additions
+
+
+def validate_stage41_prefix(before: dict, prefix: dict) -> None:
+    """Validate the immutable Stage 41 installation boundary."""
+    old_rel = {r[1]: r for r in before["relations"]}
+    new_rel = {r[1]: r for r in prefix["relations"]}
+    added = {name for name, row in new_rel.items() if name not in old_rel and row[2] in ("r", "p")}
+    if added != EXPECTED_TABLES:
+        raise RuntimeError(f"unexpected Stage 41 table delta: {added}")
+    additions = _validate_function_contracts(
+        prefix, before,
+        {"v13_registrations_frozen", "v13_registry_caller_role", "v13_registry_read_ok",
+         "v13_registry_chain_inner", "v13_scope_chain", "v13_registry_register",
+         "v13_registry_retire", "v13_registry_context"},
+    )
+    if prefix["sequences"] != before["sequences"]:
+        raise RuntimeError("Stage 41 changed sequences")
+    for key in ("schema_acl", "db_acl", "roles", "role_oids", "memberships"):
+        if prefix[key] != before[key]:
+            raise RuntimeError(f"Stage 41 changed {key}")
+    print("[prefix] Stage 41 tables +3, functions +8, roles/ACL/sequences frozen: PASS")
+
+
+def _validate_pin_relation(row: tuple) -> None:
+    name = row[1].removeprefix("public.")
+    pin = name == "v13_effect_context_pins"
+    columns = ([('effect_id','uuid'), ('attempt_no','integer'), ('fence','bigint'),
+                ('scope_id','uuid'), ('context_revision','bigint'), ('tools_revision','bigint'),
+                ('claimed_at','timestamp with time zone')] if pin else
+               [('session_id','uuid'), ('event_seq','bigint'), ('effect_id','uuid'),
+                ('attempt_no','integer'), ('fence','bigint')])
+    expected_columns = [[i,n,t,True,'clock_timestamp()' if n == 'claimed_at' else None]
+                        for i,(n,t) in enumerate(columns,1)]
+    if json.loads(row[5]) != expected_columns or any(acl for _,acl in json.loads(row[6])):
+        raise RuntimeError(f"Stage 42 column shape/ACL changed: {name}")
+    constraints = ({
+        (name+'_effect_id_fkey','f','FOREIGN KEY (effect_id) REFERENCES effects(effect_id)'),
+        (name+'_scope_id_fkey','f','FOREIGN KEY (scope_id) REFERENCES sessions(session_id)'),
+        (name+'_attempt_no_check','c','CHECK ((attempt_no > 0))'),
+        (name+'_fence_check','c','CHECK ((fence > 0))'),
+        (name+'_context_revision_check','c','CHECK ((context_revision >= 0))'),
+        (name+'_tools_revision_check','c','CHECK ((tools_revision >= 0))'),
+        (name+'_pkey','p','PRIMARY KEY (effect_id, attempt_no)'),
+        (name+'_effect_id_attempt_no_fence_key','u','UNIQUE (effect_id, attempt_no, fence)'),
+    } if pin else {
+        (name+'_pkey','p','PRIMARY KEY (session_id, event_seq)'),
+        (name+'_session_id_event_seq_fkey','f','FOREIGN KEY (session_id, event_seq) REFERENCES events(session_id, seq)'),
+        (name+'_effect_id_attempt_no_fence_fkey','f','FOREIGN KEY (effect_id, attempt_no, fence) REFERENCES v13_effect_context_pins(effect_id, attempt_no, fence)'),
+    })
+    observed_constraints = {tuple(c) for c in json.loads(row[10])}
+    if any(kind == 'n' for _,kind,_ in observed_constraints):
+        constraints |= {(name+'_'+n+'_not_null','n','NOT NULL '+n) for n,_ in columns}
+    if observed_constraints != constraints:
+        raise RuntimeError(f"Stage 42 constraint closure changed: {name}: {row[10]}")
+    index_specs = ([(name+'_pkey','effect_id, attempt_no',True,True),
+                    (name+'_effect_id_attempt_no_fence_key','effect_id, attempt_no, fence',True,False)] if pin else
+                   [(name+'_pkey','session_id, event_seq',True,True),
+                    ('ix_v13_effect_context_event_pins_effect','effect_id, attempt_no, fence',False,False)])
+    expected_indexes = {(n, f"CREATE {'UNIQUE ' if unique else ''}INDEX {n} ON public.{name} USING btree ({cols})", unique, primary)
+                        for n,cols,unique,primary in index_specs}
+    if {tuple(i) for i in json.loads(row[9])} != expected_indexes:
+        raise RuntimeError(f"Stage 42 index closure changed: {name}")
+    trigger_name = 'trg_v13_effect_context_pin_frozen' if pin else 'trg_v13_effect_context_event_pin_frozen'
+    function_name = 'v13_effect_context_pin_frozen' if pin else 'v13_effect_context_event_pin_frozen'
+    operations = 'UPDATE OR DELETE' if pin else 'INSERT OR DELETE OR UPDATE'
+    # pg_get_triggerdef emits operations in INSERT/DELETE/UPDATE order.
+    if pin:
+        operations = 'DELETE OR UPDATE'
+    expected_trigger = [[trigger_name,'O',f'CREATE TRIGGER {trigger_name} BEFORE {operations} ON public.{name} FOR EACH ROW EXECUTE FUNCTION {function_name}()']]
+    if json.loads(row[7]) != expected_trigger:
+        raise RuntimeError(f"Stage 42 trigger closure changed: {name}: {row[7]}")
+
+
+def validate_stage42_overlay(prefix: dict, after: dict) -> None:
+    """Validate the additive Stage 42 object closure and helper ACL matrix."""
+    old_rel = {r[1]: r for r in prefix["relations"]}
+    new_rel = {r[1]: r for r in after["relations"]}
+    added = {name for name, row in new_rel.items() if name not in old_rel and row[2] in ("r", "p")}
+    if added != EXPECTED_STAGE42_TABLES:
+        raise RuntimeError(f"unexpected Stage 42 table delta: {added}")
+    _validate_function_contracts(after, prefix, EXPECTED_STAGE42_FUNCTIONS)
+    old_functions = {r[0]: r for r in prefix["functions"]}
+    new_functions = {r[0]: r for r in after["functions"]}
+    changed = {sig for sig, row in old_functions.items() if new_functions.get(sig) != row}
+    if changed != STAGE42_REPLACEMENTS:
+        raise RuntimeError(f"unexpected Stage 42 replacements: {changed ^ STAGE42_REPLACEMENTS}")
+    for sig in changed:
+        old, new = old_functions[sig], new_functions[sig]
+        # Only claim changes language/search_path; other replacements retain metadata.
+        allowed = {1} | ({5, 10} if sig == "v13_claim(text,integer)" else set())
+        if any(a != b for i, (a, b) in enumerate(zip(old, new)) if i not in allowed):
+            raise RuntimeError(f"Stage 42 replacement metadata changed: {sig}")
+        if sig == "v13_claim(text,integer)" and (new[5] != "plpgsql" or not _fixed_search_path(new[10])):
+            raise RuntimeError("Stage 42 claim language/search_path contract changed")
+    additions = set(new_functions) - set(old_functions)
+    if additions != STAGE42_SIGNATURES:
+        raise RuntimeError(f"unexpected Stage 42 signatures: {additions ^ STAGE42_SIGNATURES}")
+    if after["sequences"] != prefix["sequences"]:
+        raise RuntimeError("Stage 42 changed sequences")
+    for key in ("schema_acl", "db_acl", "roles", "role_oids", "memberships"):
+        if after[key] != prefix[key]:
+            raise RuntimeError(f"Stage 42 changed {key}")
+    added_relations = {name for name in new_rel if name not in old_rel}
+    if added_relations != EXPECTED_STAGE42_TABLES:
+        raise RuntimeError(f"unexpected Stage 42 relation/index closure: {added_relations}")
+    superusers = {r[0] for r in after["roles"] if r[1] is True}
+    for name in EXPECTED_STAGE42_TABLES:
+        row = new_rel[name]
+        _validate_pin_relation(row)
+        if row[3] not in superusers:
+            raise RuntimeError(f"Stage 42 table owner is not a superuser: {name}")
+        if any(grantee != _role_oid(after, row[3]) for grantee, _, _ in _acl_entries(row[8])):
+            raise RuntimeError(f"Stage 42 table has non-owner ACL: {name}")
+    print(f"[overlay] Stage 42 tables +2, functions +11, replacements {len(STAGE42_REPLACEMENTS)}; roles/sequences/schema/db ACL unchanged: PASS")
+
+
 def validate_schema_owner(server, database: str) -> None:
     """The registry schema owner must be a trusted superuser/operator in practice."""
     with psycopg2.connect(server.get_uri(database)) as conn:
@@ -316,7 +555,7 @@ def validate_delta(before: dict, after: dict) -> None:
         name for name, row in new_rel.items()
         if name not in old_rel and row[2] in ("r", "p")
     }
-    if added_tables != EXPECTED_TABLES:
+    if added_tables != EXPECTED_TABLES | EXPECTED_STAGE42_TABLES:
         raise RuntimeError(f"unexpected table delta: {added_tables}")
     added_sequences = {
         name for name, row in new_rel.items()
@@ -333,32 +572,69 @@ def validate_delta(before: dict, after: dict) -> None:
         old = {r[0] if key == "functions" else r[1]: r for r in before[key]}
         new = {r[0] if key == "functions" else r[1]: r for r in after[key]}
         for ident, row in old.items():
-            if ident not in new or new[ident] != row:
+            if ident not in new:
                 raise RuntimeError(f"frozen {key} changed: {ident}")
-    additions = _registry_function_rows(after, before)
-    if not additions or any(
-        not (r[0].startswith("v13_registry_")
-             or r[0].split("(", 1)[0] in {"v13_registrations_frozen", "v13_scope_chain"})
-        for r in additions
-    ):
-        raise RuntimeError(f"unexpected function delta: {[r[0] for r in additions]}")
+            if key == "functions" and ident in STAGE42_REPLACEMENTS:
+                continue
+            if key == "relations" and ident == "public.events":
+                # Stage 42 may add its capture trigger only; preserve all other
+                # relation metadata, including the existing append-only trigger.
+                old_row, new_row = list(row), list(new[ident])
+                old_triggers = json.loads(old_row[7])
+                new_triggers = json.loads(new_row[7])
+                if len(new_triggers) != len(old_triggers) + 1 or not set(map(str, old_triggers)).issubset(set(map(str, new_triggers))):
+                    raise RuntimeError("events trigger delta is not exactly one additive capture trigger")
+                capture = [entry for entry in new_triggers if entry not in old_triggers]
+                if len(capture) != 1 or "v13_effect_context_event_capture" not in capture[0][2]:
+                    raise RuntimeError("events capture trigger identity mismatch")
+                old_row[7] = new_row[7]
+                if tuple(old_row) != tuple(new_row):
+                    raise RuntimeError(f"frozen relation changed: {ident}")
+            elif new[ident] != row:
+                raise RuntimeError(f"frozen {key} changed: {ident}")
+    additions = _validate_function_contracts(
+        after, before,
+        {"v13_registrations_frozen", "v13_registry_caller_role", "v13_registry_read_ok",
+         "v13_registry_chain_inner", "v13_scope_chain", "v13_registry_register",
+         "v13_registry_retire", "v13_registry_context", *EXPECTED_STAGE42_FUNCTIONS},
+    )
     role_rows = {r[0]: r for r in after["roles"]}
     acl_by_name = after["function_acl"]
     for row in additions:
-        oid, definition, owner, acl, rettype, language, volatility, definer, strict, config = row
+        oid, definition, owner, acl, rettype, language, volatility, definer, strict, defaults, config = row
         role = role_rows.get(owner)
         if role is None or role[1] is not True:
             raise RuntimeError(f"registry function {oid} is not owned by a trusted superuser")
-        if not definer or not _fixed_search_path(config):
+        function_name = _function_name(oid)
+        expected_defaults = {
+            "v13_scope_chain": 1,
+            "v13_registry_register": 1,
+            "v13_registry_context": 2,
+        }.get(function_name, 0)
+        expected_definer = function_name not in {"v13_complete", "v13_complete_contextual"}
+        if definer != expected_definer or not _fixed_search_path(config) or defaults != expected_defaults:
             raise RuntimeError(f"registry definer/search_path contract missing: {oid}")
         callable_route = {"v13_registry_register", "v13_registry_retire"}
         callable_read = {"v13_scope_chain", "v13_registry_context"}
-        function_name = oid.split("(", 1)[0]
         allowed = set()
         if function_name in callable_route | callable_read:
             allowed.add(_role_oid(after, "v13_route"))
         if function_name in callable_read:
             allowed.add(_role_oid(after, "v13_recall"))
+        if function_name == "v13_registry_fences":
+            allowed = {_role_oid(after, role) for role in ("v13_route", "v13_recall", "v13_resolve")}
+        elif function_name == "v13_effect_context_pin_insert":
+            allowed = {_role_oid(after, "v13_route")}
+        elif function_name == "v13_effect_context_pin_lookup":
+            allowed = {_role_oid(after, "v13_route")}
+        elif function_name == "v13_effect_context_pin_matches":
+            allowed = {_role_oid(after, "v13_route"), _role_oid(after, "v13_spawn_owner")}
+        elif function_name in {"v13_effect_context_event_current", "v13_effect_context_effect_current"}:
+            allowed = {_role_oid(after, "v13_route"), _role_oid(after, "v13_resolve")}
+            if function_name == "v13_effect_context_event_current":
+                allowed.update(_role_oid(after, role) for role in ("v13_recall", "v13_spawn_owner"))
+        elif function_name in {"v13_complete", "v13_complete_contextual"}:
+            allowed = {_role_oid(after, "v13_route"), _role_oid(after, "v13_spawn_owner")}
         observed = set()
         for grantee, privilege, grantable in _acl_entries(acl_by_name.get(oid, "[]")):
             if privilege != "EXECUTE":
@@ -391,7 +667,7 @@ def validate_delta(before: dict, after: dict) -> None:
         for column, raw_acl in json.loads(row[6]):
             if raw_acl:
                 raise RuntimeError(f"unexpected registry column ACL: {row[1]}.{column}")
-    print("[delta] tables +3: " + ", ".join(sorted(added_tables)))
+    print("[delta] tables +5: " + ", ".join(sorted(added_tables)))
     print("[delta] sequences +0; functions +" + str(len(additions)) + ": "
           + ", ".join(r[0] for r in additions))
     print("[delta] frozen objects/roles/ACL unchanged; superuser owners, "
@@ -574,13 +850,19 @@ def create_test_database(*, server=None, load_sql: bool = True, validate: bool =
         validate_schema_owner(server, name)
         before = snapshot(server, name)
         if load_sql:
-            load_registry(server, name)
+            load_registry_prefix(server, name)
+            prefix = snapshot(server, name)
+            load_registry_overlay(server, name)
             after = snapshot(server, name)
             if validate:
+                validate_stage41_prefix(before, prefix)
+                validate_stage42_overlay(prefix, after)
                 validate_delta(before, after)
-            database = TestDatabase(server, name, oid, roles, role_oids, before=before, after=after)
+            database = TestDatabase(server, name, oid, roles, role_oids,
+                                    before=before, after=after, prefix=prefix)
         else:
-            database = TestDatabase(server, name, oid, roles, role_oids, before=before, after=before)
+            database = TestDatabase(server, name, oid, roles, role_oids,
+                                    before=before, after=before, prefix=before)
         return database
     except BaseException as original:
         cleanup_error: BaseException | None = None

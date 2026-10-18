@@ -281,3 +281,97 @@ review 导出：`prompt-exports/oracle-review-2026-10-18-145510-untitled-chat-e8
 | S41R-11 | p_rev 负数 RAISE / 0 空注册面 / 大于时钟钳制 | tools 始终当前；探针 10 |
 | S41R-12 | ce_run registration_generation 映射仍可选 | 本阶段零触碰，留消费侧提案 |
 | S41R-13 | 六守卫精确适配，含 fresh-file 差集与 fair_claim 原有合取保留；validate_delta 名白名单显式增加公开 `v13_scope_chain`。两处旧 plan_arm 负例（ce_run:40→41、旧 future not_scheduled:41）变异不变，因 registry:41 撞号，reason 改为 `duplicate stage number`。首次 50 项在第 16 项 goal_supervisor cached-only 路径中断。 | Oracle 2026-10-18 裁决：allow() 合并 cached+untracked，goal_supervisor 直接传 cached-only；r1_load_append_ok 仅在 tracked 前缀全无时保留 CE 单 SQL 例外并新增精确 registry tuple+固定四文件全部 is_file 例外，不修改 tracked。纯内存 13 案例含四个缺文件、各单文件、错文件名、未知 stage、CE 存在/缺失；merged 与 cached-only 定向验证通过，plan_arm 104 checks。goal_supervisor 调用点、r0_source_scope 不变；P1 前完整重跑 50 项符合预期。追加 P1：原字符串入口选固定旧角色，与对象临时角色不同；删除 ROLE_ALIASES，对象使用 database.roles、字符串使用 _role_names(name)，None 省略 user、显式角色直通，失败原样传播。四 wrapper/default route/None-owner/显式 plain/缺 server 文案八项真实连接检查均绿，closing+idle 且只查身份，native_static_setup 31 checks、总 481。CE setup 与既有 r1 守卫不动；修复后提交前完整 50 项符合预期，见 precommit4-p1 results.json；提交后净树同清单证据在最终 closeout report 记录，不预填成功。 |
+
+## Stage 42 (registry Phase 2) 偏差台账
+
+本节独立于已退役的 Stage 42 goal_workflow。Oracle review
+`untitled-chat-9347AA` 已先读取再处置；原始导出为
+`prompt-exports/oracle-chat-2026-10-19-002613-untitled-chat-9347aa-da5a.md`。
+收尾 agent 按协调交接权限不暂存、提交或推送，不把脏树验收写成 post-commit receipt。
+最新结果 S42R-11：完整离线隔离 51 项通过；父协调 agent 仍须 review、提交、
+净树复验和推送，AGENTS 全任务要求未被取消。
+
+| # | 事实/偏差 | 处置与证据边界 |
+|---|---|---|
+| S42R-1 | 计划初始 event_current ACL 未含 recall；canonical 当前读链在 recall 身份下需要该谓词 | 增加 recall 的 `v13_effect_context_event_current(uuid,bigint)` EXECUTE；不授 effect_current 或任何 pin 表/列权限。consumer 实际 recall canonical 读取与 ACL 正反例验收；resolve 仍不能读 registry context。 |
+| S42R-2 | 实际 current tool spawn 的 `fork -> prefix_identity -> canonical_state` 在 spawn_owner 下同样需要 event_current | 仅增加该窄 EXECUTE；实际创建 child、spawn effect succeeded 和 child-created receipt，并 SET LOCAL ROLE spawn_owner 执行 canonical chain。superseded 不 spawn，legacy 保留。spawn_owner 既有 global claim EXECUTE 来自 Stage 20，不是本轮扩权；effect_current/pin 表仍拒。 |
+| S42R-3 | W4 govern 首红是 `flip update blocked by share` 的锁观察断言；独立原样复跑 228 checks 通过，不能声称稳定复现业务锁错误 | query-text 观察可能选中观察器/其他 backend；改为准确 updater PID，要求 pg_blocking_pids 与未授予 transactionid lock 同时成立。修正后 228 checks 通过。r0_source_scope 对固定基线精确重建两处批准改动；fair_claim/fair_driver/frontier_gap/goal_supervise/goal_supervisor/workspace_admit/plan_arm/parity/ports/read_tools 仅增加具名 guard 兼容，不开放任意 govern 改动。 |
+| S42R-4 | 任意 scope 注册/退役或 tools 变化均全局失效；meta 不是 freshness source | 接受 global blast radius，双连接 writer 提交后旧 pin/event/advance stale；逻辑 judge effect 身份不随 registry 水位变化。MATERIALIZED 锁屏障证明一条 envelope 语句读取同一旧双标量，下一语句见新双标量；snap 不重读 clock。tools 不提供历史时间轴。 |
+| S42R-5 | exact payload guard 禁止向 tool/repair/human payload 加 pin 锚；共有 completion 不能以 definer 身份绕过 current_user 授权 | 用 owner-only append-only side tables 绑定精确 attempt/fence；capture 失败连同 effect/events/sequence/mapping 整体回滚，missing/malformed false。human 六键名字和值、tool/call/repair 负例保持。completion common implementation 保留 INVOKER；新增七参无默认值，旧五/六参兼容。 |
+| S42R-6 | 计划 §4.2 要求 fair SIX 改 SEVEN，但原 fair_claim/fair_driver gate 仅安装 Stage 39 前缀 | 保留前缀 SIX，不修改冻结 claim SQL；overlay consumer 独立证明 SEVEN 与 owner/fair、route/global 身份和 route fair 42501。worker gate 证明短事务/双 fences/三元 cache/IDLE Fake IO/独立 strict completion 协议，不冒充新生产 worker 或真实 provider parity。 |
+| S42R-7 | 51 项验收前四次中断，不得拼接成成功序列 | attempt1 #4 CE 因同时运行独立临时库 gate 的全局角色清理碰撞失败；随后严格串行。attempt2 #10 fair_claim 的 stage_bytes 拒绝 govern 观察修正；按 S42R-3 精确适配后从 #1 重跑。attempt3 #14 frontier_gap 同一精确例外缺失而停止，连同另两处同型静态守卫一起适配并验证。attempt4 #16 goal_supervisor 的同型 frozen 路径拒绝 govern 修正；精确路径适配后静态验证，再执行用户限定的最后一次完整序列，不再扩大 scope。保留 acceptance1/acceptance2/acceptance3/acceptance4 原始 results.json，每项 trace bytes/mode 恢复；最终序列结果另记。 |
+| S42R-8 | Oracle 怀疑 trigger/FK qualified catalog strings 和 superseded fixture | 实际 PG 18.4 catalog 安装/闭集通过；当前 superseded fixture 是 pinned，legacy 单列。落实实际 spawn_owner 调用、human 六键精确值及 function_acl mutation 负例。历史默认 parity 的 node_modules toolchain_absent 不算 strict/all-plane 证明；历史 chain-cycle 仍只有静态防御覆盖。 |
+| S42R-9 | 最终序列 #30 pi_parity exit 1；外部 PiSwift 当前 HEAD 为 `a73c391ce1d891b7b6f8f37a8508f184a31703e3`，冻结 driver 编译失败：main.swift:233 缺 throws 调用的 try，:310 toolExecutionEnd 四元组与当前五元组不匹配 | 480.16 秒后真实编译失败，非 600 秒 timeout；不因与 S40-21 症状相似就声称依赖提交相同。用户限定最后一轮、不扩大 scope，故不回滚/修改 PiSwift、不改冻结 driver、不再重跑。#1–29 符合契约（27×0 与 expected 1/2），#31–51 未运行；W5/W6 完整验收红，提交前条件不满足。 |
+
+历史首红 receipt：`prompt-exports/w5-phase2-final-20261019/results.json`（30 条实际
+执行记录），同目录 manifest.json/head.txt/逐项日志；全部 51 项实际状态见
+`v13/registry/README.md`。goal_supervisor frozen 路径修正后的静态验证通过，
+最终序列 #16 74 checks、#19 govern 228 checks 均 exit 0，未出现真实冲突；
+未授任意 frozen 例外。30 条 `trace_restored=true`，pg.jsonl SHA-256
+`3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a`、
+mode 0644，tracked traces 无 diff。独立 consumer 289 / registry 16组485
+均 exit 0，但不补算被中止序列 #39/#51。文档已据实收尾，未暂存、提交、
+推送或做 post-commit 复验；四次前序中断仍保留，不拼接成全绿。
+
+### S42R-10：旧 PiSwift 隔离预验证受依赖 fetch 阻断
+
+用户随后授权查找保留旧版本、隔离验证 parity/ports，再从头执行 51 项。
+实际仓库 `/Users/wxl/Projects/PiSwift` 是 clean main/a73c391；没有旧本地
+branch，但 tag `v0.87.1` 精确指向历史基线
+`bfccb32f2d6318b75519b2c1790e7e66e133f5da`。该版 SDK 非 throws、事件四元组
+与冻结 driver 相符，不需从多个未知 branch 猜选。保留 remote branches 并未
+被切换或改写。建立 `/tmp/pg-agent-w5-PiSwift-v0.87.1/PiSwift` detached
+worktree，活动 checkout 不动。
+
+硬编码 filesystem dependency 不支持 SwiftPM mirror（尝试被 manifest
+校验拒绝后已撤销），改用 ignored PATH wrapper 的真实 Swift
+`--package-path` 入口指向临时 package。Sources 逐字节/hash 校验；副本
+Package.swift 只替换 PiSwift 路径，tracked driver/manifest 与外部源码零改动。
+预验证 parity exit 1：SwiftPM 更新 MacPaw/OpenAI 仓库时 GitHub TLS
+`SSL_ERROR_SYSCALL`，不是原 #30 API 错误复现，也不是旧版可运行证明。
+按用户任一非预期失败即停，未重试、未改解析策略，ports 未跑、完整 51 项未启动。
+
+证据 `prompt-exports/w5-piswift-compat/`：preflight-results.json、pi_parity.log、
+swift-invocations.jsonl、environment-before/after.json、prepare/verify/wrapper。
+trace 已恢复原 SHA-256/0644；活动 HEAD/status 前后相同且 clean，独立旧
+worktree clean，冻结 Sources/manifest hashes 未变。W5/W6 与提交前条件仍
+不满足（此为历史尝试结论）；此前 Oracle 已验证修正保留，未重审，未暂存/commit/push。
+
+### S42R-11：本地锁文件与缓存离线解阻，完整 51 项通过
+
+用户授权继续离线调查，不改活动 checkout、Package.swift、冻结 driver 或外部源码。
+旧 tag 的 Package.resolved 为 version 3、25 pins；OpenAI 固定 revision
+`4ed3ea99ff9dfd2a760509ddb31020f4b153ef93` 与活动 `.build/checkouts/OpenAI`
+HEAD 相同，裸库 `.build/repositories/OpenAI-f436e9d2` 的 cat-file 返回 commit。
+pg-agent 两套既有 build caches 已有依赖 checkout/repository，不需复制活动缓存。
+将旧锁文件复制到 ignored 临时 package，保留副本唯一的依赖路径替换，wrapper
+仅追加真实 Swift `--disable-automatic-resolution --skip-update`。初次离线 release
+build exit 0（472.93 秒），不再触发失败的依赖 update；未修改冻结测试断言。
+
+预验证依次 parity → ports 均 exit 0，trace bytes/mode 均恢复；证据
+`prompt-exports/w5-piswift-compat/offline-results.json` 及 offline-pi_parity/ports
+日志、offline-build1.log、swift-invocations.jsonl。然后从 #1 一次串行跑完 51 项，
+receipt `prompt-exports/w5-phase2-offline51-20261019/results.json` 有 51 条，
+全部 valid/trace_restored=true；49 项 exit 0，#17/#18 契约预期 exit 1/2，
+runner exit 0，总 item 用时 951.81 秒。不拼接此前 red/独立运行；逐项退出码、
+隔离环境和重跑命令见 registry README 的 Offline Isolation Acceptance。
+
+本序列 registry 16/16 groups、485 checks、零 independent failures；consumer
+289 checks；govern 228、goal_supervisor 74、plan_arm 104、CE 665、fair_claim 137
+及 read_tools E4（487.54 秒，含嵌套 registry/parity/ports）全部通过。
+计划 §5 所有 consumer 验收面有本次 item 51 证据，不遗留锁序夹具红项；
+goal_supervisor frozen 入口与 govern 精确观察修正无冲突。S42R-1 recall canonical
+链的 event_current EXECUTE 仍仅窄授，不授 effect_current 或 pin 表/列。
+
+最终 trace SHA-256/0644 与前述相同且 tracked diff 为空；verify.py 再次证明
+活动 PiSwift main/a73c391 和独立 v0.87.1/bfccb32 worktree clean、冻结原始
+Sources/manifest hash 不变。默认 parity 仍报告 node_modules 缺失，未启用
+PI_PARITY_REQUIRE_ALL，不冒充 all-plane/真实 provider 证明。Oracle 已读并落实的
+actual spawn_owner、human 六键、function_acl mutation 修正保持；catalog qualification
+和 pinned fixture 经实测不复现问题，无新 Oracle review、无扩大运行时 scope。
+
+W5/W6 测试/文档前置条件满足，提交/净树复验/推送尚未执行。父协调会话 get_log
+核实原“不 commit/push，review 后处理”是协调 agent 对收尾 agent 的权限边界，
+并非用户取消全任务提交要求。计划 §7 已更正：收尾 agent 只交付验收工件，
+父协调 agent review 后依 AGENTS 完成按路径暂存/凭据审查、提交、净树复验和 v99
+推送。保留 S42R-9/10 历史失败，不以本次成功改写历史。

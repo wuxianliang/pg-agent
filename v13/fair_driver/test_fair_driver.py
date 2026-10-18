@@ -220,6 +220,8 @@ def test_stage_bytes():
     from v13.plan_arm.test_plan_arm import r0_source_scope, r1_load_retirement_ok
 
     allowed = {
+        # r0_source_scope byte-proves only the exact govern PID/lock observation fix.
+        "v13/govern/test_govern.py",
         "v13/fair_claim/test_fair_claim.py",
         "v13/frontier_gap/test_frontier_gap.py",
         "v13/goal_supervise/test_goal_supervise.py",

@@ -215,3 +215,107 @@ goal_supervisor 74。read_tools exit 0。上一轮 precommit3（473 checks）仅
 worker-parity、§11.5 消费侧 claim 加键/advance 第八键/双标量强制钉版/superseded
 均为后续提案，不属于本阶段运行时覆盖。首次第 16 项 cached-only 首红与第二次
 第 17 项 runner 尾部误判保留在 README/台账，不把中止序列拼成全绿。
+
+## Stage 42 (registry Phase 2, 新实现)
+
+当前结论（2026-10-19，S42R-11）：W5/W6 测试/文档验收 PASS；离线隔离完整
+51 项全部符合契约，逐项 trace restore。下方 RED 为保留的历史尝试，最新 receipt
+与覆盖结果见本节末。未暂存/提交/推送，未做 post-commit 净树复验。
+
+本节不覆盖旧 Stage 42 goal_workflow 退役行。计划
+`docs/plans/v13-registry-phase2-2026-10-18.md` §5 的 15 个验收面由独立
+`v13/registry/test_consumer.py` 承载；具名测试函数与 gate 标签对照如下。
+2026-10-19 独立 consumer 实跑 exit 0、289 checks
+（`/tmp/v99-consumer-final.log`），独立 registry exit 0、16/16 groups、485
+checks、零 independent_case_failures（`/tmp/v99-registry-final2.log`）。
+完整 51 项序列结果在本节末另列，不以独立运行或旧 Stage 41 结果补算。
+
+| 计划 §5 gate | 状态 | 实际测试落点与证据 | 边界/缺口 |
+|---|---|---|---|
+| `native_claim_pin` | PASS | `native_claim_complete`：global 六键、fair SEVEN、CAS/pin、失败零 pin、触发器失败 rollback、缺 seed P0001 | fair prefix gate 仍装 Stage 39/SIX，见 S42R-6 |
+| `native_worker_protocol` | PASS | 同名函数：route/global 与 owner/fair 两线，exact lookup/context、三元 cache、registry/tools writer 提交后 rollback、IDLE Fake IO、另事务 strict completion | 协议验收，不是新生产 worker；不调用网络/provider |
+| `native_strict_complete` | PASS | `native_claim_complete`：accepted/replay/token stale、NULL/负数 22023、missing P0001、revision stale、旧 pin 仍 accepted | token 检查优先，不用当前 clock 拒绝已领取结算 |
+| `native_legacy_complete` | PASS | `native_claim_complete`：旧五/六参、unpinned、pinned legacy mapping；既有 CE gate 独立回归 | CE 七键与无 pin 平行面保持，不声称 CE registry generation 集成 |
+| `native_event_pin_atomicity` | PASS | 同名函数：mapping 失败恢复 effect/events/next_seq，duplicate/immutable、reclaim exact attempt/fence、missing/malformed false；payload guards 负例 | fault injection 在隔离库事务内 rollback，不改生产 guard |
+| `native_route_projection` | PASS | `native_w4_projection`、`native_plan_signal_evidence`：current llm finish；superseded llm/tool result 不驱动；origin_user_seq 过滤 | current tool result 仍不直接 finish，保持既有 route 语义 |
+| `native_tool_call_projection` | PASS | `native_w4_tool_parse`、`native_actual_tool_spawn`：current 实建 child/spawn succeeded/child-created，旧 call 零 child、不计 scheduler/triage；legacy 保留 | spawn_owner 实际 canonical 链执行，非只有 ACL 元数据 |
+| `native_repair_replan_projection` | PASS | `native_w4_control`、`native_plan_signal_evidence`：current continuation/material/cap/seam/fold/closeout/recover，superseded 无驱动；frontier synthetic 保留 | loaded pg_proc 检查有效定义，不以被覆盖源码代替 |
+| `native_human_cap_projection` | PASS | `native_w4_human`：current 释放 cap、旧 response 不释放；精确六键名字和值 | human payload 未新增 revision/anchor |
+| `native_parse_closeout` | PASS | `native_w4_tool_parse`、`native_w4_control`：旧 resolve failure 不耗 retry；无 source synthetic 仍计；旧 receipt 不阻终态 | append-only 审计不删除 |
+| `native_global_freshness` | PASS | `native_freshness`、`native_statement_snapshot`：unrelated register/retire、tools 双 fences、meta 诊断、judge effect identity 不变 | 接受全局 blast radius；tools 无历史轴 |
+| `native_envelope_snapshot_consistency` | PASS | `native_freshness`、`native_statement_snapshot`：21-key/eight-key、advance stale、MATERIALIZED 双连接屏障、延后 snap 投影旧双标量、下一语句读新双标量 | 不声称跨事务共用物理 snapshot |
+| `native_acl` | PASS | `native_claim_complete`、`native_acl_closure`：全部宿主表/列零权、global/fair/strict/context 正反例、recall 和 spawn_owner canonical 实调 | S42R-1/2 仅补 event_current；effect_current/pin 表不授 recall/spawn_owner |
+| `native_lock_barriers` | PASS | 同名函数：准确 PID + pg_blocking_pids + pg_locks；writer clock/session 等待时别 scope claim 可提交；completion session/effect；fair advisory/root/child/effect NOWAIT 零半写 | 不用 sleep 推断；govern query-text 观察另作精确 PID 修正 |
+| `native_overlay_static` | PASS | `native_acl_closure` 与 setup validators：prefix/前 39/loader 41/CE、两表/11 新签名/21 replacement 闭集；roles/seq/DB/schema/function/table ACL 和 columns/indexes/constraints/triggers mutation 负例 | prefix hash `e5222e1499001f3a734292d8456d2b431fcfcd2a5862952bfcc38137caee34d4`；无新 loader stage |
+
+Oracle findings 已逐项核对：actual catalog 不复现 qualification 拒装，superseded
+fixture 已 pinned 并单列 legacy；实际 spawn_owner、human 六键、function_acl
+mutation 已执行。fair 前缀 SIX/overlay SEVEN 的安装范围差异与窄 ACL 决策见
+台账 S42R-1–S42R-8。协调交接限定收尾 agent 本轮不 commit/push，未提供 post-commit receipt。
+
+### 历史 51 项顺序尝试：RED（2026-10-19）
+
+goal_supervisor frozen 路径精确适配后，从 #1 执行最后一次完整清单。
+#1–29 均符合契约：27 项 exit 0；#17 unattended exit 1、FAIL/ask_user
+尾部符合预期；#18 bad-args exit 2、建库前 usage 符合预期。
+#16 goal_supervisor 74 checks、#19 govern 228 checks 均 exit 0，没有观察到
+二者真实冲突。#30 pi_parity 在 480.16 秒后 exit 1，非超时：外部 PiSwift
+HEAD `a73c391ce1d891b7b6f8f37a8508f184a31703e3` 与冻结 driver 的
+`createAgentSession` throws / `toolExecutionEnd` 四元组合同不兼容。
+按首红即停和用户不再开新轮要求，#31–51 均未运行，未修改外部依赖或 driver。
+
+全部 51 项逐项实际退出码/未运行状态见 `v13/registry/README.md` 的
+“Phase 2 Final Sequence Result”；原始 30 项 receipt 为
+`prompt-exports/w5-phase2-final-20261019/results.json`，同目录保存 manifest、
+HEAD 和逐项日志。30 项均 `trace_restored=true`，pg.jsonl SHA-256 为
+`3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a`、
+mode 0644，tracked traces 无 diff。上表 PASS 仅代表独立 consumer 289 的
+覆盖结果；独立 registry 485 也不补算为最终序列 #39/#51 通过。
+**W5/W6 完整验收未完成，提交前条件不满足。** 文档已据实收尾；无暂存、
+提交、推送或净树复验。外部编译阻塞记录于 S42R-9。
+
+2026-10-19 后续兼容预验证仍 RED（S42R-10）：找到保留 tag
+`v0.87.1/bfccb32` 与历史冻结 API 相符，创建独立 detached worktree，
+未切换活动 PiSwift main。用 ignored 工具 PATH wrapper + Swift
+`--package-path` 构建临时 package（Sources 字节相同，仅副本依赖路径变更）。
+parity exit 1：SwiftPM 更新 MacPaw/OpenAI 时 GitHub TLS 连接失败，尚未证明
+旧版本 driver 编译/运行通过。按用户任一非预期失败即停，ports 未运行，新的
+51 项序列未启动。trace bytes/mode 已恢复；活动 HEAD/status、独立 worktree
+及冻结源码/manifest 未变，证据在 `prompt-exports/w5-piswift-compat/` 的
+preflight-results/environment-before/environment-after JSON 和日志。
+不覆盖或拼接先前结果，不把静态 API 兼容推断计为 gate PASS；当时 W5/W6 仍未完成。
+
+### 最新离线隔离 51 项顺序验收：PASS（2026-10-19）
+
+用户随后要求继续离线缓存调查。旧 tag Package.resolved 的 25 pins 有本地缓存，
+OpenAI 固定提交 `4ed3ea99ff9dfd2a760509ddb31020f4b153ef93` 在活动 checkout
+与裸库均存在；pg-agent 两个既有构建缓存已足够。锁文件复制到 ignored package
+副本，使用 `--disable-automatic-resolution --skip-update` 后 release build exit 0，
+472.93 秒；parity → ports 独立预验证均 exit 0，trace 均恢复。
+
+随后同一隔离环境从 #1 串行执行原 50 + consumer：**51/51 符合契约**，
+49 项 exit 0，#17 unattended exit 1（FAIL/ask_user），#18 bad-args exit 2
+（建库前 usage），runner exit 0。全部逐项退出码见 README “Offline Isolation
+Acceptance”，原始证据 `prompt-exports/w5-phase2-offline51-20261019/results.json`
+含 51 条执行记录；同目录 manifest/head/51 份日志，总 item 用时 951.81 秒。
+51 项均 valid/trace_restored=true，同一 trace SHA-256/0644 且无 tracked diff。
+这是独立完整序列，不补算旧首红或独立运行。
+
+本序列 #39 registry：16/16 groups、485 checks、零 independent failures；
+#51 consumer：289 checks，覆盖本节全部 15 个计划 §5 验收面；#19 govern 228、
+#16 goal_supervisor 74、#32 plan_arm 104、CE 665、fair_claim 137 均通过。
+#36 read_tools E4 在 487.54 秒后 exit 0，含嵌套 registry/parity/ports。
+真实锁序屏障、event 原子/畸形、actual spawn 和双连接 snapshot 没有遗留测试红项；
+goal_supervisor frozen 入口与 govern 精确观察修正无冲突。
+
+隔离重现步骤与工具路径见 registry README。活动 PiSwift clean main/a73c391、
+旧 detached v0.87.1/bfccb32 worktree clean，原 frozen Sources/manifest hash 不变，
+见 `prompt-exports/w5-piswift-compat/environment-before.json`、`environment-after.json`、
+`swift-invocations.jsonl` 与 `offline-results.json`。默认 parity 仍跳过 node_modules
+缺失平面，未启用 PI_PARITY_REQUIRE_ALL；不声称 all-plane 或真实 provider 验证。
+Oracle 已读处置沿用上文，无新 review、无新增运行时 scope。
+
+W5/W6 测试与文档前置条件已满足；收尾 agent 不暂存/提交/推送。父协调会话
+get_log 已核对，原话是协调 agent 对收尾 agent 的权限边界，不是用户全局覆盖，
+来源与职责已更正于计划 §7。父协调 agent review 后负责路径/凭据暂存审查、提交、
+提交后净树复验及 v99 推送；AGENTS 全任务要求仍有效，不宣称已提交里程碑。

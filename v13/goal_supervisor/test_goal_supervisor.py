@@ -257,6 +257,8 @@ def test_stage_bytes():
     ]
     diff = subprocess.check_output(
         ["git", "diff", R1, "--", *frozen,
+         # r0_source_scope byte-proves the exact govern PID/lock observation fix.
+         ":(exclude)v13/govern/test_govern.py",
          ":(exclude)v13/workspace_admit/test_workspace_admit.py"], cwd=AGENT_ROOT)
     check("stage_bytes", load_ok and diff == b"", (load_detail, diff[:200]))
 

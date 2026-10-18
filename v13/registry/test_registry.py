@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import hashlib
 import importlib.util
 import io
 import os
@@ -232,8 +233,12 @@ def wait_blocked(g, call, blocker):
 
 def native_load_untouched(g):
     g.check("real before/after snapshots captured", g.db.before is not None and g.db.after is not None)
-    g.setup.validate_delta(g.db.before, g.db.after)
-    g.check("exact eight new functions", len(g.setup._registry_function_rows(g.db.after, g.db.before)) == 8)
+    g.setup.validate_stage41_prefix(g.db.before, g.db.prefix)
+    g.check("Stage 41 prefix snapshot captured", g.db.prefix is not None)
+    g.check("exact eight Stage 41 functions", len(g.setup._registry_function_rows(g.db.prefix, g.db.before)) == 8)
+    g.check("Stage 41 prefix bytes pinned", g.setup._registry_sql_parts()[0].encode()
+            and hashlib.sha256(g.setup._registry_sql_parts()[0].encode()).hexdigest()
+            == g.setup.STAGE41_PREFIX_SHA256)
     load = load_module(ROOT / "load.py", "registry_gate_load")
     g.check("loader Stage 41 exact tail", len(load.SQL_LOAD_ORDER) == 41
             and load.STAGE_THROUGH["registry"] == 41 and load.STAGE_THROUGH["ce_run"] == 40
@@ -284,7 +289,9 @@ def native_plan_arm_closed_set(g):
     plan = load_module(ROOT / "plan_arm/test_plan_arm.py", "registry_gate_plan_arm")
     files = {p.name for p in Path(__file__).parent.iterdir()
              if p.is_file() and p.suffix in (".py", ".sql", ".md")}
-    g.check("registry exact four source files", files == {"v13_registry.sql", "setup_db.py", "test_registry.py", "README.md"}, files)
+    g.check("registry exact source files", files == {
+        "v13_registry.sql", "setup_db.py", "test_registry.py", "test_consumer.py", "README.md"
+    }, files)
     # Executes real closure plus missing/extra/future-tail/malformed/duplicate/
     # skipped-stage and fresh-file subtraction negative mutations.
     plan.r1_phase_d_prefix_allowance()
@@ -696,8 +703,11 @@ def native_events_and_probe(g):
     for left, right in ((before, middle), (middle, after)):
         g.check("registry events intentionally advance stale fences",
                 right["session_version"] > left["session_version"] and right["max_event_seq"] > left["max_event_seq"])
-        g.check("other five probe keys unchanged", {k: v for k, v in left.items() if k not in ("session_version", "max_event_seq")}
-                == {k: v for k, v in right.items() if k not in ("session_version", "max_event_seq")})
+        g.check("global registry revision advances", right["registry_revision"] > left["registry_revision"])
+        g.check("other probe keys unchanged", {k: v for k, v in left.items()
+                if k not in ("session_version", "max_event_seq", "registry_revision")}
+                == {k: v for k, v in right.items()
+                    if k not in ("session_version", "max_event_seq", "registry_revision")})
     events = g.audit("SELECT jsonb_agg(jsonb_build_object('session',session_id,'type',type,'payload',payload,"
                      "'source',source_effect_id) ORDER BY seq) FROM events WHERE session_id=%s", (scope,))
     g.check("exact two registry events", len(events) == 2)
@@ -878,6 +888,8 @@ PROBES = (native_load_untouched, native_plan_arm_closed_set, native_register_hap
 def main():
     failures = []
     setup = setup_module()
+    if sys.argv[1:]:
+        raise SystemExit("usage: test_registry.py")
     with setup.test_database() as database:
         gate = Gate(database)
         print("Registry gate database:", database.name, "OID:", database.oid, flush=True)
