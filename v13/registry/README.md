@@ -6,8 +6,9 @@ W5/W6 test and documentation acceptance passed in the isolated offline 51-item
 sequence: 49 exit 0 plus the expected goal probes exit 1/2; trace bytes/mode
 restored after all 51 items. Latest receipt and reproducibility details are at
 "Offline Isolation Acceptance" below. Historical RED attempts are retained,
-not combined. Parent coordinator review, staging, commit, push and post-commit clean-tree
-verification have not been performed.
+not combined. Implementation commit `937a864115694373250417daa374b05fad64267b` was
+pushed to `origin/v99` (`5be562d..937a864`); the documentation follow-up commit
+remains with the parent coordinator.
 
 ## Scope
 
@@ -556,8 +557,30 @@ reports `not_run/toolchain_absent planes=node_modules`; PI_PARITY_REQUIRE_ALL
 was not enabled, so no all-plane claim is made. No real provider was used.
 
 **W5/W6 test and documentation preconditions are met.** This closeout agent's
-handoff scope excludes staging, commit and push. The original instruction quoted
+handoff scope excludes staging, commit and push of the documentation follow-up.
+The original instruction quoted
 in plan section 7 is a coordinator-to-closeout-agent boundary, not a user waiver
 of AGENTS' task-wide commit/push requirement. Parent coordinator review,
-path/credential staging inspection, commit, clean-tree replay and v99 push
-remain pending; this is not a claim of a committed milestone.
+path/credential staging inspection and the documentation commit remain with the
+parent coordinator; the implementation push is recorded in S42R-12 below.
+
+### Post-Commit Net-Tree Acceptance (S42R-12, 2026-10-19): PASS
+
+On implementation HEAD `937a864115694373250417daa374b05fad64267b`, the bounded
+retry push completed `origin/v99` from `5be562d` to `937a864`. Tracked status was
+empty before and after. Reusing the detached `v0.87.1` PiSwift worktree and offline
+Package.resolved/cache isolation, the runner started at item 1 and completed all
+51 items once: 49 exit 0, item 17 expected exit 1, item 18 expected exit 2,
+runner exit 0. Receipt: `prompt-exports/w5-phase2-postcommit-20261019/results.json`
+(51 rows, all `valid=true` and `trace_restored=true`, 911.44 seconds). The same
+directory contains `manifest.json`, `head.txt`, `head-after.txt`,
+`tracked-after.txt`, `results-summary.txt`, `trace-after.txt`, `verify-after.json`
+and numbered logs.
+
+Trace remained SHA-256
+`3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a`, mode 0644.
+`verify.py` reports active PiSwift `a73c391`, detached old worktree `bfccb32`,
+both clean, and frozen Sources/manifests unchanged. Default parity still skips
+the missing `node_modules` plane (`PI_PARITY_REQUIRE_ALL` was not enabled); no
+all-plane or real-provider claim is made. Oracle review was read and its ACL,
+lock, and frozen-path dispositions remain unchanged.

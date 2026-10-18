@@ -2,7 +2,7 @@
 
 > 计划日期：2026-10-18
 > 范围：Phase 2 运行时消费集成；Phase 3 仅作最终收尾。
-> 状态：W5/W6 测试与文档验收通过（2026-10-19 离线隔离完整 51 项）；待父协调 agent review 与提交/推送，未宣称提交后净树验收完成。
+> 状态：W5/W6 测试与文档验收通过；实现提交 `937a864115694373250417daa374b05fad64267b` 已推送到 `origin/v99`，提交后净 tracked-tree 复验与完整 51 项已通过；文档 post-commit 收尾提交仍由父协调 agent 处理。
 
 ### 执行记录
 
@@ -37,8 +37,24 @@ Sources/manifest 未变。W5/W6 仍未完成，提交前条件不满足，不暂
 PiSwift 活动 main/a73c391 与 detached v0.87.1/bfccb32 均 clean，活动 checkout、
 冻结 Sources/manifest 未修改；重现命令与 51 项逐项退出码见 registry README。
 默认 parity 仍报告 node_modules 缺失，未启用 PI_PARITY_REQUIRE_ALL，不声称全平面覆盖。
-测试及收尾文档前置条件已满足；§7 的父协调 agent review、提交/推送和 post-commit receipt
-未完成，Phase 2 未宣称正式交付闭环。
+测试及收尾文档前置条件已满足；§7 的父协调 agent review、实现提交/推送已完成，
+post-commit receipt 已由本轮补齐，文档收尾提交仍由父协调 agent 处理。
+
+最新提交后净树证据（S42R-12）：实现 HEAD
+`937a864115694373250417daa374b05fad64267b`，`origin/v99` 已从
+`5be562d..937a864` 推送成功；tracked tree 在运行前后均为空。沿用旧 tag
+`v0.87.1` detached PiSwift worktree 与本地锁文件/缓存离线隔离环境，从 #1
+严格串行重跑完整 51 项；receipt 为
+`prompt-exports/w5-phase2-postcommit-20261019/results.json`，另有
+`manifest.json`、`head.txt`、`head-after.txt`、`tracked-after.txt`、
+`results-summary.txt`、`trace-after.txt` 和 `verify-after.json`。51 行均
+`valid=true`、`trace_restored=true`，49 项 exit 0，#17/#18 预期 exit 1/2，
+总 item 用时 911.44 秒；trace SHA-256 为
+`3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a`、mode
+0644。`verify.py` 证明活动 PiSwift `a73c391`、旧 worktree
+`bfccb32`、冻结 Sources/manifests 均未变且 clean。默认 parity 仍跳过缺失的
+`node_modules` 平面，未启用 `PI_PARITY_REQUIRE_ALL`，不作 all-plane/真实
+provider 声明；不修改 runtime、测试逻辑或 runner。
 
 ## 1. 目标、完成标准与边界
 

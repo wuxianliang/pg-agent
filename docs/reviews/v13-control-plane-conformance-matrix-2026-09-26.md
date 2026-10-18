@@ -219,8 +219,8 @@ worker-parity、§11.5 消费侧 claim 加键/advance 第八键/双标量强制�
 ## Stage 42 (registry Phase 2, 新实现)
 
 当前结论（2026-10-19，S42R-11）：W5/W6 测试/文档验收 PASS；离线隔离完整
-51 项全部符合契约，逐项 trace restore。下方 RED 为保留的历史尝试，最新 receipt
-与覆盖结果见本节末。未暂存/提交/推送，未做 post-commit 净树复验。
+51 项全部符合契约，逐项 trace restore。下方 RED 为保留的历史尝试；提交后净树
+复验见本节末 S42R-12。S42R-11 是实现提交前 receipt，保留其历史边界。
 
 本节不覆盖旧 Stage 42 goal_workflow 退役行。计划
 `docs/plans/v13-registry-phase2-2026-10-18.md` §5 的 15 个验收面由独立
@@ -315,7 +315,25 @@ goal_supervisor frozen 入口与 govern 精确观察修正无冲突。
 缺失平面，未启用 PI_PARITY_REQUIRE_ALL；不声称 all-plane 或真实 provider 验证。
 Oracle 已读处置沿用上文，无新 review、无新增运行时 scope。
 
-W5/W6 测试与文档前置条件已满足；收尾 agent 不暂存/提交/推送。父协调会话
-get_log 已核对，原话是协调 agent 对收尾 agent 的权限边界，不是用户全局覆盖，
-来源与职责已更正于计划 §7。父协调 agent review 后负责路径/凭据暂存审查、提交、
-提交后净树复验及 v99 推送；AGENTS 全任务要求仍有效，不宣称已提交里程碑。
+W5/W6 测试与文档前置条件已满足；收尾 agent 不暂存/提交/推送文档 follow-up。
+父协调会话 get_log 已核对，原话是协调 agent 对收尾 agent 的权限边界，不是用户全局覆盖，
+来源与职责已更正于计划 §7。实现提交已由父协调 agent 推送；本轮仅补 post-commit
+验收工件，文档 follow-up 提交仍由父协调 agent 处理。
+
+### S42R-12：实现提交后净树复验（2026-10-19）
+
+HEAD `937a864115694373250417daa374b05fad64267b` 已成功推送到 `origin/v99`
+（`5be562d..937a864`）。沿用 S42R-11 的旧 PiSwift `v0.87.1` detached
+worktree、Package.resolved 与本地缓存隔离，从 #1 严格重跑 51 项；receipt
+`prompt-exports/w5-phase2-postcommit-20261019/results.json` 共 51 行，49 项
+exit 0、#17/#18 为契约预期 1/2，runner exit 0，全部 `valid=true`、
+`trace_restored=true`，总 item 用时 911.44 秒。`manifest.json`、逐项日志、
+`head-after.txt`、`tracked-after.txt`、`results-summary.txt`、`trace-after.txt`
+和 `verify-after.json` 为同目录证据；tracked status 前后为空。
+
+trace SHA-256/mode 仍为
+`3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a`/0644。
+PiSwift `verify.py` 证明活动 main `a73c391`、旧 worktree `bfccb32` 和冻结
+Sources/manifests 未变。默认 parity 的 `node_modules` toolchain_absent 仍是
+环境限制，未声称 all-plane 或真实 provider。Oracle 已读处置不变；本轮未修改
+runtime、测试逻辑或 runner。

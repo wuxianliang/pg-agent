@@ -288,8 +288,9 @@ review 导出：`prompt-exports/oracle-review-2026-10-18-145510-untitled-chat-e8
 `untitled-chat-9347AA` 已先读取再处置；原始导出为
 `prompt-exports/oracle-chat-2026-10-19-002613-untitled-chat-9347aa-da5a.md`。
 收尾 agent 按协调交接权限不暂存、提交或推送，不把脏树验收写成 post-commit receipt。
-最新结果 S42R-11：完整离线隔离 51 项通过；父协调 agent 仍须 review、提交、
-净树复验和推送，AGENTS 全任务要求未被取消。
+最新实现提交前结果 S42R-11：完整离线隔离 51 项通过；S42R-12 记录已推送
+实现提交后的净树复验。文档 follow-up 仍由父协调 agent 处理，AGENTS 全任务
+要求未被取消。
 
 | # | 事实/偏差 | 处置与证据边界 |
 |---|---|---|
@@ -370,8 +371,26 @@ PI_PARITY_REQUIRE_ALL，不冒充 all-plane/真实 provider 证明。Oracle 已�
 actual spawn_owner、human 六键、function_acl mutation 修正保持；catalog qualification
 和 pinned fixture 经实测不复现问题，无新 Oracle review、无扩大运行时 scope。
 
-W5/W6 测试/文档前置条件满足，提交/净树复验/推送尚未执行。父协调会话 get_log
-核实原“不 commit/push，review 后处理”是协调 agent 对收尾 agent 的权限边界，
-并非用户取消全任务提交要求。计划 §7 已更正：收尾 agent 只交付验收工件，
-父协调 agent review 后依 AGENTS 完成按路径暂存/凭据审查、提交、净树复验和 v99
-推送。保留 S42R-9/10 历史失败，不以本次成功改写历史。
+W5/W6 测试/文档前置条件满足。父协调会话 get_log 核实原“不 commit/push，review
+后处理”是协调 agent 对收尾 agent 的权限边界，并非用户取消全任务提交要求。计划
+§7 已更正：收尾 agent 只交付验收工件；实现提交已推送，文档 follow-up 仍由父
+协调 agent 依 AGENTS 处理。保留 S42R-9/10 历史失败，不以本次成功改写历史。
+
+### S42R-12：已推送实现提交的 post-commit 净树验收
+
+实现提交 `937a864115694373250417daa374b05fad64267b` 已由父协调 agent 成功
+推送到 `origin/v99`（`5be562d..937a864`）。本收尾 agent 未暂存、commit 或
+push 文档；仅在该 HEAD 上复验。`git status --porcelain=v1
+--untracked-files=no` 在运行前后均为空。沿用旧 PiSwift tag `v0.87.1` 的
+detached worktree、锁文件与本地缓存离线隔离，从 #1 严格串行执行完整 51 项：
+receipt `prompt-exports/w5-phase2-postcommit-20261019/results.json` 有 51 行，
+49 项 exit 0，#17/#18 预期 exit 1/2，runner exit 0；每行
+`valid=true`、`trace_restored=true`，总 item 用时 911.44 秒。逐项 manifest、
+日志、HEAD/净树与 `verify-after.json` 保存在同一 receipt 目录。
+
+trace SHA-256 `3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a`、
+mode 0644；PiSwift `verify.py` 仍证明活动 `a73c391`、旧 worktree `bfccb32`
+和冻结 Sources/manifests clean/unchanged。默认 parity 因缺失 `node_modules`
+平面仍是环境限制，未启用 `PI_PARITY_REQUIRE_ALL`，不作 all-plane 或真实
+provider 声明。Oracle findings 已读并按 S42R-1/2/3/8 处置；本轮没有 runtime、
+测试逻辑或 runner 修正，也没有新的 scope。
