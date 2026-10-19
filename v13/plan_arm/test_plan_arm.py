@@ -257,7 +257,7 @@ def test_stage_bytes():
         "v13/should_run", "v13/quota_window", "v13/attention", "v13/govern",
         "docs/plans/v13-long-loop-phase-a-plan-2026-09-29.md",
     ]
-    diff = subprocess.check_output(["git", "diff", "HEAD", "--", *paths,
+    diff = r1_stannum_051_diff(["git", "diff", "HEAD", "--", *paths,
                                     ":(exclude)v13/govern/test_govern.py"], cwd=AGENT_ROOT)
     load = subprocess.check_output(["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT).decode()
     base_load = subprocess.check_output(
@@ -1098,11 +1098,118 @@ def r1_phase_d_prefix_allowance():
         "append is not fair_claim/39 then ce_run/40 then registry/41")
 
 
+def r1_stannum_051_restore(name, current):
+    """Restore only the byte-exact, reviewed 0.5.1 upgrade to its fixed parent."""
+    pins = {
+        "v13/mgraph/test_stannum_usage.py": "131af0f54caef6d75e3f18acdddc25d1eb30354f98c2d303a18e949938d6a295",
+        "v13/mgraph/README.md": "042b9463421bea29015e1e58f88648c09947d8c56d0aa9c28d861e68d204d251",
+        "v13/characterize/README.md": "62be8af89cb16f577960d2356ea4515ab9b26bc28f902c32981970d16365846f",
+        "v13/workspace_admit/test_workspace_admit.py": "c61ac64232b10bbf61a37053e0afa2f4a63cfbc9221b3e8589cc531f4e282804",
+        "v13/frontier_gap/test_frontier_gap.py": "73f07c2969bbb354ee570c23809260b4443b7cba8d52162d93493f6fa36f9b85",
+        "v13/goal_supervise/test_goal_supervise.py": "21dd53695cfc6c38629dd48c777ba55e8518110882706b0cacc4d5c1853a5dfb",
+        "v13/goal_supervisor/test_goal_supervisor.py": "ea567128242a5acbc4419afe252bad79256c2fdeab069ec82391ab878855c6fd",
+        "v13/fair_claim/test_fair_claim.py": "f0b5d6a0d295d24a27396bae1e4a55df908047b63546af1050d259dc4fa468d2",
+        "v13/fair_driver/test_fair_driver.py": "8bbc8381f9ef88d6f5609fd3a18728d1d316ad482756a0f3a60a34fe4148f6c4",
+    }
+    if name not in pins:
+        return current
+    assert hashlib.sha256(current).hexdigest() == pins[name], "Stannum 0.5.1 bytes: " + name
+    return subprocess.check_output([
+        "git", "show", "93d05f12090ce4b27b62b1a6f90d3c1b438eab68:" + name], cwd=AGENT_ROOT)
+
+
+def r1_stannum_051_mode_ok(path, expected):
+    import stat
+
+    mode = path.lstat().st_mode
+    return (stat.S_ISREG(mode)
+            and ("100755" if mode & 0o111 else "100644") == expected)
+
+
+def r1_stannum_051_diff(argv, cwd):
+    """Normalize a diff only after exact bytes and its original base agree."""
+    assert cwd == AGENT_ROOT and argv[:2] == ["git", "diff"] and argv[3] == "--"
+    names = subprocess.check_output(argv[:2] + ["--name-only"] + argv[2:], cwd=cwd)
+    exclusions = []
+    for name in names.decode().splitlines():
+        current = (AGENT_ROOT / name).read_bytes()
+        restored = r1_stannum_051_restore(name, current)
+        if restored != current:
+            original = subprocess.check_output(["git", "show", argv[2] + ":" + name], cwd=cwd)
+            mode = subprocess.check_output(
+                ["git", "ls-tree", argv[2], "--", name], cwd=cwd).decode().split()[0]
+            if restored == original and r1_stannum_051_mode_ok(AGENT_ROOT / name, mode):
+                exclusions.append(":(exclude)" + name)
+    return subprocess.check_output(argv + exclusions, cwd=cwd)
+
+
+def r1_stannum_051_proof():
+    """Mutation negatives supplement, never replace, the historical freeze."""
+    import tempfile
+
+    name = "v13/mgraph/test_stannum_usage.py"
+    current = (AGENT_ROOT / name).read_bytes()
+    restored = r1_stannum_051_restore(name, current)
+    with tempfile.TemporaryDirectory(prefix="v13-stannum-mode-") as directory:
+        path = Path(directory) / "approved"
+        path.write_bytes(current)
+        path.chmod(0o644)
+        assert r1_stannum_051_mode_ok(path, "100644")
+        path.chmod(0o755)
+        assert not r1_stannum_051_mode_ok(path, "100644"), "executable mutation accepted"
+        link = Path(directory) / "linked"
+        link.symlink_to(path)
+        assert link.read_bytes() == current
+        assert not r1_stannum_051_mode_ok(link, "100644"), "symlink mutation accepted"
+    for approved in (name, "v13/mgraph/README.md", "v13/characterize/README.md",
+                     "v13/workspace_admit/test_workspace_admit.py",
+                     "v13/frontier_gap/test_frontier_gap.py",
+                     "v13/goal_supervise/test_goal_supervise.py",
+                     "v13/goal_supervisor/test_goal_supervisor.py",
+                     "v13/fair_claim/test_fair_claim.py", "v13/fair_driver/test_fair_driver.py"):
+        mode = subprocess.check_output([
+            "git", "ls-tree", "93d05f12090ce4b27b62b1a6f90d3c1b438eab68",
+            "--", approved], cwd=AGENT_ROOT).decode().split()[0]
+        assert r1_stannum_051_mode_ok(AGENT_ROOT / approved, mode), "Stannum file mode: " + approved
+    assert restored != current, "upgrade is mandatory, not old-or-new"
+    for mutated in (
+            current.replace(b'EXPECTED_STANNUM_VERSION = "0.5.1"',
+                            b'EXPECTED_STANNUM_VERSION = "0.4.0"', 1),
+            current + b"\n# unapproved byte\n",
+            current.replace(b'    check("P1", ', b'    print("P1", ', 1)):
+        assert mutated != current, "mutation target missing"
+        try:
+            r1_stannum_051_restore(name, mutated)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("Stannum mutation accepted")
+    for approved in ("v13/mgraph/README.md", "v13/characterize/README.md",
+                     "v13/workspace_admit/test_workspace_admit.py",
+                     "v13/frontier_gap/test_frontier_gap.py",
+                     "v13/goal_supervise/test_goal_supervise.py",
+                     "v13/goal_supervisor/test_goal_supervisor.py",
+                     "v13/fair_claim/test_fair_claim.py", "v13/fair_driver/test_fair_driver.py"):
+        r1_stannum_051_restore(approved, (AGENT_ROOT / approved).read_bytes())
+    other = "v13/schema/v13_core.sql"
+    original = subprocess.check_output([
+        "git", "show", "93d05f12090ce4b27b62b1a6f90d3c1b438eab68:" + other], cwd=AGENT_ROOT)
+    mutant = original + b"\n-- unrelated change\n"
+    assert r1_stannum_051_restore(other, mutant) != original
+    try:
+        r1_stannum_051_restore(name, restored)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("pre-upgrade file accepted as upgraded")
+
+
 def r0_source_scope():
     """Fixed-base positive proof, shared by the affected stage gates."""
     import ast
     import re
 
+    r1_stannum_051_proof()
     base = "fb295ac6c7459bb98dac57e37883af549d2d8a4c"
     phase_d = "78e77c710bf06a0a1c771b822a3837c5db4c66d0"
     subprocess.check_call(["git", "cat-file", "-e", base + "^{commit}"], cwd=AGENT_ROOT)
@@ -1194,7 +1301,8 @@ def r0_source_scope():
     assert (AGENT_ROOT / govern_path).read_bytes() == govern_expected, "govern exact PID/lock observation only"
     for name in protected:
         if name not in tests | readmes | {path, driver_path, "v13/load.py", piswift_driver_path, govern_path}:
-            assert (AGENT_ROOT / name).read_bytes() == original(name), "protected bytes: " + name
+            current_bytes = r1_stannum_051_restore(name, (AGENT_ROOT / name).read_bytes())
+            assert current_bytes == original(name), "protected bytes: " + name
     r1_phase_d_prefix_allowance()
     r1_driver_restore((AGENT_ROOT / driver_path).read_bytes(), original(driver_path))
     r1_freeze_positive_proof()
@@ -1341,7 +1449,7 @@ def r0_source_scope():
         source_rev = body_pins.get(name, phase_d if name in phase_names else base)
         before = subprocess.check_output(
             ["git", "show", source_rev + ":" + name], cwd=AGENT_ROOT).decode()
-        after = (AGENT_ROOT / name).read_text()
+        after = r1_stannum_051_restore(name, (AGENT_ROOT / name).read_bytes()).decode()
         if name in body_only:
             body_only_ok(before, after, body_only[name])
             if name == "v13/read_tools/test_read_tools.py":

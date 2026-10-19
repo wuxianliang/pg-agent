@@ -372,7 +372,8 @@ def test_stage_bytes():
         "v13/goal_supervisor/test_goal_supervisor.py",
         "v13/goal_supervisor/README.md",
     }
-    diff = subprocess.check_output(
+    from v13.plan_arm.test_plan_arm import r1_stannum_051_diff
+    diff = r1_stannum_051_diff(
         ["git", "diff", "HEAD", "--", *paths,
          *(":(exclude)" + name for name in sorted(allowed))], cwd=AGENT_ROOT)
     readme_base = subprocess.check_output(

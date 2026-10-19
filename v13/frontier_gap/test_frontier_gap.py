@@ -358,7 +358,8 @@ def test_stage_bytes():
         "v13/plan_arm/v13_plan_arm.sql",
         "v13/workspace_admit/test_workspace_admit.py",
     }
-    diff = subprocess.check_output(
+    from v13.plan_arm.test_plan_arm import r1_stannum_051_diff
+    diff = r1_stannum_051_diff(
         ["git", "diff", base, "--", *paths,
          *(":(exclude)" + name for name in sorted(allowed))], cwd=AGENT_ROOT)
     load = subprocess.check_output(

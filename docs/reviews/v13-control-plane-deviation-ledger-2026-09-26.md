@@ -394,3 +394,15 @@ mode 0644；PiSwift `verify.py` 仍证明活动 `a73c391`、旧 worktree `bfccb3
 平面仍是环境限制，未启用 `PI_PARITY_REQUIRE_ALL`，不作 all-plane 或真实
 provider 声明。Oracle findings 已读并按 S42R-1/2/3/8 处置；本轮没有 runtime、
 测试逻辑或 runner 修正，也没有新的 scope。
+
+## Stannum 0.5.1 Upgrade Deviations (2026-10-19)
+
+| 编号 | 事实与处置 | 边界 |
+|---|---|---|
+| ST051-1 | Phase3 #26 旧版本锁与实际 0.5.1 冲突；用户明确授权独立升级 U | 首轮 RED 保留；U 后重新锁定 Phase3 基线，不拼接部分绿 |
+| ST051-2 | Oracle 提议的 capabilities 顶层键与实际 API 不符 | 改用实际 contract_version、engine.name/format；engine.version=0.5.0 是合同目标，不要求它等于 0.5.1 |
+| ST051-3 | usage run01 新 V12/V13、P 组绿，旧 F5 要求单列权重拒绝而红 | 源码 storage/mod.rs::envelope_fields 固定单列权重1.0；run02 F5 验合法 body:1.0 命中/verify、F5b/c 验零权重和 ALTER 拒绝，全77绿；生产索引不加权重 |
+| ST051-4 | 固定历史源码冻结会拒绝授权升级 | 对九个最终完整文件 SHA-256 精确锁定（路径/哈希见独立升级报告），确认普通文件与历史Git模式后恢复固定93d05f1字节继续原证明；无整路径豁免，内容/执行位/符号链接变异与版本回退仍拒绝 |
+| ST051-5 | 0.4→0.5 catalog delta 小但存储格式不兼容 | 生产停写/备份/干净关闭/重启/ALTER/普通REINDEX/verify，replica重建、rollback restore；本轮只新建stage库，不执行生产迁移 |
+| ST051-6 | 实施审查发现内容哈希不能覆盖文件类型/模式，且 ExceptionGroup 不能容纳中断 | 普通文件/历史Git模式检查及执行位/符号链接负例通过；BaseExceptionGroup 保留中断与清理错误，九文件台账已纠正 |
+| ST051-7 | U 独立完整51项 run01 全符合契约，908.70s | 49×0、预期1/2，每项trace恢复；registry485/consumer289及最终PiSwift verify绿；不替代Phase3两轮，历史RED不删 |

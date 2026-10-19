@@ -5,7 +5,21 @@ Gate: `uv run python v13/characterize/test_characterize.py`（退出码 0 = 通�
 库名 `agent_v13_characterize`。加载前缀九文件。setup **硬前置探针**
 `pg_available_extensions` 无名即 exit 非 0（fail-closed，无降级）。
 
-> **当前 installed_version：stannum 0.4.0**（2026-09-25 实测：pgembed 捆绑
+> **当前目标/实测版本：Stannum 0.5.1**（2026-10-19 installed/default/library 三面一致，
+> PG18.4、pgembed 0.3.0rc2；完整升级验收状态见
+> `docs/reviews/v13-stannum-0.5.1-upgrade-2026-10-19.md`）。生产 SQL 与查询/ACL 不改。
+> 下述 0.4.0 数据为历史测量，不是当前二进制来源或当前全绿声明。
+>
+> **升级边界**：0.4 的 LSG 索引在 0.5 下要求普通非 concurrent REINDEX；
+> ALTER EXTENSION 只改 catalog，不转换段。生产须备份/停读写、CHECKPOINT/干净关闭、
+> 部署匹配库并重启 backend、逐库更新、重建每个 Stannum 索引、verify 与业务核验后恢复。
+> replicas 重建；回退是恢复旧版备份，不是换回旧 .so。0.5.0→0.5.1 SQL no-op，
+> 仍需重启已装载旧库的 backend。本仓库只重建 disposable stage 库，不执行生产迁移。
+> V12 诊断 contract_version=1、engine.format=STN3；engine.version=0.5.0 是合同目标，
+> 不替代扩展/library 精确 0.5.1 检查。V13 在独立 template0 库验证 LOAD-before-CREATE。
+> 单列 field_weights=body:1.0 在 0.5.1 合法；无效权重和 ALTER 仍拒绝，生产索引不加权重。
+>
+> **历史 installed_version：stannum 0.4.0**（2026-09-25 实测：pgembed 捆绑
 > pin ad4d3b7，stage 库 DROP/CREATE 后 `CREATE EXTENSION` 落
 > default_version=0.4.0，K–R 八组同日全绿重跑）。历史记载出处：
 > 0.1.0 = DP5 刻画时代实测（文末实测记录节），0.3.0 = mgraph_assembly

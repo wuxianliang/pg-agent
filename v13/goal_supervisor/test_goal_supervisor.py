@@ -255,7 +255,8 @@ def test_stage_bytes():
         "v13/goal_supervise/v13_goal_supervise.sql",
         "v13/frontier_gap/v13_frontier_gap.sql",
     ]
-    diff = subprocess.check_output(
+    from v13.plan_arm.test_plan_arm import r1_stannum_051_diff
+    diff = r1_stannum_051_diff(
         ["git", "diff", R1, "--", *frozen,
          # r0_source_scope byte-proves the exact govern PID/lock observation fix.
          ":(exclude)v13/govern/test_govern.py",

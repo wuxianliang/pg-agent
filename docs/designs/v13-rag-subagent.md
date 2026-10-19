@@ -54,7 +54,7 @@ RAG 在 pg-agent 中的形态 = **能力子代理**(capability subagent):语料�
 
 | 扩展 | 版本 | v13 台账关系 |
 |---|---|---|
-| **stannum** | 0.1.0(设计期 bundle 库存实测口径;**现环境 0.4.0**,以 `pg_extension.extversion` 实测为准——消歧见 `v13/characterize/README.md` 顶部活记载行) | T0 BM25/TINQL 实体;DP5 已刻画(characterize) |
+| **stannum** | 0.1.0(设计期 bundle 库存实测口径；0.4.0 为历史适配版本；**2026-10-19 目标/实测 0.5.1**，升级验收状态见 `docs/reviews/v13-stannum-0.5.1-upgrade-2026-10-19.md` 与 `v13/characterize/README.md`) | T0 BM25/TINQL 实体;DP5 已刻画(characterize) |
 | **vectorchord(vchord)** | 1.1.1 | T1 混合台账触发线;需 `shared_preload_libraries='vchord'` |
 | **pgvector(vector)** | 0.8.2 | T1 存储备选;v6 已在用(`CREATE EXTENSION vector`) |
 | **pg_typesafe(typesafe)** | 0.0.1 | 库内判断唯一 IO 例外;v13 schema 已启用 |

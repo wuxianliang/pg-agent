@@ -1,4 +1,4 @@
-"""v13 stannum 0.4.0 usage gate.
+"""v13 stannum 0.5.1 usage gate.
 
 Run: uv run python v13/mgraph/test_stannum_usage.py  (exit 0 = pass)
 """
@@ -24,6 +24,7 @@ from v13.load import files_through
 from v13.mgraph.setup_db import DB, main as setup_db
 
 PASSED = 0
+EXPECTED_STANNUM_VERSION = "0.5.1"
 
 EXPECTED_SQL = {
     "v13_recall(text,int)": (
@@ -604,7 +605,7 @@ def identity_types(ident: str):
 def version_checks(server, cur):
     check("V1", one_text(
         cur, "SELECT extversion FROM pg_extension WHERE extname='stannum'")
-        == "0.4.0")
+        == EXPECTED_STANNUM_VERSION)
     pg = psycopg2.connect(server.get_uri("postgres"))
     try:
         pg.autocommit = True
@@ -612,10 +613,10 @@ def version_checks(server, cur):
         pc.execute(
             "SELECT default_version FROM pg_available_extensions "
             "WHERE name='stannum'")
-        check("V2", pc.fetchone()[0] == "0.4.0")
+        check("V2", pc.fetchone()[0] == EXPECTED_STANNUM_VERSION)
     finally:
         pg.close()
-    check("V3", one_text(cur, "SELECT stannum.version()") == "0.4.0")
+    check("V3", one_text(cur, "SELECT stannum.version()") == EXPECTED_STANNUM_VERSION)
     server_num = one_text(cur, "SELECT current_setting('server_version_num')::int")
     check("V4", 180000 <= server_num < 190000, server_num)
     check("V5", importlib.metadata.version("pgembed") == "0.3.0rc2")
@@ -647,6 +648,63 @@ def version_checks(server, cur):
         cur, "SELECT current_setting('stannum.enable_custom_scan')") == "on")
     check("V11", one_text(
         cur, "SELECT current_setting('stannum.strict_analysis')") == "off")
+    capabilities = one_text(cur, "SELECT stannum.capabilities()")
+    print(f"[info] V12 capabilities: {capabilities}")
+    check("V12", isinstance(capabilities, dict)
+          and capabilities.get("contract_version") == 1
+          and isinstance(capabilities.get("engine"), dict)
+          and capabilities["engine"].get("name") == "stannum"
+          and capabilities["engine"].get("format") == "STN3", capabilities)
+
+
+def load_before_create_check(server, module_path):
+    """Exercise the 0.5.1 planner fix in an owned template0 database."""
+    from psycopg2 import sql
+
+    name = "v13_stannum_load_" + uuid.uuid4().hex
+    admin = psycopg2.connect(server.get_uri("postgres"))
+    conn = None
+    created = False
+    try:
+        admin.autocommit = True
+        with admin.cursor() as ac:
+            ac.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0").format(
+                sql.Identifier(name)))
+        created = True
+        conn = psycopg2.connect(server.get_uri(name))
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            absent = ("SELECT NOT EXISTS (SELECT FROM pg_extension WHERE extname='stannum') "
+                      "AND NOT EXISTS (SELECT FROM pg_am WHERE amname='stannum')")
+            check("V13a", one_text(cur, absent) is True)
+            cur.execute(sql.SQL("LOAD {}").format(sql.Literal(module_path)))
+            check("V13b", one_text(cur, "SELECT 42") == 42
+                  and one_text(cur, "SELECT count(*) FROM pg_catalog.pg_class") > 0
+                  and one_text(cur, absent) is True)
+            cur.execute(sql.SQL("CREATE EXTENSION stannum VERSION {}").format(
+                sql.Literal(EXPECTED_STANNUM_VERSION)))
+            check("V13c", one_text(cur, "SELECT extversion FROM pg_extension "
+                                  "WHERE extname='stannum'") == EXPECTED_STANNUM_VERSION
+                  and one_text(cur, "SELECT stannum.version()") == EXPECTED_STANNUM_VERSION
+                  and one_text(cur, "SELECT count(*) FROM pg_catalog.pg_class") > 0)
+    finally:
+        failure = sys.exception()
+        try:
+            try:
+                if conn is not None:
+                    conn.close()
+            finally:
+                if created:
+                    with admin.cursor() as ac:
+                        ac.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(
+                            sql.Identifier(name)))
+        except Exception as cleanup_error:
+            if failure is not None:
+                raise BaseExceptionGroup("Stannum lifecycle and cleanup failed",
+                                     [failure, cleanup_error]) from None
+            raise
+        finally:
+            admin.close()
 
 
 def load_fixtures(cur):
@@ -1121,7 +1179,7 @@ def feature_checks(cur, ctx):
         val = cur.fetchone()[0]
         cur.execute("RELEASE SAVEPOINT sp_f4")
         foreign_ok = False
-        foreign_detail = f"returned {val!r}; 0.4.0 rejects this form"
+        foreign_detail = f"returned {val!r}; indexed field isolation requires rejection"
     except psycopg2.Error as exc:
         cur.execute("ROLLBACK TO SAVEPOINT sp_f4")
         msg = str(exc).splitlines()[0]
@@ -1144,11 +1202,27 @@ def feature_checks(cur, ctx):
     check("F4", true_hit is True and foreign_ok and still_single and gone,
           foreign_detail)
     cur.execute("CREATE TABLE v13_usage_probe_single (body text)")
+    cur.execute("INSERT INTO v13_usage_probe_single VALUES ('quasar')")
+    cur.execute(
+        "CREATE INDEX ix_v13_usage_probe_single ON v13_usage_probe_single "
+        "USING stannum (body) WITH (field_weights='body:1.0')")
+    check("F5", one_text(cur, "SELECT reloptions FROM pg_class "
+                         "WHERE oid='ix_v13_usage_probe_single'::regclass")
+          == ["field_weights=body:1.0"]
+          and one_text(cur, "SELECT count(*) FROM v13_usage_probe_single "
+                            "WHERE body ==> 'quasar'") == 1
+          and one_text(cur, "SELECT count(*) FROM stannum.verify_index("
+                            "'ix_v13_usage_probe_single', true) "
+                            "WHERE severity IN ('error','warning')") == 0)
     fails_with(
         cur,
-        "CREATE INDEX ix_v13_usage_probe_single ON v13_usage_probe_single "
-        "USING stannum (body) WITH (field_weights='body:1.0')",
-        (), "multi-column", "F5", pgcode="XX000")
+        "CREATE INDEX ix_v13_usage_probe_bad ON v13_usage_probe_single "
+        "USING stannum (body) WITH (field_weights='body:0')",
+        (), "must be a positive finite number", "F5b", pgcode="XX000")
+    fails_with(
+        cur,
+        "ALTER INDEX ix_v13_usage_probe_single SET (field_weights='body:2')",
+        (), "REINDEX to change field_weights", "F5c", pgcode="XX000")
     cur.execute("DROP TABLE v13_usage_probe_single")
     check("F6",
           ctx["jieba_scope"]
@@ -1324,7 +1398,7 @@ def privilege_checks(conn, cur, ctx):
         cur.execute("ROLLBACK TO SAVEPOINT sp_r16")
         cur.execute("RESET ROLE")
     ver = role_query(cur, "v13_usage_schema", "SELECT stannum.version()", ())
-    check("R17", ver[0][0] == "0.4.0", ver)
+    check("R17", ver[0][0] == EXPECTED_STANNUM_VERSION, ver)
     cur.execute("SAVEPOINT sp_r18")
     cur.execute("SET LOCAL ROLE v13_usage_schema")
     cur.execute("SET LOCAL enable_seqscan = off")
@@ -1405,6 +1479,9 @@ def main() -> int:
         drop_usage_role(conn, cur)
         cur.execute(SPAN_SQL)
         version_checks(server, cur)
+        module_path = one_text(cur, "SELECT probin FROM pg_proc "
+                               "WHERE oid='stannum.version()'::regprocedure")
+        load_before_create_check(server, module_path)
         sqls = load_dynamic_sql(cur)
         sid_tr, sid_other, sid_mg = load_fixtures(cur)
         commit_tx(conn, cur)

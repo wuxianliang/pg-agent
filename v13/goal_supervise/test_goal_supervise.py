@@ -291,7 +291,8 @@ def test_stage_bytes():
         "v13/frontier_gap/test_frontier_gap.py",
         "v13/workspace_admit/test_workspace_admit.py",
     }
-    diff = subprocess.check_output(
+    from v13.plan_arm.test_plan_arm import r1_stannum_051_diff
+    diff = r1_stannum_051_diff(
         ["git", "diff", base, "--", *paths,
          *(":(exclude)" + name for name in sorted(allowed))], cwd=AGENT_ROOT)
     load = subprocess.check_output(

@@ -11,8 +11,16 @@ Stage 15/15(SQL_LOAD_ORDER 第 15 位,纯末尾追加)。消费 schema→periphe
 0=通过;write/read 默认关——D/E/G/H 写路径 gate 以「INSERT 新策略版本+翻
 active」打开、测毕翻回 v2;固化链不读 write/read 开关,仅 `consolidate_mode=
 'manual'` 响亮键执法;G 组锚面纯函数/直调可在默认关下测)。
-本 stage 还有 `test_stannum_usage.py`，核查 stannum 使用，不改图语义。其中
-P5b（U2b）把使用核查 B.5 的「spans 与索引切分碰巧一致」上锁：CJK 夹具上
+本 stage 的 `test_stannum_usage.py` 当前精确要求 Stannum 0.5.1，核查使用而不改图语义。
+V12 读取 capabilities 的 contract_version/engine.format；合同 engine.version 不等于
+扩展版本。V13a/b/c 在唯一 template0 临时库中验证先 LOAD、无 AM 时普通规划、再 CREATE
+精确版本，finally 清理。F5 接受单列 body:1.0 并验证命中/verify，F5b/c 拒绝零权重及
+ALTER 改权重；生产单列索引不新增 field_weights。原查询、jieba、ACL、P/F/R 其余契约不变。
+0.4 LSG→0.5 STN3 必须重建，不支持 binary downgrade；生产迁移边界见 characterize README，
+本仓库只 DROP/CREATE stage 测试库。升级验收状态见
+`docs/reviews/v13-stannum-0.5.1-upgrade-2026-10-19.md`，不从历史记录推定本轮全绿。
+
+历史 P5b（U2b）把使用核查 B.5 的「spans 与索引切分碰巧一致」上锁：CJK 夹具上
 `v13_extract_spans`（4 参 text highlight，默认 unicode）与经
 `stannum.bind_query(..., 'ix_chunks_stannum')` 的 4 参 `indexed_query`
 highlight 哨兵区间必须完整有序相等。今天相等是现状（生产索引=默认 unicode

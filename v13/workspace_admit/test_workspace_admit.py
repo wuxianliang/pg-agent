@@ -263,7 +263,8 @@ def test_stage_bytes():
         "v13/should_run", "v13/quota_window", "v13/attention", "v13/govern",
         "docs/plans/v13-long-loop-phase-a-plan-2026-09-29.md",
     ]
-    from v13.plan_arm.test_plan_arm import r0_source_scope, r1_load_retirement_ok
+    from v13.plan_arm.test_plan_arm import (
+        r0_source_scope, r1_load_retirement_ok, r1_stannum_051_diff)
     base = r0_source_scope()
     allowed = {
         # r0_source_scope byte-proves only the exact govern PID/lock observation fix.
@@ -277,7 +278,7 @@ def test_stage_bytes():
         "v13/loop_driver/test_controller_vertical.py",
         "v13/load.py",
     }
-    diff = subprocess.check_output(
+    diff = r1_stannum_051_diff(
         ["git", "diff", "HEAD", "--", *paths,
          *(":(exclude)" + name for name in sorted(allowed))], cwd=AGENT_ROOT)
     load = subprocess.check_output(

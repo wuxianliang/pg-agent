@@ -337,3 +337,14 @@ PiSwift `verify.py` 证明活动 main `a73c391`、旧 worktree `bfccb32` 和冻�
 Sources/manifests 未变。默认 parity 的 `node_modules` toolchain_absent 仍是
 环境限制，未声称 all-plane 或真实 provider。Oracle 已读处置不变；本轮未修改
 runtime、测试逻辑或 runner。
+
+## Stannum 0.5.1 Upgrade (2026-10-19)
+
+独立升级 U，不覆盖 Stage41/42 历史或 Phase3 首轮 RED。定向16项及独立完整51项均符合契约；完整逐项结果见 `v13-stannum-0.5.1-upgrade-2026-10-19.md`。
+
+| 范围 | 当前证据 | 边界 |
+|---|---|---|
+| 精确版本与新只读接口 | usage V1/V2/V3/R17 固定 0.5.1；V12 contract_version/engine.format | capabilities 合同版本不是库版本；不消费全部新特性 |
+| LOAD-before-CREATE | V13a/b/c 在唯一 template0 库实跑成功，清理后无遗留库 | 无扩展时普通规划及同 backend CREATE；不冒充生产升级演练 |
+| 使用契约 | 独立 usage run02 全 77 checks；P/F/R 与 jieba/ACL/verify 保留 | F5 精确跟随已证实单列权重变化，非法权重/ALTER 仍拒绝 |
+| 冻结保护与全回归 | 原基线证明加精确文件字节/模式恢复与变异负例；定向16项全绿，审查修正后usage/plan_arm与纯守卫复跑绿；独立51项908.70s全符合契约，49×0及预期1/2；每项trace恢复，registry485/consumer289，最终PiSwift verify绿 | 不移动旧 base，不豁免文件，不把升级绿替代 Phase3 两轮 |

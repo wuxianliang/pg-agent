@@ -239,7 +239,8 @@ def test_stage_bytes():
         "v13/frontier_gap/README.md",
         "v13/goal_supervise/README.md",
     }
-    diff = subprocess.check_output(
+    from v13.plan_arm.test_plan_arm import r1_stannum_051_diff
+    diff = r1_stannum_051_diff(
         ["git", "diff", "HEAD", "--", *STAGE_PATHS,
          *(":(exclude)" + name for name in sorted(allowed))], cwd=AGENT_ROOT)
     load = subprocess.check_output(["git", "diff", "HEAD", "--", "v13/load.py"], cwd=AGENT_ROOT)
