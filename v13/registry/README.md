@@ -11,10 +11,13 @@ pushed to `origin/v99` (`5be562d..937a864`); its postcommit evidence was
 committed as `93d05f1`. Original Phase3 precommit run01 was RED at #26
 (0.5.1 versus the then-required 0.4.0); its #27-51 were NOT RUN. User-authorized
 independent Stannum 0.5.1 upgrade U `16e2d8b` is now committed/pushed and
-separately validated. Phase3 re-locks to U; new precommit run02 and A postcommit
-are pending, with no Phase3 acceptance or A/B commit yet.
-See `docs/reviews/v13-registry-phase3-closeout-2026-10-19.md` for the independent
-precommit/postcommit records and current pending state.
+separately validated. Phase3 precommit run02 passed all 51 contracts (918.90s).
+A `7ec8555ef1f29a2583db93bff0901a288226399c` was committed/pushed to
+`origin/v99`; its independent tracked-clean postcommit sequence passed all 51
+contracts (908.85s). B records these results only; its own hash/push is reported
+by the final read-only delivery, not prefilled here.
+See `docs/reviews/v13-registry-phase3-closeout-2026-10-19.md` for both complete
+per-item records, retained historical RED and accepted coverage limitations.
 
 ## Scope
 
@@ -357,7 +360,26 @@ reported 16/16 groups, 485 checks, zero independent failures; consumer reported
 0644. PiSwift verify reports active `a73c391`, detached `bfccb32`, and frozen
 Sources/manifests unchanged. The default node_modules parity plane remains SKIP;
 no all-plane or real-provider claim is made. This is Phase3 precommit evidence;
-A postcommit must restart the same 51-item manifest after A is pushed.
+A postcommit independently restarted the same 51-item manifest after A was pushed.
+
+## Phase 3 A Postcommit: PASS (2026-10-19)
+
+A `7ec8555ef1f29a2583db93bff0901a288226399c` was pushed to `origin/v99`
+(`16e2d8b..7ec8555`). Receipt:
+`prompt-exports/phase3-postcommit-20261019-run01/`. HEAD remained A and tracked
+status was clean before and after the serial run from #1. All 51 contracts
+passed: 49 exit0, expected #17 exit1/ask_user and #18 exit2/usage, every row
+valid=true and trace_restored=true. Recorded item time: 908.85s. Outer registry
+reported 16/16 groups, 485 checks, zero independent failures; consumer reported
+289 checks. Stannum usage passed all 77 checks under the upgraded 0.5.1 contract.
+Final trace SHA-256 is
+`3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a`, mode0644.
+Post-run verify confirms active PiSwift `a73c391`, detached `bfccb32`, both clean,
+and frozen Sources/manifests unchanged. Default node_modules SKIP remains;
+strict all-plane parity and real providers are not claimed. The final report
+retains all 51 per-item results independently of precommit and U acceptance.
+B changes result records only, with the manifest and all other tracked execution
+bytes/modes unchanged from A; no third full51 or self-referential C is required.
 
 ## Gate Manifest (Phase 2: Original 50 Plus Consumer)
 

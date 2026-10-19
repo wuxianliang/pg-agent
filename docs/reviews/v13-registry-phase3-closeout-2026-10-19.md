@@ -7,14 +7,19 @@ Original precommit run01 remains RED at #26; its #27-51 were NOT RUN.
 User then authorized a 0.5.1 upgrade, planned/reviewed with Oracle and committed
 and pushed independently as U `16e2d8b682b3b449fa45620805d337a668a6294d`.
 U passed its own targeted16 and complete51 (908.70s); that is not Phase3 evidence.
-New precommit run02 passed all51 contracts (918.90s). A postcommit remains
-pending, A/B not yet committed; no future commit or push identity is prefilled.
+New precommit run02 passed all51 contracts (918.90s). A
+`7ec8555ef1f29a2583db93bff0901a288226399c` was committed and pushed to
+origin/v99; its independent tracked-clean postcommit run01 passed all51
+contracts (908.85s). B records actual results only; its own hash/push and
+final remote equality are left to the read-only delivery, without a C commit.
 Phase3 remains docs/evidence-only relative to U, not a runtime/test implementation.
 
 Baseline: worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch
 `v99`, upstream `origin/v99`, remote `https://github.com/wuxianliang/pg-agent.git`.
-Re-locked HEAD and origin/v99 are both
-`16e2d8b682b3b449fa45620805d337a668a6294d` (ahead/behind 0/0, after U push).
+The re-locked precommit baseline was
+`16e2d8b682b3b449fa45620805d337a668a6294d` (HEAD/origin/v99 0/0 after U push).
+Before B result edits, HEAD and origin/v99 both equal A
+`7ec8555ef1f29a2583db93bff0901a288226399c`, with tracked status clean.
 The original run01 baseline was `93d05f12090ce4b27b62b1a6f90d3c1b438eab68`.
 Stannum is now pinned to 0.5.1; see the independent upgrade plan/report.
 Restored scoped stash `99d334fe90af613605b6e9ec2a7d7c0a3c5abd2d` remains
@@ -410,9 +415,103 @@ Each command has prefix `UV_FROZEN=1 uv run python`. Numbered log names are
 | 50 | `v13/workspace_exec/test_workspace_exec.py` | 0 / 0 | 3.40 | T / T | [ok] 54 checks |
 | 51 | `v13/registry/test_consumer.py` | 0 / 0 | 4.00 | T / T | 289 checks |
 
-### A Postcommit Sequence
+### A Postcommit Sequence: PASS
 
-NOT RUN; A not committed/pushed. No A identity or clean-tree result is prefilled.
+A `7ec8555ef1f29a2583db93bff0901a288226399c`, message
+`v13: record registry phase3 closeout evidence`, was committed with normal hooks
+and pushed to origin/v99 (`16e2d8b..7ec8555`). Receipt:
+`prompt-exports/phase3-postcommit-20261019-run01/`. Its head.txt records A;
+HEAD remained A and tracked status was clean before and after the independent
+serial sequence starting at #1. After completion and before B edits, HEAD and
+origin/v99 both equal A; only the excluded Stage41 review remains untracked.
+
+All 51 rows meet their contracts: 49 exit0, #17 expected exit1 with
+FAIL unattended_continuation/ask_user, #18 expected exit2/usage before DB setup.
+Every row has valid=true and trace_restored=true. Sum of recorded item seconds
+is 908.85s (not a wall-clock or future performance threshold). The outer #39
+log says `SUMMARY groups 16 passed 16 failed 0 checks 485 independent_case_failures 0 failures []`;
+#51 says `Consumer Phase 2 gate: 289 checks passed`. #26 Stannum usage
+passes 77 checks; #36 E4 passes in 460.00s. No U or precommit rows are reused.
+
+Post-run verify exits0: active PiSwift remains
+`a73c391ce1d891b7b6f8f37a8508f184a31703e3`, active_status and
+old_worktree_status empty, frozen_sources_and_manifests_unchanged=true.
+The detached checkout remains `bfccb32f2d6318b75519b2c1790e7e66e133f5da`.
+Final trace SHA-256 is
+`3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a`, mode0644.
+Default parity reports node_modules toolchain_absent SKIP: no strict all-plane
+or real-provider acceptance is claimed. External repositories are not edited.
+
+Each command below has prefix `UV_FROZEN=1 uv run python`, under the same
+offline PATH/W5_SWIFT_OFFLINE environment documented above. Numbered logs use
+`NN-<path with slashes replaced by hyphens>.log` under this postcommit receipt.
+
+| # | Path and arguments | Exit / expected | Seconds | Valid / restore | Key output |
+|---|---|---|---|---|---|
+| 1 | `v13/acl/test_acl.py` | 0 / 0 | 2.82 | T / T | [acl] ALL PASS (197) |
+| 2 | `v13/attention/test_attention.py` | 0 / 0 | 2.21 | T / T | [attention] ALL PASS (156) |
+| 3 | `v13/catalog/test_catalog.py` | 0 / 0 | 3.60 | T / T | [catalog] ALL PASS |
+| 4 | `v13/ce_run/test_ce_run.py` | 0 / 0 | 15.17 | T / T | SUMMARY groups 16 passed 16 failed 0 checks 665 independent_case_failures 0 failures [] |
+| 5 | `v13/characterize/test_characterize.py` | 0 / 0 | 6.93 | T / T | ALL PASS |
+| 6 | `v13/chunks/test_chunks.py` | 0 / 0 | 9.21 | T / T | ALL PASS |
+| 7 | `v13/control/test_control.py` | 0 / 0 | 4.43 | T / T | [PASS] stage 17 gates |
+| 8 | `v13/economy/test_economy.py` | 0 / 0 | 9.33 | T / T | ALL PASS |
+| 9 | `v13/envelope/test_envelope.py` | 0 / 0 | 7.82 | T / T | [envelope] ALL PASS |
+| 10 | `v13/fair_claim/test_fair_claim.py` | 0 / 0 | 5.90 | T / T | [ok] 137 checks |
+| 11 | `v13/fair_driver/test_fair_driver.py` | 0 / 0 | 5.63 | T / T | [ok] 42 checks |
+| 12 | `v13/fanout/test_fanout.py` | 0 / 0 | 2.26 | T / T | [done] fanout |
+| 13 | `v13/filter/test_filter.py` | 0 / 0 | 26.47 | T / T | ALL PASS |
+| 14 | `v13/frontier_gap/test_frontier_gap.py` | 0 / 0 | 8.24 | T / T | [ok] 59 checks |
+| 15 | `v13/goal_supervise/test_goal_supervise.py` | 0 / 0 | 7.34 | T / T | [ok] 172 checks |
+| 16 | `v13/goal_supervisor/test_goal_supervisor.py` | 0 / 0 | 6.21 | T / T | [gate] Fake checks only; unattended authorization remains accept_unattended.py |
+| 17 | `v13/goal_supervisor/test_goal_supervisor.py --unattended-continuation` | 1 / 1 | 6.26 | T / T | Expected FAIL unattended_continuation / ask_user |
+| 18 | `v13/goal_supervisor/test_goal_supervisor.py bad-args` | 2 / 2 | 0.38 | T / T | Expected usage; no DB setup |
+| 19 | `v13/govern/test_govern.py` | 0 / 0 | 2.80 | T / T | [govern] ALL PASS (228) |
+| 20 | `v13/handoff/test_handoff.py` | 0 / 0 | 2.30 | T / T | [handoff] ALL PASS (240) |
+| 21 | `v13/loop/test_loop.py` | 0 / 0 | 9.45 | T / T | [M3 loop] ALL PASS |
+| 22 | `v13/loop_driver/test_loop_driver.py` | 0 / 0 | 6.10 | T / T | [ok] 91 checks |
+| 23 | `v13/manifest/test_manifest.py` | 0 / 0 | 7.27 | T / T | [manifest] ALL PASS |
+| 24 | `v13/memory/test_memory.py` | 0 / 0 | 7.80 | T / T | ALL PASS |
+| 25 | `v13/mgraph/test_mgraph.py` | 0 / 0 | 32.61 | T / T | [mgraph M1+M2+M3+M4+v2-V1+V2] groups A+D+E+F+G+H: ALL GREEN |
+| 26 | `v13/mgraph/test_stannum_usage.py` | 0 / 0 | 6.98 | T / T | ALL PASS (77) |
+| 27 | `v13/mgraph_assembly/test_mgraph_assembly.py` | 0 / 0 | 12.48 | T / T | ALL J GREEN (W1: J1-J3; W2: J4-J7; W3: J8-J9) |
+| 28 | `v13/observe/test_observe.py` | 0 / 0 | 1.96 | T / T | [observe] ALL PASS (147) |
+| 29 | `v13/periphery/test_periphery.py` | 0 / 0 | 7.17 | T / T | ALL PASS (130 checks) |
+| 30 | `v13/pi_parity/test_pi_parity.py` | 0 / 0 | 19.97 | T / T | [SKIP] not_run/toolchain_absent planes=node_modules |
+| 31 | `v13/pi_ports/test_pi_ports.py` | 0 / 0 | 45.77 | T / T | [PASS] H6 |
+| 32 | `v13/plan_arm/test_plan_arm.py` | 0 / 0 | 5.62 | T / T | [ok] 104 checks |
+| 33 | `v13/plan_contract/test_plan_contract.py` | 0 / 0 | 2.06 | T / T | [ok] 93 checks |
+| 34 | `v13/plan_read/test_plan_read.py` | 0 / 0 | 2.05 | T / T | [ok] 11 checks |
+| 35 | `v13/quota_window/test_quota_window.py` | 0 / 0 | 68.27 | T / T | [quota_window] ALL PASS (226) |
+| 36 | `v13/read_tools/test_read_tools.py` | 0 / 0 | 460.00 | T / T | [PASS] E4 |
+| 37 | `v13/real_chain/test_real_chain.py` | 0 / 0 | 2.13 | T / T | [ok] 24 checks |
+| 38 | `v13/recall/test_recall.py` | 0 / 0 | 9.80 | T / T | ALL PASS |
+| 39 | `v13/registry/test_registry.py` | 0 / 0 | 12.52 | T / T | SUMMARY groups 16 passed 16 failed 0 checks 485 independent_case_failures 0 failures [] |
+| 40 | `v13/resolve/test_resolve.py` | 0 / 0 | 6.39 | T / T | [M2 resolve] ALL PASS |
+| 41 | `v13/schema/test_schema.py` | 0 / 0 | 1.30 | T / T | [M1 schema] ALL PASS |
+| 42 | `v13/seam/test_seam.py` | 0 / 0 | 5.24 | T / T | [PASS] stage 21 gates |
+| 43 | `v13/should_run/test_should_run.py` | 0 / 0 | 2.35 | T / T | [should_run] ALL PASS (194) |
+| 44 | `v13/spawn/test_spawn.py` | 0 / 0 | 1.93 | T / T | [PASS] stage 18 gates |
+| 45 | `v13/summary/test_summary.py` | 0 / 0 | 12.37 | T / T | ALL PASS |
+| 46 | `v13/triage/test_triage.py` | 0 / 0 | 1.91 | T / T | [done] triage |
+| 47 | `v13/twophase/test_twophase.py` | 0 / 0 | 6.43 | T / T | [M4 twophase] ALL PASS |
+| 48 | `v13/workflow_bind/test_workflow_bind.py` | 0 / 0 | 2.08 | T / T | [ok] 8 checks |
+| 49 | `v13/workspace_admit/test_workspace_admit.py` | 0 / 0 | 5.95 | T / T | [ok] 65 checks |
+| 50 | `v13/workspace_exec/test_workspace_exec.py` | 0 / 0 | 3.52 | T / T | [ok] 54 checks |
+| 51 | `v13/registry/test_consumer.py` | 0 / 0 | 4.06 | T / T | Consumer Phase 2 gate: 289 checks passed |
+
+B is limited to result/status updates in README, matrix, ledger, this report
+and plan section11. The completed pre-staging boundary check found exactly
+these five changed paths and no file-type/mode changes. All 1,062 other tracked
+files matched A in bytes and executable modes. The original 51 README manifest
+row bytes, parsed commands and complete manifest section matched A; all plan
+text outside section11 matched A. The permanent postcommit table's 51 indices,
+commands, exit/expected values and durations matched results.json, and the
+ordinary output summaries matched their recorded tails. git diff --check passed.
+The full diff was inspected; the unrelated untracked Stage41 review is excluded.
+Staging must still enforce exactly these five paths and repeat the diff checks
+before normal commit/push. This verified result-only scope requires no third
+full51. B's future hash/push is not prefilled here.
 
 ## Documentation And Deployment Index
 
@@ -427,7 +526,7 @@ sql/tool/llm kinds; ch08 corrects claim planes, handler filtering, profiles and
 fake-versus-production scope; ch12 states interruptible is function-hardcoded.
 Design section 11 item 6 records the actual side-table implementation and links
 this closeout. Phase1/Phase2 plan tops now acknowledge 69e118d/5be562d and
-937a864/93d05f1. Matrix has an independent P3 section, ledger P3R-1..7;
+937a864/93d05f1. Matrix has an independent P3 section, ledger P3R-1..9;
 S42R-9/10 RED and S42R-11/12 successes remain historical.
 
 ## Commit Protocol

@@ -454,14 +454,17 @@ A commit/push任一步失败即停，不跑下一步postcommit，不积压到B�
 
 ## 11. 执行记录
 
-- 当前状态：独立Stannum升级U已提交推送；G0/G1/G2在U上重新核对。历史G3 run01 RED保留；新precommit run02已从#1完整通过（918.90s，49×0及预期1/2，全trace恢复，registry485/consumer289）。A/B未提交，A后postcommit51项仍待运行。
+- 当前状态：独立Stannum升级U已提交推送；G0/G1/G2在U上重新核对。历史G3 run01 RED保留；新precommit run02已从#1完整通过（918.90s，49×0及预期1/2，全trace恢复，registry485/consumer289）。G4完成：A已提交推送。G5的A净树postcommit51项已独立通过（908.85s，同契约及计数）；B仅记录实际结果，自身提交/推送及G6最终审计不在此预填。
 - 原run01基线：2026-10-19 fetch 后 HEAD=`93d05f12090ce4b27b62b1a6f90d3c1b438eab68`、`origin/v99` 同值、ahead/behind 0/0；分支 `v99`，upstream `origin/v99`。独立工作树无变更；无 runtime/test/loader/ACL/trace diff。
 - 用户批准恢复隔离 PiSwift worktree。`/tmp/pg-agent-w5-PiSwift-v0.87.1/PiSwift` 为 tag v0.87.1=`bfccb32f2d6318b75519b2c1790e7e66e133f5da` 且 clean；活动 `/Users/wxl/Projects/PiSwift` 仍 clean `a73c391ce1d891b7b6f8f37a8508f184a31703e3`。`phase3-preflight-20261019-run02` parity/ports 均 exit 0，trace 恢复；verify 证明 frozen Sources/manifests 未变。run01 亦保留，未拼接回归序列。
 - 实际隔离加载核验：41 项 loader，overlay +2 tables/+11 signatures/20 replacements；三张 prefix tables/八函数校验通过。loaded `spawn_owner` DEFINER 共六个，逐个读 prosrc 未见 claim caller（STATIC，不代表任意动态 SQL 的证明）。pin/mapping immutable 与 events capture trigger 已在实际 catalog 装载确认。测试中创建的隔离 registry database/host roles 已按 setup 生命周期清理。
 - G1/G2 工件：README runbook、教程/设计/前两阶段计划、matrix、ledger 与本报告已更新；历史 S42R-9/10 RED 和 S42R-11/12 成功证据保留。完整教程与证据清单已最终静态复读；README/HEAD/§6.3 清单恰好 51 项且逐字一致，git diff --check 通过。
 - precommit `phase3-precommit-20261019-run01`：HEAD 前后仍为 `93d05f1`，文档脏树、未暂存；fetch 后 origin/v99 同值。#1-25 契约通过（#17=1/ask_user、#18=2/usage），#26 `test_stannum_usage.py:605` V1 exit 1（预期 0）、6.59s；26 项累计 202.46s。实查 installed/default/library Stannum 均 0.5.1，而 gate 要求 0.4.0；PG 18.4。#27-51 NOT RUN，未继续拼接。全部 26 项 trace 恢复，最终 hash/mode 与 §2.2 相同，PiSwift verify 仍绿。README/matrix/ledger/final report 已保留红灯；不提交/推送，不改 gate/依赖。当时隔离恢复 Stannum 超出 PiSwift 专项授权，已请求批准；随后用户改为授权升级0.5.1（见下条），不沿用原环境恢复方案，也不拼接原绿段。
 - 用户授权独立升级Stannum0.5.1，经Oracle计划与实施审查完成U=`16e2d8b682b3b449fa45620805d337a668a6294d`并已推送origin/v99。定向16项与独立upgrade51（908.70s，49×0及预期1/2、全trace恢复、registry485/consumer289、PiSwift verify绿）不替代Phase3两轮。执行基线重新锁定U，HEAD/origin相同0/0；Phase3范围仍仅文档。stash十二文件逐字节恢复，matrix/ledger保留U与P3两组追加，stash仍保留。SQL/运行时/loader/依赖相对U无diff，四项Oracle裁决代码前提未变；新run02从#1开始。
-- Phase3 precommit run02 receipt `prompt-exports/phase3-precommit-20261019-run02/` 已通过：51/51 valid、918.90s，49×exit0、#17/#18预期1/2；trace全恢复，registry16/16/485/0，consumer289，PiSwift verify绿。该轮不替代A后postcommit。A仍未提交/推送，postcommit必须在A上从#1重跑。
+- Phase3 precommit run02 receipt `prompt-exports/phase3-precommit-20261019-run02/` 已通过：51/51 valid、918.90s，49×exit0、#17/#18预期1/2；trace全恢复，registry16/16/485/0，consumer289，PiSwift verify绿。该轮不替代A后postcommit；后者已独立从#1重跑，结果见下条。
+- A=`7ec8555ef1f29a2583db93bff0901a288226399c`（`v13: record registry phase3 closeout evidence`）已提交并推送origin/v99，实际push范围16e2d8b..7ec8555。A上postcommit receipt `prompt-exports/phase3-postcommit-20261019-run01/`：51/51符合契约，累计item时间908.85s，49×exit0、#17 exit1/ask_user、#18 exit2/usage；全部valid=true、trace_restored=true。registry外层日志16/16 groups、485 checks、zero independent failures；consumer289 checks，Stannum usage77 checks。
+- postcommit前后HEAD均为A、tracked status为空；结束后HEAD/origin/v99均为A，仅原有Stage41未跟踪review被排除。最终trace SHA-256=`3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a`、mode0644；PiSwift verify再次确认活动a73c391与隔离bfccb32均clean、冻结Sources/manifests未变。默认node_modules SKIP、非all-plane/真实provider边界保留。
+- B限README/matrix/ledger/final report及本计划§11的结果记录；必须对照A验证全部其余tracked路径字节/模式、README原51项manifest字节/解析及本计划§11以外正文不变。仅在该检查通过后按路径提交推送，不要求第三轮51，不为B自身hash/push再开C。完整postcommit逐项永久表见最终报告；不拼接U、precommit或历史RED。
 - B 仅可在本节追加已发生的 A 身份、A 推送及 A 上 postcommit 事实；不写 B 未来 hash/push 结果。
 
 ## References

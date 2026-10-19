@@ -354,12 +354,13 @@ runtime、测试逻辑或 runner。
 本区段独立记录 Phase 3 收尾，不覆盖 Stage 41/42 历史行。计划要求的两轮
 51 项串行回归使用独立新 receipt，不以 S42R-11/S42R-12 代替本轮结果。
 precommit run01 在 #26 V1 因 Stannum 0.5.1/所需 0.4.0 不符停止；#27-51
-在该历史尝试中 NOT RUN。随后用户授权的独立0.5.1升级U=`16e2d8b`已推送；Phase3在U上新开run02，postcommit仍待A推送，A/B尚未提交。
+在该历史尝试中 NOT RUN。随后用户授权的独立0.5.1升级U=`16e2d8b`已推送。Phase3在U上独立precommit run02通过（918.90s）；A=`7ec8555ef1f29a2583db93bff0901a288226399c`已提交并推送origin/v99，A净树上的独立postcommit run01也通过（908.85s）。B仅记录实际结果，不预填自身hash/push。
 
 | 条文 | 状态 | 证据/落点 | 缺口与边界 |
 |---|---|---|---|
-| P3-1 基线、PiSwift 隔离副本与冻结源保护 | ✅ STATIC | `phase3-preflight-20261019-run02` 的 parity/ports 结果、`environment-after.json`；活动 checkout `a73c391`、detached tag `v0.87.1`=`bfccb32` | 默认 parity 跳过缺失 `node_modules` 平面；不宣称 all-plane/真实 provider |
+| P3-1 基线、PiSwift 隔离副本与冻结源保护 | ✅ STATIC / 环境实测 | U后独立 `phase3-preflight-20261019-run03` parity→ports均exit0；A postcommit后verify再次确认活动checkout `a73c391`、detached tag `v0.87.1`=`bfccb32`均clean、冻结Sources/manifests未变，trace hash/mode恢复 | 原run02 preflight仅作历史；默认parity跳过缺失node_modules平面，不宣称all-plane/真实provider |
 | P3-2 注册/消费闭集、20 replacements、ACL/锁/映射索引 | ✅ STATIC | `v13/registry/README.md`、setup/catalog 守卫、`test_registry.py`/`test_consumer.py` 具名探针映射 | claim 内部 40001、spawn_owner 动态可达性与 register/retire→claim 翻转仍按 STATIC/INFERRED 留档 |
 | P3-3 教程、runbook、设计状态收敛 | ✅ STATIC | ch02/ch03/ch06/ch08/ch12、设计 §11、README 当前接口和部署边界 | 不交付 profile/prompt 消费、生产 strict worker、在线 migration/rollback |
-| P3-4 precommit 51 项 | RED_REGRESSION | `phase3-precommit-20261019-run01`：#1-25 契约绿，#26 exit 1（预期 0）、6.59s；全轮已记录 202.46s | V1 要求 Stannum 0.4.0，实为 0.5.1；#27-51 NOT RUN；26 项 trace 恢复，PiSwift verify 绿；后续独立升级U已获批完成；run02须在U上从#1新开 |
-| P3-5 A 上 postcommit 51 项 | NOT RUN | 提交 A 后同 manifest 从 #1 重跑 | 仅在 A push 成功后执行；不拼接 precommit 或历史结果 |
+| P3-4a 原precommit run01 | 历史 RED_REGRESSION | `phase3-precommit-20261019-run01`：#1-25契约绿，#26 exit1（预期0）、6.59s；已记录202.46s | 当时V1要求Stannum0.4.0、实为0.5.1；#27-51 NOT RUN，26项trace恢复、PiSwift verify绿；保留原红灯，不拼接后续绿段 |
+| P3-4b U上新precommit run02完整51项 | ✅ PASS | `phase3-precommit-20261019-run02/`：从#1串行完整51项，918.90s；49×0及#17/#18预期1/2，全valid/trace恢复；registry16/16、485、零失败，consumer289 | U本身的独立升级51项不替代本轮；完整逐项结果见Phase3最终报告 |
+| P3-5 A上postcommit完整51项 | ✅ PASS | `phase3-postcommit-20261019-run01/`：已推送A=`7ec8555`上从#1独立串行51项，908.85s；49×0及预期1/2，全valid/trace恢复；registry16/16、485、零失败，consumer289；前后HEAD=A且tracked clean | 默认node_modules SKIP不提升为all-plane；最终trace0644及SHA-256一致、PiSwift verify绿；B只更新五份结果文档，执行面/manifest保持A，不要求第三轮51或C提交 |
