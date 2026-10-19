@@ -2,14 +2,14 @@
 
 > 计划日期：2026-10-18
 > 范围：Phase 2 运行时消费集成；Phase 3 仅作最终收尾。
-> 状态：W5/W6 测试与文档验收通过；实现提交 `937a864115694373250417daa374b05fad64267b` 已推送到 `origin/v99`，提交后净 tracked-tree 复验与完整 51 项已通过；文档 post-commit 收尾提交仍由父协调 agent 处理。
+> 状态：W5/W6 测试与文档验收通过；实现提交 `937a864115694373250417daa374b05fad64267b` 已推送到 `origin/v99`，提交后净 tracked-tree 复验与完整 51 项已通过；文档 post-commit 收尾提交 `93d05f1` 已由父协调 agent 完成并推送；Phase 3 最终收尾状态见其计划 §11 与最终报告。
 
 ### 执行记录
 
 - [x] W0-W1：Stage 41 prefix / effective-object 守卫与 overlay 基础。实际运行 registry gate 16/16 groups、483 checks，consumer foundation gate 12 checks，均 exit 0；`git diff --check` 通过。未提交或推送。
 - [x] W2-W3：claim/completion pin 与八键 freshness。实际运行 consumer 55 checks、registry 16 groups/485 checks、fair 137 checks、ACL 197 checks，envelope/filter 全绿；未提交或推送。
 - [x] W4：真实控制消费者 superseded projection；W5 补齐实际 tool spawn、repair/replan continuation、human 六键与 loaded pg_proc 证据。consumer 独立实跑 289 checks exit 0（完整序列结果另列）。
-- [x] W5-W6 测试/工件：离线隔离预验证 parity → ports 均 exit 0 后，从 #1 严格串行跑完原 50 + consumer 51 项：49 项 exit 0，#17/#18 为预期 exit 1/2，51 项均 trace restore。registry 16组485 checks、consumer 289 checks、govern 228、goal_supervisor 74、read_tools E4 均通过。README/matrix/ledger 已更新；未暂存/提交/推送，父协调 agent review 与提交后净树复验仍待处理。
+- [x] W5-W6 测试/工件：离线隔离预验证 parity → ports 均 exit 0 后，从 #1 严格串行跑完原 50 + consumer 51 项：49 项 exit 0，#17/#18 为预期 exit 1/2，51 项均 trace restore。registry 16组485 checks、consumer 289 checks、govern 228、goal_supervisor 74、read_tools E4 均通过。README/matrix/ledger 已更新；实现提交 `937a864` 与 postcommit 文档提交 `93d05f1` 已推送；Phase 3 独立两轮 51 项及最终报告的实际状态见其计划 §11，不与本阶段结果拼接。
 
 历史首红证据（不作为当前结论）：`prompt-exports/w5-phase2-final-20261019/results.json` 及同目录
 manifest/head/逐项日志。逐项 51 状态见 registry README，偏差见 S42R-9。
@@ -38,7 +38,7 @@ PiSwift 活动 main/a73c391 与 detached v0.87.1/bfccb32 均 clean，活动 chec
 冻结 Sources/manifest 未修改；重现命令与 51 项逐项退出码见 registry README。
 默认 parity 仍报告 node_modules 缺失，未启用 PI_PARITY_REQUIRE_ALL，不声称全平面覆盖。
 测试及收尾文档前置条件已满足；§7 的父协调 agent review、实现提交/推送已完成，
-post-commit receipt 已由本轮补齐，文档收尾提交仍由父协调 agent 处理。
+post-commit receipt 已由本轮补齐。此为当时交接；当前文档收尾已随 `93d05f1` 提交并推送，Phase 2 已完成。
 
 最新提交后净树证据（S42R-12）：实现 HEAD
 `937a864115694373250417daa374b05fad64267b`，`origin/v99` 已从

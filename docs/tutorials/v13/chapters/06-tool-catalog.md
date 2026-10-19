@@ -1,6 +1,6 @@
 # 第 6 章：工具目录——目录是表，可见性是查询
 
-> 前置：第 2、5 章。产出：`v13/schema/core.sql` 的 `tools` 表（G1/G6 验收）。
+> 前置：第 2、5 章。现行 schema：`v13/schema/v13_core.sql` 的 `tools` 表。
 > 对照上游：`v2`（workbench 注册表）、`v5`（named tools）、`v6`（enqueue-only 工具）。
 > 设计对照：`docs/designs/v13-context-on-pg.md` §6.8（iv）（spawn 档位）。
 
@@ -11,37 +11,32 @@ agent 能用什么工具？常规框架把工具写成代码注册（装饰器/�
 
 > **工具目录是表；工具可见性是查询。**
 
-新增一个工具 = INSERT 一行 + 起一个 worker（如果是新语言/新 handler）。
-决策平面（第 4 章）、推进函数（第 5 章）、其他语言的 worker——**全部零改动**。
-这就是「目录是数据」买到的东西：**工具-任务匹配变成关系操作**。
+新增一个工具通常仍是目录行加已有 handler；但当前表只有六列
+`name/description/kind/handler/param_spec/enabled`。`allowlist`、`interruptible`、
+`consumes`、`produces`、`mutating` 等早期设计字段不在现行 schema；若新增工具要改变
+函数内的 interruptible/worktree 名单，还需要独立 SQL/消费者变更。当前 Phase 2
+不把目录行新增写成生产 worker 或 profile 消费已交付。
 
 ## 6.2 最小形态
 
 ```sql
+-- 当前 public.tools 的实际六列形状；字段约束以已加载 schema 为准。
 CREATE TABLE tools (
   name        text PRIMARY KEY,
-  version     int NOT NULL DEFAULT 1,
-  handler     text NOT NULL,          -- 'sql' | 'py' | 'swift' | 'duck' | ... 开放词表
-  kind        text NOT NULL CHECK (kind IN ('sql','effect')),
-  description text NOT NULL,          -- 给判断平面看的一句话
-  input_schema jsonb NOT NULL,        -- args 形状（严格校验 effect.request）
-  consumes    text[] DEFAULT '{}',    -- 吃什么 artifact kind（第 7 章）
-  produces    text[] DEFAULT '{}',    -- 产什么 artifact kind
-  mutating    boolean NOT NULL DEFAULT false,   -- 决定 unknown 纪律（第 2 章）
-  allowlist   jsonb,                  -- 数据不是代码：路径白名单/表白名单/参数域；
-                                       -- interruptible 档位也住这里（jsonb 键，A18，见 6.3）
-  timeout_ms  int NOT NULL DEFAULT 30000,
-  max_attempts int NOT NULL DEFAULT 3,
+  description text NOT NULL,
+  kind        text NOT NULL CHECK (kind IN ('sql','tool','llm')),
+  handler     text NOT NULL,
+  param_spec  jsonb NOT NULL,
   enabled     boolean NOT NULL DEFAULT true
 );
 ```
 
-工具分两档（v2 与 v6 的合流）：
+早期设计以 sql/effect 分两档；现行 kind 为 sql/tool/llm：
 
 ```text
 kind='sql'    库内函数：零外部 IO；advance 同事务直接执行（第 5 章 ④），
               不进队列。默认只读——具名写允许名单（v13_tools_guard 源码闭集）例外
-kind='effect' 有外部 IO：走 effects 账本 + worker（第 2 章）
+kind='tool' / 'llm' 外部工具或模型工作：走 effects 账本；不使用 kind='effect'
 ```
 
 这个两档划分消灭了 v2→v6 之间反复出现的问题：
@@ -49,41 +44,30 @@ kind='effect' 有外部 IO：走 effects 账本 + worker（第 2 章）
 分界是**有无外部 IO**，不是 SELECT vs INSERT——`sql` 档的全部效果就是
 数据库自身状态（含允许名单内的库内写），崩溃即整笔回滚（§6.7 同一口径）。
 
-新目录行示例（A17）——spawn 也是一行目录数据，走 sql 快路：
+新目录行的六列形状示例（不是新增 handler 的部署步骤）：
 
 ```sql
-INSERT INTO tools(name, handler, kind, description, input_schema,
-                  mutating, allowlist)
-VALUES ('spawn_subsession', 'sql', 'sql',
-        'Spawn child sessions for the current turn goal',
-        '{"goal":"text","budget":"inherit-decl"}'::jsonb,
-        false,
-        '{"write_targets":["sessions","events","latches","artifacts"]}');
--- 参数面只有 goal 承接与预算继承声明；parent/cutoff/fence/prefix
--- identity/quota 全是服务端派生字段，模型不可提供（input_schema 不含这些键；
--- parent 由 advance 已持锁的当前会话行派生——模型可选 parent 即可选预算树，
--- 越权，R1 共识 11）。
--- allowlist.write_targets ⊆ {sessions,events,latches,artifacts}：目录声明，审计用。
--- mutating=false：全部效果是库内行，崩溃即整笔回滚，unknown 路径不适用（第 2 章）。
+-- 教学示例：六列目录行。实际工具名与 param_spec 必须符合已加载 handler 契约。
+INSERT INTO tools(name, description, kind, handler, param_spec, enabled)
+VALUES ('example_lookup', 'Look up an item', 'tool', 'lookup',
+        '{"type":"object","required":["query"]}'::jsonb, true);
+-- 此行仅说明目录数据形状，不会创建 handler，也不会改变硬编码的
+-- interruptible/worktree 名单或接通生产 worker。
 ```
 
 ## 6.3 逐段解释
 
-- **`handler` 开放词表**：新语言接入 = 新 handler 名 + 一个 worker 进程，零 DDL。
-  claim 的 `p_handlers` 过滤（第 2 章）让每种 worker 只领自己的活——单队列单总线。
-- **`consumes/produces` 是匹配的关节**：工具-任务匹配从「全目录 Choice」降为
-  「SQL join 预筛 + Jev 终选」——任务需要 kind X 的 artifact →
-  `WHERE X = ANY(consumes)` 出候选集 → 判断只在候选集里选。
-  判断负担下降一个数量级，且这是纯关系操作（「SQL 管算术，Jev 管语义」的又一次兑现）。
-- **`mutating` 不只是标注**：它决定第 2 章 `v13_recover_expired` 的行为——
-  非 mutating 失败可回 ready 重试；mutating 失败进 unknown。
-  **一列数据驱动恢复策略**，不需要 per-tool 的恢复代码。
-- **`allowlist` 是数据**：pi 式文件工具的根目录白名单、duck 工具的表白名单、
-  SQL 工具的参数域——全部住在目录行上。改授权 = UPDATE 一行，审计 =
-  `SELECT * FROM tools`。**`interruptible` 是 allowlist 键不是列（A18，
-  零新列）**：`allowlist.interruptible ∈ {'required','best_effort',
-  'unsupported'}`（缺省按 `unsupported`），guard 校验三值——第 8/12 章
-  第四务消费；R2 共识 1（零新表零新列）拒加列。
+- **`handler` 是现行六列中的开放文本**：新增 handler 名可描述目录行为，但当前
+  claim 接口不接收 `p_handlers`，也没有本阶段交付的生产 worker parity；单队列分流
+  仍是后续接线问题。
+- **早期目录设计，不是当前契约**：`consumes/produces`、目录 `mutating`、
+  `input_schema` 等字段曾用于描述候选预筛、恢复策略和参数校验；它们不在现行
+  `tools` 表中，不能据此推导当前查询或恢复行为。当前 effect 的 unknown/worktree
+  纪律由既有代码路径及其 metadata/artifact 机制决定。
+- **profile/allowlist 不是现行 tools 列**：pi/duck 的路径或表白名单、
+  interruptible 档位仍是早期设计意图；当前名单由 `v13_interruptible()` 等函数内
+  逻辑决定，registry 的 `tool_profile` 只有数据且没有消费者。未来消费需独立 SQL
+  与 worker 设计，不能用 `SELECT * FROM tools` 宣称已生效。
 - **只读角色执法（v2 的教训）**：模型生成的 SQL 永远跑在
   `default_transaction_read_only` 的角色下——**让数据库自己执法**，
   而不是文本黑名单（v2 的黑名单连字符串里的 `'set'` 都误伤）。
@@ -110,14 +94,11 @@ VALUES ('spawn_subsession', 'sql', 'sql',
 ## 6.4 硬性规定与 gate
 
 ```text
-G1/G6 节选断言：
-✓ INSERT 新 sql 工具后，advance 无需任何代码变更即可路由到它
-✓ consumes/produces 预筛：给任务注入 kind='ast' 需求，候选集只含吃 ast 的工具
-✓ disabled 工具对判断平面不可见（fold_state 查 enabled=true）
-✓ input_schema 不符的 effect.request 在创建时被拒（fail-closed，不静默修参数）
-✓ mutating=true 的工具在恢复扫描中绝不回 ready（只能 unknown）
+历史 G1/G6 验收意图（不是当前 v13 gate 或实现保证）：目录可见性、artifact 预筛、
+输入 schema 校验与 mutating 驱动恢复曾作为目标。当前实现应以已加载 schema、现行
+consumer 与独立 gate 为准；本章不声称上述早期断言仍由现有实现覆盖。
 
-G-sql-write-closed（guard 具名例外；设计 §10）节选断言：
+历史 G-sql-write-closed 设计断言（不是当前 gate 逐项实跑记录）：
 ✓ 具名闭集外 VOLATILE sql 工具 enable → 红
 ✓ write_targets 缺键而 VOLATILE → 红；prosrc 含 IO 通道（dblink/pg_net/COPY PROGRAM）→ 红
 ✓ UPDATE tools 扩 guard 名单被拒（扩员 = guard 源码+设计修订+部署 gate 同发）
@@ -125,14 +106,10 @@ G-sql-write-closed（guard 具名例外；设计 §10）节选断言：
 
 ## 6.5 检查点练习
 
-1. 注册三个假工具（sql 只读、py effect、duck effect），写 fold_state 的工具目录
-   摘要视图：`v_tool_catalog(p_handler)`。断言：禁用一个后摘要即时变化。
-2. 加 `tool_version_guard`：effect.request 里记录工具 version，settle 时目录已升版
-   → 结果照常落账（已发生的执行不可抹），但新 effect 必须用新版本。
-   （这是 v8 插件世代域被砍后保留的种子——第 15 章 meta 版本门的局部版。）
-3. 破坏性实验：把 mutating 标错（真副作用工具标 false），构造 recover 回 ready，
-   观察双执行。写断言把「目录 mutating 必须与实现一致」钉进 gate
-   （FakeTool 双执行计数 == 1）。
+这些是早期设计练习，不是可直接运行的现状练习。现状练习应先检查
+`v13/schema/v13_core.sql` 中的 `tools` schema、已加载的 handler 和
+`v13/registry/test_registry.py` 对 enabled/context 的覆盖；不得使用本节已移除的
+`v_tool_catalog(p_handler)`、版本守卫或目录 mutating 机制。
 
 ## 6.6 回到 vN 对照
 
@@ -155,21 +132,11 @@ G-sql-write-closed（guard 具名例外；设计 §10）节选断言：
 - **判断有成本且答案可缓存**：判断按 token 收费、按秒计延迟，候选集
   每小一号，这笔账就便宜一号。
 
-**推导。** 「可信状态必须在表里」逼出**目录是表、可见性是查询**：目录行
-与 fold_state、advance、claim 共享同一个 commit 边界，`INSERT` 一行，
-提交瞬间对所有读者可见——决策平面、推进函数、其他 worker 零改动；
-`v_tool_catalog` 是视图——视图是计算不是存储，摘要永不与目录漂移。
-「外部 IO 无原子性」逼出**两档 `kind` 是外部 IO 有无的物理分界**：
-`sql` 档的全部效果就是数据库自身状态（默认只读；具名写允许名单内的
-库内写不改这一点——写的仍是库内指针），同事务执行、backend 一死整体
-回滚，原子性白送；`effect` 档碰库外世界，事务罩不住，只剩账本 +
-worker + at-least-once。「超时≠失败」逼出**`mutating` 列**：恢复扫描
-无法证明超时 effect 的副作用没发生，把 mutating 工具回 ready 等于
-重放副作用，一列数据统一分流，免掉 per-tool 恢复代码。「判断有成本」
-逼出**`consumes/produces`**：`WHERE X = ANY(consumes)` 是免费的算术，
-Jev 终选是昂贵的语义，先用便宜的把贵的喂小。「执法者现成」逼出
-**只读角色 + `allowlist` 数据化**：模型 SQL 永远跑在 `default_transaction_read_only`
-之下，写得再花也写不进库——收紧授权是 `UPDATE`，审计是 `SELECT`。
+**历史设计推导（非当前契约）。** 早期草案曾把目录行、fold_state、advance、claim
+描述为共享数据驱动边界，并设想以 `mutating` 与 `consumes/produces` 驱动恢复和候选
+预筛。这些字段及相应的 `v_tool_catalog`、input schema 与 allowlist 不属于现行六列
+schema；不可据此声称当前运行时采用这些机制。当前注册 overlay 的工具快照也是当前值，
+不是历史版本。有关 provider IO 与事务边界的通用约束仍应依各现行 handler/worker 契约判断。
 
 **反事实。** 把注册搬回代码：T0 运维上线新工具，改了派发器的注册代码，
 漏改判断摘要的拼装；T0+ε 新工具可执行但不可见，claim 领得到活、判断

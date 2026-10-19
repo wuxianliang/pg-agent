@@ -46,13 +46,13 @@ BEGIN
 END $$;
 ```
 
-worker 主循环（库外 Python，也是任何语言的模板）：
+worker 主循环（库外 Python 的概念模板；当前 gate 只用 inline fake adapter，不等于生产接线）：
 
 ```python
 while True:
     msgs = pgmq.read("v13_work", vt=30, qty=10)   # visibility timeout 30s
     for m in msgs:
-        job = v13_claim(worker_id, my_handlers, lease_ms=60000)  # 只认表！
+        job = v13_claim(worker_id, lease_ms=60000)  # 当前 global claim 不接收 handlers[]
         if job is None or job["effect_id"] != m.msg["effect_id"]:
             continue                               # 消息过期/已被接管：丢弃
         result = execute_outside_tx(job)           # 全部 IO 在这里

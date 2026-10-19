@@ -743,6 +743,14 @@ v99 `cbf65cf` 为准。
    吸收（§6 断言 3）。**与 stage 41 不原子捆绑**——注册面先落，无消费方
    时 registrations 只是惰性行，空跑无害；worker 钉版契约随本步生效。
 6. **ch08 教程措辞收敛**：偏差台账（§8）收敛后同步，不先于机制落地。
+   **2026-10-19 当前状态**：Stage 41 已由 `69e118d`/`5be562d` 交付，消费侧
+   Phase 2 已由 `937a864`/`93d05f1` 交付。上列 3/5 保留设计历史；as-built 使用
+   attempt/fence side-table 锚而非新增业务 payload 键，fair prefix 仍 SIX、overlay
+   为 SEVEN，CE 仍独立。教程 ch02/03/06/08/12 按实际 worker/lease 签名、tools
+   六列与函数名单收敛，不声称 profile/prompt 消费或生产 strict worker 已交付。
+   部署仅支持隔离库装载/只读核验，不将 §9.4 的“DROP 回滚”当生产操作流程。
+   最终证据/限制见 `docs/plans/v13-registry-phase3-closeout-2026-10-19.md` 与
+   `docs/reviews/v13-registry-phase3-closeout-2026-10-19.md`；两轮验收及 A/B 交付状态以计划 §11 和最终报告为准。
 7. **（后续可选复核）ce_run 侧**：ce_run 已在 v99 收口；
    `registration_generation` → `v13_registry_meta.revision` 的可选映射
    （§7.4，台账 S41R-12）与 `v13_ce_claim_bound_effect` 响应对齐（§5.2）

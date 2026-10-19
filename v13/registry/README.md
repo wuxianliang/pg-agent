@@ -7,8 +7,14 @@ sequence: 49 exit 0 plus the expected goal probes exit 1/2; trace bytes/mode
 restored after all 51 items. Latest receipt and reproducibility details are at
 "Offline Isolation Acceptance" below. Historical RED attempts are retained,
 not combined. Implementation commit `937a864115694373250417daa374b05fad64267b` was
-pushed to `origin/v99` (`5be562d..937a864`); the documentation follow-up commit
-remains with the parent coordinator.
+pushed to `origin/v99` (`5be562d..937a864`); its postcommit evidence was
+committed as `93d05f1`. Original Phase3 precommit run01 was RED at #26
+(0.5.1 versus the then-required 0.4.0); its #27-51 were NOT RUN. User-authorized
+independent Stannum 0.5.1 upgrade U `16e2d8b` is now committed/pushed and
+separately validated. Phase3 re-locks to U; new precommit run02 and A postcommit
+are pending, with no Phase3 acceptance or A/B commit yet.
+See `docs/reviews/v13-registry-phase3-closeout-2026-10-19.md` for the independent
+precommit/postcommit records and current pending state.
 
 ## Scope
 
@@ -88,8 +94,12 @@ and `enabled`, including disabled rows unchanged.
 
 Tools have **no historical time axis**: even an old or zero registry revision
 returns current tools and their current `v13_tools_meta.revision`. Phase 2 pins
-`(scope_id, context_revision, tools_revision)` and requires both fences to be
-rechecked before claim commit; a changed scalar rolls back CAS and pin.
+`(scope_id, context_revision, tools_revision)`. Claim rechecks both fences inside
+the function; the tested inline adapter model also rechecks before commit.
+A detected change rolls back CAS and pin. Neither check locks the clock or
+provides strict commit-instant freshness: a writer may commit after the last
+check. Existing production loop/fair drivers do not implement this model's
+additional pin/context/cache checks.
 
 Registry events intentionally advance `v13_probe.session_version` and
 `max_event_seq`; an in-flight advance becomes stale and reparses. This is a
@@ -161,7 +171,7 @@ The Stage 41 prefix SHA-256 remains
 `e5222e1499001f3a734292d8456d2b431fcfcd2a5862952bfcc38137caee34d4`.
 `setup_db.py` captures pre-registry, prefix and overlay catalogs separately.
 Stage 42 adds exactly two tables and eleven function signatures, replaces
-exactly 21 existing definitions, and adds one events capture trigger. It adds
+exactly 20 existing definitions, and adds one events capture trigger. It adds
 no role, sequence, database/schema privilege or loader entry. Pin columns,
 indexes, constraints and immutable/capture triggers are closed-set validated.
 The five-parameter completion wrapper and snapshot wrapper remain unchanged.
@@ -182,7 +192,8 @@ retain SIX. The independently loaded overlay gate proves SEVEN and owner/fair
 versus route/global identities; changing the prefix-only assertion to SEVEN
 would misstate its installed API. This is recorded as S42R-6.
 
-Worker adapter protocol: start IDLE, claim under route (global) or owner (fair),
+Worker contract, exercised only by the inline fake adapter in
+`test_consumer.py:native_worker_protocol`: start IDLE, claim under route (global) or owner (fair),
 exact-lookup the pin, read `registry_context(scope, context_revision)`, cache by
 the three-part key, recheck both fences and commit. A changed fence rolls back
 the claim. Fake IO runs only after commit/IDLE; completion opens a separate
@@ -247,7 +258,13 @@ spawn needs the same narrow EXECUTE for spawn_owner's
 `fork -> prefix_identity -> canonical_state` (S42R-2). Neither receives
 `effect_current` or pin-table access. Existing global-claim EXECUTE for the
 trusted non-login spawn_owner is preserved from Stage 20, not newly granted;
-route is the only ordinary host identity admitted to global claim.
+route is the ordinary host identity for global claim. The preserved
+spawn_owner EXECUTE is a latent ACL/API inconsistency: the invoker claim first
+calls fences, which spawn_owner cannot execute (STATIC: 42501 before CAS,
+not a separately executed denial probe). The checked owner-DEFINER and role
+switch call graph contains no production spawn_owner claim caller; NOLOGIN
+alone does not prove unreachable dynamic SQL. A reachable caller blocks
+closeout for separate Phase 2 repair; Phase 3 does not change grants.
 
 ### Lock Evidence and Review
 
@@ -270,7 +287,77 @@ spawn_owner execution, exact human payload and function-ACL mutation suggestions
 are exercised. Trigger/FK catalog strings install successfully on the actual
 PostgreSQL 18.4 catalog; the superseded source fixture is pinned, with legacy
 coverage separate. Prefix SIX versus overlay SEVEN is documented above. No
-second review, real provider, commit or push is claimed.
+second Phase 2 review or real provider is claimed. The historical review
+preceded implementation `937a864` and evidence commit `93d05f1`, both pushed;
+it is not a Phase 3 run receipt.
+
+## Phase 3 Deployment Runbook (Isolated Database Only)
+
+This runbook supports a fresh disposable database installation and read-only
+health review. It is not an online migration, upgrade, downgrade, or rollback
+procedure for an existing production database. The current SQL loader may drop
+and recreate test databases; never point it at production.
+
+1. Record the approved commit, target isolated database/cluster, owner, and
+   database roles. Confirm the extension prerequisites and the public `CREATE`
+   and database `TEMPORARY` boundaries. The sole installation order is the 41
+   entries in `v13/load.py::SQL_LOAD_ORDER`; compare `load.load_stage` and
+   `v13/registry/setup_db.py::_registry_sql_parts` before running the controlled
+   loader. Do not infer a production CLI or run against an unknown existing
+   database.
+2. Use the existing `v13_open_session` entry point. Inspect its loaded argument
+   types, defaults, EXECUTE ACL and return contract, then create an unparented
+   root session through an approved owner/route identity. Record the returned
+   UUID and operator. Do not insert `sessions` directly, fix a UUID, or claim
+   that an independent root is an ancestor of existing sessions.
+3. Read-only health checks should cover the prefix hash, loader count, three
+   prefix tables/eight functions, two overlay tables, eleven new signatures,
+   twenty replacements, and the events capture trigger. Check clock/tools seeds,
+   loaded `pg_proc` signatures, owner, `prosecdef`, `proconfig/search_path`,
+   volatility, default-argument count and ACL. Authorized context/probe/envelope
+   reads must confirm the anchor identity and both revisions; never grant pin
+   table access temporarily to perform a check.
+4. Record SQLSTATE, commit, caller, transaction state, scope/effect/attempt/fence,
+   both revisions and event identity for any anomaly. Do not manually write,
+   update, delete or repair pins, mappings or events, and do not replay external
+   IO. A superseded effect may already have succeeded; projection excludes it
+   from current control but does not requeue or compensate it.
+5. For an existing production installation, stop writes, preserve a backup and
+   append-only audit, and commission a separate migration design. Do not drop a
+   production database, delete historical pin/mapping/event rows, or rerun the
+   full SQL blindly. Stage 1-40 reconstruction is only an isolated validation;
+   an online rollback would need each object's last valid definition plus trigger,
+   FK, historical pin and worker compatibility work. That migration is outside
+   Phase 3.
+
+## Phase 3 Precommit Run01: RED (2026-10-19)
+
+Receipt: `prompt-exports/phase3-precommit-20261019-run01/`. On HEAD `93d05f1`
+with approved documentation changes only, #1-25 met their contracts, including
+#17/#18 expected exit 1/2. #26 `v13/mgraph/test_stannum_usage.py` exited 1
+(expected 0) at V1: installed/available/library Stannum all 0.5.1, required 0.4.0.
+Recorded item time: 202.46s; #26: 6.59s. Runner stopped; #27-51 NOT RUN.
+All 26 trace bytes/mode restored; final SHA-256 remains `3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a`, mode 0644.
+PiSwift verify remains clean/frozen. No test, dependency, extension or executable
+changes were made in that historical attempt. No staging/commit/push occurred.
+The later user instruction superseded isolation with independent upgrade U
+`16e2d8b` (see its separate report). Phase3 must restart from #1 with run02,
+not continue or substitute U's 51-item acceptance.
+The final report preserves all 51 per-item statuses for this failed attempt.
+
+## Phase 3 Precommit Run02 On Stannum U: PASS (2026-10-19)
+
+Receipt: `prompt-exports/phase3-precommit-20261019-run02/`, run from #1 on
+U commit `16e2d8b`. All 51 items were valid and restored their trace bytes/mode;
+49 exited 0, #17 exited 1 for the expected ask_user refusal, and #18 exited 2
+for the expected usage guard. Recorded item time was 918.90s. Outer registry
+reported 16/16 groups, 485 checks, zero independent failures; consumer reported
+289 checks. The final trace SHA-256 is
+`3496c6a4c98937a009fed3144d0cdcac84dd1e788fd2854769cc9aca705d933a` with mode
+0644. PiSwift verify reports active `a73c391`, detached `bfccb32`, and frozen
+Sources/manifests unchanged. The default node_modules parity plane remains SKIP;
+no all-plane or real-provider claim is made. This is Phase3 precommit evidence;
+A postcommit must restart the same 51-item manifest after A is pushed.
 
 ## Gate Manifest (Phase 2: Original 50 Plus Consumer)
 
@@ -561,8 +648,10 @@ handoff scope excludes staging, commit and push of the documentation follow-up.
 The original instruction quoted
 in plan section 7 is a coordinator-to-closeout-agent boundary, not a user waiver
 of AGENTS' task-wide commit/push requirement. Parent coordinator review,
-path/credential staging inspection and the documentation commit remain with the
-parent coordinator; the implementation push is recorded in S42R-12 below.
+path/credential staging inspection and the documentation commit remained with the
+parent coordinator at that handoff. The follow-up was subsequently committed and
+pushed as `93d05f1`; Phase 2 is complete. The implementation push is recorded in
+S42R-12 below.
 
 ### Post-Commit Net-Tree Acceptance (S42R-12, 2026-10-19): PASS
 

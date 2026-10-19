@@ -1,6 +1,6 @@
 # 第 8 章：多语言 harness——SQL-only 合同
 
-> 前置：第 2、3、6 章。产出：worker 契约文档 + `v13/fakes.py` 的双语言验证（G6 验收）。
+> 前置：第 2、3、6 章。早期多语言 worker 设计意图；现状仅验收 inline fake adapter，未交付生产多语言 DB 接线。
 > 对照上游：`v12/queue`（G6：inline/queue 双模 effect_id 逐字节一致）。
 
 ## 8.1 这一章要做什么
@@ -9,7 +9,7 @@
 pi 式极简文件工具——**同一个 agent 用 Jev 从统一目录选择，中间产物互通**。
 
 v13 的立场：**多语言不是机制，是推论。** 工具目录是数据（第 6 章）、
-effect 总线是语言无关的 SQL 合同（第 2 章）、worker 契约只有三个函数——
+effect 总线是语言无关的 SQL 合同（第 2 章）、worker 可围绕 claim/IO/complete 协议设计——
 那么语言差异必然被压进 worker 进程内部。**任何语言之间永不直接通信，只通过行交换。
 PG 本身就是 harness。**
 
@@ -18,22 +18,22 @@ PG 本身就是 harness。**
 ```text
 一个合法 worker = 能连 libpq + 实现以下三步的进程：
 
-1. v13_claim(worker_id, handlers[], lease_ms)        → 领单（事务）
+1. v13_claim(worker_id, lease_ms DEFAULT 60000)    → global 领单（route，事务）
+   v13_claim_fair(worker_id, lease_ms DEFAULT 60000) → fair 领单（owner，事务）
+   CE 的七键 claim 是独立并行面，不接 registry pin
 2. 进程内执行全部 IO（网络/文件/工作台）              → 无事务
-3. v13_complete(effect_id, attempt, fence, status,   → 结算（事务）
-                result)
+3. v13_complete(actor, effect_id, attempt, fence, status, → strict 结算（另事务）
+                result, context_revision)
+   旧五/六参 overload 仍可用，但不做 require_pin=true 的 strict 核对。
+   global 精确六键；fair 加 root_session_id 为七键。额外 pin/context/cache/fences
+   复核仅由 test_consumer.py 的 inline fake adapter 验收，不是现有生产 driver。
 
-第四务（控制订阅——是义务，不是第四个函数）：
-- 长跑 handler SHOULD 订阅本 session 的 cancel/requested 事件；订阅档位
-  是目录数据（`tools.allowlist` 的 `interruptible` 键 ∈ {required, best_effort,
-  unsupported}，第 6 章）
-- 收到即中断自己拉起的子进程、settle cancelled——主动打断住在 handler
-  进程内，核心永不杀进程（不新增 kill 通道）
-- 不订阅者（unsupported）退回粘性语义：跑到自然结束，settle 被 cancel
-  语境吸收（第 12 章）
-- mutating effect 中断后外部副作用状态不明 → settle unknown——cancelled
-  不得掩埋 unknown（与第 12 章同一条纪律）
-- 中断前已落的 partial artifact 只作审计证据，不过 completion gate
+控制订阅是概念性后续合同，不是当前 claim 参数或已接入的生产 worker：
+- 当前 `tools` 表只有 `name/description/kind/handler/param_spec/enabled` 六列；没有
+  `allowlist` 或 `interruptible` 列。
+- `v13_interruptible()` 仍是函数内硬编码名单；`tool_profile` 目前只有注册数据，
+  没有消费者。要改变中断或 worktree 名单，需要另行改 SQL/消费者。
+- 本章的 fake adapter 可演示协议，不证明现有 Python/Swift/框架 worker 已接入该合同。
 
 附带纪律：
 - 请求已冻结：worker 原样发送 request，凭据在进程侧注入，无权改
@@ -43,51 +43,48 @@ PG 本身就是 harness。**
 
 Swift 用 PostgresNIO/libpq，Python 用 psycopg，Node 用 pg——各写各的，
 互不需要知道对方存在。**一致性锚点是 effect_id 由 SQL 生成（uuid v5）**：
-同一逻辑动作不管哪个语言的 worker 领取，幂等身份逐字节相同
-（v12 G6 已在 inline/queue 两模式间验证过同一性质，跨语言是同一证明的复制）。
+同一逻辑动作由任一 worker 领取时取得同一个 SQL 生成的幂等身份；本章不声称
+worker 会自行跨语言推导 ID，也不声称当前生产环境已有多语言 parity。
 
 ## 8.3 逐段解释
 
-- **单队列 + handlers[] 过滤**：所有语言共享 `v13_work` 一条队列，
-  claim 按目录的 handler 列过滤（第 2 章 SQL 里的子查询）。不建第二队列——
-  「第二队列」在裁决清单上和第二租户/第二运行时同列。
+- **单队列 + 现行 claim 合同**：本阶段 global/fair claim 的真实 SQL 接口没有
+  `handlers[]` 参数；worker 通过 route/global 或 fair owner 身份领取。CE claim
+  保持独立七键面，不接 registry pin。概念性的按 handler 过滤仍是早期设计意图，
+  不是当前生产 worker 接线。
 - **lease 是行上的时钟**：Swift（actor 模型）和 Python（协程）心跳节奏不同无所谓——
   lease_until 是 `clock_timestamp()` 算出来的行数据，谁先过期谁被接管，语言无感。
 - **崩溃窗口语言无关**：Swift worker 在「外部成功、结算前」崩溃，
   和 Python worker 崩溃是同一个 SQL 现象（claimed + lease 过期），
   走同一条恢复路径（第 11 章）。**恢复逻辑只写一遍，写在 SQL 里。**
-- **第四务是控制语义，不是崩溃语义**：与第 11 章的区分一句话——
-  kill-at-every-boundary 是崩溃语义（系统杀 worker 自身，恢复靠账本与扫描）；
-  第四务是控制语义（handler 杀自己的子进程，由 cancel 事件驱动）。
-  两者共用同一条结算纪律（申报不裁决、副作用不明即 unknown），
-  但「谁去杀」不同：崩溃杀点谁也不控制，控制中断是合同义务。
-- **第四务零新机制**：轮询 events 是读、中断子进程是 worker 进程内行为、
-  settle 走既有 `v13_complete`——不新增通道。订阅档位是目录行数据
-  （`allowlist.interruptible` 键，第 6 章），required 档不订阅即合同违约（gate 可断言），核心仍不
-  越俎代庖去杀进程。
-- **mutating harness 缺 worktree binding 拒 claim**：目录声明工作面的 mutating
-  工具，claim 前必须已有 binding artifact（latch `name='worktree'` 的当前
-  绑定，第 7 章）；缺 binding 的 effect，harness 拒绝领取——副作用落点不明的
-  工作不认领。子会话不继承父的 binding（第 14 章），并行子会话不共享工作面。
-- **pi 式极简工具就是一包目录行**：read/write/edit/bash/glob 注册在某个 handler 下，
-  allowlist 根目录是目录行的数据（第 6 章）；写操作产物注册为 artifact（第 7 章）；
-  bash 标 mutating=true——享受全套 unknown 纪律。**没有为「外部著名工具集」
-  开任何特殊通道。**
-- **新增一个 Swift 工具的全部动作**：INSERT tools 一行 + 启动 swift-worker 进程。
-  决策平面、effect 总线、其他 worker 零改动——第 6 章承诺在这里兑现。
+- **控制中断仍是边界说明，不是已交付生产接线**：轮询 events、子进程中断和
+  `v13_complete` 结算可以作为未来 adapter 的设计；当前 gate 只覆盖 inline fake
+  adapter，不能把该模型写成现有 worker 的行为保证。
+- **worktree 是既有独立机制**：当前 `v13_requires_worktree()` 名单和 artifact/latch
+  路径决定 binding 要求，不读取不存在的目录 mutating/allowlist 列，也不由 registry
+  profile 驱动。新增工具若改变该名单必须独立改 SQL；不能据此声称任意目录行自动获得保护。
+- **pi 式极简工具仍受现行六列目录约束**：read/write/edit/bash/glob 的 handler、
+  kind、param_spec 和 enabled 可由目录行描述；profile/allowlist 等早期概念不是当前
+  schema。写操作的既有 artifact/unknown 规则不因此获得新的注册通道。
+- **新增工具的边界**：当前目录新增行只改变已实现 handler/catalog 行为。
+  若要改变 interruptible 或 worktree 名单，需要独立 SQL/消费者变更；本章的 fake
+  worker 练习不证明生产 Swift/Python worker 已接入数据库。
 
-## 8.4 硬性规定与 gate
+## 8.4 历史验收意图
+
+以下 G6 列表是早期设计目标，不是当前 gate 覆盖或生产 DB worker 的交付声明。
+尤其按 handler 分流、跨语言接管和中断均不能由本章的概念模型推出。
+当前实际证明范围见 registry README 与独立 consumer gate。
 
 ```text
-G6 节选断言：
+历史 G6 节选断言（非现状保证）：
 ✓ 双 handler（py fake + swift fake）同队列：各领各的，无一错领
 ✓ 跨语言 effect_id 一致：同一逻辑键两种语言推导同 uuid
 ✓ 杀 py worker 后 swift worker 接管其未决 effect（lease 过期）
 ✓ 错误信封：两种语言的失败结果落账后事件形状完全一致
 ✓ op_seq 并行纪律：只读 effect 并行执行（op_seq NULL）；
   同 mutation_scope 的变更严格按最小未完成序
-✓ 第四务：cancel 后 required 档 handler 的外部子进程提前终止、settle cancelled；
-  unsupported 档自然结束、settle 被粘性吸收（第 12 章）
+✓ 未来 adapter 可按 cancel 事件实现中断与结算；本章不宣称生产 worker 已接线
 ✓ mutating 中断后副作用不明 → settle unknown；用 cancelled 掩埋 unknown → 红
 ✓ 中断 turn 的 partial artifact 只进审计断言集，不过 completion gate
 ✓ 目录声明工作面的 mutating effect 无 worktree binding → harness 拒 claim（零执行）
@@ -95,19 +92,24 @@ G6 节选断言：
 
 ## 8.5 检查点练习
 
+前两项是未来 adapter 的设计练习，不是现有双语言 DB gate，也不应以迟到结算
+stale 推出外部副作用 exactly-once。第三项须保持当前 schema 与独立名单边界。
+
 1. 写第二个 fake worker（模拟 Swift：不同的 sleep 节奏、不同的崩溃概率），
    与 py fake 同跑 G6。断言：所有不变量对两语言同时成立。
 2. 故意让 swift fake 慢结算（hold lease 到过期边缘），py fake 接管完成后
    swift fake 的迟到结算返回 stale——断言外部副作用计数 == 1。
-3. 用 `tools.handler` 加第三种 handler（如 'node'），只 INSERT 目录行 + 起进程，
-   跑通一个 turn。记录：这个练习改了几个 SQL 文件？（应为零。）
+3. 用 `tools.handler` 加第三种 handler（如 'node'），在现行六列 schema 下验证目录
+   行和已有 catalog 行为。若要改变中断/worktree名单，记录所需的独立 SQL/消费者变更；
+   不能把练习写成“只 INSERT 且零 SQL 文件”。
 
 ## 8.6 回到 vN 对照
 
 - `v12/queue/test_queue.py` 的双模一致性断言（SQL `v12_uuid_v5` == Python `uuid5`）
   是本章跨语言主张的已验证前例。
 - v4 的 queue_kinds（embed/sql_heavy/human_inbox 三种队列）：裁决「kind 是一列数据，
-  不是拓扑」——v13 用 handlers[] 过滤兑现：队列永远一条，分流在 claim 的 WHERE 里。
+  不是拓扑」。当前 v13 claim 不接收 `handlers[]`；分流依赖现行 handler/catalog
+  行为和调用身份，不能把早期 handlers 过滤描述成已装载接口。
 
 ## 8.7 内在合理性：前因后果
 
@@ -122,11 +124,10 @@ G6 节选断言：
 但「租约没续上」必须是同一个客观事实，否则接管无从谈起。
 
 **推导。** 这些力逼出本章的合同。内存互不可见 ⇒ 一致性锚点必须语言
-无关：effect_id 由 SQL 生成 uuid v5，任何语言的 worker 对同一逻辑动作
-都推导出逐字节相同的 id——幂等身份不依赖任何一方的运行时，语言之间
-永不直接通信，只通过行交换。消息人人可领 ⇒ claim 必须按目录声明的
-handler 过滤（handlers[] 对照 tools.handler 数据列的子查询），而不是
-按语言或进程亲和认领——分流住在 WHERE 里，队列永远一条。心跳因语言
+无关：effect_id 由 SQL 生成 uuid v5，任何语言的 worker 从领取结果取得
+同一个幂等 id，不自行推导——身份不依赖任何一方的运行时，语言之间
+永不直接通信，只通过行交换。当前 claim 只接 worker/lease，不接 `handlers[]`；
+按 handler 过滤只是早期设计意图，不能从共享队列推导出已有生产分流。心跳因语言
 而异 ⇒ lease_until 是 `clock_timestamp()` 算出来的行数据，不是任何
 进程的内部状态：谁先过期谁被接管，续租与回收走同一套超时逻辑，谁也
 不必知道别人的节奏。崩溃窗口语言无关 ⇒ 恢复逻辑只写一遍、写在

@@ -52,11 +52,12 @@ END $$;
   正在飞的外部调用落完 settle 时自然被 cancel 语境吸收（结果落账但 turn 不继续）。
   v8 的三窗口收束/五出口矩阵被砍成「检查点 + 吸收」，因为单活跃索引
   （第 5 章①）已把竞态面压到最小。
-- **粘性是默认，interruptible 是升级**：核心永不杀进程（第 8 章），所以
-  cancel 的默认语义就是粘性。目录 `allowlist.interruptible ∈ {required,
-  best_effort, unsupported}` 键（第 6 章，零新列）声明档位的 handler 走第 8 章第四务——订阅本 session 的
-  cancel 事件、中断子进程、settle cancelled/unknown；unsupported 档保持粘性。
-  升级零机制改动：订阅是读，中断是进程内行为，settle 走既有 `v13_complete`。
+- **粘性是默认，interruptible 档位仍由函数决定**：核心永不杀进程，cancel
+  默认保持粘性。当前 `tools` 表没有 `allowlist` 或 `interruptible` 列；
+  `v13_interruptible()` 的硬编码名单决定 required/best_effort/unsupported，
+  registry 的 `tool_profile` 尚无消费者。订阅 cancel、中断子进程与结算是 adapter
+  合同；现有 fake 协议测试不证明生产 Python/Swift worker 已接线，也不将现有函数
+  档位误写成尚未实现。改变名单需要独立 SQL/消费者变更。
 - **父 cancel 同事务扇出子树**：对树中会话落 cancel 时，同一事务沿
   `parent_session_id` 给全部非终态子孙各扇出一条 `cancel/requested` 事件
   ——每个子孙看到的是自己的 cancel 事实，各自的粘性收束独立完成；不新增

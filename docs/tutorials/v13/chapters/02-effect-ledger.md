@@ -59,25 +59,11 @@ CREATE TABLE effects (
 ```
 
 ```sql
--- 领取：单事务、SKIP LOCKED、递增 fence、写租约
-CREATE OR REPLACE FUNCTION v13_claim(p_worker text, p_handlers text[], p_lease_ms int)
-RETURNS jsonb LANGUAGE sql AS $$
-  UPDATE effects e SET status='claimed', attempt_no = attempt_no+1,
-         fence = fence+1, lease_owner=p_worker,
-         lease_until = now() + make_interval(ms=>p_lease_ms)
-  WHERE effect_id = (
-    SELECT effect_id FROM effects
-    WHERE status='ready'
-      AND (tool_name IS NULL OR tool_name IN (
-           SELECT name FROM tools WHERE handler = ANY(p_handlers)))  -- 第 6 章
-      AND (op_seq IS NULL OR op_seq = (                       -- 变更序最小未完成
-           SELECT min(op_seq) FROM effects WHERE session_id=e.session_id
-             AND mutation_scope=e.mutation_scope AND status<>'succeeded'))
-    ORDER BY created_at
-    FOR UPDATE SKIP LOCKED LIMIT 1)
-  RETURNING jsonb_build_object('effect_id', effect_id, 'attempt_no', attempt_no,
-                               'fence', fence, 'request', request);
-$$;
+-- 领取（概念示例；当前 Stage 42 接口没有 handlers[] 参数）
+-- global: v13_claim(p_worker text, p_lease_ms integer DEFAULT 60000)
+-- fair:   v13_claim_fair(p_worker text, p_lease_ms integer DEFAULT 60000)
+-- 返回精确六键；fair 额外返回 root_session_id。CE claim 保持独立七键面。
+-- 生产 worker 的 handler 分流并未由本阶段新增参数或新 driver 实现。
 ```
 
 ```sql
@@ -117,9 +103,11 @@ END $$;
   `conflict`（同 fence 异结果）在 gate 里构造，出现即人为 bug。
 - **事件与结算同事务**：`effect_done` 事件和控制态同 commit——
   这就是「日志与现在永不分家」在行动平面的兑现。
-- **`mutating` 问的是外部副作用，不是写库**：该列语义 =「外部副作用能否在
+- **`mutating` 的早期设计语义问的是外部副作用，不是写库**：现行 tools 无此列；
+  既有 effect 路径使用自身 metadata/恢复规则，不能读取目录 mutating。
+  早期设计语义 =「外部副作用能否在
   rollback 后仍在」。`kind='sql'` 工具（第 6 章）崩溃即整笔回滚——unknown
-  路径不适用，目录行 `mutating=false`，恢复扫描见不到 sql 行；G3 的 unknown
+  路径不适用；不能据此宣称存在目录行 `mutating=false`。G3 的 unknown
   纪律只对着有外部 IO 的 effect 档生效。
 - **锁序一行注释**：session → effect，两级。v8 的八位锁序在 9 张表的世界里
   塌缩成这一行；写进注释就是全部所需（00 章差异表）。spawn（第 14 章）

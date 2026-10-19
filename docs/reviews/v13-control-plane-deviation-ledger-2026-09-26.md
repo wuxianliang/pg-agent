@@ -289,8 +289,8 @@ review 导出：`prompt-exports/oracle-review-2026-10-18-145510-untitled-chat-e8
 `prompt-exports/oracle-chat-2026-10-19-002613-untitled-chat-9347aa-da5a.md`。
 收尾 agent 按协调交接权限不暂存、提交或推送，不把脏树验收写成 post-commit receipt。
 最新实现提交前结果 S42R-11：完整离线隔离 51 项通过；S42R-12 记录已推送
-实现提交后的净树复验。文档 follow-up 仍由父协调 agent 处理，AGENTS 全任务
-要求未被取消。
+实现提交后的净树复验。当前文档 follow-up 已随 `93d05f1` 提交并推送，Phase 2
+已完成；当时父协调交接边界不取消 AGENTS 全任务要求。
 
 | # | 事实/偏差 | 处置与证据边界 |
 |---|---|---|
@@ -374,7 +374,7 @@ actual spawn_owner、human 六键、function_acl mutation 修正保持；catalog
 W5/W6 测试/文档前置条件满足。父协调会话 get_log 核实原“不 commit/push，review
 后处理”是协调 agent 对收尾 agent 的权限边界，并非用户取消全任务提交要求。计划
 §7 已更正：收尾 agent 只交付验收工件；实现提交已推送，文档 follow-up 仍由父
-协调 agent 依 AGENTS 处理。保留 S42R-9/10 历史失败，不以本次成功改写历史。
+协调 agent 依 AGENTS 处理。当前补记：该文档 follow-up 已随 `93d05f1` 提交并推送，Phase 2 已完成。保留 S42R-9/10 历史失败，不以本次成功改写历史。
 
 ### S42R-12：已推送实现提交的 post-commit 净树验收
 
@@ -406,3 +406,16 @@ provider 声明。Oracle findings 已读并按 S42R-1/2/3/8 处置；本轮没�
 | ST051-5 | 0.4→0.5 catalog delta 小但存储格式不兼容 | 生产停写/备份/干净关闭/重启/ALTER/普通REINDEX/verify，replica重建、rollback restore；本轮只新建stage库，不执行生产迁移 |
 | ST051-6 | 实施审查发现内容哈希不能覆盖文件类型/模式，且 ExceptionGroup 不能容纳中断 | 普通文件/历史Git模式检查及执行位/符号链接负例通过；BaseExceptionGroup 保留中断与清理错误，九文件台账已纠正 |
 | ST051-7 | U 独立完整51项 run01 全符合契约，908.70s | 49×0、预期1/2，每项trace恢复；registry485/consumer289及最终PiSwift verify绿；不替代Phase3两轮，历史RED不删 |
+
+## Phase 3 Registry Closeout Deviations
+
+| 编号 | 事实/偏差 | 处置与证据边界 |
+|---|---|---|
+| P3R-1 | Phase 2 README 曾将 replacement 计为 21 | 更正为 setup 闭集的 20 个既有定义；新增 strict/overlay 签名另计，SQL 与 allowlist 不变 |
+| P3R-2 | `spawn_owner` 保留 global claim EXECUTE，但 invoker 首先调用其无权执行的 fences | 接受为 latent ACL/API 风险；当前给定 owner/DEFINER 调用图无生产 caller 的 STATIC 结论，NOLOGIN 不等于不可达；发现动态 caller 即回交 Phase 2 |
+| P3R-3 | claim 双 fence 二次读取后到 COMMIT 仍存在 writer 窗口 | 接受快照复核和 superseded 投影；不声称 commit-instant freshness 或撤销已发生的外部 IO |
+| P3R-4 | 没有真实 register/retire 后 claim 新 revision 与旧 pin 投影翻转的独立组合断言 | 保留 INFERRED：后续读取新快照时成功 claim 使用新修订，current helpers 排除旧 pin；`pin_matches` 只匹配历史 exact pin |
+| P3R-5 | 部署不是现有生产库在线 migration/rollback | runbook 限定隔离库装载演练与只读 catalog 核验；生产升级须停写、备份、审计保全并另提迁移设计 |
+| P3R-6 | PiSwift/trace/skip 证据依赖 ignored 本地材料 | 保存 preflight/environment 摘要；无原始 ignored receipt 时最终报告仅保留自包含摘要，不把历史结果冒充本轮 DIRECT |
+| P3R-7 | Phase 3 precommit run01 在 #26 Stannum V1 失败 | `RED_REGRESSION`：#1-25 契约绿，#26 exit 1/6.59s；实际扩展/默认/library 0.5.1，gate 要求 0.4.0；#27-51 与 postcommit NOT RUN。26 项 trace 恢复、PiSwift verify 绿；A/B 未提交推送。当时恢复隔离Stannum需另批；后续用户改为批准独立升级U=`16e2d8b`，已推送并独立验收。Phase3相对U不改测试/依赖，run02必须从#1开始，历史RED不删 |
+| P3R-8 | Phase 3 precommit run02 在 U 上完整通过 | `prompt-exports/phase3-precommit-20261019-run02/`：918.90s，49×exit0、#17/#18预期1/2，51/51 valid且trace恢复；registry16/16/485/0、consumer289、PiSwift verify绿。A后postcommit仍需从#1重跑，不与U或历史run01拼接 |

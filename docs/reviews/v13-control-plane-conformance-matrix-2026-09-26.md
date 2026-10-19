@@ -246,12 +246,12 @@ checks、零 independent_case_failures（`/tmp/v99-registry-final2.log`）。
 | `native_envelope_snapshot_consistency` | PASS | `native_freshness`、`native_statement_snapshot`：21-key/eight-key、advance stale、MATERIALIZED 双连接屏障、延后 snap 投影旧双标量、下一语句读新双标量 | 不声称跨事务共用物理 snapshot |
 | `native_acl` | PASS | `native_claim_complete`、`native_acl_closure`：全部宿主表/列零权、global/fair/strict/context 正反例、recall 和 spawn_owner canonical 实调 | S42R-1/2 仅补 event_current；effect_current/pin 表不授 recall/spawn_owner |
 | `native_lock_barriers` | PASS | 同名函数：准确 PID + pg_blocking_pids + pg_locks；writer clock/session 等待时别 scope claim 可提交；completion session/effect；fair advisory/root/child/effect NOWAIT 零半写 | 不用 sleep 推断；govern query-text 观察另作精确 PID 修正 |
-| `native_overlay_static` | PASS | `native_acl_closure` 与 setup validators：prefix/前 39/loader 41/CE、两表/11 新签名/21 replacement 闭集；roles/seq/DB/schema/function/table ACL 和 columns/indexes/constraints/triggers mutation 负例 | prefix hash `e5222e1499001f3a734292d8456d2b431fcfcd2a5862952bfcc38137caee34d4`；无新 loader stage |
+| `native_overlay_static` | PASS | `native_acl_closure` 与 setup validators：prefix/前 39/loader 41/CE、两表/11 新签名/20 replacement 闭集；roles/seq/DB/schema/function/table ACL 和 columns/indexes/constraints/triggers mutation 负例 | prefix hash `e5222e1499001f3a734292d8456d2b431fcfcd2a5862952bfcc38137caee34d4`；无新 loader stage |
 
 Oracle findings 已逐项核对：actual catalog 不复现 qualification 拒装，superseded
 fixture 已 pinned 并单列 legacy；实际 spawn_owner、human 六键、function_acl
 mutation 已执行。fair 前缀 SIX/overlay SEVEN 的安装范围差异与窄 ACL 决策见
-台账 S42R-1–S42R-8。协调交接限定收尾 agent 本轮不 commit/push，未提供 post-commit receipt。
+台账 S42R-1–S42R-8。当时协调交接限定收尾 agent 不 commit/push；现已完成实现 `937a864` 与证据 `93d05f1`，postcommit receipt 见 S42R-12，保留以下历史 RED。
 
 ### 历史 51 项顺序尝试：RED（2026-10-19）
 
@@ -318,7 +318,7 @@ Oracle 已读处置沿用上文，无新 review、无新增运行时 scope。
 W5/W6 测试与文档前置条件已满足；收尾 agent 不暂存/提交/推送文档 follow-up。
 父协调会话 get_log 已核对，原话是协调 agent 对收尾 agent 的权限边界，不是用户全局覆盖，
 来源与职责已更正于计划 §7。实现提交已由父协调 agent 推送；本轮仅补 post-commit
-验收工件，文档 follow-up 提交仍由父协调 agent 处理。
+验收工件。上述为历史交接；当前文档 follow-up 已随 `93d05f1` 提交并推送，Phase 2 已完成。
 
 ### S42R-12：实现提交后净树复验（2026-10-19）
 
@@ -348,3 +348,18 @@ runtime、测试逻辑或 runner。
 | LOAD-before-CREATE | V13a/b/c 在唯一 template0 库实跑成功，清理后无遗留库 | 无扩展时普通规划及同 backend CREATE；不冒充生产升级演练 |
 | 使用契约 | 独立 usage run02 全 77 checks；P/F/R 与 jieba/ACL/verify 保留 | F5 精确跟随已证实单列权重变化，非法权重/ALTER 仍拒绝 |
 | 冻结保护与全回归 | 原基线证明加精确文件字节/模式恢复与变异负例；定向16项全绿，审查修正后usage/plan_arm与纯守卫复跑绿；独立51项908.70s全符合契约，49×0及预期1/2；每项trace恢复，registry485/consumer289，最终PiSwift verify绿 | 不移动旧 base，不豁免文件，不把升级绿替代 Phase3 两轮 |
+
+## Phase 3 Registry Closeout (2026-10-19)
+
+本区段独立记录 Phase 3 收尾，不覆盖 Stage 41/42 历史行。计划要求的两轮
+51 项串行回归使用独立新 receipt，不以 S42R-11/S42R-12 代替本轮结果。
+precommit run01 在 #26 V1 因 Stannum 0.5.1/所需 0.4.0 不符停止；#27-51
+在该历史尝试中 NOT RUN。随后用户授权的独立0.5.1升级U=`16e2d8b`已推送；Phase3在U上新开run02，postcommit仍待A推送，A/B尚未提交。
+
+| 条文 | 状态 | 证据/落点 | 缺口与边界 |
+|---|---|---|---|
+| P3-1 基线、PiSwift 隔离副本与冻结源保护 | ✅ STATIC | `phase3-preflight-20261019-run02` 的 parity/ports 结果、`environment-after.json`；活动 checkout `a73c391`、detached tag `v0.87.1`=`bfccb32` | 默认 parity 跳过缺失 `node_modules` 平面；不宣称 all-plane/真实 provider |
+| P3-2 注册/消费闭集、20 replacements、ACL/锁/映射索引 | ✅ STATIC | `v13/registry/README.md`、setup/catalog 守卫、`test_registry.py`/`test_consumer.py` 具名探针映射 | claim 内部 40001、spawn_owner 动态可达性与 register/retire→claim 翻转仍按 STATIC/INFERRED 留档 |
+| P3-3 教程、runbook、设计状态收敛 | ✅ STATIC | ch02/ch03/ch06/ch08/ch12、设计 §11、README 当前接口和部署边界 | 不交付 profile/prompt 消费、生产 strict worker、在线 migration/rollback |
+| P3-4 precommit 51 项 | RED_REGRESSION | `phase3-precommit-20261019-run01`：#1-25 契约绿，#26 exit 1（预期 0）、6.59s；全轮已记录 202.46s | V1 要求 Stannum 0.4.0，实为 0.5.1；#27-51 NOT RUN；26 项 trace 恢复，PiSwift verify 绿；后续独立升级U已获批完成；run02须在U上从#1新开 |
+| P3-5 A 上 postcommit 51 项 | NOT RUN | 提交 A 后同 manifest 从 #1 重跑 | 仅在 A push 成功后执行；不拼接 precommit 或历史结果 |
