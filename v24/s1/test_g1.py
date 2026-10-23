@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import base64
 import hashlib
 import json
+import re
 import time
 from uuid import uuid4
 
@@ -116,8 +117,15 @@ def catalog(owner):
                          FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
                         WHERE n.nspname='v24'""")
         functions = {r[0]: r[1:] for r in cur.fetchall()}
-    assert {n for n, r in functions.items() if r[0]} == {"advance"}
+    read_definers = {"resolve", "run_owner", "run_projection", "poll", "wait_check"}
+    assert {n for n, r in functions.items() if r[0]} == {"advance"} | read_definers
     assert functions["advance"][2] == ["search_path=pg_catalog, v24"]
+    for name in read_definers:
+        security, volatility, config, definition = functions[name]
+        assert security and volatility == "s", (name, functions[name])
+        assert config == ["search_path=pg_catalog, v24"], (name, config)
+        assert not re.search(r"\b(?:INSERT|UPDATE|DELETE|pg_advisory\w*)\b",
+                             definition, re.IGNORECASE), (name, definition)
     for helper in ("canonical_json", "principal_id", "effect_id_for", "error_v1"):
         assert functions[helper][0:2] == (False, "i"), (helper, functions[helper])
     for name, (_, _, _, definition) in functions.items():
@@ -132,7 +140,7 @@ def catalog(owner):
                 assert not functions[name][0]  # INVOKER; no application table privileges
         if "pg_advisory_xact_lock" in definition:
             assert name == "advance", name
-    for wrapper in ("scope_control", "install"):
+    for wrapper in ("scope_control", "install", "start", "cancel", "steer", "respond"):
         assert not functions[wrapper][0], wrapper
         body = functions[wrapper][3]
         assert "v24.advance(" in body, wrapper
@@ -172,7 +180,8 @@ def catalog(owner):
         assert one(owner, "SELECT v24.error_v1(%s)->'error'->>'code'", (code,)) == code
     sqlstate(owner, "22023", lambda: one(owner, "SELECT v24.error_v1('no_interpreter')"))
     owner.rollback()
-    print("[G1-A] single DEFINER/writer; pure helpers; closed error set; ordered lock pass")
+    print("[G1-A] advance is sole writable DEFINER; closed read DEFINER allowlist; "
+          "pure helpers; closed error set; ordered lock pass")
 
 
 def shapes(owner, service):
@@ -777,7 +786,8 @@ def permissions(db, owner, connections):
         exposed = one(conn, """SELECT array_agg(proname::text ORDER BY proname)
             FROM pg_proc WHERE pronamespace='v24'::regnamespace
               AND has_function_privilege(session_user,oid,'EXECUTE')""")
-        expected = pure | {"advance", "scope_control", "resolve", "fiber_control", "dispose"}
+        expected = pure | {"advance", "scope_control", "resolve", "poll", "wait_check",
+                           "fiber_control", "dispose", "start", "cancel", "steer", "respond"}
         if alias != "admin":
             expected.add("install")
         assert set(exposed) == expected, (alias, exposed)

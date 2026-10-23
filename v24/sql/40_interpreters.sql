@@ -17,6 +17,18 @@ BEGIN
   IF p_outcome->'body'->>'kind' = 'command_install' THEN
     RETURN v24.interpret_install(p_effect_id, p_principal, p_outcome, p_closure);
   END IF;
+  IF p_outcome->'body'->>'kind' = 'command_start' THEN
+    RETURN v24.interpret_start(p_effect_id, p_principal, p_outcome, p_closure);
+  END IF;
+  IF p_outcome->'body'->>'kind' = 'command_cancel' THEN
+    RETURN v24.interpret_cancel(p_effect_id, p_principal, p_outcome, p_closure);
+  END IF;
+  IF p_outcome->'body'->>'kind' = 'command_steer' THEN
+    RETURN v24.interpret_steer(p_effect_id, p_principal, p_outcome, p_closure);
+  END IF;
+  IF p_outcome->'body'->>'kind' = 'command_respond' THEN
+    RETURN v24.interpret_respond(p_effect_id, p_principal, p_outcome, p_closure);
+  END IF;
   IF p_outcome->'body'->>'kind' = 'command_fiber_control' THEN
     RETURN v24.interpret_fiber_control(p_effect_id, p_principal, p_outcome, p_closure);
   END IF;
@@ -121,6 +133,30 @@ DECLARE
   ev jsonb;
   succ jsonb;
   new_id uuid;
+  start_run v24.runs%ROWTYPE;
+  start_pin v24.pins%ROWTYPE;
+  start_model uuid;
+  start_owner_episode uuid;
+  start_payload jsonb := body->'payload';
+  cancel_run v24.runs%ROWTYPE;
+  cancel_effect v24.effects%ROWTYPE;
+  cancel_pin v24.pins%ROWTYPE;
+  cancel_expected jsonb;
+  cancel_generation bigint;
+  steer_run v24.runs%ROWTYPE;
+  steer_effect v24.effects%ROWTYPE;
+  steer_expected jsonb;
+  steer_successors jsonb;
+  steer_input jsonb;
+  steer_claimed boolean;
+  steer_generation bigint;
+  steer_model uuid;
+  respond_run v24.runs%ROWTYPE;
+  respond_generation bigint;
+  respond_interaction uuid;
+  respond_origin uuid;
+  respond_model uuid;
+  has_error boolean := p_delta->'error' IS NOT NULL AND p_delta->'error' <> 'null'::jsonb;
 BEGIN
   -- W5 mode is inferred from the authenticated outcome class, never the delta.
   -- Leave the W4 scope-command path below unchanged.
@@ -156,12 +192,42 @@ BEGIN
                   WHERE x NOT IN ('installs','fibers')) THEN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
+  ELSIF kind = 'command_start' THEN
+    IF EXISTS (SELECT 1 FROM jsonb_object_keys(inserts) x WHERE x NOT IN ('runs','pins'))
+       OR updates <> '{}'::jsonb OR p_delta ? 'settle' THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+  ELSIF kind = 'command_cancel' THEN
+    IF inserts <> '{}'::jsonb
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(updates) x
+                  WHERE x NOT IN ('runs','effects','pins'))
+       OR coalesce(p_delta->'successors','[]'::jsonb) <> '[]'::jsonb
+       OR p_delta ? 'settle' THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+  ELSIF kind = 'command_steer' THEN
+    IF inserts <> '{}'::jsonb
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(updates) x
+                  WHERE x NOT IN ('runs','effects'))
+       OR jsonb_array_length(coalesce(p_delta->'successors','[]'::jsonb)) > 1
+       OR p_delta ? 'settle' THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+  ELSIF kind = 'command_respond' THEN
+    IF inserts <> '{}'::jsonb
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(updates) x WHERE x <> 'runs')
+       OR jsonb_array_length(coalesce(p_delta->'successors','[]'::jsonb)) > 1
+       OR p_delta ? 'settle' THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
   ELSE
     RAISE EXCEPTION 'v24.validate_and_apply_delta: no footprint for %', kind
       USING ERRCODE = '0A000';
   END IF;
-  IF (SELECT coalesce(sum(jsonb_array_length(value)),0) FROM jsonb_each(inserts)) > 16
-     OR (SELECT coalesce(sum(jsonb_array_length(value)),0) FROM jsonb_each(updates)) > 16
+  IF (SELECT coalesce(sum(jsonb_array_length(value)),0) FROM jsonb_each(inserts)) >
+       (CASE WHEN kind='command_start' THEN 17 ELSE 16 END)
+     OR (SELECT coalesce(sum(jsonb_array_length(value)),0) FROM jsonb_each(updates)) >
+       (CASE WHEN kind IN ('command_cancel','command_steer') THEN 512 ELSE 16 END)
      OR jsonb_array_length(coalesce(p_delta->'events','[]'::jsonb)) > 64
      OR jsonb_array_length(coalesce(p_delta->'successors','[]'::jsonb)) > 16 THEN
     RETURN v24.error_v1('invalid_outcome');
@@ -173,7 +239,352 @@ BEGIN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
 
+  -- D-S3-2 is narrowly scoped: existing command kinds cannot attach run IDs.
+  IF kind NOT IN ('command_start','command_cancel','command_steer','command_respond') AND p_delta->'effect' ? 'run_id' THEN
+    RETURN v24.error_v1('invalid_outcome');
+  END IF;
+  IF kind = 'command_start' THEN
+    IF has_error THEN
+      IF inserts <> '{}'::jsonb OR coalesce(p_delta->'events','[]'::jsonb) <> '[]'::jsonb
+         OR coalesce(p_delta->'successors','[]'::jsonb) <> '[]'::jsonb
+         OR p_delta ? 'effect' OR p_delta ? 'request'
+         OR coalesce(p_delta->'error'->'error'->>'code','') NOT IN
+              ('budget_exceeded','scope_closed','provider_unavailable','dependency_unresolved') THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    ELSE
+      IF jsonb_array_length(coalesce(inserts->'runs','[]'::jsonb)) <> 1
+         OR jsonb_array_length(coalesce(inserts->'pins','[]'::jsonb)) <>
+            jsonb_array_length(coalesce(start_payload->'input'->'requires','[]'::jsonb))
+         OR jsonb_array_length(coalesce(p_delta->'successors','[]'::jsonb)) <> 1
+         OR jsonb_array_length(coalesce(p_delta->'events','[]'::jsonb)) <> 2 THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      BEGIN
+        SELECT * INTO start_run FROM jsonb_populate_record(NULL::v24.runs,inserts->'runs'->0);
+        SELECT f.current_episode_id INTO start_owner_episode FROM v24.fibers f
+          WHERE f.fiber_id=(start_payload->>'owner_fiber_id')::uuid;
+        start_model := md5(p_effect_id::text || ':model_call:0')::uuid;
+        IF start_run.run_id IS NULL
+           OR EXISTS (SELECT 1 FROM v24.runs rr WHERE rr.run_id=start_run.run_id)
+           OR inserts->'runs'->0 IS DISTINCT FROM jsonb_build_object(
+              'run_id',start_run.run_id,'scope_id',(start_payload->>'scope_id')::uuid,
+              'owner_fiber_id',(start_payload->>'owner_fiber_id')::uuid,
+              'owner_episode_id',start_owner_episode,'status','running',
+              'epoch_no',1,'registration_generation',1,'turn_no',0,'driving_generation',1,
+              'remaining_steps',(start_payload->'budget'->>'steps')::integer,
+              'remaining_tool_calls',(start_payload->'budget'->>'tool_calls')::integer,
+              'remaining_tokens',(start_payload->'budget'->>'tokens')::bigint,
+              'remaining_wall_ms',coalesce((start_payload->'budget'->>'wall_ms')::bigint,86400000),
+              'revision',1,'created_at',now(),'updated_at',now())
+           OR p_delta->'effect' IS DISTINCT FROM jsonb_build_object('run_id',start_run.run_id)
+           OR p_delta->'request' IS DISTINCT FROM jsonb_build_object('response',
+              jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
+                'emitted',jsonb_build_array(start_run.run_id,start_model),'revision',1,'claim',NULL))
+           OR p_delta->'successors' IS DISTINCT FROM jsonb_build_array(jsonb_build_object(
+              'effect_id',start_model,'ordinal',0,'kind','model_call','run_id',start_run.run_id,
+              'fiber_id',start_run.owner_fiber_id,'episode_id',start_run.owner_episode_id,
+              'epoch_no',1,'generation',1,'replay_policy','no_replay',
+              'request',jsonb_build_object('run_id',start_run.run_id,'epoch_no',1,'generation',1,
+                'input',start_payload->'input','budget',start_payload->'budget')))
+           OR p_delta->'events' IS DISTINCT FROM jsonb_build_array(
+              jsonb_build_object('entity_type','run','entity_id',start_run.run_id,
+                'event_kind','run_started','payload',jsonb_build_object('run_id',start_run.run_id)),
+              jsonb_build_object('entity_type','run','entity_id',start_run.run_id,
+                'event_kind','model_call_requested','payload',
+                jsonb_build_object('run_id',start_run.run_id,'effect_id',start_model))) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        FOR r IN SELECT value FROM jsonb_array_elements(coalesce(inserts->'pins','[]'::jsonb)) LOOP
+          SELECT * INTO start_pin FROM jsonb_populate_record(NULL::v24.pins,r);
+          IF start_pin.pin_id IS NULL OR NOT coalesce(p_closure->'slots' ? start_pin.slot_id::text,false)
+             OR NOT EXISTS (SELECT 1 FROM v24.resolve(start_run.scope_id,ARRAY[start_pin.key]) rr
+                  JOIN v24.slots sl ON sl.slot_id=rr.slot_id
+                  WHERE rr.live AND rr.slot_id=start_pin.slot_id
+                    AND sl.fiber_id=start_pin.provider_fiber_id
+                    AND rr.provider_episode_id=start_pin.provider_episode_id
+                    AND rr.descriptor_digest=start_pin.descriptor_digest)
+             OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(
+                  coalesce(start_payload->'input'->'requires','[]'::jsonb)) req
+                  WHERE req->>'key'=start_pin.key)
+             OR r IS DISTINCT FROM jsonb_build_object('pin_id',start_pin.pin_id,'consumer_type','run',
+                  'consumer_run_id',start_run.run_id,'consumer_epoch',1,'key',start_pin.key,
+                  'slot_id',start_pin.slot_id,'provider_fiber_id',start_pin.provider_fiber_id,
+                  'provider_episode_id',start_pin.provider_episode_id,
+                  'descriptor_digest',start_pin.descriptor_digest,'created_by_effect',p_effect_id) THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+        END LOOP;
+        IF EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(inserts->'pins','[]'::jsonb)) pn
+                   GROUP BY pn->>'key' HAVING count(*)>1) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value
+          OR numeric_value_out_of_range OR datetime_field_overflow THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END;
+    END IF;
+  END IF;
+
+  IF kind = 'command_cancel' THEN
+    IF has_error THEN
+      IF updates <> '{}'::jsonb OR coalesce(p_delta->'events','[]'::jsonb) <> '[]'::jsonb
+         OR p_delta ? 'effect' OR p_delta ? 'request'
+         OR coalesce(p_delta->'error'->'error'->>'code','') NOT IN
+              ('already_terminal','stale_generation') THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    ELSE
+      BEGIN
+        SELECT * INTO cancel_run FROM v24.runs rr
+          WHERE rr.run_id=(body->'payload'->>'run_id')::uuid;
+        cancel_generation := (body->'payload'->>'expected_generation')::bigint;
+        IF cancel_run.run_id IS NULL
+           OR NOT coalesce(p_closure->'runs' ? cancel_run.run_id::text,false)
+           OR cancel_run.status IN ('completed','failed','cancelled','blocked_unknown')
+           OR cancel_generation IS DISTINCT FROM cancel_run.driving_generation
+           OR (v24.run_owner(cancel_run.run_id) IS DISTINCT FROM p_principal
+               AND NOT pg_has_role(session_user,'v24_admin','USAGE'))
+           OR p_delta->'effect' IS DISTINCT FROM jsonb_build_object('run_id',cancel_run.run_id)
+           OR p_delta->'request' IS DISTINCT FROM jsonb_build_object('response',
+                jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
+                  'emitted','[]'::jsonb,'revision',cancel_run.revision+1,'claim',NULL))
+           OR p_delta->'events' IS DISTINCT FROM jsonb_build_array(jsonb_build_object(
+                'entity_type','run','entity_id',cancel_run.run_id,'event_kind','run_cancelled',
+                'payload',jsonb_build_object('run_id',cancel_run.run_id,
+                                           'generation',cancel_generation)))
+           OR coalesce(updates->'runs','[]'::jsonb) IS DISTINCT FROM
+                jsonb_build_array(jsonb_build_object('key',jsonb_build_object('run_id',cancel_run.run_id),
+                  'set',jsonb_build_object('status','cancelled','ended_at',now(),
+                    'interaction',NULL,'pending_steer',NULL,
+                    'close_intent',jsonb_build_object('kind','cancel','generation',cancel_generation,'at',now()),
+                    'driving_generation',cancel_run.driving_generation+1,
+                    'revision',cancel_run.revision+1,'updated_at',now()))) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        -- Exact patches enforce column, target, and transition closures before DML.
+        SELECT coalesce(jsonb_agg(jsonb_build_object('key',jsonb_build_object('effect_id',e.effect_id),
+          'set',CASE WHEN e.status='ready'
+             THEN jsonb_build_object('status','cancelled','settled_at',now(),'outcome',NULL)
+             ELSE jsonb_build_object('cancel_requested',true) END) ORDER BY e.effect_id),'[]'::jsonb)
+          INTO cancel_expected FROM v24.effects e
+          WHERE e.run_id=cancel_run.run_id AND e.kind IN ('model_call','tool_call')
+            AND e.status IN ('ready','claimed');
+        IF coalesce(updates->'effects','[]'::jsonb) IS DISTINCT FROM cancel_expected THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        FOR cancel_effect IN SELECT * FROM v24.effects e
+          WHERE e.run_id=cancel_run.run_id AND e.kind IN ('model_call','tool_call')
+            AND e.status IN ('ready','claimed') LOOP
+          IF NOT coalesce(p_closure->'effects' ? cancel_effect.effect_id::text,false) THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+        END LOOP;
+        -- Evaluate pin blockers after the projected ready -> cancelled updates.
+        SELECT coalesce(jsonb_agg(jsonb_build_object('key',jsonb_build_object('pin_id',pn.pin_id),
+          'set',jsonb_build_object('released_at',now(),'released_by_effect',p_effect_id))
+          ORDER BY pn.pin_id),'[]'::jsonb) INTO cancel_expected
+          FROM v24.pins pn WHERE pn.consumer_run_id=cancel_run.run_id AND pn.released_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM v24.effects e WHERE e.pin_id=pn.pin_id
+            AND (e.status IN ('ready','claimed')
+                 OR (e.status='unknown' AND e.resource_quiesced_at IS NULL))
+            AND NOT (e.run_id IS NOT DISTINCT FROM cancel_run.run_id
+                     AND e.kind IN ('model_call','tool_call') AND e.status='ready'));
+        IF coalesce(updates->'pins','[]'::jsonb) IS DISTINCT FROM cancel_expected THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        FOR cancel_pin IN SELECT * FROM v24.pins pn
+          WHERE pn.consumer_run_id=cancel_run.run_id AND pn.released_at IS NULL LOOP
+          IF NOT coalesce(p_closure->'pins' ? cancel_pin.pin_id::text,false)
+             OR EXISTS (SELECT 1 FROM v24.effects e WHERE e.pin_id=cancel_pin.pin_id
+                  AND (e.status IN ('ready','claimed')
+                       OR (e.status='unknown' AND e.resource_quiesced_at IS NULL))
+                  AND NOT coalesce(p_closure->'effects' ? e.effect_id::text,false)) THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+        END LOOP;
+      EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value
+          OR numeric_value_out_of_range OR datetime_field_overflow THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END;
+    END IF;
+  END IF;
+
+  IF kind = 'command_steer' THEN
+    IF has_error THEN
+      IF updates <> '{}'::jsonb OR coalesce(p_delta->'events','[]'::jsonb) <> '[]'::jsonb
+         OR coalesce(p_delta->'successors','[]'::jsonb) <> '[]'::jsonb
+         OR p_delta ? 'effect' OR p_delta ? 'request'
+         OR coalesce(p_delta->'error'->'error'->>'code','') NOT IN
+              ('already_terminal','stale_generation') THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    ELSE
+      BEGIN
+        SELECT * INTO steer_run FROM v24.runs rr
+          WHERE rr.run_id=(body->'payload'->>'run_id')::uuid;
+        steer_generation := (body->'payload'->>'expected_generation')::bigint;
+        IF steer_run.run_id IS NULL
+           OR NOT coalesce(p_closure->'runs' ? steer_run.run_id::text,false)
+           OR steer_run.status IN ('completed','failed','cancelled','blocked_unknown')
+           OR (v24.run_owner(steer_run.run_id) IS DISTINCT FROM p_principal
+               AND NOT pg_has_role(session_user,'v24_admin','USAGE'))
+           OR steer_generation IS DISTINCT FROM steer_run.driving_generation
+           OR p_delta->'effect' IS DISTINCT FROM jsonb_build_object('run_id',steer_run.run_id)
+           OR p_delta->'request' IS DISTINCT FROM jsonb_build_object('response',
+                jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
+                  'emitted',coalesce((p_delta->'request'->'response'->'emitted'),'[]'::jsonb),
+                  'revision',steer_run.revision+1,'claim',NULL))
+           OR p_delta->'events' IS DISTINCT FROM jsonb_build_array(jsonb_build_object(
+                'entity_type','run','entity_id',steer_run.run_id,'event_kind','run_steered',
+                'payload',jsonb_build_object('run_id',steer_run.run_id,
+                  'generation',steer_run.driving_generation+1,
+                  'deferred',false))) THEN
+          -- The exact response/event checks are completed below once the claim branch
+          -- and successor shape have been derived.
+          NULL;
+        END IF;
+        IF steer_run.run_id IS NULL
+           OR NOT coalesce(p_closure->'runs' ? steer_run.run_id::text,false)
+           OR steer_run.status IN ('completed','failed','cancelled','blocked_unknown')
+           OR (v24.run_owner(steer_run.run_id) IS DISTINCT FROM p_principal
+               AND NOT pg_has_role(session_user,'v24_admin','USAGE'))
+           OR steer_generation IS DISTINCT FROM steer_run.driving_generation THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        SELECT EXISTS (SELECT 1 FROM v24.effects e
+          WHERE e.run_id=steer_run.run_id AND e.kind IN ('model_call','tool_call')
+            AND e.status='claimed') INTO steer_claimed;
+        SELECT coalesce(jsonb_agg(jsonb_build_object('key',jsonb_build_object('effect_id',e.effect_id),
+          'set',jsonb_build_object('status','cancelled','settled_at',now(),'outcome',NULL))
+          ORDER BY e.effect_id),'[]'::jsonb)
+          INTO steer_expected FROM v24.effects e
+         WHERE e.run_id=steer_run.run_id AND e.kind IN ('model_call','tool_call')
+           AND e.status='ready';
+        IF coalesce(updates->'effects','[]'::jsonb) IS DISTINCT FROM steer_expected THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        FOR steer_effect IN SELECT * FROM v24.effects e
+          WHERE e.run_id=steer_run.run_id AND e.kind IN ('model_call','tool_call')
+            AND e.status='ready' LOOP
+          IF NOT coalesce(p_closure->'effects' ? steer_effect.effect_id::text,false) THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+        END LOOP;
+        steer_model := md5(p_effect_id::text || ':model_call:0')::uuid;
+        IF steer_claimed THEN
+          IF coalesce(p_delta->'successors','[]'::jsonb) <> '[]'::jsonb THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+        ELSE
+          IF jsonb_array_length(coalesce(p_delta->'successors','[]'::jsonb)) <> 1
+             OR p_delta->'successors'->0 IS DISTINCT FROM jsonb_build_object(
+               'effect_id',steer_model,'ordinal',0,'kind','model_call','run_id',steer_run.run_id,
+               'fiber_id',steer_run.owner_fiber_id,'episode_id',steer_run.owner_episode_id,
+               'epoch_no',steer_run.epoch_no+1,'generation',steer_run.driving_generation+1,
+               'replay_policy','replay_safe','request',p_delta->'successors'->0->'request') THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+          IF (p_delta->'successors'->0->'request') IS DISTINCT FROM jsonb_build_object(
+              'run_id',steer_run.run_id,'epoch_no',steer_run.epoch_no+1,
+              'generation',steer_run.driving_generation+1,
+              'input',coalesce((SELECT e.request->'input' FROM v24.effects e
+                WHERE e.run_id=steer_run.run_id AND e.kind='model_call'
+                ORDER BY e.created_at DESC,e.effect_id DESC LIMIT 1),'{}'::jsonb),
+              'instruction',body->'payload'->'instruction') THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+        END IF;
+        IF coalesce(updates->'runs','[]'::jsonb) IS DISTINCT FROM jsonb_build_array(
+            jsonb_build_object('key',jsonb_build_object('run_id',steer_run.run_id),'set',
+              jsonb_build_object('epoch_no',steer_run.epoch_no+1,
+                'driving_generation',steer_run.driving_generation+1,
+                'revision',steer_run.revision+1,'interaction',NULL,'status','running',
+                'pending_steer',CASE WHEN steer_claimed THEN
+                  jsonb_build_object('instruction',body->'payload'->'instruction',
+                    'generation',steer_run.driving_generation+1,'epoch',steer_run.epoch_no+1)
+                  ELSE NULL END,'updated_at',now())) )
+           OR p_delta->'events' IS DISTINCT FROM jsonb_build_array(jsonb_build_object(
+                'entity_type','run','entity_id',steer_run.run_id,'event_kind','run_steered',
+                'payload',jsonb_build_object('run_id',steer_run.run_id,
+                  'generation',steer_run.driving_generation+1,'deferred',steer_claimed)))
+           OR p_delta->'request' IS DISTINCT FROM jsonb_build_object('response',
+                jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
+                  'emitted',CASE WHEN steer_claimed THEN '[]'::jsonb
+                    ELSE jsonb_build_array(steer_model) END,
+                  'revision',steer_run.revision+1,'claim',NULL)) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value
+          OR numeric_value_out_of_range OR datetime_field_overflow THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END;
+    END IF;
+  END IF;
+
+  IF kind = 'command_respond' THEN
+    IF has_error THEN
+      IF updates <> '{}'::jsonb OR coalesce(p_delta->'events','[]'::jsonb) <> '[]'::jsonb
+         OR coalesce(p_delta->'successors','[]'::jsonb) <> '[]'::jsonb
+         OR p_delta ? 'effect' OR p_delta ? 'request'
+         OR coalesce(p_delta->'error'->'error'->>'code','') NOT IN
+              ('already_terminal','interaction_mismatch','stale_generation') THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    ELSE
+      BEGIN
+        SELECT * INTO respond_run FROM v24.runs rr
+          WHERE rr.run_id=(body->'payload'->>'run_id')::uuid;
+        respond_generation := (body->'payload'->>'expected_generation')::bigint;
+        respond_interaction := (body->'payload'->>'interaction_id')::uuid;
+        IF respond_run.run_id IS NULL
+           OR NOT coalesce(p_closure->'runs' ? respond_run.run_id::text,false)
+           OR respond_run.status IN ('completed','failed','cancelled','blocked_unknown')
+           OR (v24.run_owner(respond_run.run_id) IS DISTINCT FROM p_principal
+               AND NOT pg_has_role(session_user,'v24_admin','USAGE'))
+           OR respond_run.status IS DISTINCT FROM 'waiting'
+           OR respond_run.interaction IS NULL
+           OR respond_run.interaction->>'interaction_id' IS DISTINCT FROM respond_interaction::text
+           OR respond_generation IS DISTINCT FROM respond_run.driving_generation
+           OR p_delta->'effect' IS DISTINCT FROM jsonb_build_object('run_id',respond_run.run_id)
+           OR jsonb_array_length(coalesce(p_delta->'successors','[]'::jsonb)) <> 1 THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        respond_model := md5(p_effect_id::text || ':model_call:0')::uuid;
+        respond_origin := (respond_run.interaction->>'origin_effect_id')::uuid;
+        IF p_delta->'successors'->0 IS DISTINCT FROM jsonb_build_object(
+             'effect_id',respond_model,'ordinal',0,'kind','model_call',
+             'run_id',respond_run.run_id,'fiber_id',respond_run.owner_fiber_id,
+             'episode_id',respond_run.owner_episode_id,'epoch_no',respond_run.epoch_no,
+             'generation',respond_run.driving_generation+1,'replay_policy','no_replay',
+             'request',jsonb_build_object('run_id',respond_run.run_id,
+               'epoch_no',respond_run.epoch_no,'generation',respond_run.driving_generation+1,
+               'response',body->'payload'->'response','origin_effect_id',respond_origin))
+           OR coalesce(updates->'runs','[]'::jsonb) IS DISTINCT FROM jsonb_build_array(
+             jsonb_build_object('key',jsonb_build_object('run_id',respond_run.run_id),'set',
+               jsonb_build_object('status','running','interaction',NULL,
+                 'driving_generation',respond_run.driving_generation+1,
+                 'revision',respond_run.revision+1,'updated_at',now())))
+           OR p_delta->'events' IS DISTINCT FROM jsonb_build_array(jsonb_build_object(
+             'entity_type','run','entity_id',respond_run.run_id,
+             'event_kind','interaction_responded','payload',jsonb_build_object(
+               'run_id',respond_run.run_id,'interaction_id',respond_interaction,
+               'generation',respond_run.driving_generation+1)))
+           OR p_delta->'request' IS DISTINCT FROM jsonb_build_object('response',
+             jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
+               'emitted',jsonb_build_array(respond_model),
+               'revision',respond_run.revision+1,'claim',NULL)) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value
+          OR numeric_value_out_of_range OR datetime_field_overflow THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END;
+    END IF;
+  END IF;
+
   -- S2: successor shape, born-settled and attribution are closed contracts.
+  IF kind NOT IN ('command_start','command_steer','command_respond') THEN
   FOR succ IN SELECT value FROM jsonb_array_elements(coalesce(p_delta->'successors','[]'::jsonb)) LOOP
     IF jsonb_typeof(succ) IS DISTINCT FROM 'object'
        OR NOT (succ ?& ARRAY['effect_id','ordinal','kind','request'])
@@ -190,6 +601,7 @@ BEGIN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
   END LOOP;
+  END IF;
   -- settle[] may only target ready fiber_reconcile rows in the locked closure.
   IF p_delta ? 'settle' THEN
     IF jsonb_typeof(p_delta->'settle') IS DISTINCT FROM 'array'
@@ -511,6 +923,97 @@ BEGIN
     END LOOP;
   END IF;
 
+  IF kind = 'command_start' THEN
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(inserts->'runs','[]'::jsonb)) LOOP
+      INSERT INTO v24.runs SELECT * FROM jsonb_populate_record(NULL::v24.runs,r);
+    END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(inserts->'pins','[]'::jsonb)) LOOP
+      INSERT INTO v24.pins(pin_id,consumer_type,consumer_run_id,consumer_epoch,key,
+        slot_id,provider_fiber_id,provider_episode_id,descriptor_digest,created_by_effect)
+      SELECT pn.pin_id,pn.consumer_type,pn.consumer_run_id,pn.consumer_epoch,pn.key,
+        pn.slot_id,pn.provider_fiber_id,pn.provider_episode_id,pn.descriptor_digest,pn.created_by_effect
+      FROM jsonb_populate_record(NULL::v24.pins,r) pn;
+    END LOOP;
+    -- The two run references were prevalidated against the insert delta;
+    -- now check them against the inserted row before persisting either effect.
+    IF NOT has_error AND NOT EXISTS (SELECT 1 FROM v24.runs rr
+          WHERE rr.run_id=(p_delta->'effect'->>'run_id')::uuid
+            AND rr.run_id=(p_delta->'successors'->0->>'run_id')::uuid
+            AND rr.scope_id=(body->'payload'->>'scope_id')::uuid
+            AND rr.owner_fiber_id IS NOT DISTINCT FROM start_run.owner_fiber_id
+            AND rr.owner_episode_id IS NOT DISTINCT FROM start_run.owner_episode_id) THEN
+      RAISE EXCEPTION 'v24 start: inserted run attribution mismatch' USING ERRCODE='22023';
+    END IF;
+  END IF;
+
+  IF kind = 'command_cancel' AND NOT has_error THEN
+    UPDATE v24.runs AS rr SET status='cancelled',ended_at=now(),
+      interaction=NULL,pending_steer=NULL,
+      close_intent=jsonb_build_object('kind','cancel','generation',cancel_generation,'at',now()),
+      driving_generation=rr.driving_generation+1,revision=rr.revision+1,updated_at=now()
+      WHERE rr.run_id=cancel_run.run_id;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'effects','[]'::jsonb)) LOOP
+      IF r->'set' ? 'status' THEN
+        UPDATE v24.effects AS ef SET status='cancelled',settled_at=now(),outcome=NULL
+          WHERE ef.effect_id=(r->'key'->>'effect_id')::uuid AND ef.run_id=cancel_run.run_id
+            AND ef.kind IN ('model_call','tool_call') AND ef.status='ready';
+      ELSE
+        UPDATE v24.effects AS ef SET cancel_requested=true
+          WHERE ef.effect_id=(r->'key'->>'effect_id')::uuid AND ef.run_id=cancel_run.run_id
+            AND ef.kind IN ('model_call','tool_call') AND ef.status='claimed';
+      END IF;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'v24 cancel: effect transition changed' USING ERRCODE='40001';
+      END IF;
+    END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'pins','[]'::jsonb)) LOOP
+      UPDATE v24.pins AS pn SET released_at=now(),released_by_effect=p_effect_id
+        WHERE pn.pin_id=(r->'key'->>'pin_id')::uuid AND pn.consumer_run_id=cancel_run.run_id
+          AND pn.released_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM v24.effects e WHERE e.pin_id=pn.pin_id
+            AND (e.status IN ('ready','claimed')
+                 OR (e.status='unknown' AND e.resource_quiesced_at IS NULL)));
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'v24 cancel: pin remains referenced' USING ERRCODE='40001';
+      END IF;
+    END LOOP;
+    scope_id := cancel_run.scope_id;
+  END IF;
+
+  -- W5 steer must archive the ready business effects before inserting its
+  -- immediate successor (the run-level unique model_call index enforces this).
+  IF kind = 'command_steer' AND NOT has_error THEN
+    UPDATE v24.runs AS rr SET
+      epoch_no=rr.epoch_no+1,
+      driving_generation=rr.driving_generation+1,
+      revision=rr.revision+1,
+      interaction=NULL,
+      status='running',
+      pending_steer=CASE WHEN steer_claimed THEN
+        jsonb_build_object('instruction',body->'payload'->>'instruction',
+          'generation',rr.driving_generation+1,'epoch',rr.epoch_no+1)
+        ELSE NULL END,
+      updated_at=now()
+      WHERE rr.run_id=steer_run.run_id;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'effects','[]'::jsonb)) LOOP
+      UPDATE v24.effects AS ef SET status='cancelled',settled_at=now(),outcome=NULL
+        WHERE ef.effect_id=(r->'key'->>'effect_id')::uuid
+          AND ef.run_id=steer_run.run_id AND ef.kind IN ('model_call','tool_call')
+          AND ef.status='ready';
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'v24 steer: effect transition changed' USING ERRCODE='40001';
+      END IF;
+    END LOOP;
+    scope_id := steer_run.scope_id;
+  END IF;
+
+  IF kind = 'command_respond' AND NOT has_error THEN
+    UPDATE v24.runs AS rr SET status='running',interaction=NULL,
+      driving_generation=rr.driving_generation+1,revision=rr.revision+1,updated_at=now()
+      WHERE rr.run_id=respond_run.run_id;
+    scope_id := respond_run.scope_id;
+  END IF;
+
   IF scope_id IS NULL THEN
     BEGIN scope_id := (body->'payload'->>'scope_id')::uuid; EXCEPTION WHEN invalid_text_representation THEN NULL; END;
   END IF;
@@ -532,9 +1035,10 @@ BEGIN
     END LOOP;
   END IF;
 
-  INSERT INTO v24.effects(effect_id,requester_id,request_key,scope_id,fiber_id,episode_id,kind,status,request,request_digest,replay_policy,outcome,settled_at)
+  INSERT INTO v24.effects(effect_id,requester_id,request_key,scope_id,run_id,fiber_id,episode_id,kind,status,request,request_digest,replay_policy,outcome,settled_at)
   VALUES(p_effect_id,p_principal,body->>'request_key',
     coalesce(scope_id,(p_delta->'effect'->>'scope_id')::uuid),
+    (p_delta->'effect'->>'run_id')::uuid,
     (p_delta->'effect'->>'fiber_id')::uuid,
     (p_delta->'effect'->>'episode_id')::uuid,
     kind,status,p_outcome,request_digest,'replay_safe',outcome,now());
@@ -549,10 +1053,13 @@ BEGIN
   END LOOP;
   FOR succ IN SELECT value FROM jsonb_array_elements(coalesce(p_delta->'successors','[]'::jsonb)) LOOP
     new_id := coalesce((succ->>'effect_id')::uuid,gen_random_uuid());
-    INSERT INTO v24.effects(effect_id,parent_effect_id,ordinal,requester_id,scope_id,fiber_id,kind,status,request,request_digest,replay_policy,outcome,settled_at)
+    INSERT INTO v24.effects(effect_id,parent_effect_id,ordinal,requester_id,scope_id,run_id,fiber_id,episode_id,epoch_no,generation,kind,status,request,request_digest,replay_policy,outcome,settled_at)
     VALUES(new_id,p_effect_id,(succ->>'ordinal')::int,p_principal,scope_id,
-      (succ->>'fiber_id')::uuid,succ->>'kind',coalesce(succ->>'status','ready'),
-      coalesce(succ->'request','{}'::jsonb),sha256(convert_to(coalesce(succ->'request','{}'::jsonb)::text,'UTF8')),'replay_safe',
+      (succ->>'run_id')::uuid,(succ->>'fiber_id')::uuid,(succ->>'episode_id')::uuid,
+      (succ->>'epoch_no')::bigint,(succ->>'generation')::bigint,
+      succ->>'kind',coalesce(succ->>'status','ready'),
+      coalesce(succ->'request','{}'::jsonb),sha256(convert_to(coalesce(succ->'request','{}'::jsonb)::text,'UTF8')),
+      CASE WHEN kind IN ('command_start','command_steer','command_respond') THEN 'no_replay' ELSE 'replay_safe' END,
       CASE WHEN succ->>'status' IN ('succeeded','failed') THEN succ->'outcome' ELSE NULL END,
       CASE WHEN succ->>'status' IN ('succeeded','failed') THEN now() ELSE NULL END);
     emitted := emitted || jsonb_build_array(new_id);
@@ -568,6 +1075,384 @@ BEGIN
     END IF;
   END LOOP;
   RETURN response;
+END;
+$$;
+
+-- S3 W4: seal publication authority without claiming resource quiescence.
+CREATE FUNCTION v24.interpret_cancel(p_effect_id uuid, p_principal uuid,
+  p_outcome jsonb, p_closure jsonb) RETURNS jsonb
+LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
+DECLARE
+  p jsonb := p_outcome->'body'->'payload';
+  current_run v24.runs%ROWTYPE;
+  expected_generation bigint;
+  effect_updates jsonb;
+  pin_updates jsonb;
+BEGIN
+  IF NOT (p ?& ARRAY['run_id','expected_generation'])
+     OR EXISTS (SELECT 1 FROM jsonb_object_keys(p) k WHERE k NOT IN ('run_id','expected_generation'))
+     OR jsonb_typeof(p->'run_id') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(p->'expected_generation') IS DISTINCT FROM 'number'
+     OR (p->>'expected_generation') !~ '^[0-9]+$'
+     OR (p->>'expected_generation')::numeric > 9223372036854775807 THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END IF;
+  expected_generation := (p->>'expected_generation')::bigint;
+  SELECT * INTO current_run FROM v24.runs rr WHERE rr.run_id=(p->>'run_id')::uuid;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END IF;
+  IF v24.run_owner(current_run.run_id) IS DISTINCT FROM p_principal
+     AND NOT pg_has_role(session_user,'v24_admin','USAGE') THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('unauthorized'));
+  END IF;
+  -- Terminal precedence is intentional: a fresh key never revives a sealed run.
+  IF current_run.status IN ('completed','failed','cancelled','blocked_unknown') THEN
+    RETURN jsonb_build_object('write',true,'error',v24.error_v1('already_terminal'));
+  END IF;
+  IF expected_generation IS DISTINCT FROM current_run.driving_generation THEN
+    RETURN jsonb_build_object('write',true,'error',v24.error_v1('stale_generation'));
+  END IF;
+  SELECT coalesce(jsonb_agg(jsonb_build_object('key',jsonb_build_object('effect_id',e.effect_id),
+    'set',CASE WHEN e.status='ready'
+       THEN jsonb_build_object('status','cancelled','settled_at',now(),'outcome',NULL)
+       ELSE jsonb_build_object('cancel_requested',true) END) ORDER BY e.effect_id),'[]'::jsonb)
+    INTO effect_updates FROM v24.effects e
+    WHERE e.run_id=current_run.run_id AND e.kind IN ('model_call','tool_call')
+      AND e.status IN ('ready','claimed');
+  -- Ignore exactly the ready business effects cancelled by this same delta.
+  SELECT coalesce(jsonb_agg(jsonb_build_object('key',jsonb_build_object('pin_id',pn.pin_id),
+    'set',jsonb_build_object('released_at',now(),'released_by_effect',p_effect_id))
+    ORDER BY pn.pin_id),'[]'::jsonb) INTO pin_updates
+    FROM v24.pins pn WHERE pn.consumer_run_id=current_run.run_id AND pn.released_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM v24.effects e WHERE e.pin_id=pn.pin_id
+      AND (e.status IN ('ready','claimed')
+           OR (e.status='unknown' AND e.resource_quiesced_at IS NULL))
+      AND NOT (e.run_id IS NOT DISTINCT FROM current_run.run_id
+               AND e.kind IN ('model_call','tool_call') AND e.status='ready'));
+  RETURN jsonb_build_object('domain',jsonb_build_object('update',jsonb_build_object(
+    'runs',jsonb_build_array(jsonb_build_object('key',jsonb_build_object('run_id',current_run.run_id),
+      'set',jsonb_build_object('status','cancelled','ended_at',now(),
+        'interaction',NULL,'pending_steer',NULL,
+        'close_intent',jsonb_build_object('kind','cancel','generation',expected_generation,'at',now()),
+        'driving_generation',current_run.driving_generation+1,
+        'revision',current_run.revision+1,'updated_at',now()))),
+    'effects',effect_updates,'pins',pin_updates)),
+    'effect',jsonb_build_object('run_id',current_run.run_id),
+    'request',jsonb_build_object('response',jsonb_build_object('v',1,'disposition','committed',
+      'effect_id',p_effect_id,'emitted','[]'::jsonb,'revision',current_run.revision+1,'claim',NULL)),
+    'events',jsonb_build_array(jsonb_build_object('entity_type','run','entity_id',current_run.run_id,
+      'event_kind','run_cancelled','payload',jsonb_build_object('run_id',current_run.run_id,
+        'generation',expected_generation))),
+    'successors','[]'::jsonb);
+END;
+$$;
+
+-- S3 W5: steer advances the run epoch and either continues immediately or defers
+-- behind an already claimed business effect.
+CREATE FUNCTION v24.interpret_steer(p_effect_id uuid, p_principal uuid,
+  p_outcome jsonb, p_closure jsonb) RETURNS jsonb
+LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
+DECLARE
+  p jsonb := p_outcome->'body'->'payload';
+  current_run v24.runs%ROWTYPE;
+  expected_generation bigint;
+  ready_updates jsonb;
+  has_claimed boolean;
+  model_id uuid := md5(p_effect_id::text || ':model_call:0')::uuid;
+  prior_input jsonb;
+  next_epoch bigint;
+  next_generation bigint;
+  response jsonb;
+BEGIN
+  IF jsonb_typeof(p) IS DISTINCT FROM 'object'
+     OR NOT (p ?& ARRAY['run_id','expected_generation','instruction'])
+     OR EXISTS (SELECT 1 FROM jsonb_object_keys(p) k
+                WHERE k NOT IN ('run_id','expected_generation','instruction'))
+     OR jsonb_typeof(p->'run_id') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(p->'expected_generation') IS DISTINCT FROM 'number'
+     OR (p->>'expected_generation') !~ '^[0-9]+$'
+     OR (p->>'expected_generation')::numeric > 9223372036854775807
+     OR jsonb_typeof(p->'instruction') IS DISTINCT FROM 'string'
+     OR length(p->>'instruction') NOT BETWEEN 1 AND 8192 THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END IF;
+  BEGIN
+    expected_generation := (p->>'expected_generation')::bigint;
+    SELECT * INTO current_run FROM v24.runs WHERE run_id=(p->>'run_id')::uuid;
+  EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END IF;
+  IF v24.run_owner(current_run.run_id) IS DISTINCT FROM p_principal
+     AND NOT pg_has_role(session_user,'v24_admin','USAGE') THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('unauthorized'));
+  END IF;
+  IF current_run.status IN ('completed','failed','cancelled','blocked_unknown') THEN
+    RETURN jsonb_build_object('write',true,'error',v24.error_v1('already_terminal'));
+  END IF;
+  IF expected_generation IS DISTINCT FROM current_run.driving_generation THEN
+    RETURN jsonb_build_object('write',true,'error',v24.error_v1('stale_generation'));
+  END IF;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+      'key',jsonb_build_object('effect_id',e.effect_id),
+      'set',jsonb_build_object('status','cancelled','settled_at',now(),'outcome',NULL))
+      ORDER BY e.effect_id),'[]'::jsonb)
+    INTO ready_updates
+    FROM v24.effects e
+   WHERE e.run_id=current_run.run_id AND e.kind IN ('model_call','tool_call')
+     AND e.status='ready';
+  SELECT EXISTS (SELECT 1 FROM v24.effects e
+    WHERE e.run_id=current_run.run_id AND e.kind IN ('model_call','tool_call')
+      AND e.status='claimed') INTO has_claimed;
+  SELECT coalesce(e.request->'input','{}'::jsonb) INTO prior_input
+    FROM v24.effects e
+   WHERE e.run_id=current_run.run_id AND e.kind='model_call'
+   ORDER BY e.created_at DESC,e.effect_id DESC LIMIT 1;
+  next_epoch := current_run.epoch_no + 1;
+  next_generation := current_run.driving_generation + 1;
+  response := jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
+    'emitted',CASE WHEN has_claimed THEN '[]'::jsonb ELSE jsonb_build_array(model_id) END,
+    'revision',current_run.revision+1,'claim',NULL);
+  RETURN jsonb_build_object(
+    'domain',jsonb_build_object('update',jsonb_build_object(
+      'runs',jsonb_build_array(jsonb_build_object('key',jsonb_build_object('run_id',current_run.run_id),
+        'set',jsonb_build_object('epoch_no',next_epoch,
+          'driving_generation',next_generation,'revision',current_run.revision+1,
+          'interaction',NULL,'status','running',
+          'pending_steer',CASE WHEN has_claimed THEN
+            jsonb_build_object('instruction',p->>'instruction','generation',next_generation,'epoch',next_epoch)
+            ELSE NULL END,'updated_at',now()))),
+      'effects',ready_updates)),
+    'effect',jsonb_build_object('run_id',current_run.run_id),
+    'request',jsonb_build_object('response',response),
+    'events',jsonb_build_array(jsonb_build_object('entity_type','run','entity_id',current_run.run_id,
+      'event_kind','run_steered','payload',jsonb_build_object('run_id',current_run.run_id,
+        'generation',next_generation,'deferred',has_claimed))),
+    'successors',CASE WHEN has_claimed THEN '[]'::jsonb ELSE jsonb_build_array(
+      jsonb_build_object('effect_id',model_id,'ordinal',0,'kind','model_call',
+        'run_id',current_run.run_id,'fiber_id',current_run.owner_fiber_id,
+        'episode_id',current_run.owner_episode_id,'epoch_no',next_epoch,
+        'generation',next_generation,'replay_policy','replay_safe',
+        'request',jsonb_build_object('run_id',current_run.run_id,'epoch_no',next_epoch,
+          'generation',next_generation,'input',coalesce(prior_input,'{}'::jsonb),
+          'instruction',p->>'instruction'))) END);
+END;
+$$;
+
+-- S3 W6: interaction matching precedes CAS, so a second key observes consumption.
+CREATE FUNCTION v24.interpret_respond(p_effect_id uuid, p_principal uuid,
+  p_outcome jsonb, p_closure jsonb) RETURNS jsonb
+LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
+DECLARE
+  p jsonb := p_outcome->'body'->'payload';
+  current_run v24.runs%ROWTYPE;
+  expected_generation bigint;
+  interaction_id uuid;
+  origin_id uuid;
+  model_id uuid := md5(p_effect_id::text || ':model_call:0')::uuid;
+  next_generation bigint;
+BEGIN
+  IF jsonb_typeof(p) IS DISTINCT FROM 'object'
+     OR NOT (p ?& ARRAY['run_id','interaction_id','response','expected_generation'])
+     OR EXISTS (SELECT 1 FROM jsonb_object_keys(p) k
+                WHERE k NOT IN ('run_id','interaction_id','response','expected_generation'))
+     OR jsonb_typeof(p->'run_id') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(p->'interaction_id') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(p->'response') IS DISTINCT FROM 'object'
+     OR jsonb_typeof(p->'expected_generation') IS DISTINCT FROM 'number'
+     OR (p->>'expected_generation') !~ '^[0-9]+$'
+     OR (p->>'expected_generation')::numeric > 9223372036854775807 THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END IF;
+  BEGIN
+    expected_generation := (p->>'expected_generation')::bigint;
+    interaction_id := (p->>'interaction_id')::uuid;
+    SELECT * INTO current_run FROM v24.runs WHERE run_id=(p->>'run_id')::uuid;
+  EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END IF;
+  IF v24.run_owner(current_run.run_id) IS DISTINCT FROM p_principal
+     AND NOT pg_has_role(session_user,'v24_admin','USAGE') THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('unauthorized'));
+  END IF;
+  IF current_run.status IN ('completed','failed','cancelled','blocked_unknown') THEN
+    RETURN jsonb_build_object('write',true,'error',v24.error_v1('already_terminal'));
+  END IF;
+  IF current_run.status IS DISTINCT FROM 'waiting' OR current_run.interaction IS NULL
+     OR current_run.interaction->>'interaction_id' IS DISTINCT FROM interaction_id::text THEN
+    RETURN jsonb_build_object('write',true,'error',v24.error_v1('interaction_mismatch'));
+  END IF;
+  IF expected_generation IS DISTINCT FROM current_run.driving_generation THEN
+    RETURN jsonb_build_object('write',true,'error',v24.error_v1('stale_generation'));
+  END IF;
+  origin_id := (current_run.interaction->>'origin_effect_id')::uuid;
+  next_generation := current_run.driving_generation+1;
+  RETURN jsonb_build_object(
+    'domain',jsonb_build_object('update',jsonb_build_object('runs',jsonb_build_array(
+      jsonb_build_object('key',jsonb_build_object('run_id',current_run.run_id),
+        'set',jsonb_build_object('status','running','interaction',NULL,
+          'driving_generation',next_generation,'revision',current_run.revision+1,'updated_at',now()))))),
+    'effect',jsonb_build_object('run_id',current_run.run_id),
+    'request',jsonb_build_object('response',jsonb_build_object('v',1,'disposition','committed',
+      'effect_id',p_effect_id,'emitted',jsonb_build_array(model_id),
+      'revision',current_run.revision+1,'claim',NULL)),
+    'events',jsonb_build_array(jsonb_build_object('entity_type','run','entity_id',current_run.run_id,
+      'event_kind','interaction_responded','payload',jsonb_build_object('run_id',current_run.run_id,
+        'interaction_id',interaction_id,'generation',next_generation))),
+    'successors',jsonb_build_array(jsonb_build_object('effect_id',model_id,'ordinal',0,
+      'kind','model_call','run_id',current_run.run_id,'fiber_id',current_run.owner_fiber_id,
+      'episode_id',current_run.owner_episode_id,'epoch_no',current_run.epoch_no,
+      'generation',next_generation,'replay_policy','no_replay',
+      'request',jsonb_build_object('run_id',current_run.run_id,'epoch_no',current_run.epoch_no,
+        'generation',next_generation,'response',p->'response','origin_effect_id',origin_id))));
+END;
+$$;
+
+-- S3 W2: start only interprets local data and the locked capability snapshot.
+CREATE FUNCTION v24.interpret_start(p_effect_id uuid, p_principal uuid,
+  p_outcome jsonb, p_closure jsonb) RETURNS jsonb
+LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
+DECLARE
+  p jsonb := p_outcome->'body'->'payload';
+  inp jsonb := p->'input';
+  budget jsonb := p->'budget';
+  reqs jsonb := coalesce(inp->'requires','[]'::jsonb);
+  sc v24.scopes%ROWTYPE;
+  f v24.fibers%ROWTYPE;
+  ep v24.episodes%ROWTYPE;
+  it v24.installs%ROWTYPE;
+  item jsonb;
+  b record;
+  resolved record;
+  run_id uuid := gen_random_uuid();
+  model_id uuid := md5(p_effect_id::text || ':model_call:0')::uuid;
+  pins jsonb := '[]'::jsonb;
+  run_row jsonb;
+  response jsonb;
+  fail_code text;
+BEGIN
+  IF NOT (p ?& ARRAY['scope_id','owner_fiber_id','input','budget'])
+     OR EXISTS (SELECT 1 FROM jsonb_object_keys(p) k
+                WHERE k NOT IN ('scope_id','owner_fiber_id','input','budget'))
+     OR jsonb_typeof(p->'scope_id') IS DISTINCT FROM 'string'
+     OR (p->'owner_fiber_id' <> 'null'::jsonb
+         AND jsonb_typeof(p->'owner_fiber_id') IS DISTINCT FROM 'string')
+     OR jsonb_typeof(inp) IS DISTINCT FROM 'object'
+     OR jsonb_typeof(budget) IS DISTINCT FROM 'object'
+     OR jsonb_typeof(reqs) IS DISTINCT FROM 'array' THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END IF;
+  IF jsonb_array_length(reqs) > 16 THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END IF;
+  FOR item IN SELECT value FROM jsonb_array_elements(reqs) LOOP
+    IF jsonb_typeof(item) IS DISTINCT FROM 'object'
+       OR NOT (item ? 'key')
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(item) k WHERE k <> 'key')
+       OR jsonb_typeof(item->'key') IS DISTINCT FROM 'string'
+       OR length(item->>'key') NOT BETWEEN 1 AND 256 THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(reqs) r
+             GROUP BY r->>'key' HAVING count(*)>1)
+     OR ((p->>'owner_fiber_id') IS NULL AND jsonb_array_length(reqs)>0)
+     OR NOT (budget ?& ARRAY['steps','tool_calls'])
+     OR EXISTS (SELECT 1 FROM jsonb_object_keys(budget) k
+                WHERE k NOT IN ('steps','tool_calls','tokens','wall_ms')) THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+  END IF;
+  FOR b IN SELECT key,value FROM jsonb_each(budget) LOOP
+    -- Numeric comparison happens only after syntax validation, and before
+    -- bounded casts: arbitrarily large positive integers are W1 cap failures.
+    IF jsonb_typeof(b.value) IS DISTINCT FROM 'number'
+       OR (b.value #>> '{}') !~ '^[0-9]+$' THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+    END IF;
+    IF b.key IN ('steps','wall_ms') AND (b.value #>> '{}')::numeric < 1 THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+    END IF;
+  END LOOP;
+  IF (budget->>'steps')::numeric > 256
+     OR (budget->>'tool_calls')::numeric > 1024
+     OR (budget->>'tokens')::numeric > 1000000000000
+     OR (budget->>'wall_ms')::numeric > 86400000 THEN
+    fail_code := 'budget_exceeded';
+  END IF;
+  SELECT * INTO sc FROM v24.scopes s WHERE s.scope_id=(p->>'scope_id')::uuid;
+  IF NOT FOUND OR (sc.owner_principal IS DISTINCT FROM p_principal
+                  AND NOT pg_has_role(session_user,'v24_admin','USAGE')) THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('unauthorized'));
+  END IF;
+  IF fail_code IS NULL AND sc.close_requested_at IS NOT NULL THEN
+    fail_code := 'scope_closed';
+  END IF;
+  IF p->>'owner_fiber_id' IS NOT NULL THEN
+    SELECT * INTO f FROM v24.fibers fx WHERE fx.fiber_id=(p->>'owner_fiber_id')::uuid;
+    IF NOT FOUND OR f.scope_id IS DISTINCT FROM sc.scope_id THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_args'));
+    END IF;
+    SELECT * INTO ep FROM v24.episodes e WHERE e.episode_id=f.current_episode_id;
+    SELECT * INTO it FROM v24.installs i WHERE i.install_id=f.install_id;
+    IF fail_code IS NULL AND (f.disposed_at IS NOT NULL OR NOT f.want_on
+       OR ep.episode_id IS NULL OR ep.fiber_id IS DISTINCT FROM f.fiber_id
+       OR ep.state IS DISTINCT FROM 'active' OR it.state IS DISTINCT FROM 'installed') THEN
+      fail_code := 'provider_unavailable';
+    END IF;
+  END IF;
+  IF fail_code IS NULL THEN
+    FOR resolved IN SELECT * FROM v24.resolve(sc.scope_id,
+       ARRAY(SELECT value->>'key' FROM jsonb_array_elements(reqs))) LOOP
+      IF resolved.live IS DISTINCT FROM true THEN
+        fail_code := 'dependency_unresolved';
+        EXIT;
+      END IF;
+      IF NOT coalesce(p_closure->'slots' ? resolved.slot_id::text,false) THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('retry_with_closure'));
+      END IF;
+      pins := pins || jsonb_build_array(jsonb_build_object('pin_id',gen_random_uuid(),
+        'consumer_type','run','consumer_run_id',run_id,'consumer_epoch',1,
+        'key',resolved.key,'slot_id',resolved.slot_id,
+        'provider_fiber_id',(SELECT s.fiber_id FROM v24.slots s WHERE s.slot_id=resolved.slot_id),
+        'provider_episode_id',resolved.provider_episode_id,
+        'descriptor_digest',resolved.descriptor_digest,'created_by_effect',p_effect_id));
+    END LOOP;
+  END IF;
+  IF fail_code IS NOT NULL THEN
+    RETURN jsonb_build_object('write',true,'error',v24.error_v1(fail_code));
+  END IF;
+  -- wall_ms is optional but the frozen DDL requires a value: absent means
+  -- the deployment ceiling. Keep the original budget in the model request.
+  run_row := jsonb_build_object('run_id',run_id,'scope_id',sc.scope_id,
+    'owner_fiber_id',f.fiber_id,'owner_episode_id',ep.episode_id,'status','running',
+    'epoch_no',1,'registration_generation',1,'turn_no',0,'driving_generation',1,
+    'remaining_steps',(budget->>'steps')::integer,
+    'remaining_tool_calls',(budget->>'tool_calls')::integer,
+    'remaining_tokens',(budget->>'tokens')::bigint,
+    'remaining_wall_ms',coalesce((budget->>'wall_ms')::bigint,86400000),
+    'revision',1,'created_at',now(),'updated_at',now());
+  response := jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
+    'emitted',jsonb_build_array(run_id,model_id),'revision',1,'claim',NULL);
+  RETURN jsonb_build_object('write',true,
+    'domain',jsonb_build_object('insert',jsonb_build_object('runs',jsonb_build_array(run_row),'pins',pins)),
+    'effect',jsonb_build_object('run_id',run_id),
+    'request',jsonb_build_object('response',response),
+    'events',jsonb_build_array(
+      jsonb_build_object('entity_type','run','entity_id',run_id,'event_kind','run_started',
+        'payload',jsonb_build_object('run_id',run_id)),
+      jsonb_build_object('entity_type','run','entity_id',run_id,'event_kind','model_call_requested',
+        'payload',jsonb_build_object('run_id',run_id,'effect_id',model_id))),
+    'successors',jsonb_build_array(jsonb_build_object('effect_id',model_id,'ordinal',0,
+      'kind','model_call','run_id',run_id,'fiber_id',f.fiber_id,'episode_id',ep.episode_id,
+      'epoch_no',1,'generation',1,'replay_policy','no_replay',
+      'request',jsonb_build_object('run_id',run_id,'epoch_no',1,'generation',1,'input',inp,'budget',budget))));
 END;
 $$;
 

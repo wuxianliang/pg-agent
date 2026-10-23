@@ -174,7 +174,7 @@ def resolver_contract(owner):
             'ret', pg_get_function_result(p.oid))
         FROM pg_proc p WHERE p.pronamespace='v24'::regnamespace
           AND p.proname='resolve'""")
-    assert row["prosecdef"] is False, row
+    assert row["prosecdef"] is True, row
     assert row["volatile"] == "s", row
     assert row["args"] == "p_scope_id uuid, p_keys text[]", row
     assert "key text" in row["ret"] and "live boolean" in row["ret"], row

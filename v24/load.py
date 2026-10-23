@@ -13,6 +13,7 @@ CANONICAL_ORDER = (
     "30_advance.sql",
     "40_interpreters.sql",
     "45_capability.sql",
+    "47_verbs.sql",
     "50_permissions.sql",
 )
 # W4 activates the command interpreter and delta applier.
@@ -23,6 +24,7 @@ SQL_LOAD_ORDER = (
     "30_advance.sql",
     "40_interpreters.sql",
     "45_capability.sql",
+    "47_verbs.sql",
     "50_permissions.sql",
 )
 

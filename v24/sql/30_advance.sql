@@ -279,6 +279,30 @@ BEGIN
     END IF;
   END IF;
 
+  -- Start's absent targets have protocol errors, rather than being nonexistent
+  -- closure members. These reads run under G, after exact request replay.
+  IF v_class='command' AND v_body->>'kind'='command_start' THEN
+    IF v_body->'payload'->>'scope_id' IS NULL THEN
+      RETURN v24.error_v1('invalid_args');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM v24.scopes s
+                    WHERE s.scope_id=(v_body->'payload'->>'scope_id')::uuid) THEN
+      RETURN v24.error_v1('unauthorized');
+    END IF;
+    IF v_body->'payload'->>'owner_fiber_id' IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM v24.fibers f
+                        WHERE f.fiber_id=(v_body->'payload'->>'owner_fiber_id')::uuid) THEN
+      RETURN v24.error_v1('invalid_args');
+    END IF;
+  END IF;
+
+  -- A missing run-control target is W0, not an unresolved closure reference.
+  IF v_class='command' AND v_body->>'kind' IN ('command_cancel','command_steer','command_respond')
+     AND NOT EXISTS (SELECT 1 FROM v24.runs r
+                     WHERE r.run_id=(v_body->'payload'->>'run_id')::uuid) THEN
+    RETURN v24.error_v1('invalid_args');
+  END IF;
+
   -- 9 / E1 / K0/S1: discover the transitive ownership/reference closure WITHOUT
   -- locking. UNION deduplicates cycles. New/missing references fail closed before
   -- ANY domain DML; never repair a closure by adding locks after this pass.
@@ -301,6 +325,27 @@ BEGIN
         ('scopes',x.scope_id), ('runs',x.parent_run_id),
         ('fibers',x.owner_fiber_id), ('episodes',x.owner_episode_id)
       ) r(entity_type,entity_id) WHERE c.entity_type='runs' AND x.run_id=c.entity_id
+      UNION ALL
+      -- Run control touches business effects; only cancel releases run pins.
+      SELECT 'effects', e.effect_id FROM v24.effects e
+        WHERE c.entity_type='runs' AND e.run_id=c.entity_id
+          AND c.entity_id=(v_body->'payload'->>'run_id')::uuid
+          AND e.kind IN ('model_call','tool_call') AND e.status IN ('ready','claimed')
+          AND v_class='command' AND v_body->>'kind' IN ('command_cancel','command_steer')
+      UNION ALL
+      SELECT 'pins', p.pin_id FROM v24.pins p
+        WHERE c.entity_type='runs' AND p.consumer_run_id=c.entity_id
+          AND c.entity_id=(v_body->'payload'->>'run_id')::uuid AND p.released_at IS NULL
+          AND v_class='command' AND v_body->>'kind'='command_cancel'
+      UNION ALL
+      SELECT 'effects', e.effect_id FROM v24.effects e
+        WHERE c.entity_type='pins' AND e.pin_id=c.entity_id
+          AND EXISTS (SELECT 1 FROM v24.pins p WHERE p.pin_id=c.entity_id
+                      AND p.consumer_run_id=(v_body->'payload'->>'run_id')::uuid
+                      AND p.released_at IS NULL)
+          AND (e.status IN ('ready','claimed')
+               OR (e.status='unknown' AND e.resource_quiesced_at IS NULL))
+          AND v_class='command' AND v_body->>'kind'='command_cancel'
       UNION ALL
       SELECT r.* FROM v24.installs x CROSS JOIN LATERAL (VALUES
         ('scopes',x.scope_id), ('fibers',x.owner_fiber_id), ('episodes',x.owner_episode_id)
@@ -342,6 +387,17 @@ BEGIN
       WHERE c.entity_type='fibers' AND x.fiber_id=c.entity_id
         AND v_class='command' AND v_body->>'kind'='command_fiber_control'
         AND v_body->'payload'->>'action'='on' AND rr.live
+      UNION ALL
+      -- Run pins use the same pre-lock resolve discovery as activation pins.
+      -- Clamp malformed arrays here; interpret_start owns W0 shape validation.
+      SELECT 'slots', rr.slot_id
+      FROM v24.resolve((v_body->'payload'->>'scope_id')::uuid,
+        ARRAY(SELECT value->>'key' FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(v_body->'payload'->'input'->'requires')='array'
+               THEN v_body->'payload'->'input'->'requires' ELSE '[]'::jsonb END)
+          WITH ORDINALITY req(value,ord) WHERE ord<=16)) rr
+      WHERE v_class='command' AND v_body->>'kind'='command_start'
+        AND c.entity_type='effects' AND c.entity_id=p_effect_id AND rr.live
       UNION ALL
       SELECT 'fibers', x.fiber_id FROM v24.episodes x
         WHERE c.entity_type='episodes' AND x.episode_id=c.entity_id

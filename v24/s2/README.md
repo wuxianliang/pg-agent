@@ -1,6 +1,6 @@
 # v24 S2 capability plane — final
 
-Authority: [S2 plan](../../docs/plans/v24-s2-capability-2026-10-23.md). **S2 is complete: W1–W7 implemented, all five gates exit 0, closeout artifacts present.** This file is written before the S2 milestone commit.
+Authority: [S2 plan](../../docs/plans/v24-s2-capability-2026-10-23.md). **S2 is complete: W1–W7 implemented, all five gates exit 0, closeout artifacts present.** The S3 closeout corrections below reflect the current code.
 
 ## Layout and load
 
@@ -13,7 +13,7 @@ Authority: [S2 plan](../../docs/plans/v24-s2-capability-2026-10-23.md). **S2 is 
 
 ## `resolve` (C8)
 
-`v24.resolve(scope_id, keys[])` is `STABLE` / `SECURITY INVOKER` and returns exactly B.3's six columns:
+`v24.resolve(scope_id, keys[])` was `STABLE` / `SECURITY INVOKER` in S2; S3 W1 changed it to `STABLE` / `SECURITY DEFINER` because protocol roles have zero table privileges (the S2 defect was that service-role invocation would raise `42501`; S2 had only exercised it as migration owner). It returns exactly B.3's six columns:
 
 ```text
 (key, slot_id, provider_episode_id, descriptor, descriptor_digest, live)
@@ -70,7 +70,7 @@ When clear it tombstones the install's own fibers (`disposed_at`, `want_on=false
 
 ## ACL
 
-`advance` remains the only `SECURITY DEFINER` function. `resolve`, `fiber_control` and `dispose` are INVOKER; EXECUTE is granted to `v24_admin`, `v24_service`, `v24_operator` (plus the existing entry points). `check_policy_valid`/`check_policy_ok`/`capability_noop` are ungranted helpers used by the DEFINER. The protocol roles still hold zero table privileges; `test_g1.py` re-runs the exact EXECUTE set and the 30 DML refusals per role.
+At S2 close, `advance` was the only `SECURITY DEFINER` function. S3 W1 adds the read-only DEFINER allowlist (`resolve`, `poll`, `wait_check`, `run_owner`, `run_projection`); `run_owner`/`run_projection` are internal and have no protocol-role EXECUTE grants; `fiber_control` and `dispose` remain INVOKER; EXECUTE is granted to `v24_admin`, `v24_service`, `v24_operator` (plus the existing entry points). `check_policy_valid`/`check_policy_ok`/`capability_noop` are ungranted helpers used by the DEFINER. The protocol roles still hold zero table privileges; `test_g1.py` re-runs the exact EXECUTE set and the 30 DML refusals per role.
 
 ## Actual verification — 2026-10-23
 
@@ -88,12 +88,14 @@ Run from `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` on branch `v24` (P
 
 Historical failures and their corrections are recorded in the matrix §0.1 and the ledger §4; no assertion was deleted or weakened.
 
+On 2026-10-24 the five commands above plus `uv run python v24/s3/test_g2.py` were rerun serially and all exited 0 (matrix §0). The S2 A1 console label still says INVOKER; the current catalog assertion and S3 G2a-0 verify DEFINER and real protocol-role reads.
+
 ## Boundaries (not covered by S2)
 
-- **G3b** (run pins, withdraw-then-new-run, claim/close double order) is S3. S2 proves only the activation-pin half.
+- S2 proves the activation-pin half. S3 G3b-1…5 passed on 2026-10-24, completing G3 (G3a+G3b); full claimed/unknown settlement release remains unverified / S4. G3b-4 is sequential evidence; G3b-5 proves start/off serialization with two connections and lock barriers.
 - `inspect_resource` convergence is S5; S2 only stops `prepare_unknown` at `dispose_pending`.
 - Owner cascade, scope close, recursive children barriers and the full dispose closure are S5; S2 does leaf dispose only.
-- No read API beyond `resolve`; poll/wait zero-write is N/A until S3.
-- `advance.revision` is still 0 (no `runs` writer); the C2 hole must be written back before S3.
+- S2 provided `resolve`; S3 adds the run projection read APIs `poll` and `wait_check`.
+- S3 `start` now writes `runs` with `revision=1`; advance increments revision on visible-state changes. It is no longer constant 0.
 - FakeHost is in-process and not a transport proof; recovery covers two journal windows only.
-- Concurrency evidence is limited to G exclusivity/first-lock and the activation-pin barrier; the full matrix is S7/G6.
+- Current concurrency evidence includes G exclusivity/first-lock, the activation-pin barrier, and S3 G3b-5 start/off lock barriers; the full matrix remains S7/G6.

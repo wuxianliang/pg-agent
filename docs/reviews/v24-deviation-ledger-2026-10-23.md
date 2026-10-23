@@ -1,6 +1,6 @@
-# v24 偏差台账（S1 + S2）
+# v24 偏差台账（S1 + S2 + S3）
 
-> 定稿：2026-10-23。本文件是 S1/S2 里程碑的收尾工件，分别是 [S1 计划 §7](../plans/v24-s1-kernel-2026-10-23.md) 与 [S2 计划 §7](../plans/v24-s2-capability-2026-10-23.md) 的落位记录。规则：**每条与设计稿不一致的实现都必须具名落账，不得静默改规格**；规格修改走「设计稿修订 + Oracle 复审」（pre-plan §1.2）。历史失败追加修正结果，不覆盖、不删去。
+> 收尾稿：2026-10-24。本文件是 S1/S2/S3 里程碑的收尾工件，记录各计划 §7 的实施偏差。2026-10-24 本轮六个 gate 串行实跑全部退出 0，G3b-1…5 passed（命令与结果见矩阵 §0）。规则：**每条与设计稿不一致的实现都必须具名落账，不得静默改规格**；规格修改走「设计稿修订 + Oracle 复审」（pre-plan §1.2）。历史失败追加修正结果，不覆盖、不删去。
 
 裁决来源：`docs/reviews/v24-three-doc-consistency-2026-10-23.md`（chat `untitled-chat-1EDE09`，14 项）、W5/W6 实施裁决（chat `untitled-chat-B38EF4`、`untitled-chat-F1CED0`）。设计稿 652 行、pre-plan 354 行，R5 修订为行内改写，两份文件行号未位移，因此 `L###` 引用继续有效。
 
@@ -40,6 +40,28 @@
 | D-S2-10 | delta 的 `effect` 补丁可写归属列 | S1 计划 §4.14.4 的 `effect` 只有 status/outcome | 可选 `scope_id`/`fiber_id`/`episode_id`，校验一致 | W1 失败 receipt 也带 fiber 归属；`R` 的 CAS/失败断言 |
 | D-S2-11 | 闭包/applier 直接改 30/40 | S2 计划 §4.0 原写「45 覆盖分派函数」 | 45 只放 `resolve`、wrapper、索引 | 复制数百行函数会产生两份定义并漂移；`git diff` 可审 |
 
+### 1.2 S3 分歧与实施裁决（D-S3-1…7）
+
+| # | 分歧 | 设计/计划位置 | 采用 | 落位 / 证据 |
+|---|---|---|---|---|
+| D-S3-1 | 读面 DEFINER allowlist，并修复 S2 resolve 缺陷 | §B.3 未定 security；S2 `resolve` 为 INVOKER | `resolve/poll/wait_check/run_owner/run_projection` 采用固定 search_path 的只读 DEFINER allowlist；helper 内部且不授予协议角色 | S2 只由 owner 实测 resolve；三个零表权协议角色作为 service 调用会 42501。S3 W1 改为 DEFINER 并补真实 service/operator 调用断言；`run_owner`/`run_projection` 未 GRANT |
+| D-S3-2 | effect delta 加 `run_id` | §4.14.4 delta 无 run 归属 | 可选 `run_id` 并校验与 payload 一致 | 支撑 command_start/后继 effect run 归属和 run projection 审计 |
+| D-S3-3 | run handle 不扩返回封套 | §4.2 要求 start 返回 handle | `emitted[0]` 是 run_id，registration_generation v1 固定 1 | 保持封套键闭集；poll 回显 registration |
+| D-S3-4 | cancel 将 ready effect 置 cancelled | §4.5 要求归档未 claim 后继 | `status=cancelled`、outcome NULL、settled_at 设置 | 符合 `c_effects_outcome`，不增加 archive 表 |
+| D-S3-5 | steer 立即续链边界 | §4.6 对旧 claimed 后继的说明 | 无旧 claimed 时立即建 model_call；有 claimed 时 pending_steer，不建 successor | 避免旧/新驱动重叠；applier 先写 effects 更新，再插 successor，以满足 `u_effects_model_call` |
+| D-S3-6 | interaction 生产归属 | §4.7 model outcome 路径 | S3 只消费测试 seed interaction，生产归 S4 | S3 不声称生产覆盖 |
+| D-S3-7 | owner fiber scope 与 run scope | §4.2 未明确 | start 要求二者 scope 相同 | 防止跨 scope run pin 的歧义 |
+
+### 1.3 S3 实施披露（非额外规格变更）
+
+| 项 | 实际选择 | 状态/边界 |
+|---|---|---|
+| 可选 `wall_ms` | 缺省使用 86400000 ms | W2 budget 约定；测试应覆盖 omitted 值 |
+| steer delta 应用顺序 | 先 effects 更新，再插 successor | 确保唯一索引 `u_effects_model_call` 在同 run successor 创建时可满足 |
+| claimed/unknown 引用 pin | cancel 保留被引用 run pin；未知 effect 的静默/完整释放交 S4 | G3b-2 只验证保留，不宣称最终释放 |
+| G3b-4 双序 | 两条已提交顺序场景 | 不是并发/锁屏障证明 |
+| G3b-5 start/off 双序 | 两连接锁屏障，核对 `pg_blocking_pids()` / `pg_locks` | 本轮 `V` 实跑通过；G3b-4 仍只为顺序场景 |
+
 ## 2. 实施披露（不是规格偏差）
 
 以下条目改动的是 DDL 细节或测试夹具，不改变设计语义；列在此处是为了让复核者能对着代码找到它们。
@@ -49,18 +71,18 @@
 | I1 | `f_effects_parent`、`f_events_effect` 为 DEFERRABLE | 计划列为普通 FK | DEFERRABLE | 与同组 FK 的延迟策略一致；`D.deferred` 证明延迟 FK 在 COMMIT 闭合 |
 | I2 | `c_installs_ident` 重命名为 `c_installs_identity_len` | 计划用 `c_installs_ident` | 改名 | 与唯一索引 `u_installs_ident` 重名，PG 允许但审计易混；`D.catalog` 断言约束名 |
 | I3 | 夹具 schema 闭集为 `{v24, v24_fake}` | 计划只列 `v24` | 加入 FakeHost journal schema | journal 必须与十表分离；`S._assert_closed_catalog` 仍断言第三 schema 被拒 |
-| I4 | G1-A 允许 INVOKER `validate_and_apply_install_delta` 含 `UPDATE v24.effects` | 计划「只有 advance 体内出现 UPDATE」 | 允许该具名、不可授权的 INVOKER helper | W5 需要与 advance 共享 delta 应用；`prosecdef=true` 仍恰为 `{advance}`，唯一写权威未放宽（矩阵 §1.1） |
+| I4 | G1-A 允许 INVOKER `validate_and_apply_install_delta` 含 `UPDATE v24.effects` | 计划「只有 advance 体内出现 UPDATE」 | 允许该具名、不可授权的 INVOKER helper | W5 需要与 advance 共享 delta 应用；S1 时 `prosecdef=true` 恰为 `{advance}`；S3 W1 后加入只读 DEFINER allowlist，advance 仍为唯一可写 DEFINER（矩阵 §1.1） |
 | I5 | settlement mode 由 `p_outcome.class` 推断 | 计划未指定推断来源 | class 决定 success/failure/unknown | 避免 delta 自选执行域；`T.install_settlement_w5` 三态断言 |
 | I6 | `install` 的 `preparing` vs `installed` 由 manifest 决定 | 计划只写状态机 | 空 `provides` + 零长 artifact ⇒ 纯声明 `installed` | 让 `host_prepare` 三态都可达；`T.install_settlement_w5` 覆盖 |
-| I7 | S1 的 `invalid_outcome` 是**零写预检**，不是 W1 稳定失败 receipt | §4.16 错误表标 W1；设计稿 L279 要求「可审计确定失败」 | S1 保持零写；S3 补稳定失败 receipt | S1 唯一可达生产者是结算 delta 预检（`validate_and_apply_install_delta` 直接返回 error，未进入 DML），结算不写 request 行，没有承载 receipt 的位置。S1 未实现 `tool_calls` 超限路径，因此该 W1 分支不可达。`T.install_settlement_w5` 实测该路径十表快照不变、effect 仍 `claimed`；矩阵 §2.1 已分列「计划 W1 / S1 零写」 |
+| I7 | S1 的 `invalid_outcome` 是**零写预检**，不是 W1 稳定失败 receipt | §4.16 错误表标 W1；设计稿 L279 要求「可审计确定失败」 | S1 保持零写；S3 未新增该 W1 receipt 证据，model/tool outcome 路径归 S4 | S1 唯一可达生产者是结算 delta 预检（`validate_and_apply_install_delta` 直接返回 error，未进入 DML），结算不写 request 行，没有承载 receipt 的位置。S1 未实现 `tool_calls` 超限路径，因此该 W1 分支不可达。`T.install_settlement_w5` 实测该路径十表快照不变、effect 仍 `claimed`；矩阵 §3.1 已分列 W0 实测与未验证的 W1 receipt |
 
 ## 3. 非偏差声明
 
 - **子门拆分不是规格偏差**：S1 内部按 W1–W6 串行拆分，是计划的工项划分，不改变设计稿的任何合同。原 W6（解释器）已由 Oracle 裁决（chat `untitled-chat-B38EF4`）解散，`scope_control` 归 W4、`install`/`host_prepare`/settlement 归 W5，ACL 顺延为 W6；这是**排期**调整，不是语义变更。
 - **T1/T2 术语不是偏差**：T1 = 资格提交（claim 的 COMMIT）、T2 = 外部结果接纳（settlement 事务），由设计稿 §7.1 定义，R5 已写入正文；计划与矩阵沿用该定义。
 - **W5 判据不回填 claim**：claim 的判据由 W3 gate 守住（Oracle 裁决 ①）；W5 只保留 S4–S6，不是覆盖率下降。
-- **G3 子门拆分不是规格偏差**：G3a 归 S2、G3b 归 S3，是 pre-plan §2.2 已冻结的施工口径；S2 只证 activation-pin 半部，run-pin 半部在矩阵标「未验证 / S3」，不计入覆盖。
-- **S1 夹具/ACL 对齐不是放宽**：S2 把 canonical 列表从 6 文件扩到 7、`test_g1.py` 的 G1-A 允许 `validate_and_apply_delta` 含 `UPDATE v24.effects`、ACL 期望集合加入 `resolve`/`fiber_control`/`dispose`。三者都是「新函数集合」的必然对齐，断言只增不减；`T` 仍断言唯一 DEFINER 是 advance。
+- **G3 子门拆分不是规格偏差**：G3a 归 S2、G3b 归 S3，是 pre-plan §2.2 已冻结的施工口径；S2 当时只证 activation-pin 半部；S3 本轮 G3b-1…5 实跑通过后父门为「完成（G3a+G3b）」；claimed/unknown 完整 settlement release 仍为「未验证 / S4」。
+- **S1 夹具/ACL 对齐不是放宽**：S2 把 canonical 列表从 6 文件扩到 7、`test_g1.py` 的 G1-A 允许 `validate_and_apply_delta` 含 `UPDATE v24.effects`、ACL 期望集合加入 `resolve`/`fiber_control`/`dispose`。三者都是「新函数集合」的必然对齐，断言只增不减；S3 W1 后 `T` 断言 advance 是唯一可写 DEFINER，另有封闭只读 DEFINER allowlist；`run_owner`/`run_projection` 内部且不授予协议角色 EXECUTE。
 
 ## 4. 历史失败（追加，不覆盖）
 
@@ -79,11 +101,13 @@
 
 S1 四次是夹具缺陷；S2 六次是夹具/测试断言缺陷或局部 SQL 质量问题，均非设计语义变更。修正后同一 gate 退出 0，未删断言、未降低断言强度。
 
-## 5. 仍未关闭的披露
+## 5. 验收结果与仍未关闭的披露
 
-- **`revision = 0` 的 C2 空洞**：S1/S2 不写 `runs`，`advance` 返回 0。S3 开工前必须回写 C2，否则 poll 游标语义会错。
-- **G3b 未验证**：run pin、withdraw 后新 run、claim/close 双序归 S3；S2 只证 activation-pin 半部。
+本轮六 gate 依序退出 0/0/0/0/0/0（矩阵 §0）；G2 父门为「部分（G2a 绿；G2b 保留 S4）」，G3 父门为「完成（G3a+G3b）」。`runs` 已有 S3 start writer，revision 从 1 起并随可见状态变化递增。错误码为 21 个有生产者、2 个未产生：`blocked_unknown` / S4、`cleanup_cycle` / S5。
+
+- **G2b 保留 S4**：完整 T2/unknown wall 尚未实现。
+- **G3b-2 完整 pin 排空保留 S4**：claimed/unknown 引用 pin 的最终释放需 effect settlement/静默；S3 验证 cancel 保留 pin。
 - **inspect 收敛未验证**：S2 只把 `prepare_unknown` 停在 `dispose_pending`；完整收敛归 S5。
 - **owner 级联/scope close/完整 dispose 闭包未验证**：S2 只做 leaf dispose；其余归 S5。
 - **FakeHost 不是 transport 证明**：纯进程内、无套接字；真实 IO 归后续 stage。
-- **完整 recovery / 并发矩阵**：只覆盖两个 journal 窗口、G1-L 与 G3a-F；其余归 S6/S7。
+- **完整 recovery / 并发矩阵**：覆盖两个 journal 窗口、G1-L、G3a-F 及 G3b-5 两连接锁屏障；G3b-4 是顺序场景；其余归 S6/S7。

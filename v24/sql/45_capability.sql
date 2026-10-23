@@ -9,7 +9,7 @@
 CREATE FUNCTION v24.resolve(p_scope_id uuid, p_keys text[])
 RETURNS TABLE(key text, slot_id uuid, provider_episode_id uuid,
               descriptor jsonb, descriptor_digest bytea, live boolean)
-LANGUAGE plpgsql STABLE SECURITY INVOKER
+LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path = pg_catalog, v24
 AS $$
 BEGIN
