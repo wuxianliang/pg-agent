@@ -1,12 +1,12 @@
-# v24 S1 覆盖矩阵
+# v24 覆盖矩阵（S1 + S2）
 
-> 定稿：2026-10-23。本文件是 S1 里程碑的收尾工件之一。断言口径以 [S1 计划 §5](../plans/v24-s1-kernel-2026-10-23.md) 为准，设计语义以 [设计稿](../designs/v24-pg-agent-2026-10-22.md) 为准。矩阵只记录**本次实跑**看到的证据；未运行、未实现、无生产者的条目一律显式标注，不计为已覆盖。
+> 定稿：2026-10-23。S1 与 S2 的收尾工件。断言口径以 [S1 计划 §5](../plans/v24-s1-kernel-2026-10-23.md)、[S2 计划 §5](../plans/v24-s2-capability-2026-10-23.md) 为准，设计语义以 [设计稿](../designs/v24-pg-agent-2026-10-22.md) 为准。矩阵只记录**本次实跑**看到的证据；未运行、未实现、无生产者的条目一律显式标注，不计为已覆盖。
 
 ## 0. 运行环境与最终证据
 
 环境：PostgreSQL 18.4（pgembed），Python 3.12，psycopg2 2.9.12，工作树 `.claude/worktrees/v99`，分支 `v24`。
 
-简称：`T`=`v24/s1/test_g1.py`，`D`=`v24/s1/test_ddl.py`，`S`=`v24/s1/setup_db.py`，`L`=`v24/load.py`，`F`=`v24/s1/fake_host.py`。`T.state` 对十表做全列全行快照（含 bytea、receipt、claim 字段）；`T.rejects_without_writes` 在拒绝后**提交**再比对快照，避免把写入藏在未提交事务里。
+简称：`T`=`v24/s1/test_g1.py`，`D`=`v24/s1/test_ddl.py`，`S`=`v24/s1/setup_db.py`，`L`=`v24/load.py`，`R`=`v24/s2/test_g3a.py`。`T.state` / `R.state` 对十表做全列全行快照（含 bytea、receipt、claim 字段）。S2 的零写分两级：**W0** = 十表全快照相等；**W1** = 除本次 command 的 `effects`/`requests` receipt 外零 diff。`R` 用 `domain_state`（去掉 effects/requests）断言 W1 的领域零写。
 
 | # | 命令 | 退出码 |
 |---:|---|---:|
@@ -14,108 +14,142 @@
 | 2 | `uv run python v24/s1/setup_db.py --self-check` | 0 |
 | 3 | `uv run python v24/s1/test_ddl.py` | 0 |
 | 4 | `uv run python v24/s1/test_g1.py` | 0 |
+| 5 | `uv run python v24/s2/test_g3a.py` | 0 |
 
 ### 0.1 历史失败（追加修正结果，不覆盖）
 
 | 阶段 | 失败 | 根因 | 修正后 |
 |---|---|---|---|
-| W5 首次 | `test_g1.py` 退出 1：`AmbiguousColumn: column reference "manifest" is ambiguous` | `interpret_install` 内局部变量与列名重名 | 重命名局部变量为 `parsed_manifest`，同一 gate 转 0 |
-| W6 首次 | `test_g1.py` 退出 1：ACL 探针期望 `42501`，实得 `428C9` | UPDATE 探针取表首列；`events.event_id` 是 `GENERATED ALWAYS AS IDENTITY`，解析期错误先于执行期权限检查 | 探针只选 `attidentity='' AND attgenerated=''` 的列；转 0 |
-| W6 第二次 | `test_g1.py` 退出 1：`permission denied for table effects` | 影子 TEMP 对象在 `SET ROLE` 前创建，属主是 LOGIN 角色；切到组角色后不可读 | 改为 `SET ROLE` → 建影子 → 断言 → DROP → `RESET ROLE`；转 0 |
-| W6 第三次 | `test_g1.py` 挂起（>600s，转后台后终止） | G1-B 回滚注入的触发器在 owner 未提交事务中持有 `v24.scopes` 的 ACCESS EXCLUSIVE，阻塞 admin 的 INSERT | 触发器提交后再注入、探针结束显式 DROP；转 0 |
+| S1 W5 首次 | `T` 退出 1：`AmbiguousColumn: column reference "manifest" is ambiguous` | `interpret_install` 内局部变量与列名重名 | 重命名局部变量为 `parsed_manifest`，同一 gate 转 0 |
+| S1 W6 首次 | `T` 退出 1：ACL 探针期望 `42501`，实得 `428C9` | UPDATE 探针取表首列；`events.event_id` 是 `GENERATED ALWAYS AS IDENTITY`，解析期错误先于执行期权限检查 | 探针只选 `attidentity='' AND attgenerated=''` 的列；转 0 |
+| S1 W6 第二次 | `T` 退出 1：`permission denied for table effects` | 影子 TEMP 对象在 `SET ROLE` 前创建，属主是 LOGIN 角色；切到组角色后不可读 | 改为 `SET ROLE` → 建影子 → 断言 → DROP → `RESET ROLE`；转 0 |
+| S1 W6 第三次 | `T` 挂起（>600s，转后台后终止） | G1-B 回滚注入的触发器在 owner 未提交事务中持有 `v24.scopes` 的 ACCESS EXCLUSIVE，阻塞 admin 的 INSERT | 触发器提交后再注入、探针结束显式 DROP；转 0 |
+| S2 W1/W2 | `R` 退出 1：`42702 column reference "k" is ambiguous` | applier 遗留的未使用变量 `k text` 与 `jsonb_object_keys(...) k` 别名冲突 | 删除未使用变量；转 0 |
+| S2 W4 | `R` 退出 1：`428C9 cannot insert a non-DEFAULT value into column "consumer_id"` | `INSERT INTO v24.pins SELECT *` 覆盖生成列 | 显式列清单并排除 `consumer_id`；转 0 |
+| S2 W4 | `R` 退出 1：`23502 null value in column "opened_at"` | `jsonb_populate_record` 对缺省列写 NULL，绕过 DEFAULT | delta 的 episode 行携带 `opened_at`；转 0 |
+| S2 W5 | `R` 退出 1：settle 路径 `invalid_outcome`，随后暴露 `42702 column reference "kind"` | settle 的 `UPDATE v24.effects ... WHERE kind=... AND status=...` 列名与 PL/pgSQL 变量歧义 | `UPDATE ... AS ef` 全部别名限定；转 0 |
+| S2 W6 | `R` 退出 1：`request_conflict` | 测试把 scope 与 install 用了同一个 `request_key`；`requests(principal_id,request_key)` 全局唯一 | scope key 改为独立值；转 0 |
+| S2 W5 | `R` 退出 1：succeeded reconcile 计数断言失败 | 一次 on + 一次 off 各结算一条，测试却假设只有一条 | 改为断言 ready=0 且存在 `stage=deactivate/result=closed` 的那条；转 0 |
 
-以上均为**测试夹具/探针缺陷**，不是产品缺陷；四次失败都在同一 S1 提交前修正，未以降低断言的方式绕过。
+以上均为**夹具/探针/测试断言缺陷**或局部 SQL 质量问题，不是设计语义变更；全部在对应里程碑提交前修正，未以降低断言的方式绕过。
 
-## 1. 具名断言 G1-A … G1-R
+## 1. S1 具名断言 G1-A … G1-R
 
 | ID | 生产者（本次实跑） | 断言要点 | 结果 |
 |---|---|---|---|
-| G1-A | `T.catalog`（L112–171） | `prosecdef=true` 的函数恰为 `{advance}`；advance 的 `proconfig` 为 `search_path=pg_catalog, v24`；四个纯 helper 均 INVOKER+IMMUTABLE；无 `claim_*`/`lease_*`/`acquire_*`；含 `pg_advisory_xact_lock` 的函数只有 advance；两个 wrapper 为 INVOKER、体内有 `v24.advance(` 且无任何写语句；全部函数属主为 `v24_owner`；`aclexplode` 断言 PUBLIC 无 EXECUTE；advance 源码中 G 的 `PERFORM` 先于 reads 的 `FROM` 与任何 `FOR UPDATE`，八段锁语句的出现次序为 scope→run→effect→install→fiber→episode→slot→pin；函数体无 `http`/`dblink`/`pg_sleep`/`current_setting`/`current_user`；23 个错误码全被 `error_v1` 接受，未知码得 `22023` | 通过 |
-| G1-B | `T.scope_control_w4`（L458–508） | 一次 command 提交后：scope 行 +1、effect=`succeeded`、request 行存在且 `effect_id` 相等、恰 1 条事件；另注入 `BEFORE INSERT ON v24.events` 触发器（`23514`）。冻结写序是 domain → effect → request → events，因此失败发生在 scope/effect/request **已写之后**；失败后十表全快照与注入前逐字节相等，证明整事务回滚而非写前拒绝 | 通过 |
+| G1-A | `T.catalog`（L112–171） | `prosecdef=true` 的函数恰为 `{advance}`；advance 的 `proconfig` 为 `search_path=pg_catalog, v24`；四个纯 helper 均 INVOKER+IMMUTABLE；无 `claim_*`/`lease_*`/`acquire_*`；含 `pg_advisory_xact_lock` 的函数只有 advance；全部函数属主为 `v24_owner`；`aclexplode` 断言 PUBLIC 无 EXECUTE；advance 源码中 G 的 `PERFORM` 先于 reads 的 `FROM` 与任何 `FOR UPDATE`，八段锁语句的次序为 scope→run→effect→install→fiber→episode→slot→pin；函数体无 `http`/`dblink`/`pg_sleep`/`current_setting`/`current_user`；23 个错误码全被 `error_v1` 接受，未知码得 `22023` | 通过 |
+| G1-B | `T.scope_control_w4`（L458–508） | 一次 command 提交后：scope 行 +1、effect=`succeeded`、request 行存在且 `effect_id` 相等、恰 1 条事件；另注入 `BEFORE INSERT ON v24.events` 触发器（`23514`）。冻结写序是 domain → effect → request → events，因此失败发生在 scope/effect/request **已写之后**；失败后十表全快照逐字节相等，证明整事务回滚而非写前拒绝 | 通过 |
 | G1-C | `T.install_settlement_w5`（L510–724） | T2 三路故障：delta 预检拒绝（`invalid_outcome`）、事件触发器 `23514`、install CAS 拒绝（`receipt_conflict`）；每路后十表快照相等、effect 仍 `claimed`、无 successor、无 receipt 写 | 通过 |
-| G1-D | `T.scope_control_w4`、`T.command_prefix`（L292–329） | 同 request 同 bytes 二次 advance 返回与首次 **byte-equal** 的封套；提交后十表快照相等；事件计数不变 | 通过 |
+| G1-D | `T.scope_control_w4`、`T.command_prefix` | 同 request 同 bytes 二次 advance 返回与首次 **byte-equal** 的封套；提交后十表快照相等；事件计数不变 | 通过 |
 | G1-E | `T.command_prefix` | 同键不同 payload ⇒ `request_conflict`，`rejects_without_writes` 全快照相等（提交后复检） | 通过 |
-| G1-F1 | `T.command_prefix` | fixture 预置同键 request 行后，用一个与派生值不等的 `effect_id` 提交：无论 bytes 相同或不同，均得 `effect_id_conflict`，不得得 `replay`/`request_conflict`；零写 | 通过 |
+| G1-F1 | `T.command_prefix` | fixture 预置同键 request 行后，用与派生值不等的 `effect_id` 提交：无论 bytes 相同或不同，均得 `effect_id_conflict`，不得得 `replay`/`request_conflict`；零写 | 通过 |
 | G1-F2 | `T.scope_control_w4`、`T.install_settlement_w5` | 同一 `(principal,request_key,kind)` 的 wrapper 两次派生同一 `effect_id`；二次调用返回首次 response；`w5-pure` 的 replay 与首次 byte-equal 且全快照不变 | 通过 |
-| G1-G | `T.claims_and_receipts`（L332–392） | 旧 token（attempt/fence 各减 1、或 owner 伪造）对 success/failure/unknown 三类均 `stale_claim` 零写；effect 保持 `claimed` | 通过 |
-| G1-H1 | `T.identities_and_matrix`（L240–289） | 真实 LOGIN 连接：`session_user`=LOGIN 角色；`SET ROLE v24_service` 后 `current_user` 变而 principal 不变，且 principal(session_user) ≠ principal(current_user)；claim 的 `owner` 等于 `session_user` | 通过 |
+| G1-G | `T.claims_and_receipts` | 旧 token（attempt/fence 各减 1、或 owner 伪造）对 success/failure/unknown 三类均 `stale_claim` 零写；effect 保持 `claimed` | 通过 |
+| G1-H1 | `T.identities_and_matrix` | 真实 LOGIN：`session_user`=LOGIN 角色；`SET ROLE` 后 `current_user` 变而 principal 不变；claim 的 `owner` 等于 `session_user` | 通过 |
 | G1-H2 | `T.claims_and_receipts`、`T.install_settlement_w5` | settlement 的 owner 比对对象是 `effects.claim_owner`：`owner="spoof"` 与历史 token 均 `stale_claim` 零写 | 通过 |
-| G1-I | `T.install_settlement_w5` | claim 提交前 FakeHost 拒绝执行（错误文本含 `claim COMMIT`）且 journal=0；提交后 journal=1 而 effect 仍 `claimed`（IO 已返回、T2 未提交）；过期重 claim 得 `attempt=fence=2`；旧 token 结算 `stale_claim`；两个 crash 窗口 journal 分别为 0/1，且都不伪造结算 | 通过 |
-| G1-J | `T.install_settlement_w5` | `installed`/`prepare_failed`/`prepare_unknown` 三态各自由 success/failure/unknown 到达；`resource_quiesced_at` 仅 unknown 为 NULL；`claim_owner`/`lease_until` 结算后清空；`attempt_no=fence=1` 保持不变 | 通过 |
-| G1-J2 | `T.scope_control_w4` | `create_root`：`route_path=[id]`、`root_id=id`、`parent_id IS NULL`；`create_child`：`route_path = parent.route_path \|\| new_id` 且 `root_id` 继承；`close` 只写 `close_requested_at`，`closed_at` 保持 NULL；关闭后 `create_child`/`install` 得 W1 `scope_closed`（effect=`failed` 且有 request 行保存该错误） | 通过 |
-| G1-K | `T.install_settlement_w5`、`D.negatives` | 同 receipt 二次提交不产生第二条 `(effect,entity,kind)` 事件；`install` entity 的 `seq` 恰为 `[1,2]`；append-only 触发器对 UPDATE/DELETE/TRUNCATE 三语句各得 `23514`（DDL 侧） | 通过 |
-| G1-L1 | `T.locks`（L414–454） | 阻塞者持 `pg_advisory_xact_lock(24,1)` 后，`pg_locks` 中出现 `(advisory,24,1,objsubid=2)` 且 granted；第二连接调 advance 在该锁上 `NOT granted` 且 `wait_event_type='Lock'`；**未用 sleep 猜顺序**，轮询真实锁证据 | 通过 |
-| G1-L2 | `T.locks` | 该 backend 阻塞期间，`pg_locks` 中其 `relation IS NOT NULL AND granted` 的 `v24.*` 行锁计数为 0 | 通过 |
-| G1-M | `T.closure_retry`（L395–411） | 引用不存在的 `install_id` ⇒ `retry_with_closure` 零写；补上该 install 行后，**新事务**在 G 下重新发现闭包并成功 claim | 通过 |
-| G1-N | `S._assert_closed_catalog`（L540–555） | 应用 schema 恰为 `{v24, v24_fake}` 且属主均为 `v24_owner`；base table + partitioned 恰为十表；view/materialized view 为空；扩展为空；测试另断言创建第三 schema 会被拒 | 通过 |
-| G1-O | `D`（整文件，7 组） | owner 身份绕过 ACL 的直接 DML：partial unique 冲突、复合 FK 拒绝、`c_pins_xor`、`c_scopes_path_end`、命令 claim 保留列、append-only、T2–T4 冻结字段、延迟 FK 在 COMMIT 闭合、E1→E2/slot/pin 的「先关旧再插新」次序、缺 request 的 effect 与子 scope 路径在 COMMIT 被拒 | 通过 |
-| G1-P | `T.permissions`（L727–848） | 三个协议角色各 30 条 DML（10 表 × INSERT/UPDATE/DELETE）全部 `42501`；已授权 EXECUTE 集合逐角色精确相等（admin 无 install，service/operator 有）；`SET ROLE` 到 owner/其他协议角色/自身及 `SET SESSION AUTHORIZATION` 均 `42501`；`CREATE TABLE v24.*` 与私有 helper 调用 `42501`；TEMP + `search_path=pg_temp,v24` + `pg_temp.principal_id` 影子函数不能改写入口行为；`v24_owner` 真实 LOGIN 可写十表且无协议 EXECUTE 成员资格 | 通过 |
-| G1-Q | `T.shapes`（L174–237）、`T.claims_and_receipts` | class 闭集 5 值；6 个非闭集（含 `"COMMAND"`、JSON `null`、`7`）各 `invalid_args` 零写；8 类形状族（command/claim 携非 null claim、>1 MiB、深度>32、键数>200、未知 kind、`lease_ms` 越界、unknown 携 successors/intents、canonical_bytes 不匹配）各零写；`lease_ms ∈ {1, 300000}` 可达且签发 token；五个 class 各达唯一分支 | 通过 |
-| G1-R | `T.expect_envelope`（L107–110）及各分支 | 封套精确等于 `{v,disposition,effect_id,emitted,revision,claim}`：仅 claim+committed 时 `claim={attempt,fence,session_user}`；claim 的 deferred 与 command/settlement 全部分支 `claim=null` | 通过 |
+| G1-I | `T.install_settlement_w5` | claim 提交前 FakeHost 拒绝执行且 journal=0；提交后 journal=1 而 effect 仍 `claimed`；过期重 claim 得 `attempt=fence=2`；旧 token 结算 `stale_claim`；两个 crash 窗口 journal 分别为 0/1 | 通过 |
+| G1-J | `T.install_settlement_w5` | `installed`/`prepare_failed`/`prepare_unknown` 三态由 success/failure/unknown 到达；`resource_quiesced_at` 仅 unknown 为 NULL；`claim_owner`/`lease_until` 结算后清空 | 通过 |
+| G1-J2 | `T.scope_control_w4` | `create_root`：`route_path=[id]`、`root_id=id`、`parent_id IS NULL`；`create_child`：`route_path = parent.route_path \|\| new_id`；`close` 只写 `close_requested_at`；关闭后 `create_child`/`install` 得 W1 `scope_closed` | 通过 |
+| G1-K | `T.install_settlement_w5`、`D.negatives` | 同 receipt 二次提交不产生第二条同 `(effect,entity,kind)` 事件；`install` entity 的 `seq` 为 `[1,2]`；append-only 触发器对 UPDATE/DELETE/TRUNCATE 各得 `23514` | 通过 |
+| G1-L1 | `T.locks` | 阻塞者持 `pg_advisory_xact_lock(24,1)` 后 `pg_locks` 出现 `(advisory,24,1,objsubid=2)`；第二连接在该锁上 `NOT granted` 且 `wait_event_type='Lock'`；**未用 sleep 猜顺序** | 通过 |
+| G1-L2 | `T.locks` | 该 backend 阻塞期间在 `v24.*` 上无任何 granted 行锁 | 通过 |
+| G1-M | `T.closure_retry` | 悬空 `install_id` ⇒ `retry_with_closure` 零写；补行后**新事务**在 G 下重新发现闭包并成功 claim | 通过 |
+| G1-N | `S._assert_closed_catalog` | schema 恰为 `{v24, v24_fake}` 且属主 `v24_owner`；base+partitioned 恰十表；view 为空；扩展为空；第三 schema 被拒 | 通过 |
+| G1-O | `D`（7 组） | owner 直写 DDL 约束反例：partial unique、复合 FK、`c_pins_xor`、`c_scopes_path_end`、保留列、append-only、T2–T4 冻结字段、COMMIT 闭合、E1→E2/slot/pin 顺序、缺 request 的 effect | 通过 |
+| G1-P | `T.permissions` | 三角色各 30 条 DML 全 `42501`；EXECUTE 集合逐角色精确（admin 无 install）；`SET ROLE`/`SET SESSION AUTHORIZATION`/`CREATE TABLE v24.*`/私有 helper 均 `42501`；TEMP 影子不能改写入口；owner 真实 LOGIN 可写十表 | 通过 |
+| G1-Q | `T.shapes`、`T.claims_and_receipts` | class 闭集 5 值；6 非闭集与 8 形状族各零写 `invalid_args`；`lease_ms` 边界可达；五 class 各达唯一分支 | 通过 |
+| G1-R | `T.expect_envelope` 及各分支 | 封套精确六键；仅 claim+committed 时 `claim={attempt,fence,session_user}`；其余 `claim=null` | 通过 |
 
 ### 1.1 G1-A 的断言细化（披露，不是放行）
 
-W5 需要一个与 advance 共享 delta 应用的 INVOKER helper `v24.validate_and_apply_install_delta`，其体内含 `UPDATE v24.effects`。为保持「单一写权威」的可证伪性，G1-A 的静态检查细化为：
+S1 的 W5 需要一个与 advance 共享 delta 应用的 INVOKER helper `validate_and_apply_install_delta`；S2 的 `settle[]` 又让主 applier `validate_and_apply_delta` 含 `UPDATE v24.effects`。G1-A 的静态检查因此细化为：
 
-- `prosecdef=true` **仍恰为** `{advance}`（这是唯一写权威）；
-- 含 `UPDATE v24.effects` 的函数只允许 `{advance, validate_and_apply_install_delta}`，且后者必须 INVOKER、不属于可授权入口（`has_function_privilege` 断言）；
+- `prosecdef=true` **仍恰为** `{advance}`（唯一写权威）；
+- 含 `UPDATE v24.effects` 的函数允许 `{advance, validate_and_apply_install_delta, validate_and_apply_delta}`；三者中只有 advance 是 DEFINER，另两个必须 INVOKER、无任何 EXECUTE 授权、且不可被协议角色调用；
 - 含 `pg_advisory_xact_lock` 的仍只允许 advance。
 
 即：放宽的是「源码里只能出现一处 UPDATE 文本」，未放宽「只有一个 DEFINER、只有一个可调用写入口」。
 
-## 2. 错误码覆盖（23 码）
+## 2. S2 具名断言 G3a-A … G3a-L
 
-`error_v1` 接受全部 23 码（签名冻结，G1-A 已逐码断言）。**能产生**与**能接受**是两件事，下表分开记。
+| ID | 生产者（本次实跑） | 断言要点 | 结果 |
+|---|---|---|---|
+| G3a-A | `R.resolver_contract`、`resolver_shape_and_writes`、`resolver_routing`、`resolver_live_predicate`、`resolver_limit`、`acl` | `resolve` STABLE/INVOKER、六列、输入序；未知 key `live=false` 且零写；leaf-first realm、同 key 不同 realm 并存、无跨 realm fallback；withdrawn/released/retiring/disposed/closing 全 `live=false`；257 key → `22023`；三角色 EXECUTE、PUBLIC 无 | 通过 |
+| G3a-B | `R.fiber_control_activation` | 空 inject：`on` → 一个 active episode（epoch=1）、`current_episode_id` 指向它、无 activation pin、无贡献 slot、reconcile succeeded；事件恰 `fiber_activated`+`episode_opened` | 通过 |
+| G3a-C | `R.fiber_control_activation` | 有 requires/provides：activation pin 的 consumer episode/epoch/key/slot/provider 全对；provide slot 的 realm/key/contribution_seq/descriptor digest 正确；`next_contribution_seq` 递增 | 通过 |
+| G3a-D | `R.fiber_control_activation` | 缺依赖 / policy=false ⇒ W1 `dependency_unresolved`；无 episode/slot/pin；fiber 写 `want_on=true/control_seq+1/failure_seq/failure`，`current_episode_id=NULL`；补 provider 后 retry 成功并 pin 到正确 slot/episode | 通过 |
+| G3a-E | `R.fiber_control_activation` | 同 realm/key 已有 live slot ⇒ W1 `provide_conflict`；目标 fiber 无 episode/slot；fiber failure 记录 | 通过 |
+| G3a-F | `R.deactivation_barrier` | A pin B 的 slot → B off：slot `withdrawn_at` 非空、`released_at` NULL、episode retiring、reconcile ready、`deferred`；A off 释放 pin；B 再 off 完成 release/close/current 清空 | 通过 |
+| G3a-G | `R.fiber_control_activation`、`R.deactivation_barrier` | E1→E2：off 完成后再次 on 得 `epoch=E1.epoch+1` 的 E2；E1 行与旧 pin 行保留；无 partial unique 冲突；旧 child install 的 owner 列不变（G3a-J） | 通过 |
+| G3a-H | `R.fiber_control_activation` | 错 `expected_control_seq` ⇒ W1 `stale_generation`，除本次 receipt 外零 diff；已完成 on 再 on（新 key）⇒ committed、除 receipt 外零 diff、无新 reconcile；同 key replay byte-equal 且不新增行 | 通过 |
+| G3a-I | `R.fiber_control_activation` | 有 failure ⇒ retry 清 `failure_seq/failure`、`control_seq+1`、新 reconcile；无 failure ⇒ no-op；`installs.state` 始终不变 | 通过 |
+| G3a-J | `R.install_fibers` | 每个新 install 恰一条 deterministic inactive fiber（`want_on=false`、`current=NULL`、owner 继承）；replay/identity reuse 不增 fiber；child 写固定 `(owner_fiber_id,owner_episode_id)`；E1→E2 后旧行不变；disposed/`owner_closing`/`install_not_ready`/不存在 owner 四类拒绝的原子性 | 通过 |
+| G3a-K | `R.dispose_leaf` | release 后继与 reservation 确定性；success → `disposed+disposed_at`+`install_disposed`；同 key replay；新 key `already_terminal`；active fiber 阻塞→off→二次 dispose；`prepare_unknown` 停在 dispose_pending；release failure 不写 disposed；`dispose_pending` 拒收 host_prepare（`receipt_conflict`） | 通过 |
+| G3a-L | `R.acl`、`T.catalog`、`T.permissions` | `resolve` 零写/STABLE/INVOKER；`fiber_control`/`dispose` INVOKER、体内只调 advance、无 DML；`prosecdef=true` 仍恰为 advance；PUBLIC 无 EXECUTE；三角色 EXECUTE 精确集合（S1 G1-A/G1-P 回归） | 通过 |
 
-### 2.1 S1 有生产者的 10 码
+### 2.1 G3 父门状态
+
+| 父门 | 子门 | 状态 |
+|---|---|---|
+| G3 | G3a | **完成**：上表 A–L 全绿 |
+| G3 | G3b（run pin / withdraw 后新 run / claim-close 双序） | **未验证 / 保留 S3**：S2 无 run，本矩阵不计入覆盖 |
+
+§9 G3 的两条 run 相关负例（provider close 先/claim 后、claim 先/close 后；withdraw 后旧 pin 排空但新 run 失败）**没有**在 S2 运行；S2 只证了无 run activation-pin 屏障（G3a-F）与 withdraw 后新 resolve 不可见（G3a-A）。
+
+## 3. 错误码覆盖（23 码）
+
+`error_v1` 接受全部 23 码（签名冻结，G1-A 已逐码断言）。**能产生**与**能接受**是两件事。
+
+### 3.1 有生产者的 16 码
 
 | 码 | 写类 | 生产者证据 |
 |---|---|---|
-| `invalid_args` | W0 | `T.shapes`（6 非闭集 + 8 形状族）、`T.command_prefix`（malformed scope payload）、`T.claims_and_receipts`（对已结算/取消 effect 发 claim） |
-| `unauthorized` | W0 | `T.identities_and_matrix`（admin 以外提交 create_root；非 service 提交 claim/settlement） |
-| `request_conflict` | W0 | `T.command_prefix`（同键异 payload） |
-| `effect_id_conflict` | W0 | `T.command_prefix`（C0 先于 replay）、`T.claims_and_receipts`（claim/settlement 的派生 id 不匹配） |
-| `receipt_conflict` | W0 | `T.claims_and_receipts`（已结算异 digest）、`T.install_settlement_w5`（install 已非 preparing） |
-| `stale_claim` | W0 | `T.claims_and_receipts`（attempt/fence/owner 四组合）、`T.install_settlement_w5`（spoof owner、旧 crash token） |
-| `retry_with_closure` | W0 | `T.closure_retry`（悬空 install 引用） |
-| `scope_closed` | W1 | `T.scope_control_w4`、`T.install_settlement_w5`（关闭后 create_child / install，receipt 与 effect 同事务落盘） |
-| `install_identity_conflict` | W1 | `T.install_settlement_w5`（artifact digest 或 manifest 字节不同；二次提交返回同一错误） |
-| `invalid_outcome` | W1（计划）/ S1 零写 | `T.install_settlement_w5`（delta 预检拒绝，十表快照不变、effect 仍 `claimed`）。S1 唯一可达生产者是结算预检，返回前不写任何行；W1 的「可审计确定失败」需要 request/effect 落盘路径，要到 S3 的 tool_calls 超限场景才存在。记台账 I7 |
+| `invalid_args` | W0 | `T.shapes`/`T.command_prefix`/`T.claims_and_receipts`；`R` 的 manifest 形状、CAS 参数、缺 owner 等 |
+| `unauthorized` | W0 | `T.identities_and_matrix` |
+| `request_conflict` | W0 | `T.command_prefix` |
+| `effect_id_conflict` | W0 | `T.command_prefix`、`T.claims_and_receipts` |
+| `receipt_conflict` | W0 | `T.claims_and_receipts`、`T.install_settlement_w5`；`R.dispose_leaf`（dispose_pending 期间的 host_prepare） |
+| `stale_claim` | W0 | `T.claims_and_receipts`、`T.install_settlement_w5` |
+| `retry_with_closure` | W0 | `T.closure_retry`、`R.closure_fail_closed_and_seam` |
+| `scope_closed` | W1 | `T.scope_control_w4`、`T.install_settlement_w5`、`R.fiber_control_activation` |
+| `install_identity_conflict` | W1 | `T.install_settlement_w5` |
+| `invalid_outcome` | W0（实测） | `T.install_settlement_w5`、`R` 的 delta 预检；设计意图 W1 的「可审计确定失败」仍待 S3 的 tool_calls 超限路径（台账 I7） |
+| `stale_generation` | W1 | `R.fiber_control_activation`（fiber CAS） |
+| `already_terminal` | W1 | `R.install_fibers`（disposed fiber）、`R.dispose_leaf`（disposed install） |
+| `install_not_ready` | W1 | `R.install_fibers`（child owner 无 active episode）、`R.fiber_control_activation`（install 非 installed） |
+| `owner_closing` | W1 | `R.install_fibers`（owner `want_on=false`） |
+| `dependency_unresolved` | W1 | `R.fiber_control_activation`（缺 slot / policy=false） |
+| `provide_conflict` | W1 | `R.fiber_control_activation` |
 
-> 写类注：§4.16 把 `invalid_outcome` 标为 W1，但 S1 的可达路径是解释器/应用器的预检拒绝，**实测零写**。设计稿 L279 要求该类拒绝进入「可审计确定失败」，即应有稳定失败 receipt；S1 尚无承载它的 request 行（结算路径不写 request）。这不是设计语义被改动，而是 S1 只实现了防御性预检分支；S3 引入 `tool_calls` 超限时必须补上稳定失败 receipt，已记台账 I7。
+### 3.2 仍**不能产生**的 7 码（不得计为已覆盖）
 
-### 2.2 S1 **不能产生**的 13 码（不得计为已覆盖）
-
-| 码 | 预定阶段 | S1 状态 |
+| 码 | 预定阶段 | 状态 |
 |---|---|---|
-| `not_found_or_denied` | S3 | 未产生：S1 无读函数 |
-| `stale_generation` | S3 | 未产生：无 generation CAS |
+| `not_found_or_denied` | S3 | 未产生：无 poll/wait 读面 |
 | `registration_stale` | S3 | 未产生：无 wait handle |
-| `already_terminal` | S3 | 未产生：无 terminal 动词；claim 对已结算效果按裁决返 `invalid_args` |
-| `owner_closing` | S2 | 未产生：无 child install admission |
-| `install_not_ready` | S2 | 未产生：无 `fiber_control(on)` |
 | `interaction_mismatch` | S3 | 未产生：无 respond |
 | `provider_unavailable` | S3 | 未产生：无 start/episode 选择 |
-| `dependency_unresolved` | S2 | 未产生：无依赖求解 |
-| `provide_conflict` | S2 | 未产生：无活 slot 冲突语义 |
 | `budget_exceeded` | S4 | 未产生：无预算准入 |
-| `blocked_unknown` | S4 | 未产生：无 unknown wall（S1 的 unknown 只到 `prepare_unknown` 状态） |
+| `blocked_unknown` | S4 | 未产生：无 unknown wall |
 | `cleanup_cycle` | S5 | 未产生：无清理 DAG |
 
-## 3. S1 无写入者 / 不适用
+## 4. 无写入者 / 不适用 / 未验证
 
 | 项 | 处理 |
 |---|---|
-| 十表中 `runs`/`fibers`/`episodes`/`slots`/`pins` 的领域行为 | S1 无生产者（计划 §4.12）。只做 (a) catalog 存在性、(b) owner 直写 DDL 约束反例（G1-O）、(c) 夹具 seed 行。**不做**任何「advance 会如何维护它们」的行为断言 |
-| 读请求零写 | **N/A**：S1 无读函数。S3 有读面后启用，不得写成「已覆盖」 |
-| 并发矩阵 | 只证 G1-L 的 G 排他 + G 是首锁；完整双提交序矩阵归 S7 的 G6 |
-| 真实 host IO / 网络 | FakeHost 纯进程内、无套接字（`F`），不是 transport 证明；真实套接字入口不在本 stage |
-| 崩溃恢复 | 只测两个 journal 窗口（before/after journal）；完整 recovery 归后续 stage |
-| `advance` 的 `revision` | S1 恒为 0（不写 runs），是 C2 的已知空洞；S3 开工前必须回写 |
-| DDL 语义 vs advance 语义 | G1-O 证明 DDL 能拒绝，不证明 advance 会正确拒绝；两者在矩阵中分列 |
+| `runs` 的领域行为 | S1/S2 均无生产者；S3 消费。矩阵不做行为断言 |
+| run pin 半部 | **未验证 / S3（G3b）**：S2 只证 activation-pin 半部 |
+| `inspect_resource` 收敛 | **未验证 / S5**：S2 只把 `prepare_unknown` 停在 `dispose_pending`，不实现 inspect |
+| owner 级联 / scope close / 完整 dispose 闭包 | **未验证 / S5**：S2 只做 leaf dispose |
+| `resolve` 只读 | S2 已实测零写；poll/wait 的「读请求零写」仍 N/A（S3） |
+| 并发矩阵 | 只证 G1-L 的 G 排他/首锁与 G3a-F 的 pin 屏障；完整双提交序归 S7/G6 |
+| 真实 host IO / 网络 | FakeHost 纯进程内、无套接字；不是 transport 证明 |
+| 崩溃恢复 | 只测两个 journal 窗口；完整 recovery 归 S6 |
+| `advance.revision` | S2 仍恒为 0（不写 runs），C2 空洞保留；S3 开工前回写 |
+| DDL 语义 vs advance 语义 | G1-O 证明 DDL 能拒绝；advance 语义由 G1/G3a 的具名断言分列 |
 
-## 4. 结论
+## 5. 结论
 
-- S1 的具名断言 G1-A…G1-R 全部有生产者、全部实跑通过；四个 gate 退出码均为 0。
-- 13 个错误码、五张领域表的领域行为、读面零写与完整并发/恢复矩阵**未在 S1 验证**，已在 §2.2、§3 显式标注，不计入覆盖。
-- 已知残余风险：`revision=0` 的 C2 空洞（S3 前回写）；FakeHost 非真实 transport；G1-A 的源码文本检查已按 §1.1 细化。
+- S1 G1-A…G1-R、S2 G3a-A…G3a-L 全部有生产者、全部实跑通过；五个 gate 退出码均为 0。
+- G3 父门只到「部分（G3a 绿）」；G3b 的 run-pin 半部、inspect 收敛、owner 级联/完整 dispose 闭包**未在 S1/S2 验证**，已在 §2.1、§4 显式标注。
+- 仍不能产生的 7 个错误码、`runs` 的领域行为、C2 的 `revision=0` 空洞是 S3–S6 的输入，不得在后续矩阵中回填为「已覆盖」。

@@ -123,7 +123,11 @@ def catalog(owner):
     for name, (_, _, _, definition) in functions.items():
         assert not name.startswith(("claim_", "lease_", "acquire_")), name
         if "UPDATE v24.effects" in definition:
-            assert name in {"advance", "validate_and_apply_install_delta"}, name
+            assert name in {
+                "advance",
+                "validate_and_apply_install_delta",
+                "validate_and_apply_delta",
+            }, name
             if name != "advance":
                 assert not functions[name][0]  # INVOKER; no application table privileges
         if "pg_advisory_xact_lock" in definition:
@@ -773,7 +777,7 @@ def permissions(db, owner, connections):
         exposed = one(conn, """SELECT array_agg(proname::text ORDER BY proname)
             FROM pg_proc WHERE pronamespace='v24'::regnamespace
               AND has_function_privilege(session_user,oid,'EXECUTE')""")
-        expected = pure | {"advance", "scope_control"}
+        expected = pure | {"advance", "scope_control", "resolve", "fiber_control", "dispose"}
         if alias != "admin":
             expected.add("install")
         assert set(exposed) == expected, (alias, exposed)

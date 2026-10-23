@@ -191,10 +191,24 @@ BEGIN
     IF v_bytes IS DISTINCT FROM convert_to(v24.canonical_json(v_body->'payload'), 'UTF8') THEN
       RETURN v24.error_v1('invalid_args');
     END IF;
-    -- S1 root-only install shape must reject even a nonexistent child owner
-    -- before closure discovery would otherwise return retry_with_closure.
-    IF v_body->>'kind' = 'command_install' AND v_body->'payload'->>'owner_fiber_id' IS NOT NULL THEN
+    -- S2 child admission: a nonexistent owner is W0 invalid_args, not a closure
+    -- failure. This read happens before closure discovery; fibers are never
+    -- deleted, so it cannot race a removal.
+    IF v_body->>'kind' = 'command_install'
+       AND v_body->'payload'->>'owner_fiber_id' IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM v24.fibers
+                        WHERE fiber_id = (v_body->'payload'->>'owner_fiber_id')::uuid) THEN
       RETURN v24.error_v1('invalid_args');
+    END IF;
+    IF v_body->>'kind' = 'command_fiber_control' THEN
+      IF jsonb_typeof(v_body->'payload'->'fiber_id') IS DISTINCT FROM 'string'
+         OR jsonb_typeof(v_body->'payload'->'action') IS DISTINCT FROM 'string'
+         OR (v_body->'payload'->>'action') NOT IN ('on','off','retry')
+         OR jsonb_typeof(v_body->'payload'->'expected_control_seq') IS DISTINCT FROM 'number'
+         OR (v_body->'payload'->>'expected_control_seq') !~ '^[0-9]{1,18}$'
+         OR (v_body->'payload'->>'expected_control_seq')::numeric > 9223372036854775807 THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
     END IF;
     -- These are reference fields, not caller-provided closure/lock instructions.
     FOR v_ref IN SELECT value #>> '{}' FROM jsonb_each(v_body->'payload')
@@ -292,12 +306,52 @@ BEGIN
         ('scopes',x.scope_id), ('fibers',x.owner_fiber_id), ('episodes',x.owner_episode_id)
       ) r(entity_type,entity_id) WHERE c.entity_type='installs' AND x.install_id=c.entity_id
       UNION ALL
+      SELECT 'fibers', f.fiber_id FROM v24.installs x
+        JOIN v24.fibers f ON f.install_id = x.install_id
+        WHERE c.entity_type='installs' AND x.install_id=c.entity_id
+      UNION ALL
+      SELECT 'installs', ci.install_id FROM v24.installs x
+        JOIN v24.installs ci ON ci.owner_fiber_id = x.owner_fiber_id
+         AND ci.owner_episode_id = x.owner_episode_id
+        WHERE c.entity_type='installs' AND x.install_id=c.entity_id
+          AND x.owner_fiber_id IS NOT NULL AND ci.install_id <> x.install_id
+      UNION ALL
+      SELECT 'effects', e.effect_id FROM v24.installs x
+        JOIN v24.effects e ON (e.request->>'install_id') = x.install_id::text
+        WHERE c.entity_type='installs' AND x.install_id=c.entity_id
+      UNION ALL
       SELECT r.* FROM v24.fibers x CROSS JOIN LATERAL (VALUES
         ('scopes',x.scope_id), ('installs',x.install_id), ('fibers',x.owner_fiber_id),
         ('episodes',x.owner_episode_id), ('episodes',x.current_episode_id)
       ) r(entity_type,entity_id) WHERE c.entity_type='fibers' AND x.fiber_id=c.entity_id
       UNION ALL
+      SELECT 'effects', e.effect_id FROM v24.fibers x
+        JOIN v24.effects e ON e.fiber_id = x.fiber_id
+        WHERE c.entity_type='fibers' AND x.fiber_id=c.entity_id
+          AND e.kind='fiber_reconcile'
+      UNION ALL
+      -- Activation closure: resolve hard requirements without locking yet; the
+      -- interpreter re-resolves and returns retry_with_closure on drift.
+      SELECT 'slots', rr.slot_id
+      FROM v24.fibers x
+      JOIN v24.installs i ON i.install_id = x.install_id
+      CROSS JOIN LATERAL v24.resolve(
+        x.scope_id,
+        ARRAY(SELECT value->>'key' FROM jsonb_array_elements(i.requires))
+      ) rr
+      WHERE c.entity_type='fibers' AND x.fiber_id=c.entity_id
+        AND v_class='command' AND v_body->>'kind'='command_fiber_control'
+        AND v_body->'payload'->>'action'='on' AND rr.live
+      UNION ALL
       SELECT 'fibers', x.fiber_id FROM v24.episodes x
+        WHERE c.entity_type='episodes' AND x.episode_id=c.entity_id
+      UNION ALL
+      SELECT 'slots', s.slot_id FROM v24.episodes x
+        JOIN v24.slots s ON s.episode_id = x.episode_id
+        WHERE c.entity_type='episodes' AND x.episode_id=c.entity_id
+      UNION ALL
+      SELECT 'pins', p.pin_id FROM v24.episodes x
+        JOIN v24.pins p ON p.consumer_episode_id = x.episode_id
         WHERE c.entity_type='episodes' AND x.episode_id=c.entity_id
       UNION ALL
       SELECT r.* FROM v24.slots x CROSS JOIN LATERAL (VALUES
@@ -321,6 +375,12 @@ BEGIN
     SELECT entity_type, jsonb_agg(entity_id ORDER BY entity_id) AS ids
       FROM closure GROUP BY entity_type
   ) SELECT jsonb_object_agg(entity_type, ids) INTO v_closure FROM grouped;
+
+  IF (SELECT coalesce(sum(jsonb_array_length(c.value)), 0)
+        FROM jsonb_each(v_closure) c) > 512 THEN
+    -- Bounded closure: no unbounded subtree traversal (design §2.5).
+    RETURN v24.error_v1('retry_with_closure');
+  END IF;
 
   IF EXISTS (
     SELECT 1 FROM jsonb_each(v_closure) c
@@ -368,7 +428,9 @@ BEGIN
     v_delta := v24.interpret_command(p_effect_id, v_principal, p_outcome, v_closure);
   ELSIF v_class = 'claim' THEN
     SELECT * INTO v_effect FROM v24.effects WHERE effect_id=p_effect_id;
-    IF v_effect.kind LIKE 'command\_%' OR
+    -- fiber_reconcile is DB-only work (no host IO, no claim); claiming it
+    -- would create a second lifecycle queue.
+    IF v_effect.kind LIKE 'command\_%' OR v_effect.kind = 'fiber_reconcile' OR
        v_effect.status IN ('succeeded','failed','unknown','cancelled') THEN
       RETURN v24.error_v1('invalid_args');
     END IF;

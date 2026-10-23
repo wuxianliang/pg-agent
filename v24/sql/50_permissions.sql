@@ -26,6 +26,15 @@ GRANT EXECUTE ON FUNCTION v24.scope_control(text, uuid, jsonb, text, text)
   TO v24_admin, v24_service, v24_operator;
 GRANT EXECUTE ON FUNCTION v24.install(uuid, uuid, bytea, bytea, text)
   TO v24_service, v24_operator;
+-- W1 capability read surface: STABLE, INVOKER, writes nothing.
+GRANT EXECUTE ON FUNCTION v24.resolve(uuid, text[])
+  TO v24_admin, v24_service, v24_operator;
+-- W4 lifecycle entry point.
+GRANT EXECUTE ON FUNCTION v24.fiber_control(uuid, text, bigint, text)
+  TO v24_admin, v24_service, v24_operator;
+-- W6 dispose entry point.
+GRANT EXECUTE ON FUNCTION v24.dispose(uuid, text)
+  TO v24_admin, v24_service, v24_operator;
 
 -- Fail closed if a later function drifts from the owner/path/PUBLIC contract.
 DO $acl$
