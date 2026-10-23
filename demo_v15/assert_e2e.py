@@ -1336,9 +1336,9 @@ def _overflow(root, nodes, stored_by, iters_by):
 def _uuid_mismatch(sql: str, root_id: str, sqlstate) -> bool:
     if _PRIOR_HISTORY.search(sql or "") is None:
         return False
-    if sqlstate == "22P02":
-        return True
     found = _UUID.findall(sql or "")
+    if sqlstate == "22P02":
+        return not found or any(item.lower() != root_id.lower() for item in found)
     return any(item.lower() != root_id.lower() for item in found)
 
 
