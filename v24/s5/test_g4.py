@@ -265,6 +265,66 @@ def installed_fixture(owner, admin, service, tag):
     return scope_id, install_id, hp
 
 
+def new_child_scope(admin, parent_id, realm, key):
+    payload = {"action": "create_child", "parent_scope_id": str(parent_id),
+               "realm_routes": {}, "default_realm": realm}
+    effect_id, outcome = command(admin, key, "command_scope_control", payload)
+    response = advance(admin, effect_id, outcome)
+    assert response.get("disposition") == "committed", response
+    admin.commit()
+    return response["emitted"][0]
+
+
+def close_scope(admin, scope_id, key):
+    payload = {"action": "close", "parent_scope_id": str(scope_id)}
+    effect_id, outcome = command(admin, key, "command_scope_control", payload)
+    response = advance(admin, effect_id, outcome)
+    admin.commit()
+    return response
+
+
+def scope_row(owner, scope_id):
+    value = one(owner, "SELECT to_jsonb(s) FROM v24.scopes s WHERE s.scope_id=%s",
+                (scope_id,))
+    owner.rollback()
+    return value
+
+
+def scope_phase_events(owner, scope_id):
+    value = one(
+        owner,
+        """SELECT coalesce(jsonb_agg(jsonb_build_object(
+             'phase', payload->>'phase', 'pending', payload->'pending',
+             'blockers', payload->'blockers', 'ok', payload->'ok')
+             ORDER BY seq), '[]')
+             FROM v24.events
+            WHERE entity_type='scope' AND entity_id=%s
+              AND event_kind='scope_close_phase'""",
+        (scope_id,),
+    )
+    owner.rollback()
+    return value
+
+
+def scope_event_count(owner, scope_id, event_kind):
+    value = one(
+        owner,
+        """SELECT count(*) FROM v24.events
+            WHERE entity_type='scope' AND entity_id=%s AND event_kind=%s""",
+        (scope_id, event_kind),
+    )
+    owner.rollback()
+    return value
+
+
+def settle_release(service, effect_id):
+    token = claim_effect(service, effect_id)
+    settled = settle_effect(service, effect_id, token, "success", {})
+    assert settled.get("disposition") == "committed", settled
+    return settled
+
+
+
 def g4_a(owner):
     """Merged DAG: R owns A, A owns B, live dependency A -> P. Read-only."""
     creator = uuid4()
@@ -642,9 +702,12 @@ def g4_cascade(owner, admin, service):
         str(root_install), str(child_a), str(child_b)}, stage
     assert len(stage["successors"]) == 1, stage
     assert stage["successors"][0]["request"]["install_id"] == str(child_a), stage
+    # S5 W3 test alignment: `close` is now an accepted dispose_stage mode (the
+    # close cascade entry point).  The stage is still read-only here.
     close_probe = one(owner, "SELECT v24.dispose_stage(%s,%s,'close')",
                       (root_install, uuid4()))
-    assert close_probe["error"]["error"]["code"] == "invalid_args", close_probe
+    assert "error" not in close_probe, close_probe
+    assert close_probe["installs"], close_probe
     owner.rollback()
 
     first = one(admin, "SELECT v24.dispose(%s,%s)",
@@ -1281,6 +1344,287 @@ def g4_n(owner, admin, service):
           "converges with an effect-only claim write")
 
 
+def g4_g(owner, admin, service):
+    """G4-G: command-driven close phases; child scope finalizes first."""
+    parent = new_scope(admin, "g4g", "g4g-parent")
+    child = new_child_scope(admin, parent, "g4g-c", "g4g-child")
+    parent_install = admit_install(
+        admin, parent, "g4g-parent-i", "g4g-parent-inst")["emitted"][0]
+    child_install = admit_install(
+        admin, child, "g4g-child-i", "g4g-child-inst")["emitted"][0]
+
+    def parent_call(key, phase, disposition):
+        before = scope_event_count(owner, parent, "scope_close_phase")
+        response = close_scope(admin, parent, key)
+        after = scope_event_count(owner, parent, "scope_close_phase")
+        assert after == before + 1, (key, before, after)
+        current = scope_phase_events(owner, parent)[-1]
+        assert current["phase"] == phase, (key, current)
+        assert response["disposition"] == disposition, (key, response)
+        if disposition == "deferred":
+            assert scope_row(owner, parent)["closed_at"] is None, key
+        return response
+
+    first = parent_call("g4g-p-1", "request", "committed")
+    assert first["emitted"] == [], first
+    parent_call("g4g-p-2", "drain", "deferred")
+    parent_call("g4g-p-3", "retire", "deferred")
+    cascade = parent_call("g4g-p-4", "cascade", "deferred")
+    assert len(cascade["emitted"]) == 1, cascade
+    assert scope_event_count(owner, parent, "scope_closed") == 0
+    parent_call("g4g-p-5", "barrier", "deferred")
+    parent_barrier = scope_phase_events(owner, parent)[-1]
+    assert parent_barrier["pending"]["children"] > 0, parent_barrier
+    assert scope_event_count(owner, parent, "scope_closed") == 0
+
+    # The parent's install is disposable, but the child scope is still open.
+    settle_release(service, cascade["emitted"][0])
+    assert install_row(owner, parent_install)["state"] == "disposed"
+    parent_call("g4g-p-6", "barrier", "deferred")
+
+    child_phases = []
+    child_closed_at = None
+    for index in range(1, 16):
+        before = scope_event_count(owner, child, "scope_close_phase")
+        response = close_scope(admin, child, "g4g-c-%d" % index)
+        after = scope_event_count(owner, child, "scope_close_phase")
+        assert after == before + 1, (index, before, after)
+        child_phases.append(scope_phase_events(owner, child)[-1]["phase"])
+        if response.get("emitted"):
+            for effect_id in response["emitted"]:
+                settle_release(service, effect_id)
+        row = scope_row(owner, child)
+        if row["closed_at"] is not None:
+            child_closed_at = row["closed_at"]
+            assert response["disposition"] == "committed", response
+            break
+        assert scope_event_count(owner, child, "scope_closed") == 0
+    assert child_closed_at is not None, child_phases
+    assert child_phases[-1] == "finalize", child_phases
+    assert install_row(owner, child_install)["state"] == "disposed"
+
+    parent_call("g4g-p-7", "barrier", "deferred")
+    assert scope_phase_events(owner, parent)[-1]["ok"] is True
+    final = parent_call("g4g-p-8", "finalize", "committed")
+    assert final["emitted"] == [], final
+    parent_row = scope_row(owner, parent)
+    assert parent_row["closed_at"] is not None, parent_row
+    assert parent_row["close_requested_at"] is not None, parent_row
+
+    parent_phases = [event["phase"] for event in scope_phase_events(owner, parent)]
+    assert parent_phases == [
+        "request", "drain", "retire", "cascade",
+        "barrier", "barrier", "barrier", "finalize"], parent_phases
+    rank = {"request": 0, "drain": 1, "retire": 2, "cascade": 3,
+            "barrier": 4, "finalize": 5}
+    assert [rank[p] for p in parent_phases] == sorted(rank[p] for p in parent_phases)
+    assert [rank[p] for p in child_phases] == sorted(rank[p] for p in child_phases)
+    assert any(event["phase"] == "barrier"
+               and event["pending"]["children"] > 0
+               for event in scope_phase_events(owner, parent))
+    assert scope_event_count(owner, parent, "scope_closed") == 1
+    assert scope_event_count(owner, child, "scope_closed") == 1
+    ordered = one(owner, """SELECT
+        (SELECT closed_at FROM v24.scopes WHERE scope_id=%s) <
+        (SELECT closed_at FROM v24.scopes WHERE scope_id=%s)""", (child, parent))
+    owner.rollback()
+    assert ordered is True, ordered
+
+    # Same-key replay: byte-equal response and zero new events/effects/rows.
+    before_state = state(owner)
+    owner.rollback()
+    before_phases = scope_event_count(owner, parent, "scope_close_phase")
+    replay = close_scope(admin, parent, "g4g-p-1")
+    assert replay == first, (replay, first)
+    assert state(owner) == before_state
+    owner.rollback()
+    assert scope_event_count(owner, parent, "scope_close_phase") == before_phases
+
+    # A new key on the closed scope is the existing W1 already_terminal receipt.
+    closed_at = scope_row(owner, parent)["closed_at"]
+    before_domain = domain_state(owner)
+    owner.rollback()
+    terminal = close_scope(admin, parent, "g4g-p-9")
+    assert terminal == {
+        "v": 1, "error": {"code": "already_terminal", "detail": {}}}, terminal
+    assert domain_state(owner) == before_domain
+    assert scope_event_count(owner, parent, "scope_closed") == 1
+    assert scope_row(owner, parent)["closed_at"] == closed_at
+
+    # Drain evidence: a live run gets only close_intent={kind:'close'}.  The
+    # run row is a seeded fixture (non-public path); status/ended_at are not
+    # rewritten and the close command publishes no successor.
+    run_scope = new_scope(admin, "g4g-r", "g4g-run-root")
+    run_id = uuid4()
+    with owner.cursor() as cur:
+        cur.execute(
+            """INSERT INTO v24.runs(run_id, scope_id, status, remaining_steps,
+                 remaining_tool_calls, remaining_wall_ms)
+               VALUES (%s,%s,'running',2,1,1000)""",
+            (run_id, run_scope))
+    owner.commit()
+    assert close_scope(admin, run_scope, "g4g-r-1")["disposition"] == "committed"
+    run_before = one(owner, "SELECT to_jsonb(r) FROM v24.runs r WHERE r.run_id=%s",
+                     (run_id,))
+    owner.rollback()
+    drain = close_scope(admin, run_scope, "g4g-r-2")
+    assert drain["disposition"] == "deferred", drain
+    run_after = one(owner, "SELECT to_jsonb(r) FROM v24.runs r WHERE r.run_id=%s",
+                    (run_id,))
+    owner.rollback()
+    run_changed = {key for key in run_after if run_after[key] != run_before[key]}
+    assert run_changed == {"close_intent"}, run_changed
+    assert run_after["status"] == "running" and run_after["ended_at"] is None
+    assert run_after["close_intent"] == {"kind": "close"}, run_after
+    assert one(owner, "SELECT count(*) FROM v24.effects WHERE parent_effect_id=%s",
+               (drain["effect_id"],)) == 0
+    drain_event = scope_phase_events(owner, run_scope)[-1]
+    assert drain_event["phase"] == "drain", drain_event
+    assert drain_event["pending"]["runs"] == 1, drain_event
+    assert close_scope(admin, run_scope, "g4g-r-3")["disposition"] == "deferred"
+    assert scope_phase_events(owner, run_scope)[-1]["phase"] == "retire"
+    assert one(owner, "SELECT status FROM v24.runs WHERE run_id=%s",
+               (run_id,)) == "running"
+    owner.rollback()
+
+    # Retire evidence: the active generation moves to retiring, its slots are
+    # withdrawn (not released), and the fiber intent flips with control_seq + 1.
+    retire_scope, retire_install, _hp = installed_fixture(
+        owner, admin, service, "g4g-ret")
+    retire_fiber = fiber_of(owner, retire_install)
+    activated = one(admin, "SELECT v24.fiber_control(%s,'on',0,%s)",
+                    (retire_fiber, "g4g-ret-on"))
+    admin.commit()
+    assert activated.get("disposition") == "committed", activated
+    retire_episode = activated["emitted"][0]
+    close_scope(admin, retire_scope, "g4g-ret-1")
+    close_scope(admin, retire_scope, "g4g-ret-2")
+    retire_stage = close_scope(admin, retire_scope, "g4g-ret-3")
+    assert retire_stage["disposition"] == "deferred", retire_stage
+    assert scope_phase_events(owner, retire_scope)[-1]["phase"] == "retire"
+    episode = one(owner, "SELECT to_jsonb(e) FROM v24.episodes e WHERE episode_id=%s",
+                  (retire_episode,))
+    owner.rollback()
+    assert episode["state"] == "retiring", episode
+    assert episode["retire_started_at"] is not None and episode["closed_at"] is None
+    slot = one(owner, "SELECT to_jsonb(s) FROM v24.slots s WHERE episode_id=%s",
+               (retire_episode,))
+    owner.rollback()
+    assert slot["withdrawn_at"] is not None, slot
+    assert slot["released_at"] is None, slot
+    retire_fiber_row = one(
+        owner, "SELECT to_jsonb(f) FROM v24.fibers f WHERE f.fiber_id=%s",
+        (retire_fiber,))
+    owner.rollback()
+    assert retire_fiber_row["want_on"] is False, retire_fiber_row
+    assert retire_fiber_row["control_seq"] == 2, retire_fiber_row
+    print("[G4-G] parent phases=%s child phases=%s child.closed_at<parent.closed_at=%s "
+          "barrier children>0, finalize-once, same-key replay, new-key already_terminal; "
+          "drain writes only close_intent={kind:close}; retire moves the generation to "
+          "retiring and withdraws (not releases) its slots"
+          % (parent_phases, child_phases, ordered))
+
+
+def g4_o(owner, admin, service):
+    """G4-O: close_requested_at blocks every new admission; fiber on is narrowed."""
+    scope_id = new_scope(admin, "g4o", "g4o-root")
+    admitted = admit_install(admin, scope_id, "g4o-i", "g4o-inst")
+    install_id = admitted["emitted"][0]
+    fiber = fiber_of(owner, install_id)
+
+    requested = close_scope(admin, scope_id, "g4o-close")
+    assert requested["disposition"] == "committed", requested
+    requested_row = scope_row(owner, scope_id)
+    assert requested_row["close_requested_at"] is not None, requested_row
+    assert requested_row["closed_at"] is None, requested_row
+
+    before = domain_state(owner)
+    owner.rollback()
+
+    child_payload = {"action": "create_child",
+                     "parent_scope_id": str(scope_id),
+                     "realm_routes": {}, "default_realm": "g4o-c"}
+    effect_id, outcome = command(
+        admin, "g4o-child", "command_scope_control", child_payload)
+    child_block = advance(admin, effect_id, outcome)
+    admin.commit()
+    assert child_block == {
+        "v": 1, "error": {"code": "scope_closed", "detail": {}}}, child_block
+    assert domain_state(owner) == before
+    owner.rollback()
+
+    install_payload = {
+        "scope_id": str(scope_id), "owner_fiber_id": None,
+        "manifest_bytes": base64.b64encode(
+            manifest_bytes("g4o-second")).decode(),
+        "artifact_digest": "\\x"}
+    effect_id, outcome = command(
+        admin, "g4o-install", "command_install", install_payload)
+    install_block = advance(admin, effect_id, outcome)
+    admin.commit()
+    assert install_block == {
+        "v": 1, "error": {"code": "scope_closed", "detail": {}}}, install_block
+    assert domain_state(owner) == before
+    owner.rollback()
+
+    start_block = one(
+        admin, "SELECT v24.start(%s,%s,%s,%s,%s)",
+        (scope_id, fiber, Json({}),
+         Json({"steps": 2, "tool_calls": 1, "wall_ms": 100}), "g4o-start"))
+    admin.commit()
+    assert start_block == {
+        "v": 1, "error": {"code": "scope_closed", "detail": {}}}, start_block
+    assert domain_state(owner) == before
+    owner.rollback()
+
+    ten_before = state(owner)
+    owner.rollback()
+    fiber_before = one(
+        owner, "SELECT to_jsonb(f) FROM v24.fibers f WHERE f.fiber_id=%s", (fiber,))
+    owner.rollback()
+    fiber_block = one(
+        admin, "SELECT v24.fiber_control(%s,'on',0,%s)", (fiber, "g4o-on"))
+    admin.commit()
+    assert fiber_block == {
+        "v": 1, "error": {"code": "scope_closed", "detail": {}}}, fiber_block
+    ten_after = state(owner)
+    owner.rollback()
+    for table in EXPECTED_TABLES - {"effects", "requests", "fibers"}:
+        assert ten_after[table] == ten_before[table], (
+            table, "fiber_control(on) after close wrote rows")
+    fiber_after = one(
+        owner, "SELECT to_jsonb(f) FROM v24.fibers f WHERE f.fiber_id=%s", (fiber,))
+    owner.rollback()
+    changed = {key for key in fiber_after if fiber_after[key] != fiber_before[key]}
+    assert changed == {"failure_seq", "failure"}, changed
+    assert fiber_after["failure_seq"] == 1, fiber_after
+    assert fiber_after["failure"]["code"] == "scope_closed", fiber_after
+    assert fiber_after["want_on"] is False, fiber_after
+    assert fiber_after["control_seq"] == 0, fiber_after
+    assert one(owner, "SELECT count(*) FROM v24.episodes WHERE fiber_id=%s",
+               (fiber,)) == 0
+    assert one(owner, "SELECT count(*) FROM v24.slots WHERE fiber_id=%s",
+               (fiber,)) == 0
+    assert one(owner, """SELECT count(*) FROM v24.pins p
+        JOIN v24.episodes e ON e.episode_id=p.consumer_episode_id
+        WHERE e.fiber_id=%s""", (fiber,)) == 0
+    owner.rollback()
+
+    # A close by a non-owner/non-admin remains the existing W1 unauthorized
+    # receipt (the close applier must not turn it into invalid_outcome) and
+    # writes no domain rows.
+    before = domain_state(owner)
+    owner.rollback()
+    unauthorized = close_scope(service, scope_id, "g4o-unauth")
+    assert unauthorized == {
+        "v": 1, "error": {"code": "unauthorized", "detail": {}}}, unauthorized
+    assert domain_state(owner) == before
+    owner.rollback()
+    print("[G4-O] create_child/install/start -> scope_closed with byte-equal domain; "
+          "fiber_control(on) -> scope_closed with only failure_seq/failure changed; "
+          "non-owner close keeps the W1 unauthorized receipt")
+
+
 def main():
     with server_helper_scope(), setup_db() as db:
         owner = db.connect()
@@ -1293,13 +1637,15 @@ def main():
         g4_b(owner)
         g4_e(owner, admin, service)
         g4_cascade(owner, admin, service)
+        g4_g(owner, admin, service)
         g4_h(owner, admin, service)
         g4_i(owner, admin, service)
         g4_j(owner, admin, service)
         g4_k(owner, admin, service)
         g4_n(owner, admin, service)
+        g4_o(owner, admin, service)
         _assert_closed_catalog(owner)
-    print("[passed] v24 S5 W1-W2")
+    print("[passed] v24 S5 W1-W3")
     return 0
 
 

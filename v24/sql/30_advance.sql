@@ -330,6 +330,30 @@ BEGIN
         ('scopes',s.parent_id), ('scopes',s.root_id)
       ) r(entity_type,entity_id) WHERE c.entity_type='scopes' AND s.scope_id=c.entity_id
       UNION ALL
+      -- S5 W3 close: the target scope's child scopes, runs and installs are part
+      -- of the write set.  Only the target scope expands (the parent/root hops
+      -- above must not pull in the whole tree).
+      SELECT 'scopes', ch.scope_id FROM v24.scopes s
+        JOIN v24.scopes ch ON ch.parent_id = s.scope_id
+       WHERE c.entity_type='scopes' AND s.scope_id=c.entity_id
+         AND s.scope_id=(v_body->'payload'->>'parent_scope_id')::uuid
+         AND v_class='command' AND v_body->>'kind'='command_scope_control'
+         AND v_body->'payload'->>'action'='close'
+      UNION ALL
+      SELECT 'runs', r.run_id FROM v24.scopes s
+        JOIN v24.runs r ON r.scope_id = s.scope_id
+       WHERE c.entity_type='scopes' AND s.scope_id=c.entity_id
+         AND s.scope_id=(v_body->'payload'->>'parent_scope_id')::uuid
+         AND v_class='command' AND v_body->>'kind'='command_scope_control'
+         AND v_body->'payload'->>'action'='close'
+      UNION ALL
+      SELECT 'installs', i.install_id FROM v24.scopes s
+        JOIN v24.installs i ON i.scope_id = s.scope_id
+       WHERE c.entity_type='scopes' AND s.scope_id=c.entity_id
+         AND s.scope_id=(v_body->'payload'->>'parent_scope_id')::uuid
+         AND v_class='command' AND v_body->>'kind'='command_scope_control'
+         AND v_body->'payload'->>'action'='close'
+      UNION ALL
       SELECT r.* FROM v24.runs x CROSS JOIN LATERAL (VALUES
         ('scopes',x.scope_id), ('runs',x.parent_run_id),
         ('fibers',x.owner_fiber_id), ('episodes',x.owner_episode_id)
@@ -370,6 +394,17 @@ BEGIN
         WHERE c.entity_type='installs' AND x.install_id=c.entity_id
           AND x.owner_fiber_id IS NOT NULL AND ci.install_id <> x.install_id
       UNION ALL
+      -- S5 W3 close: correct owner-descendant edge for the close closure.  The
+      -- pre-existing sibling edge above is a W1 behaviour and is not reused.
+      SELECT 'installs', ci.install_id FROM v24.fibers f
+        JOIN v24.installs ci ON ci.owner_fiber_id = f.fiber_id
+        JOIN v24.episodes e ON e.episode_id = ci.owner_episode_id
+                            AND e.fiber_id = f.fiber_id
+       WHERE c.entity_type='installs' AND f.install_id=c.entity_id
+         AND ci.install_id <> c.entity_id
+         AND v_class='command' AND v_body->>'kind'='command_scope_control'
+         AND v_body->'payload'->>'action'='close'
+      UNION ALL
       SELECT 'effects', e.effect_id FROM v24.installs x
         JOIN v24.effects e ON (e.request->>'install_id') = x.install_id::text
         WHERE c.entity_type='installs' AND x.install_id=c.entity_id
@@ -383,6 +418,13 @@ BEGIN
         JOIN v24.effects e ON e.fiber_id = x.fiber_id
         WHERE c.entity_type='fibers' AND x.fiber_id=c.entity_id
           AND e.kind='fiber_reconcile'
+      UNION ALL
+      -- S5 W3 close: retire touches every episode of the scope fiber, not only
+      -- the owner/current pointers.
+      SELECT 'episodes', e.episode_id FROM v24.episodes e
+       WHERE c.entity_type='fibers' AND e.fiber_id=c.entity_id
+         AND v_class='command' AND v_body->>'kind'='command_scope_control'
+         AND v_body->'payload'->>'action'='close'
       UNION ALL
       -- Activation closure: resolve hard requirements without locking yet; the
       -- interpreter re-resolves and returns retry_with_closure on drift.
@@ -418,6 +460,28 @@ BEGIN
       SELECT 'pins', p.pin_id FROM v24.episodes x
         JOIN v24.pins p ON p.consumer_episode_id = x.episode_id
         WHERE c.entity_type='episodes' AND x.episode_id=c.entity_id
+      UNION ALL
+      -- S5 W3 close: provider pins of the closure episodes are also blocked by
+      -- the barrier and must be in the lock set.
+      SELECT 'pins', p.pin_id FROM v24.episodes x
+        JOIN v24.pins p ON p.provider_episode_id = x.episode_id
+        WHERE c.entity_type='episodes' AND x.episode_id=c.entity_id
+          AND v_class='command' AND v_body->>'kind'='command_scope_control'
+          AND v_body->'payload'->>'action'='close'
+      UNION ALL
+      -- S5 W3 close: all pins that reference a closure slot, and all run pins of
+      -- the target scope's runs.
+      SELECT 'pins', p.pin_id FROM v24.slots x
+        JOIN v24.pins p ON p.slot_id = x.slot_id
+        WHERE c.entity_type='slots' AND x.slot_id=c.entity_id
+          AND v_class='command' AND v_body->>'kind'='command_scope_control'
+          AND v_body->'payload'->>'action'='close'
+      UNION ALL
+      SELECT 'pins', p.pin_id FROM v24.runs x
+        JOIN v24.pins p ON p.consumer_run_id = x.run_id
+        WHERE c.entity_type='runs' AND x.run_id=c.entity_id
+          AND v_class='command' AND v_body->>'kind'='command_scope_control'
+          AND v_body->'payload'->>'action'='close'
       UNION ALL
       SELECT r.* FROM v24.slots x CROSS JOIN LATERAL (VALUES
         ('fibers',x.fiber_id), ('episodes',x.episode_id)

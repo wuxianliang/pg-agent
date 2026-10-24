@@ -281,6 +281,122 @@ AS $$
    ORDER BY s.contribution_seq DESC, s.slot_id;
 $$;
 
+-- W3 close closure: this scope's installs plus their transitive owner
+-- descendants (D-S5-10).  Dependency neighbours are deliberately not included:
+-- scope close owns this scope's own obligations, while a live dependency pin is
+-- surfaced separately by scope_closable's pin blocker.  `scope_depth` is the
+-- route_path length of the install's own scope; callers order it DESC so child
+-- scopes are cascaded before the parent.  UNION (not ALL) terminates cycles.
+CREATE FUNCTION v24.cleanup_close_closure(p_scope_id uuid)
+RETURNS TABLE(install_id uuid, scope_depth int)
+LANGUAGE sql STABLE SECURITY INVOKER
+SET search_path = pg_catalog, v24
+AS $$
+  WITH RECURSIVE d(install_id) AS (
+    SELECT i.install_id FROM v24.installs i WHERE i.scope_id = p_scope_id
+    UNION
+    SELECT ci.install_id
+      FROM d
+      JOIN v24.fibers f ON f.install_id = d.install_id
+      JOIN v24.installs ci ON ci.owner_fiber_id = f.fiber_id
+      JOIN v24.episodes e ON e.episode_id = ci.owner_episode_id
+                          AND e.fiber_id = f.fiber_id
+  )
+  SELECT d.install_id, cardinality(s.route_path)::int
+    FROM d
+    JOIN v24.installs i ON i.install_id = d.install_id
+    JOIN v24.scopes s ON s.scope_id = i.scope_id
+   ORDER BY cardinality(s.route_path) DESC, d.install_id;
+$$;
+
+-- C26 barrier predicate.  The result is a structured blocker report:
+--   {ok, blockers:{runs,fibers,installs,children,effects,pins}, pending:{...}}
+-- `pending` is the frozen four-key phase payload; `blockers` carries the extra
+-- effect/pin counts the barrier must also clear.  Read-only and INVOKER.
+CREATE FUNCTION v24.scope_closable(p_scope_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY INVOKER
+SET search_path = pg_catalog, v24
+AS $$
+DECLARE
+  v_children int := 0;
+  v_installs int := 0;
+  v_fibers int := 0;
+  v_runs int := 0;
+  v_effects int := 0;
+  v_pins int := 0;
+  v_pending jsonb;
+  v_blockers jsonb;
+BEGIN
+  IF p_scope_id IS NULL
+     OR NOT EXISTS (SELECT 1 FROM v24.scopes s WHERE s.scope_id = p_scope_id) THEN
+    RETURN jsonb_build_object('ok', false,
+      'blockers', jsonb_build_object('missing', 1),
+      'pending', jsonb_build_object('runs',0,'fibers',0,'installs',0,'children',0));
+  END IF;
+
+  SELECT count(*) INTO v_children
+    FROM v24.scopes c
+   WHERE c.parent_id = p_scope_id AND c.closed_at IS NULL;
+
+  SELECT count(*) INTO v_installs
+    FROM v24.cleanup_close_closure(p_scope_id) c
+    JOIN v24.installs i ON i.install_id = c.install_id
+   WHERE i.state <> 'disposed';
+
+  SELECT count(*) INTO v_fibers
+    FROM v24.cleanup_close_closure(p_scope_id) c
+    JOIN v24.fibers f ON f.install_id = c.install_id
+   WHERE f.disposed_at IS NULL;
+
+  SELECT count(*) INTO v_runs
+    FROM v24.runs r
+   WHERE r.scope_id = p_scope_id
+     AND r.status NOT IN ('completed','failed','cancelled','blocked_unknown');
+
+  SELECT count(*) INTO v_effects
+    FROM v24.cleanup_close_closure(p_scope_id) c
+    JOIN v24.effects e ON (e.request->>'install_id') = c.install_id::text
+   WHERE e.kind IN ('host_prepare','host_release','inspect_resource')
+     AND (e.status IN ('ready','claimed')
+          OR (e.status = 'unknown' AND e.resource_quiesced_at IS NULL));
+
+  -- A live pin references the closure when the provider side belongs to a
+  -- closure fiber/slot, or when the consumer side is a closure fiber or a run
+  -- in this scope.  Both directions block: neither can be released by retire.
+  SELECT count(*) INTO v_pins
+    FROM v24.pins p
+   WHERE p.released_at IS NULL
+     AND (
+       EXISTS (SELECT 1 FROM v24.cleanup_close_closure(p_scope_id) c
+                 JOIN v24.fibers f ON f.install_id = c.install_id
+                 JOIN v24.episodes ep ON ep.fiber_id = f.fiber_id
+                WHERE ep.episode_id = p.provider_episode_id)
+       OR EXISTS (SELECT 1 FROM v24.cleanup_close_closure(p_scope_id) c
+                    JOIN v24.fibers f ON f.install_id = c.install_id
+                    JOIN v24.slots s ON s.fiber_id = f.fiber_id
+                   WHERE s.slot_id = p.slot_id)
+       OR p.consumer_run_id IN
+            (SELECT r.run_id FROM v24.runs r WHERE r.scope_id = p_scope_id)
+       OR EXISTS (SELECT 1 FROM v24.cleanup_close_closure(p_scope_id) c
+                    JOIN v24.fibers f ON f.install_id = c.install_id
+                    JOIN v24.episodes ep ON ep.fiber_id = f.fiber_id
+                   WHERE ep.episode_id = p.consumer_episode_id)
+     );
+
+  v_pending := jsonb_build_object(
+    'runs', v_runs, 'fibers', v_fibers,
+    'installs', v_installs, 'children', v_children);
+  v_blockers := jsonb_build_object(
+    'runs', v_runs, 'fibers', v_fibers, 'installs', v_installs,
+    'children', v_children, 'effects', v_effects, 'pins', v_pins);
+  RETURN jsonb_build_object(
+    'ok', (v_runs + v_fibers + v_installs + v_children + v_effects + v_pins) = 0,
+    'blockers', v_blockers,
+    'pending', v_pending);
+END;
+$$;
+
 -- One bounded dispose/inspect stage.  Iterative array stack (no recursive
 -- function calls), at most 16 installs+fibers update rows and 16 successors per
 -- stage.
@@ -335,9 +451,7 @@ DECLARE
   v_blocked_reason text := NULL;
 BEGIN
   IF p_install_id IS NULL OR p_by_effect IS NULL
-     OR p_mode IS NULL OR p_mode NOT IN ('command','cascade') THEN
-    -- `close` is accepted by the shared C27 helper only from W3; W2 still
-    -- rejects it as invalid_args exactly like any other bad mode.
+     OR p_mode IS NULL OR p_mode NOT IN ('command','cascade','close') THEN
     RETURN jsonb_build_object('error', v24.error_v1('invalid_args'));
   END IF;
 
