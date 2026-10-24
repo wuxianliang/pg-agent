@@ -614,6 +614,17 @@ BEGIN
         ELSE
           RETURN v24.error_v1('invalid_args');
         END IF;
+      ELSIF v_cause = 'steer'
+            AND v_parent.kind IN ('model_call','tool_call') THEN
+        -- C21: a consumed pending steer is a steer-shaped request whose parent
+        -- is the last old-generation settlement, not a command_steer.  Its
+        -- deterministic id is the steer namespace, never command:model_call:0.
+        IF v_effect.effect_id <> v24.steer_model_effect_id(v_effect.run_id,
+             (v_req->>'epoch_no')::bigint,
+             (v_req->>'generation')::bigint,
+             v_req->>'instruction') THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
       ELSE
         IF v_parent.kind <> 'command_'||v_cause
            OR v_effect.effect_id <>

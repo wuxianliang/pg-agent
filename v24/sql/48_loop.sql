@@ -102,6 +102,43 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, v24 AS $$
                    OR (e.status = 'unknown' AND e.resource_quiesced_at IS NULL)));
 $$;
 
+-- C21 deterministic steer-consumption identity.  This deliberately owns its own
+-- namespace: model_effect_id() keys on a command effect and
+-- continuation_effect_id() keys on a model effect, while this one keys on the
+-- run plus the pending steer's epoch/generation and an instruction digest.  The
+-- same pending value always yields the same id, and two different pending
+-- steers cannot collide with either existing namespace or with each other.
+CREATE FUNCTION v24.steer_model_effect_id(p_run uuid, p_epoch bigint,
+  p_generation bigint, p_instruction text) RETURNS uuid
+LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, v24 AS $$
+  SELECT md5(p_run::text||':steer_model:'||p_epoch::text||':'||p_generation::text
+             ||':'||md5(coalesce(p_instruction,'')))::uuid
+$$;
+
+-- C21 consumption predicate: conditions 1, 2, 3 and 5.  Condition 4
+-- (class <> unknown) belongs to the caller, which already routes unknown to the
+-- blocked_unknown wall.  The predicate runs before any DML, so the settling
+-- effect still has status ready/claimed in the table; p_effect_id makes it
+-- count as settled.  Old generation is strict less-than: no effect can be
+-- newer than the run, but only genuinely inherited work may consume a steer.
+CREATE FUNCTION v24.steer_consumable(p_run uuid, p_effect_id uuid,
+  p_epoch bigint, p_generation bigint) RETURNS boolean
+LANGUAGE sql STABLE SET search_path = pg_catalog, v24 AS $$
+  SELECT coalesce((
+    SELECT r.pending_steer IS NOT NULL
+       AND r.status NOT IN ('completed','failed','cancelled','blocked_unknown')
+       AND (p_epoch < r.epoch_no OR p_generation < r.driving_generation)
+       AND NOT EXISTS (
+             SELECT 1 FROM v24.effects e
+              WHERE e.run_id = r.run_id
+                AND e.kind IN ('model_call','tool_call')
+                AND e.effect_id <> p_effect_id
+                AND (e.epoch_no < r.epoch_no
+                     OR e.generation < r.driving_generation)
+                AND e.status IN ('ready','claimed'))
+      FROM v24.runs r WHERE r.run_id = p_run), false)
+$$;
+
 -- C19 model settlement.  Every structural check precedes the first DML and
 -- failures return {write:false,error} so the caller's transaction stays clean.
 CREATE FUNCTION v24.interpret_model_settlement(p_effect_id uuid, p_principal uuid,
@@ -154,6 +191,14 @@ DECLARE
   v_i int;
   v_pin_id uuid;
   v_pin_digest text;
+  v_consume boolean := false;
+  v_pending_epoch bigint;
+  v_pending_gen bigint;
+  v_pending_instruction text;
+  v_steer_id uuid;
+  v_steer_admit boolean := false;
+  v_steer_sealed boolean := false;
+  v_steer_reserve bigint;
 BEGIN
   SELECT * INTO e FROM v24.effects WHERE effect_id = p_effect_id;
   IF NOT FOUND OR e.kind <> 'model_call' THEN
@@ -390,6 +435,16 @@ BEGIN
       ELSE
         RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
       END IF;
+    ELSIF v_cause = 'steer' AND parent.kind IN ('model_call','tool_call') THEN
+      -- C21: a consumed pending steer is a steer-shaped request whose parent is
+      -- the last old-generation settlement, not a command_steer.  Its identity
+      -- is the C21 deterministic steer id (not the command model_call id).
+      IF e.effect_id IS DISTINCT FROM v24.steer_model_effect_id(e.run_id,
+           (e.request->>'epoch_no')::bigint,
+           (e.request->>'generation')::bigint,
+           e.request->>'instruction') THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
     ELSE
       IF parent.kind <> 'command_'||v_cause
          OR e.effect_id IS DISTINCT FROM md5(e.parent_effect_id::text||':model_call:0')::uuid THEN
@@ -520,7 +575,10 @@ BEGIN
         'event_kind','run_blocked_unknown','payload',jsonb_build_object(
           'run_id',e.run_id,'reason','semantic_violation','effect_id',p_effect_id)));
   ELSIF v_late THEN
-    -- C21: only facts and cost survive a settlement from an older generation.
+    -- C21: an older generation normally contributes facts and cost only.  When
+    -- this settlement is the last live old-generation business effect and a
+    -- pending steer is waiting, the same delta consumes it into exactly one
+    -- cause='steer' model and never publishes the old inherited successor.
     v_effect_status := CASE WHEN v_class = 'failure' THEN 'failed' ELSE 'succeeded' END;
     v_quiesced := true;
     v_status := r.status;
@@ -533,6 +591,77 @@ BEGIN
                           ELSE 'model_call_settled' END,
         'payload',jsonb_build_object(
           'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',true)));
+    v_consume := v24.steer_consumable(e.run_id,p_effect_id,e.epoch_no,e.generation);
+    IF v_consume THEN
+      v_pending_epoch := (r.pending_steer->>'epoch')::bigint;
+      v_pending_gen := greatest(r.driving_generation,
+                                (r.pending_steer->>'generation')::bigint);
+      v_pending_instruction := r.pending_steer->>'instruction';
+      -- Latest wins: the pending value is cleared whether or not a model fits.
+      v_pending := NULL;
+      v_steer_admit := v_steps >= 1 AND v_wall > 0
+                       AND (v_tokens IS NULL OR v_tokens > 0);
+      IF v_steer_admit THEN
+        v_steer_reserve := v24.model_reserve(v_tokens);
+        v_steps := v_steps - 1;
+        v_tokens := CASE WHEN v_tokens IS NULL THEN NULL
+                         ELSE v_tokens - v_steer_reserve END;
+        -- The settling model is the run's latest model input; a respond-shaped
+        -- model has none, so inherit the most recent model input like C17's
+        -- continuation rule.
+        v_input := coalesce(e.request->'input',
+          (SELECT x.request->'input' FROM v24.effects x
+            WHERE x.run_id = e.run_id AND x.kind = 'model_call'
+              AND x.effect_id <> p_effect_id AND x.request ? 'input'
+            ORDER BY x.created_at DESC, x.effect_id DESC LIMIT 1),
+          '{}'::jsonb);
+        v_steer_id := v24.steer_model_effect_id(e.run_id,v_pending_epoch,
+                                                v_pending_gen,v_pending_instruction);
+        v_succ := jsonb_build_array(jsonb_build_object(
+          'effect_id',v_steer_id,'parent_effect_id',p_effect_id,
+          'ordinal',0,'kind','model_call',
+          'run_id',r.run_id,'fiber_id',r.owner_fiber_id,'episode_id',r.owner_episode_id,
+          'epoch_no',v_pending_epoch,'generation',v_pending_gen,'pin_id',NULL,
+          'replay_policy','no_replay',
+          'request',jsonb_build_object(
+            'v',1,'cause','steer','run_id',r.run_id,'epoch_no',v_pending_epoch,
+            'generation',v_pending_gen,'input',v_input,
+            'reserve',jsonb_build_object('tokens',v_steer_reserve),
+            'digests',v_digests,'instruction',v_pending_instruction)));
+        v_events := v_events || jsonb_build_array(jsonb_build_object(
+          'entity_type','run','entity_id',e.run_id,
+          'event_kind','pending_steer_consumed','payload',jsonb_build_object(
+            'run_id',e.run_id,'effect_id',p_effect_id,'model_effect_id',v_steer_id,
+            'epoch',v_pending_epoch,'generation',v_pending_gen)));
+      ELSE
+        -- C23 addendum B: never admit a reserve-0 steer.  Seal when the run is
+        -- sealable; otherwise record the clear and publish nothing.
+        v_steer_sealed := v24.loop_sealable(e.run_id,p_effect_id,
+          jsonb_build_object('kind','budget'),NULL,NULL);
+        IF v_steer_sealed THEN
+          SELECT e2.request->'budget' INTO v_budget FROM v24.effects e2
+           WHERE e2.run_id = e.run_id AND e2.kind = 'model_call' AND e2.request ? 'budget'
+           ORDER BY e2.created_at, e2.effect_id LIMIT 1;
+          IF v_budget IS NULL OR jsonb_typeof(v_budget) IS DISTINCT FROM 'object' THEN
+            v_budget := jsonb_build_object('steps',v_steps,'tokens',coalesce(v_tokens,0),
+              'tool_calls',v_tool_calls,'wall_ms',v_wall);
+          END IF;
+          v_status := 'completed';
+          v_close := jsonb_build_object('kind','budget');
+          v_result := jsonb_build_object('v',1,'close_reason','budget_exhausted',
+            'final_text',NULL,'turn_no',v_turn,'budget',v_budget);
+          v_interaction := NULL; v_ended := now();
+          v_pins := v24.run_pin_release_set(e.run_id,p_effect_id,v_status,p_effect_id);
+          v_events := v_events || jsonb_build_array(
+            jsonb_build_object('entity_type','run','entity_id',e.run_id,
+              'event_kind','budget_exhausted','payload',jsonb_build_object(
+                'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn)),
+            jsonb_build_object('entity_type','run','entity_id',e.run_id,
+              'event_kind','run_completed','payload',jsonb_build_object(
+                'run_id',e.run_id,'close_reason','budget_exhausted','turn_no',v_turn)));
+        END IF;
+      END IF;
+    END IF;
   ELSIF v_class = 'failure' THEN
     v_status := 'failed';
     v_effect_status := 'failed';
@@ -852,6 +981,14 @@ DECLARE
   v_budget jsonb;
   v_fact_event text;
   v_final_text text;
+  v_pending_epoch bigint;
+  v_pending_gen bigint;
+  v_pending_instruction text;
+  v_steer_id uuid;
+  v_steer_admit boolean := false;
+  v_steer_sealed boolean := false;
+  v_steer_reserve bigint;
+  v_consume_events jsonb := '[]'::jsonb;
 BEGIN
   SELECT * INTO e FROM v24.effects WHERE effect_id = p_effect_id;
   IF NOT FOUND OR e.kind <> 'tool_call' THEN
@@ -983,7 +1120,8 @@ BEGIN
     -- C20 step 3's late fact (terminal run or old generation) also decides
     -- whether this settlement may release terminal-run pins (C22).
     v_late := r.status IN ('completed','failed','cancelled','blocked_unknown')
-              OR e.generation IS DISTINCT FROM r.driving_generation;
+              OR e.generation IS DISTINCT FROM r.driving_generation
+              OR e.epoch_no IS DISTINCT FROM r.epoch_no;
     IF v_late AND r.status IN ('completed','failed','cancelled') THEN
       v_pins := v24.run_pin_release_set(e.run_id,p_effect_id,r.status,p_effect_id);
     END IF;
@@ -1109,13 +1247,85 @@ BEGIN
           END IF;
         END IF;
         END IF;
+      ELSIF v24.steer_consumable(e.run_id,p_effect_id,e.epoch_no,e.generation) THEN
+        -- C21: the closing old-generation settlement consumes the pending steer
+        -- in place of the batch's inherited continuation.  Exactly one
+        -- cause='steer' model is published and the pending value is cleared;
+        -- latest wins, so only the last steer write is read.
+        v_pending_epoch := (r.pending_steer->>'epoch')::bigint;
+        v_pending_gen := greatest(r.driving_generation,
+                                  (r.pending_steer->>'generation')::bigint);
+        v_pending_instruction := r.pending_steer->>'instruction';
+        v_pending := NULL;
+        v_steer_admit := v_steps >= 1 AND v_wall > 0
+                         AND (v_tokens IS NULL OR v_tokens > 0);
+        IF v_steer_admit THEN
+          v_steer_reserve := v24.model_reserve(v_tokens);
+          v_steps := v_steps - 1;
+          v_tokens := CASE WHEN v_tokens IS NULL THEN NULL
+                           ELSE v_tokens - v_steer_reserve END;
+          v_digests := v24.model_digests(e.run_id);
+          -- start/steer/continuation carry input; a respond model does not, so
+          -- take the most recent model input on the run (C21 reducer input).
+          SELECT x.request->'input' INTO v_input FROM v24.effects x
+           WHERE x.run_id = e.run_id AND x.kind = 'model_call'
+             AND x.request ? 'input'
+           ORDER BY x.created_at DESC, x.effect_id DESC LIMIT 1;
+          v_input := coalesce(v_input,'{}'::jsonb);
+          v_steer_id := v24.steer_model_effect_id(e.run_id,v_pending_epoch,
+                                                  v_pending_gen,v_pending_instruction);
+          v_succ := jsonb_build_array(jsonb_build_object(
+            'effect_id',v_steer_id,'parent_effect_id',p_effect_id,
+            'ordinal',0,'kind','model_call',
+            'run_id',r.run_id,'fiber_id',r.owner_fiber_id,'episode_id',r.owner_episode_id,
+            'epoch_no',v_pending_epoch,'generation',v_pending_gen,'pin_id',NULL,
+            'replay_policy','no_replay',
+            'request',jsonb_build_object(
+              'v',1,'cause','steer','run_id',r.run_id,'epoch_no',v_pending_epoch,
+              'generation',v_pending_gen,'input',v_input,
+              'reserve',jsonb_build_object('tokens',v_steer_reserve),
+              'digests',v_digests,'instruction',v_pending_instruction)));
+          v_consume_events := jsonb_build_array(jsonb_build_object(
+            'entity_type','run','entity_id',e.run_id,
+            'event_kind','pending_steer_consumed','payload',jsonb_build_object(
+              'run_id',e.run_id,'effect_id',p_effect_id,'model_effect_id',v_steer_id,
+              'epoch',v_pending_epoch,'generation',v_pending_gen)));
+        ELSE
+          -- C23 addendum B: never admit a reserve-0 steer; seal if possible.
+          v_steer_sealed := v24.loop_sealable(e.run_id,p_effect_id,
+            jsonb_build_object('kind','budget'),NULL,NULL);
+          IF v_steer_sealed THEN
+            SELECT e2.request->'budget' INTO v_budget FROM v24.effects e2
+             WHERE e2.run_id = e.run_id AND e2.kind = 'model_call' AND e2.request ? 'budget'
+             ORDER BY e2.created_at, e2.effect_id LIMIT 1;
+            IF v_budget IS NULL OR jsonb_typeof(v_budget) IS DISTINCT FROM 'object' THEN
+              v_budget := jsonb_build_object('steps',v_steps,'tokens',coalesce(v_tokens,0),
+                'tool_calls',v_tool_calls,'wall_ms',v_wall);
+            END IF;
+            v_seal_kind := 'budget';
+            v_status := 'completed';
+            v_close := jsonb_build_object('kind','budget');
+            v_run_result := jsonb_build_object('v',1,'close_reason','budget_exhausted',
+              'final_text',NULL,'turn_no',v_turn,'budget',v_budget);
+            v_interaction := NULL; v_ended := now();
+            v_pins := v24.run_pin_release_set(e.run_id,p_effect_id,v_status,p_effect_id);
+            v_consume_events := jsonb_build_array(
+              jsonb_build_object('entity_type','run','entity_id',e.run_id,
+                'event_kind','budget_exhausted','payload',jsonb_build_object(
+                  'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn)),
+              jsonb_build_object('entity_type','run','entity_id',e.run_id,
+                'event_kind','run_completed','payload',jsonb_build_object(
+                  'run_id',e.run_id,'close_reason','budget_exhausted','turn_no',v_turn)));
+          END IF;
+        END IF;
       END IF;
     END IF;
 
     v_events := jsonb_build_array(
       jsonb_build_object('entity_type','run','entity_id',e.run_id,
         'event_kind',v_fact_event,'payload',jsonb_build_object(
-          'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',v_late)));
+          'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',v_late)))
+      || v_consume_events;
     IF NOT v_sibling AND NOT v_late THEN
       v_events := v_events || jsonb_build_array(
         jsonb_build_object('entity_type','run','entity_id',e.run_id,
@@ -1204,6 +1414,7 @@ DECLARE
   v_max_ord int;
   v_batch_calc text;
   v_succ_pin v24.pins%ROWTYPE;
+  v_consumable boolean := false;
   v_event_kinds text[] := ARRAY[
     'model_call_requested','model_call_settled','model_call_failed','model_call_unknown',
     'tool_call_settled','tool_call_failed','tool_call_unknown','tool_batch_admitted',
@@ -1268,6 +1479,10 @@ BEGIN
   END IF;
   v_cancel_late := r.status = 'cancelled' AND e.kind IN ('model_call','tool_call')
                    AND e.status = 'claimed' AND e.cancel_requested;
+  -- C21: a steer successor may only appear when this settlement is the last
+  -- old-generation business effect of a still-live run that carries the
+  -- pending value.  Evaluated before any DML, exactly like the interpreter.
+  v_consumable := v24.steer_consumable(e.run_id,p_effect_id,e.epoch_no,e.generation);
 
   -- Effect receipt matches the incoming class exactly.
   IF jsonb_typeof(p_delta->'effect') IS DISTINCT FROM 'object' THEN
@@ -1454,7 +1669,10 @@ BEGIN
     END IF;
     IF v_effect_status = 'failed' THEN
       IF e.kind = 'model_call' AND v_status <> 'failed'
-         AND NOT v_cancel_late THEN
+         AND NOT v_cancel_late
+         -- C21: an inherited old-generation failure records its fact while the
+         -- same delta consumes the pending steer; the run stays live.
+         AND NOT (v_consumable AND set_r->'pending_steer' = 'null'::jsonb) THEN
         RETURN v24.error_v1('invalid_outcome');
       ELSIF e.kind = 'tool_call'
             AND v_status NOT IN ('running','waiting','completed','failed','cancelled') THEN
@@ -1640,6 +1858,65 @@ BEGIN
         IF v_succ_ord <> 0 OR succ->'pin_id' <> 'null'::jsonb THEN
           RETURN v24.error_v1('invalid_outcome');
         END IF;
+        IF v_succ_req->>'cause' = 'steer' THEN
+          -- C21: the only steer successor is the one this run's pending value
+          -- entitles, with a deterministic identity in its own namespace.  The
+          -- same delta must clear pending_steer and announce the consumption.
+          IF v_succ_parent IS DISTINCT FROM p_effect_id
+             OR NOT v_consumable
+             OR jsonb_typeof(r.pending_steer) IS DISTINCT FROM 'object'
+             OR set_r->'pending_steer' <> 'null'::jsonb THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+          IF NOT (v_succ_req ?& ARRAY['v','cause','run_id','epoch_no','generation',
+                                      'input','reserve','digests','instruction'])
+             OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_succ_req) k
+                         WHERE k NOT IN ('v','cause','run_id','epoch_no','generation',
+                                         'input','reserve','digests','instruction')) THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+          IF v_succ_req->>'v' IS DISTINCT FROM '1'
+             OR v_succ_req->>'run_id' IS DISTINCT FROM e.run_id::text
+             OR jsonb_typeof(v_succ_req->'epoch_no') IS DISTINCT FROM 'number'
+             OR jsonb_typeof(v_succ_req->'generation') IS DISTINCT FROM 'number'
+             OR (v_succ_req->>'epoch_no')::bigint IS DISTINCT FROM
+                (r.pending_steer->>'epoch')::bigint
+             OR (v_succ_req->>'generation')::bigint IS DISTINCT FROM
+                greatest(r.driving_generation,
+                         (r.pending_steer->>'generation')::bigint)
+             OR (succ->>'epoch_no')::bigint IS DISTINCT FROM
+                (v_succ_req->>'epoch_no')::bigint
+             OR (succ->>'generation')::bigint IS DISTINCT FROM
+                (v_succ_req->>'generation')::bigint
+             OR jsonb_typeof(v_succ_req->'input') IS DISTINCT FROM 'object'
+             OR jsonb_typeof(v_succ_req->'instruction') IS DISTINCT FROM 'string'
+             OR v_succ_req->>'instruction' IS DISTINCT FROM
+                r.pending_steer->>'instruction'
+             OR jsonb_typeof(v_succ_req->'reserve') IS DISTINCT FROM 'object'
+             OR (SELECT count(*) FROM jsonb_object_keys(v_succ_req->'reserve')) <> 1
+             OR NOT (v_succ_req->'reserve' ? 'tokens')
+             OR jsonb_typeof(v_succ_req->'reserve'->'tokens') IS DISTINCT FROM 'number'
+             OR (v_succ_req->'reserve'->>'tokens') IS NULL
+             OR (v_succ_req->'reserve'->>'tokens') !~ '^[0-9]+$'
+             OR (v_succ_req->'reserve'->>'tokens')::bigint >
+                (v24.loop_policy()->>'reserve_tokens')::bigint
+             OR jsonb_typeof(v_succ_req->'digests') IS DISTINCT FROM 'object'
+             OR v_succ_req->'digests' IS DISTINCT FROM v24.model_digests(e.run_id) THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+          IF (succ->>'effect_id')::uuid IS DISTINCT FROM
+             v24.steer_model_effect_id(e.run_id,
+               (r.pending_steer->>'epoch')::bigint,
+               greatest(r.driving_generation,
+                        (r.pending_steer->>'generation')::bigint),
+               r.pending_steer->>'instruction') THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_events) x
+                          WHERE x->>'event_kind' = 'pending_steer_consumed') THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+        ELSE
         IF e.kind = 'model_call' THEN
           IF v_succ_parent IS DISTINCT FROM p_effect_id THEN
             RETURN v24.error_v1('invalid_outcome');
@@ -1697,6 +1974,7 @@ BEGIN
            OR octet_length(v24.canonical_json(v_succ_req->'state')) >
               (v24.loop_policy()->>'max_state_bytes')::int THEN
           RETURN v24.error_v1('invalid_outcome');
+        END IF;
         END IF;
       END IF;
     END LOOP;

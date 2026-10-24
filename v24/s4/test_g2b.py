@@ -2313,6 +2313,313 @@ def cancel_t2_tool_unknown(db, owner):
         service.close()
 
 
+# ---------------------------------------------------------------------------
+# S4 W5: pending_steer consumption (G2b-P/Q) and terminal pin release (G2b-R/S).
+
+def steer_model_id(run_id, epoch, generation, instruction):
+    """Mirror of v24.steer_model_effect_id:
+    md5(run || ':steer_model:' || epoch || ':' || generation || ':' || md5(text))."""
+    return md5_uuid(f"{run_id}:steer_model:{epoch}:{generation}:"
+                    f"{hashlib.md5(instruction.encode()).hexdigest()}")
+
+
+def pending_steer_consumption(db, owner):
+    """G2b-P: claimed tool blocks the steer; its settlement consumes only the latest."""
+    service = db.connect("service")
+    try:
+        budget = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
+        run_id, model_id = start_tool_run(owner, service, "g2b-p", ("p0",), budget)
+        model1 = effect_row(owner, model_id)
+        prior_input = model1["request"]["input"]
+        tool_ids, _, _ = settle_tool_batch(owner, service, run_id, model_id, ("p0",))
+        tool_id = tool_ids[0]
+        token = claim_effect(service, tool_id)
+
+        first, _ = steer(service, run_id, 1, "first steer", f"g2b-p-1-{uuid4()}")
+        service.commit()
+        assert_owner_envelope(first)
+        assert first["emitted"] == [], first
+        run = run_row(owner, run_id)
+        assert run["pending_steer"] == {"instruction": "first steer", "generation": 2,
+                                        "epoch": 2}, run
+        assert run["driving_generation"] == 2 and run["epoch_no"] == 2, run
+        assert run["status"] == "running", run
+        assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                           "AND kind='model_call'", (run_id,)) == 1
+        print("[G2b-P/steer1] claimed tool defers the steer: pending_steer="
+              "{instruction:'first steer',generation:2,epoch:2}, 0 model "
+              "successor, still exactly 1 model effect")
+
+        second, _ = steer(service, run_id, 2, "latest steer", f"g2b-p-2-{uuid4()}")
+        service.commit()
+        assert_owner_envelope(second)
+        assert second["emitted"] == [], second
+        run = run_row(owner, run_id)
+        assert run["pending_steer"] == {"instruction": "latest steer", "generation": 3,
+                                        "epoch": 3}, run
+        assert run["driving_generation"] == 3 and run["epoch_no"] == 3, run
+        assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                           "AND kind='model_call'", (run_id,)) == 1
+        print("[G2b-P/steer2] latest wins: pending_steer is overwritten to "
+              "{instruction:'latest steer',generation:3,epoch:3} with 0 model "
+              "successor")
+
+        settled, _ = settle_tool(service, tool_id, token, "success",
+                                 {"status": "ok", "output": {"p0": 1},
+                                  "usage": {"wall_ms": 4}})
+        assert_owner_envelope(settled)
+        expected = steer_model_id(run_id, 3, 3, "latest steer")
+        assert settled["emitted"] == [expected], (settled, expected)
+        run = run_row(owner, run_id)
+        assert run["pending_steer"] is None, run
+        assert run["status"] == "running" and run["turn_no"] == 2, run
+        assert run["remaining_steps"] == 5 and run["remaining_tokens"] == 904, run
+        steer_effect = effect_row(owner, expected)
+        assert steer_effect["kind"] == "model_call", steer_effect
+        assert steer_effect["status"] == "ready", steer_effect
+        assert steer_effect["parent_effect_id"] == tool_id, steer_effect
+        assert steer_effect["ordinal"] == 0 and steer_effect["pin_id"] is None, steer_effect
+        assert steer_effect["epoch_no"] == 3 and steer_effect["generation"] == 3, steer_effect
+        assert steer_effect["request"] == {
+            "v": 1, "cause": "steer", "run_id": run_id, "epoch_no": 3,
+            "generation": 3, "input": prior_input, "instruction": "latest steer",
+            "reserve": {"tokens": 4096}, "digests": model1["request"]["digests"]
+        }, steer_effect["request"]
+        consumed = events_of_kind(owner, run_id, "pending_steer_consumed")
+        assert len(consumed) == 1, consumed
+        assert consumed[0]["effect_id"] == tool_id, consumed
+        assert consumed[0]["payload"]["model_effect_id"] == expected, consumed
+        assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                           "AND kind='model_call'", (run_id,)) == 2
+        assert read(owner, "SELECT count(*) FROM v24.effects WHERE effect_id=%s",
+                    (md5_uuid(f"{model_id}:continuation"),)) == 0
+        print("[G2b-P/consume] settling the last old-generation tool publishes "
+              "exactly one cause='steer' model (epoch 3, generation 3, latest "
+              "instruction, prior input, reserve 4096, same digests), clears "
+              "pending, emits pending_steer_consumed and creates no old continuation")
+
+        phase2_ids, _, _ = settle_tool_batch(owner, service, run_id, expected, ("p0",),
+                                            text="phase two")
+        tool2 = phase2_ids[0]
+        token2 = claim_effect(service, tool2)
+        third, _ = steer(service, run_id, 3, "third steer", f"g2b-p-3-{uuid4()}")
+        service.commit()
+        assert_owner_envelope(third) and third["emitted"] == [], third
+        fourth, _ = steer(service, run_id, 4, "newest steer", f"g2b-p-4-{uuid4()}")
+        service.commit()
+        assert_owner_envelope(fourth) and fourth["emitted"] == [], fourth
+        run = run_row(owner, run_id)
+        assert run["pending_steer"] == {"instruction": "newest steer", "generation": 5,
+                                        "epoch": 5}, run
+        settled2, _ = settle_tool(service, tool2, token2, "success",
+                                  {"status": "ok", "output": {"p0": 2},
+                                   "usage": {"wall_ms": 6}})
+        assert_owner_envelope(settled2)
+        expected2 = steer_model_id(run_id, 5, 5, "newest steer")
+        assert settled2["emitted"] == [expected2], (settled2, expected2)
+        run = run_row(owner, run_id)
+        assert run["pending_steer"] is None and run["status"] == "running", run
+        steer_effect2 = effect_row(owner, expected2)
+        assert steer_effect2["parent_effect_id"] == tool2, steer_effect2
+        assert steer_effect2["request"]["instruction"] == "newest steer", steer_effect2
+        assert steer_effect2["request"]["epoch_no"] == 5, steer_effect2
+        assert steer_effect2["request"]["generation"] == 5, steer_effect2
+        models = model_rows(owner, run_id)
+        assert len(models) == 3, models
+        assert {row["effect_id"] for row in models} == {model_id, expected, expected2}, models
+        assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                           "AND effect_id IN (%s,%s)",
+                    (run_id, md5_uuid(f"{model_id}:continuation"),
+                     md5_uuid(f"{expected}:continuation"))) == 0
+        assert len(events_of_kind(owner, run_id, "pending_steer_consumed")) == 2
+        print("[G2b-P/second] a second claimed-tool settlement consumes only the "
+              "newest of two further steers: a second cause='steer' model with "
+              "epoch/generation 5 and instruction 'newest steer', 3 models total, "
+              "0 inherited continuations")
+    finally:
+        service.close()
+
+
+def pending_steer_unknown(db, owner):
+    """G2b-Q: an old-generation unknown settlement walls the run, clears pending."""
+    service = db.connect("service")
+    try:
+        budget = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
+        run_id, model_id = start_tool_run(owner, service, "g2b-q", ("q0",), budget)
+        tool_ids, _, _ = settle_tool_batch(owner, service, run_id, model_id, ("q0",))
+        tool_id = tool_ids[0]
+        token = claim_effect(service, tool_id)
+        steered, _ = steer(service, run_id, 1, "consume me", f"g2b-q-{uuid4()}")
+        service.commit()
+        assert_owner_envelope(steered)
+        assert steered["emitted"] == [], steered
+        assert run_row(owner, run_id)["pending_steer"]["instruction"] == "consume me"
+
+        settled, receipt = settle_tool(
+            service, tool_id, token, "unknown",
+            {"status": "error", "output": {"lost": True}, "usage": {"wall_ms": 4}})
+        assert_owner_envelope(settled)
+        assert settled["emitted"] == [], settled
+        tool = effect_row(owner, tool_id)
+        assert tool["status"] == "unknown" and tool["outcome"] == receipt, tool
+        assert tool["resource_quiesced_at"] is None, tool
+        run = run_row(owner, run_id)
+        assert run["status"] == "blocked_unknown", run
+        assert run["pending_steer"] is None and run["interaction"] is None, run
+        assert run["close_intent"]["kind"] == "unknown", run
+        assert run["result"]["close_reason"] == "unknown", run
+        assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                           "AND kind='model_call'", (run_id,)) == 1
+        assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                           "AND kind='model_call' AND status IN ('ready','claimed')",
+                    (run_id,)) == 0
+        assert read(owner, "SELECT count(*) FROM v24.effects WHERE effect_id=%s",
+                    (md5_uuid(f"{model_id}:continuation"),)) == 0
+        assert events_of_kind(owner, run_id, "pending_steer_consumed") == []
+        print("[G2b-Q] old-generation tool unknown: effect unknown with original "
+              "receipt and resource_quiesced NULL, run blocked_unknown with "
+              "close_reason='unknown', pending_steer cleared, 0 model successor, "
+              "no continuation and no pending_steer_consumed event")
+    finally:
+        service.close()
+
+
+def completed_pin_release(db, owner):
+    """G2b-R: completing the run releases every run pin from the last settlement."""
+    service = db.connect("service")
+    try:
+        keys = ("r0", "r1")
+        budget = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
+        run_id, model_id = start_tool_run(owner, service, "g2b-r", keys, budget)
+        tool_ids, _, pins = settle_tool_batch(owner, service, run_id, model_id, keys)
+        assert len(pins) == 2 and all(pin["released_at"] is None for pin in pins.values())
+        continuation = None
+        for index, tool_id in enumerate(tool_ids):
+            token = claim_effect(service, tool_id)
+            response, _ = settle_tool(service, tool_id, token, "success",
+                                      {"status": "ok", "output": {"i": index},
+                                       "usage": {"wall_ms": 2}})
+            assert_owner_envelope(response)
+            if index == 0:
+                assert response["emitted"] == [], response
+                assert all(pin["released_at"] is None for pin in run_pins(owner, run_id))
+            else:
+                assert len(response["emitted"]) == 1, response
+                continuation = response["emitted"][0]
+        token = claim_effect(service, continuation)
+        final, _ = settle(service, continuation, token, "success",
+                          {"text": "done", "final": {"text": "done"},
+                           "usage": {"tokens": 10, "wall_ms": 3}})
+        assert_owner_envelope(final)
+        assert final["emitted"] == [], final
+        run = run_row(owner, run_id)
+        assert run["status"] == "completed", run
+        assert run["close_intent"] == {"kind": "final"}, run
+        released = run_pins(owner, run_id)
+        assert len(released) == 2, released
+        for pin in released:
+            assert pin["released_at"] is not None, pin
+            assert pin["released_by_effect"] == continuation, (pin, continuation)
+        assert read(owner, "SELECT v24.run_pin_release_set(%s,NULL,'completed',%s)",
+                    (run_id, continuation)) == []
+        print("[G2b-R] run completed by the final model settlement: both tool pins "
+              f"released in that advance with released_by_effect={continuation}; "
+              "the C22 release set is now empty")
+    finally:
+        service.close()
+
+
+def settlement_pin_release(db, owner):
+    """G2b-S: settlement-side pin release (batch-closing success and unknown)."""
+    service = db.connect("service")
+    try:
+        # Part 1: a frozen final run is drained by the last tool success; the
+        # completion and the pin release happen in the same advance.
+        root, live, _ = loop_fixture(owner, service, realm="g2b-s-final",
+                                     requires=("s0",))
+        budget = {"steps": 4, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
+        response, _ = start(service, root, live["fiber"],
+                            {"requires": [{"key": "s0"}]}, budget,
+                            f"g2b-s-{uuid4()}")
+        service.commit()
+        assert_owner_envelope(response)
+        run_id, model_id = response["emitted"]
+        run = run_row(owner, run_id)
+        pin = run_pins(owner, run_id)[0]
+        tool_id = md5_uuid(f"{model_id}:tool_call:0")
+        request = {"v": 1, "run_id": run_id, "epoch_no": run["epoch_no"],
+                   "generation": run["driving_generation"], "ordinal": 0,
+                   "key": pin["key"], "args": {},
+                   "descriptor_digest": hexbyte(pin["descriptor_digest"]),
+                   "batch_digest": batch_digest([tool_id])}
+        with owner.cursor() as cur:
+            insert(cur, "effects", effect_id=tool_id, parent_effect_id=model_id,
+                   ordinal=0, requester_id=uuid4(), run_id=run_id,
+                   pin_id=pin["pin_id"], epoch_no=run["epoch_no"],
+                   generation=run["driving_generation"], kind="tool_call",
+                   status="ready", request=Json(request), request_digest=DIGEST,
+                   replay_policy="no_replay")
+        owner.commit()
+        token = claim_effect(service, model_id)
+        frozen, _ = settle(service, model_id, token, "success",
+                           {"text": "done", "final": {"text": "done"},
+                            "usage": {"tokens": 40, "wall_ms": 5}})
+        assert_owner_envelope(frozen)
+        assert frozen["emitted"] == [], frozen
+        assert run_row(owner, run_id)["status"] == "running"
+        before_pin = run_pins(owner, run_id)[0]
+        assert before_pin["released_at"] is None, before_pin
+        assert before_pin["released_by_effect"] is None, before_pin
+        token = claim_effect(service, tool_id)
+        closed, _ = settle_tool(service, tool_id, token, "success",
+                                {"status": "ok", "output": {"drain": 1},
+                                 "usage": {"wall_ms": 3}})
+        assert_owner_envelope(closed)
+        assert closed["emitted"] == [], closed
+        run = run_row(owner, run_id)
+        assert run["status"] == "completed", run
+        after_pin = run_pins(owner, run_id)[0]
+        assert after_pin["pin_id"] == pin["pin_id"], after_pin
+        assert after_pin["released_at"] is not None, after_pin
+        assert after_pin["released_by_effect"] == tool_id, (after_pin, tool_id)
+        completed = events_of_kind(owner, run_id, "run_completed")
+        assert len(completed) == 1 and completed[0]["payload"]["close_reason"] == "final"
+        print("[G2b-S/final] the last tool success closes the frozen final run and "
+              "releases its pin in the same advance (released_by_effect = the "
+              "settling tool effect), run_completed close_reason=final")
+
+        # Part 2: an unknown tool keeps its own pin; every unreferenced pin of
+        # the same run is released by that settlement.
+        keys = ("s1", "s2")
+        budget = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
+        run_id2, model_id2 = start_tool_run(owner, service, "g2b-s-unknown", keys, budget)
+        tool_ids, _, _ = settle_tool_batch(owner, service, run_id2, model_id2, keys)
+        token0 = claim_effect(service, tool_ids[0])
+        token1 = claim_effect(service, tool_ids[1])
+        ok_response, _ = settle_tool(service, tool_ids[0], token0, "success",
+                                     {"status": "ok", "output": {"i": 0},
+                                      "usage": {"wall_ms": 1}})
+        assert_owner_envelope(ok_response)
+        assert ok_response["emitted"] == [], ok_response
+        unknown_response, _ = settle_tool(
+            service, tool_ids[1], token1, "unknown",
+            {"status": "error", "output": {"lost": True}, "usage": {"wall_ms": 2}})
+        assert_owner_envelope(unknown_response)
+        assert unknown_response["emitted"] == [], unknown_response
+        run2 = run_row(owner, run_id2)
+        assert run2["status"] == "blocked_unknown", run2
+        pins_after = {pin["key"]: pin for pin in run_pins(owner, run_id2)}
+        assert pins_after["s1"]["released_at"] is not None, pins_after
+        assert pins_after["s1"]["released_by_effect"] == tool_ids[1], pins_after
+        assert pins_after["s2"]["released_at"] is None, pins_after
+        assert pins_after["s2"]["released_by_effect"] is None, pins_after
+        print("[G2b-S/unknown] the unknown tool keeps its own pin (released_at "
+              "NULL) while the settled sibling's pin is released in that same "
+              "advance by the unknown settlement")
+    finally:
+        service.close()
+
+
 def main():
     install_no_network()
     try:
@@ -2340,10 +2647,14 @@ def main():
             pending_final_seal(db, owner)
             cancel_t2_two_orders(db, owner)
             cancel_t2_tool_unknown(db, owner)
+            pending_steer_consumption(db, owner)
+            pending_steer_unknown(db, owner)
+            completed_pin_release(db, owner)
+            settlement_pin_release(db, owner)
             _assert_closed_catalog(owner)
     finally:
         restore_no_network()
-    print("[passed] v24 S4 W1-W4")
+    print("[passed] v24 S4 W1-W5")
     return 0
 
 
