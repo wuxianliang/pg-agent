@@ -319,7 +319,7 @@ Fake-only；无真实 provider/网络；无跨主机 lease；无 starvation/fair
 | D-S6-12 | **关闭** | `G8-D1a`：已关闭 scope + 真实过期、已 claim、非 manual 的候选，`command_recover` 精确 applied=1 `settle_unknown`/`install_not_preparing`，scope/install/fiber/run 未复活；不是 noop fixture |
 | D-S8-7 | **关闭** | `G8-D2`：双 spawn、spawn+普通 tool、spawn+`final`、spawn+`interaction` 均 `invalid_outcome` + 十表零写 + 原 claim 不变；随后同 key 合法 spawn committed |
 | D-S7-2 | **仍未关闭** | G8 不写 starvation/fairness 用例；无活性/公平性证明 |
-| G9/G10 | **未运行** | 属 M-R/M-P；不得用 G8 或 11/11 代替 |
+| G9/G10 | **后续完成** | G9 由 M-R 通过 11/11（§1.17），G10 由 M-P 通过 8/8（§1.18）；不得用 G8 或 11/11 代替 |
 
 **边界与不 overclaim**：`G8-H12` 在开放 keyset 扫描中把一行移到自己 cursor 之后，确定性地观察到同一行 **2 次**（`duplicates=1`），再按 `effect_id` 去重得到完整 8 行集合；这只证 worker 必须按 id 去重，不声称任意并发状态改变都会产生重复。公共路径 `unknown→inspect` 分支在 M-H **未生成**，实际返回 `[]`；没有用 owner 插入补成公共路径证据。公共路径 32 次 `fiber_control(on/off)` 的 counts 为 effects 4/18/34/66、reconcile 1/8/16/32、episodes 1/4/8/16、pins 0；逐命令闭包 6…38（非单调，因探针指向不同形状的 latest effect）。`G8-W1` 只证 M-H 可用的 SQL/session 前置（READ COMMITTED、30s/5s/5s、两连接 IDLE、在飞时不 sweep）；worker 循环/真实 provider 属 M-R，不在本里程碑。所有 G8 fixture 无网络；socket 仅被 monkeypatch 后 deny/restore。
 
@@ -369,6 +369,39 @@ credentials_absent             # exit 2
 starvation/fairness（D-S7-2 保持未关闭）、跨主机 lease、多主机或 M-P
 plugin/registry。`v24/host/process_io.py` 只是 scaffolding，G9 不把它当作
 plugin host 的运行时证明。
+
+
+### 1.18 M-P 落地（2026-10-24；G10 8/8、Node 独立通过、multilingual smoke 通过）
+
+**范围**：新增 `v24/host/{registry,line_json,plugins,plugin_smoke}.py`、
+`v24/s11/{plugins/echo.py,plugins/echo.js,plugin_fixtures.py,test_g10.py,
+test_node.py,README.md}`；更新本矩阵/台账与 `v24/s7/README.md`。**无产品 SQL、无 loader、无新表/列/错误码**；九个冻结
+内核 SQL、`v24/sql/49_host_reads.sql`、`v15/**`、`v13/**`、`v99/**` 均零
+diff。G10 是 extension check，不是第 12 条 closeout gate；历史 11/11 不变。
+
+| # | 计划/合同 | 实际 | 理由 / 证据 |
+|---|---|---|---|
+| D-MP-1 | 设计 §9.1「所有 gate 外部适配器为 Fake」 | G10、`test_node.py` 与 `plugin_smoke.py` 的 plugin 都是**真实本地解释器子进程**（`sys.executable`/`node`），不是 Fake 进程；但模型仍是 scripted transport，且 fixture 前 deny socket/opener | 本地、确定性、无网络，Python 解释器必然存在，判为可接受的 §9.1 字面偏差；口径固定为「真实**网络** IO 不进 gate」。G10-H 实测超时/超限杀进程组并 reap，G10-B/Node 实测真实 stdin/stdout 帧 |
+| D-MP-2 | `descriptor_digest` 的规范字节未指定序列化 | `registry.pg_jsonb_text()` 复刻 PostgreSQL `jsonb::text`：key 按 UTF-8 字节长度后字节序、`", "`/`": "` 间距；`v24.canonical_json(jsonb)` 就是 `p_payload::text` | 用宿主语言 compact JSON 会与内核 `descriptor_digest` 不一致；G10-A 用真实 slot/pin digest 断言，G10-F 在 pin 字节被改而 digest 字段仍匹配时零 spawn |
+| D-MP-3 | 三个 digest 负例要求零 spawn | artifact/adapter 不匹配会让 `host_prepare` 先失败，无法到达 tool dispatch；G10-E 因此先用**正确** registry 完成 install/prepare/activate，再在工具派发前替换为不匹配 registry，并用 patch 的 `run_process` 断言零 spawn | 隔离被测量的边界（工具派发），而不是把 prepare 失败冒充工具零 spawn；三个负例各自独立 scope/workdir、独立不匹配字段 |
+| D-MP-4 | 工具回执按 parent model effect + ordinal 关联，不按 key | `plugins.tool_handler` 只把 `effect_id` 传给 line-JSON reservation；`worker` 已有 parent/ordinal 关联，dispatcher 不按 key 查回执 | G10-C/G10-D/G10-G 与 multilingual smoke 的重复 Node key（成功 + exit 3）均按 parent/ordinal 正确落位，未覆盖先前回执 |
+| D-MP-5 | unknown tool 保持 pin/资源屏障，不强制释放 | G10-D 断言 run `blocked_unknown`、install 仍 `installed`、`disposed_at NULL`、零 `host_release`；dispatcher 对 timeout/EOF/坏帧/第二帧/超限/异常退出一律 `unknown` | 不新增 `unknown→success` 或 forced release 路径；G10-H 的每个 started 进程都有 returncode/reaped 证据 |
+| D-MP-6 | `prepare`/`release`/`inspect` 沿用既有 host effect 结果形状 | `plugins.py` 复用 `{v:1,prepared|released|observed,...}` 形状，不新增 lifecycle receipt；reservation 直接取 effect request 的既有值 | 与 `v24/s6/fake_crash_host.py` 的可执行规范一致；G10-G 证明重复 reservation 幂等且只一行 host_prepare/host_release |
+| D-MP-7 | M-P-3 要求同一 run Python → Node → final | `plugin_smoke.py --multilingual-smoke` 单 fixture/单 scope/单 run：Python Unicode 成功 → Node 转义换行+空字符串成功 → Node exit 3 工具错误 → final；两个 install 均 disposed、scope closed | 2026-10-24 实跑 exit 0（run_id/证据见矩阵 §0.7）；`test_node.py --node` 只是独立 Node 全生命周期，不替代本项 |
+
+**G10 实测**（2026-10-24，最终树）：无参数
+`uv run python v24/s11/test_g10.py` 实跑 **8/8 ID，exit 0**，末行
+`[passed] v24 G10 M-P Python: 8 case(s): G10-A, G10-B, G10-C, G10-D, G10-E, G10-F, G10-G, G10-H`。
+`uv run python v24/s11/test_node.py --node` 实跑 **exit 0**（Node
+`v24.13.1`），覆盖 Unicode、转义换行、空字符串与 Node exit 3。
+`uv run python -m v24.host.plugin_smoke --multilingual-smoke` 实跑
+**exit 0**：同一 run 内 Python → Node → final，两个 install disposed，
+scope closed。
+
+**未证明 / 未运行**：Go/Swift/DuckDB 不在本轮范围；G10 不证明真实网络
+provider、跨主机 lease、starvation/fairness（D-S7-2 保持未关闭）或多主机；
+Node 缺失时 `test_node.py --node`/`--multilingual-smoke` 打印 SKIP 并
+exit 2，SKIP 不算通过。
 
 
 ## 2. 实施披露（不是规格偏差）
@@ -473,7 +506,8 @@ S6/S8 收尾轮十个 gate 依序退出 0/0/0/0/0/0/0/0/0/0（load、`s1/setup_d
 - **S5/S6/S8 边界（历史；G6/S7 已由 §1.15 补证）**：S5 只证串行 request-key 阶段（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进）；S6 只证 FakeHost/journal 下的崩溃恢复合同（命令驱动、无 recovery 表/队列/lease/cursor、无第二 claim 路径），**不证**真实 provider/adapter 的 reservation 幂等、S7 三面并发或 S8 spawn（S7 三面并发已由 G6 补证）；S8 只证 FakeHost/进程内 fixture 下的 spawn/child-run 合同，**不证**真实 provider/adapter 或 G6/S7 三面并发（G6/S7 已由 S7 W1–W2 补证）。`cleanup_pending` 非严格递减、close 依赖新 key（§3），不得外推为「自动收口」；S6 的 `has_more` 只是提示，K2/K3 的 lease 过期是 seeded fixture，K5 为 host-only、预算不适用；G7-G 的 claim 走真实公共 claim 路径（D-S8-12），不是 seeded fixture。
 - **FakeLLM/FakeTool/FakeCleanupHost/FakeCrashHost/FakeHost 不是 transport 证明**：纯进程内、无套接字；S5 没有 FakeCleanupHost 文件（§2.2），S6 的 `CrashHost` 只写 JSONL 与 `v24_fake.journal`；S8 的 G7 同样无 socket/HTTP，`v24_fake.journal` 新增 0 行；真实 IO 不在 gate 内。
 - **仍未关闭的披露**：**D-S7-2 仍为显式债务（无 starvation/fairness 证明）**；A-S5-1…9 的逐条理由见 §1.6，A-S6-1…9 见 §1.10，A-S8-1…6 见 §1.13；G7-G 的 owner-pinned child 首 model 公共 claim 已由 D-S8-12 修复，不再列为未关闭债务。**D-S6-12 已由 `G8-D1a` 关闭，D-S8-7 已由 `G8-D2` 关闭（见 §1.16）**；D-S5-8 与 D-S5-10 的旧披露已由 S7 评估关闭：N7 + L1/L2 未发现 lock-order/deadlock bug（D-S7-1 未触发），N7 以真实跨 scope child install 补足证据（D-S7-3 未触发）；见 §1.5、§1.15。
-- **M-H 验收（2026-10-24）**：G8 **23/23** exit 0；`B=3`、`H_ok=509`、`H_bad=510`、`C=512/513`；H13 64.00 MiB；ACL 17 DEFINER / 27 GRANT / 26-27-27；九个冻结内核 SQL diff 为空；11 条既有 closeout 复跑 **11/11**。G10 未运行，属 M-P；G8 不改变历史 closeout 计数，也不提供 starvation/fairness 或 host worker 证据（§1.16）。
+- **M-H 验收（2026-10-24）**：G8 **23/23** exit 0；`B=3`、`H_ok=509`、`H_bad=510`、`C=512/513`；H13 64.00 MiB；ACL 17 DEFINER / 27 GRANT / 26-27-27；九个冻结内核 SQL diff 为空；11 条既有 closeout 复跑 **11/11**。G10 后续由 M-P 完成（§0.7/§1.18）；G8 不改变历史 closeout 计数，也不提供 starvation/fairness 或 host worker 证据（§1.16）。
 - **M-R 验收（2026-10-24）**：G9 **11/11** exit 0；脚本化 transport、零真实套接字；无 key smoke `not_requested` 0 / `credentials_absent` 2；九个冻结内核 SQL、`v15/**`、`v13/**`、`v99/**` diff 为空；11 条既有 closeout 复跑 **11/11**。真实 provider 有 key 路径未运行；G9 不改变历史 closeout 计数，也不提供 starvation/fairness、跨主机 lease 或 M-P 证据（§1.17）。
+- **M-P 验收（2026-10-24）**：G10 **8/8** exit 0（G10-A…H）；`test_node.py --node` 独立 **exit 0**（Node v24.13.1）；`plugin_smoke.py --multilingual-smoke` **exit 0**：同一 run 内 Python → Node → final，Unicode/转义换行/空字符串/exit 3 全覆盖，两个 install disposed、scope closed；九个冻结内核 SQL、`v15/**`、`v13/**`、`v99/**` diff 为空；11 条既有 closeout 复跑 **11/11**。G10 不改变历史 closeout 计数；D-MP-1 为显式 §9.1 偏差（真实本地子进程），D-MP-3 记录三个 digest 负例的隔离方式（§1.18）。
 - **历史口径更新**：S4 的「22 个有生产者、1 个未产生」由本节更新为 23/0；S8 再更新为 **24/0**；S1–S4 的其它验收结论与边界（FakeLLM/FakeTool、真实 IO、S6/S7）继续有效。
 - **R6/R7 规格修订已入账**（D-R6-1…4，§1.8；D-S8-1…12，§1.12）：D-R6-1 仍为规格层（S6 未改变十窗口）；D-R6-2 已由 S8/G7 实施；D-R6-3/4 已由 S6 W1–W4 实施并由 G5 证明；D-S8-12 为 W3 评审修复的产品缺陷（非规格修订）。**G5、G6 与 G7 已完成**（G6 由 S7 W1–W2 证明：30/30 ID、11/11），S7 已结项，S1–S8 全部收口。

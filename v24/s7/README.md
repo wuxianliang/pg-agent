@@ -290,6 +290,52 @@ This extension check does **not** change the historical S7 result: S7 remains
 provider latency/availability/cost/model quality, starvation/fairness
 (`D-S7-2`), cross-host lease, multi-host, or M-P plugin/registry behavior.
 
+
+## M-P extension check (G10 + Node + multilingual smoke, not closeout gates)
+
+M-P adds `v24/host/{registry,line_json,plugins,plugin_smoke}.py` and
+`v24/s11/**`: an approved adapter registry, one-shot line-JSON plugins, and
+Python/Node reference plugins. The historical 11 commands above, their order,
+assertions and numbering are unchanged.
+
+Three **separate** checks are required for an honest M-P record:
+
+| check | command | pass | skip / not verified |
+|---|---|---|---|
+| G10 Python lifecycle | `uv run python v24/s11/test_g10.py` | 8/8 IDs, exit 0 | traceback/exit 1 = fail |
+| Node lifecycle | `uv run python v24/s11/test_node.py --node` | Node present, exit 0 | exit 2 / `[SKIP] not_run/toolchain_absent planes=node` |
+| same-run multilingual | `uv run python -m v24.host.plugin_smoke --multilingual-smoke` | one run Python → Node → final, exit 0 | exit 2 / `[SKIP] ... planes=python,node` |
+
+The no-flag forms of `test_node.py` and `plugin_smoke.py` print
+`not_requested` and exit 0; they are not evidence. A green G10 run is **not**
+multilingual completion.
+
+G10's final line is:
+
+```text
+[passed] v24 G10 M-P Python: 8 case(s): G10-A, G10-B, G10-C, G10-D, G10-E, G10-F, G10-G, G10-H
+```
+
+It covers the approved five-field registry lookup, Python full lifecycle with a
+real local subprocess, exit-3 known errors, bad-frame unknown with the
+pin/resource barrier kept, three separate zero-spawn digest negatives
+(artifact/adapter/descriptor), frozen-pin descriptor-byte mismatch, idempotent
+prepare/release reservations, and all line-JSON bounds/timeout/reap paths.
+`test_node.py --node` runs the same lifecycle independently on Node (plus Node
+exit 3); `plugin_smoke.py --multilingual-smoke` is the only check that runs
+Python → Node → final in **one** run and disposes both installs.
+
+The scripted model stays Fake. Plugin subprocesses are real and local but have
+no network; this is the explicit §9.1 deviation D-MP-1 in the ledger. The
+frozen nine kernel SQL files, `v24/sql/49_host_reads.sql`, `v15/**`, `v13/**`
+and `v99/**` remain zero-diff; no table/column/error-code change.
+
+This extension check does **not** change the historical S7 result: S7 remains
+11/11. G10 is recorded as **passed / 8/8**, Node as **passed (v24.13.1)** and
+the same-run multilingual smoke as **passed**. It does not prove real network
+providers, Go/Swift/DuckDB, cross-host lease, starvation/fairness (`D-S7-2`),
+or multi-host behavior.
+
 ## Mechanical guards
 
 - No `sleep` and no socket in `v24/s7/**`; ordering is held-G/barrier only.
@@ -321,9 +367,10 @@ provider latency/availability/cost/model quality, starvation/fairness
 
 ## Boundaries
 
-- Fake fixtures only: no real provider and no network.
+- Models/fixtures are Fake and there is no network; M-P plugin subprocesses are real but local and deterministic (D-MP-1).
 - No cross-host lease claim.
 - No starvation/fairness claim (`D-S7-2`).
 - No G5 crash-window re-test.
+- No M-P real-network provider, Go/Swift/DuckDB, or multi-host claim.
 - No multi-host claim.
 - Evidence-only: no product change and no new SQL/DDL/loader/error code.
