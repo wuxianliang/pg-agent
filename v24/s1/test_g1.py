@@ -135,6 +135,7 @@ def catalog(owner):
                 "advance",
                 "validate_and_apply_install_delta",
                 "validate_and_apply_delta",
+                "validate_and_apply_loop_delta",
             }, name
             if name != "advance":
                 assert not functions[name][0]  # INVOKER; no application table privileges

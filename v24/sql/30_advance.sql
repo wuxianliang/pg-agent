@@ -102,6 +102,10 @@ DECLARE
   v_claim jsonb := NULL;
   v_disposition text := 'committed';
   v_ref text;
+  v_req jsonb;
+  v_cause text;
+  v_parent v24.effects%ROWTYPE;
+  v_req_keys text[];
 BEGIN
   -- 1 / A: all untrusted shapes are checked before authentication or locks.
   IF p_effect_id IS NULL OR jsonb_typeof(p_outcome) IS DISTINCT FROM 'object'
@@ -484,16 +488,127 @@ BEGIN
     v_delta := v24.interpret_command(p_effect_id, v_principal, p_outcome, v_closure);
   ELSIF v_class = 'claim' THEN
     SELECT * INTO v_effect FROM v24.effects WHERE effect_id=p_effect_id;
-    -- S3.1 temporary allowlist: settlement handles only host_prepare and
-    -- host_release. Claiming any other kind would commit a claim that
-    -- settlement must reject (0A000), wedging the effect and its run.
-    -- Remove this allowlist in S4, when model/tool settlement adds those kinds.
-    IF v_effect.kind NOT IN ('host_prepare','host_release') OR
+    -- C18: the allowlist has exactly one source of truth. Every kind admitted
+    -- here must have a registered settlement path (W1: model_call).
+    IF v_effect.kind <> ALL (v24.claimable_kinds()) OR
        v_effect.status IN ('succeeded','failed','unknown','cancelled') THEN
       RETURN v24.error_v1('invalid_args');
     END IF;
+    -- C18 condition 2: reject a structurally invalid request BEFORE the host
+    -- executes it.  No row is touched on this path.
+    IF v_effect.kind = 'model_call' THEN
+      v_req := v_effect.request;
+      IF jsonb_typeof(v_req) IS DISTINCT FROM 'object' THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      v_cause := v_req->>'cause';
+      IF v_cause IS NULL OR v_cause NOT IN ('start','steer','respond','continuation') THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      v_req_keys := ARRAY['v','cause','run_id','epoch_no','generation','reserve','digests'] ||
+        CASE v_cause
+          WHEN 'start' THEN ARRAY['input','budget']
+          WHEN 'steer' THEN ARRAY['input','instruction']
+          WHEN 'respond' THEN ARRAY['response','origin_effect_id']
+          WHEN 'continuation' THEN ARRAY['input','batch_digest','state']
+        END;
+      IF NOT (v_req ?& v_req_keys)
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_req) k
+                     WHERE k <> ALL(v_req_keys)) THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      IF jsonb_typeof(v_req->'reserve') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(v_req->'digests') IS DISTINCT FROM 'object' THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      BEGIN
+        IF (v_req->>'v') IS DISTINCT FROM '1'
+           OR jsonb_typeof(v_req->'run_id') IS DISTINCT FROM 'string'
+           OR v_req->>'run_id' IS DISTINCT FROM v_effect.run_id::text
+           OR jsonb_typeof(v_req->'epoch_no') IS DISTINCT FROM 'number'
+           OR jsonb_typeof(v_req->'generation') IS DISTINCT FROM 'number'
+           OR (v_req->>'epoch_no') !~ '^[0-9]+$'
+           OR (v_req->>'generation') !~ '^[0-9]+$'
+           OR (v_req->>'epoch_no')::bigint IS DISTINCT FROM v_effect.epoch_no
+           OR (v_req->>'generation')::bigint IS DISTINCT FROM v_effect.generation
+           OR v_effect.pin_id IS NOT NULL
+           OR v_effect.ordinal IS DISTINCT FROM 0
+           OR v_effect.parent_effect_id IS NULL
+           OR jsonb_typeof(v_req->'reserve') IS DISTINCT FROM 'object'
+           OR (SELECT count(*) FROM jsonb_object_keys(v_req->'reserve')) <> 1
+           OR NOT (v_req->'reserve' ? 'tokens')
+           OR jsonb_typeof(v_req->'reserve'->'tokens') IS DISTINCT FROM 'number'
+           OR (v_req->'reserve'->>'tokens') IS NULL
+           OR (v_req->'reserve'->>'tokens') !~ '^[0-9]+$'
+           OR (v_req->'reserve'->>'tokens')::bigint >
+              (v24.loop_policy()->>'reserve_tokens')::bigint
+           OR jsonb_typeof(v_req->'digests') IS DISTINCT FROM 'object'
+           OR (SELECT count(*) FROM jsonb_object_keys(v_req->'digests')) <> 3
+           OR NOT (v_req->'digests' ?& ARRAY['policy','schema','toolset'])
+           OR (v_req->'digests'->>'policy') IS NULL
+           OR (v_req->'digests'->>'policy') !~ '^[0-9a-f]{64}$'
+           OR (v_req->'digests'->>'schema') IS NULL
+           OR (v_req->'digests'->>'schema') !~ '^[0-9a-f]{64}$'
+           OR (v_req->'digests'->>'toolset') IS NULL
+           OR (v_req->'digests'->>'toolset') !~ '^[0-9a-f]{64}$' THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+        IF v_cause IN ('start','steer','continuation')
+           AND jsonb_typeof(v_req->'input') IS DISTINCT FROM 'object' THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+        IF v_cause = 'start'
+           AND jsonb_typeof(v_req->'budget') IS DISTINCT FROM 'object' THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+        IF v_cause = 'steer' AND (jsonb_typeof(v_req->'instruction') IS DISTINCT FROM 'string'
+            OR length(v_req->>'instruction') NOT BETWEEN 1 AND 8192) THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+        IF v_cause = 'respond' AND (jsonb_typeof(v_req->'response') IS DISTINCT FROM 'object'
+            OR jsonb_typeof(v_req->'origin_effect_id') IS DISTINCT FROM 'string'
+            OR (v_req->>'origin_effect_id') IS NULL
+            OR (v_req->>'origin_effect_id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+        IF v_cause = 'continuation' AND (
+            jsonb_typeof(v_req->'state') IS DISTINCT FROM 'object'
+            OR octet_length(v24.canonical_json(v_req->'state')) >
+               (v24.loop_policy()->>'max_state_bytes')::int
+            OR jsonb_typeof(v_req->'batch_digest') IS DISTINCT FROM 'string'
+            OR (v_req->>'batch_digest') IS NULL
+            OR (v_req->>'batch_digest') !~ '^[0-9a-f]{64}$') THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+      EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
+          OR invalid_parameter_value THEN
+        RETURN v24.error_v1('invalid_args');
+      END;
+      -- Cause must agree with the parent effect kind and the deterministic id.
+      SELECT * INTO v_parent FROM v24.effects p WHERE p.effect_id=v_effect.parent_effect_id;
+      IF NOT FOUND OR v_parent.run_id IS DISTINCT FROM v_effect.run_id THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      IF v_cause = 'continuation' THEN
+        IF v_parent.kind <> 'model_call'
+           OR v_effect.effect_id <>
+              md5(v_effect.parent_effect_id::text||':continuation')::uuid THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+      ELSE
+        IF v_parent.kind <> 'command_'||v_cause
+           OR v_effect.effect_id <>
+              md5(v_effect.parent_effect_id::text||':model_call:0')::uuid THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+      END IF;
+    END IF;
+    -- D-S4-1: an expired business lease is not a second attempt. host kinds
+    -- keep their S3 re-claim semantics.
     IF v_effect.status='claimed' AND v_effect.lease_until > now() THEN
       v_disposition := 'deferred';
+    ELSIF v_effect.status='claimed' AND v_effect.kind IN ('model_call','tool_call') THEN
+      RETURN v24.error_v1('stale_claim');
     ELSE
       UPDATE v24.effects SET status='claimed', attempt_no=attempt_no+1, fence=fence+1,
         claim_owner=session_user::text,

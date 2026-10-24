@@ -346,14 +346,19 @@ def owner_start(db, owner):
         assert response["revision"] == 1 and response["claim"] is None, response
         assert len(response["emitted"]) == 2 and len(set(response["emitted"])) == 2, response
         run_id, model_id = response["emitted"]
+        reserve = one(owner, "SELECT v24.model_reserve(%s)", (budget["tokens"],))
+        digests = one(owner, "SELECT v24.model_digests(%s)", (run_id,))
         after = state(owner)
         run = next(row for row in after["runs"] if row["run_id"] == run_id)
         for column, expected in {
             "scope_id": str(root), "owner_fiber_id": str(live["fiber"]),
             "owner_episode_id": str(live["episode"]), "status": "running",
             "epoch_no": 1, "registration_generation": 1, "turn_no": 0,
-            "driving_generation": 1, "revision": 1, "remaining_steps": 7,
-            "remaining_tool_calls": 3, "remaining_tokens": 1234, "remaining_wall_ms": 10000,
+            "driving_generation": 1, "revision": 1,
+            "remaining_steps": budget["steps"] - 1,
+            "remaining_tool_calls": 3,
+            "remaining_tokens": budget["tokens"] - reserve,
+            "remaining_wall_ms": 10000,
         }.items():
             assert run[column] == expected, (alias, column, run)
         for column in ("parent_run_id", "spawn_key", "spawn_request_digest", "interaction",
@@ -380,7 +385,16 @@ def owner_start(db, owner):
         }.items():
             assert model[column] == expected, (column, model)
         assert model["request"] == {"run_id": run_id, "epoch_no": 1, "generation": 1,
-                                    "input": input_value, "budget": budget}, model
+                                    "input": input_value, "budget": budget,
+                                    "v": 1, "cause": "start",
+                                    "reserve": {"tokens": reserve}, "digests": digests}, model
+        for column, expected in {"run_id": run_id, "epoch_no": 1, "generation": 1,
+                                 "input": input_value, "budget": budget}.items():
+            assert model["request"][column] == expected, (column, model)
+        assert model["request"]["v"] == 1, model
+        assert model["request"]["cause"] == "start", model
+        assert model["request"]["reserve"] == {"tokens": reserve}, model
+        assert model["request"]["digests"] == digests, model
         assert model["claim_owner"] is None and model["lease_until"] is None, model
         assert model["outcome"] is None and model["settled_at"] is None, model
         command = next(row for row in after["effects"] if row["effect_id"] == str(expected_effect))
@@ -406,6 +420,9 @@ def owner_start(db, owner):
         login.commit()
         assert replay == response and replay_raw == raw, (alias, replay)
         assert state(owner) == after, "same-key replay wrote rows"
+        assert one(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                          "AND kind='model_call' AND status IN ('ready','claimed')",
+                   (run_id,)) == 1
         sqlstate(owner, "23505", lambda: seed_effect(owner, uuid4(), run_id=run_id, kind="model_call"),
                  message="u_effects_model_call")
         owner.rollback()
@@ -491,8 +508,11 @@ def start_boundaries(db, owner):
         login.commit()
         assert response.get("disposition") == "committed", (budget, response)
         run = one(owner, "SELECT to_jsonb(r) FROM v24.runs r WHERE run_id=%s", (response["emitted"][0],))
-        assert run["remaining_steps"] == budget["steps"] and run["remaining_tool_calls"] == budget["tool_calls"], run
-        assert run["remaining_tokens"] == budget.get("tokens"), run
+        reserve = one(owner, "SELECT v24.model_reserve(%s)", (budget.get("tokens"),))
+        assert run["remaining_steps"] == budget["steps"] - 1, run
+        assert run["remaining_tool_calls"] == budget["tool_calls"], run
+        expected_tokens = None if budget.get("tokens") is None else budget["tokens"] - reserve
+        assert run["remaining_tokens"] == expected_tokens, run
         assert run["remaining_wall_ms"] == budget.get("wall_ms", 86400000), run
         owner.rollback()
     invalid = [None, [], {}, {"steps": 1}, {"tool_calls": 0}, {**minimum, "extra": 1}]
@@ -547,7 +567,7 @@ def assert_claim_rejected(owner, login, effect_id, label):
 
 
 def claim_guard(db, owner):
-    """G2a-11: only host_prepare/host_release are claimable until S4 settlement."""
+    """G2a-11: stage allowlist; model is claimable, every non-member stays W0."""
     login = db.connect("service")
     root, live, creator = start_fixture(owner, login, realm="claim-guard")
     response, _ = start(login, root, live["fiber"], {},
@@ -562,20 +582,40 @@ def claim_guard(db, owner):
     assert model["attempt_no"] == 0 and model["fence"] == 0, model
     assert model["claim_owner"] is None and model["lease_until"] is None, model
     owner.rollback()
-    assert_claim_rejected(owner, login, model_id, "real model_call")
+    kinds = one(owner, "SELECT v24.claimable_kinds()")
+    assert kinds == ["host_prepare", "host_release", "model_call"], kinds
+    assert set(kinds) == {"host_prepare", "host_release", "model_call"}, kinds
+    owner.rollback()
 
-    for kind in ("tool_call", "inspect_resource"):
-        effect_id = uuid4()
-        seed_effect(owner, effect_id, kind=kind, status="ready")
-        owner.commit()
-        assert_claim_rejected(owner, login, effect_id, f"seeded {kind}")
+    # S4 W1 positive: the real start model_call is claimable and the token is exact.
+    before = state(owner)
+    owner.rollback()
+    claimed = advance(login, model_id, claim())
+    login.commit()
+    assert claimed == {"v": 1, "disposition": "committed", "effect_id": model_id,
+                       "emitted": [], "revision": 0,
+                       "claim": {"attempt": 1, "fence": 1, "owner": db.roles["service"]}}, claimed
+    after = state(owner)
+    owner.rollback()
+    for table in EXPECTED_TABLES - {"effects"}:
+        assert after[table] == before[table], (table, "model claim wrote extra rows")
+    claimed_model = next(row for row in after["effects"] if row["effect_id"] == model_id)
+    assert claimed_model["status"] == "claimed", claimed_model
+    assert claimed_model["attempt_no"] == 1 and claimed_model["fence"] == 1, claimed_model
+    assert claimed_model["claim_owner"] == db.roles["service"], claimed_model
+    assert claimed_model["lease_until"] is not None, claimed_model
 
-    for kind in ("command_install", "fiber_reconcile"):
+    # Every non-member kind stays W0 with a ten-table byte-equal snapshot.
+    command_kinds = ("command_start", "command_cancel", "command_steer",
+                     "command_respond", "command_install", "command_fiber_control",
+                     "command_dispose", "command_scope_control")
+    assert len(command_kinds) == 8, command_kinds
+    for kind in ("tool_call", "inspect_resource") + command_kinds + ("fiber_reconcile",):
         effect_id = uuid4()
         extra = {"fiber_id": live["fiber"]} if kind == "fiber_reconcile" else {}
         seed_effect(owner, effect_id, kind=kind, status="ready", **extra)
         owner.commit()
-        assert_claim_rejected(owner, login, effect_id, kind)
+        assert_claim_rejected(owner, login, effect_id, f"seeded {kind}")
 
     # S1 install fixture / existing host claim path: not over-blocked.
     install = seed_install(owner, scope_id=root, creator=creator, state="preparing")
@@ -599,9 +639,11 @@ def claim_guard(db, owner):
     assert row["status"] == "claimed" and row["attempt_no"] == 1 and row["fence"] == 1, row
     assert row["claim_owner"] == db.roles["service"] and row["lease_until"] is not None, row
     login.close()
-    print("[G2a-11] claim allowlist: real model_call and owner-seeded tool_call/inspect_resource/"
-          "command_install/fiber_reconcile reject invalid_args with ten-table byte-equal snapshots "
-          "and untouched attempt/fence/owner/lease; host_prepare still claims; temporary until S4")
+    print("[G2a-11] claim allowlist = v24.claimable_kinds() {host_prepare,host_release,"
+          "model_call}; real model claim exact token and effect-only write; owner-seeded "
+          "tool_call/inspect_resource/all command_*/fiber_reconcile reject invalid_args with "
+          "ten-table byte-equal snapshots and untouched attempt/fence/owner/lease; "
+          "host_prepare still claims")
 
 
 def cancel(conn, run_id, generation, key):
@@ -666,6 +708,13 @@ def assert_cancel_success(owner, login, run_id, generation, *, ready_ids, claime
     before = state(owner)
     owner.rollback()
     old_run = next(row for row in before["runs"] if row["run_id"] == run_id)
+    # [S4 addendum A] cancel refunds every ready model reserve it archives.
+    refund = sum((row["request"].get("reserve") or {}).get("tokens", 0)
+                 for row in before["effects"]
+                 if row["run_id"] == run_id and row["kind"] == "model_call"
+                 and row["status"] == "ready")
+    expected_tokens = (None if old_run["remaining_tokens"] is None
+                       else old_run["remaining_tokens"] + refund)
     key = f"cancel-success-{uuid4()}"
     response, raw = cancel(login, run_id, generation, key)
     login.commit()
@@ -684,8 +733,12 @@ def assert_cancel_success(owner, login, run_id, generation, *, ready_ids, claime
     assert run["ended_at"] and run["ended_at"] == run["updated_at"], run
     assert run["close_intent"] == {"kind": "cancel", "generation": generation,
                                     "at": run["ended_at"]}, run
+    assert run["remaining_tokens"] == expected_tokens, (run, expected_tokens)
+    if expected_tokens is not None:
+        assert run["remaining_tokens"] == old_run["remaining_tokens"] + refund, (old_run, run)
     changed_run = {"status", "interaction", "pending_steer", "driving_generation",
-                   "revision", "ended_at", "updated_at", "close_intent"}
+                   "revision", "ended_at", "updated_at", "close_intent",
+                   "remaining_tokens"}
     assert {k: v for k, v in run.items() if k not in changed_run} == {
         k: v for k, v in old_run.items() if k not in changed_run}, (old_run, run)
     assert [row for row in after["runs"] if row["run_id"] != run_id] == [
@@ -861,14 +914,31 @@ def assert_steer_success(owner, login, run_id, generation, *, deferred=False,
     new_generation, new_epoch = generation + 1, old_run["epoch_no"] + 1
     expected_pending = ({"instruction": instruction, "generation": new_generation,
                          "epoch": new_epoch} if deferred else None)
+    # [S4 addendum A] steer refunds every ready model reserve in the same delta;
+    # a newly admitted model then pre-debits its own reserve.
+    refund = sum((row["request"].get("reserve") or {}).get("tokens", 0)
+                 for row in before["effects"]
+                 if row["run_id"] == run_id and row["kind"] == "model_call"
+                 and row["status"] == "ready")
+    balance = (None if old_run["remaining_tokens"] is None
+               else old_run["remaining_tokens"] + refund)
+    new_reserve = 0 if deferred else one(
+        owner, "SELECT v24.model_reserve(%s)", (balance,))
+    expected_tokens = (None if balance is None else balance - new_reserve)
+    expected_steps = old_run["remaining_steps"] - (0 if deferred else 1)
     for column, expected in {"status": "running", "epoch_no": new_epoch,
                              "driving_generation": new_generation,
                              "revision": old_run["revision"] + 1,
-                             "interaction": None, "pending_steer": expected_pending}.items():
+                             "interaction": None, "pending_steer": expected_pending,
+                             "remaining_steps": expected_steps,
+                             "remaining_tokens": expected_tokens}.items():
         assert run[column] == expected, (column, expected, run)
+    if balance is not None:
+        assert run["remaining_tokens"] == old_run["remaining_tokens"] + refund - new_reserve, run
     assert run["updated_at"] >= old_run["updated_at"], run
     changed_run = {"status", "epoch_no", "driving_generation", "revision",
-                   "interaction", "pending_steer", "updated_at"}
+                   "interaction", "pending_steer", "remaining_steps",
+                   "remaining_tokens", "updated_at"}
     assert {k: v for k, v in run.items() if k not in changed_run} == {
         k: v for k, v in old_run.items() if k not in changed_run}, (old_run, run)
     assert [row for row in after["runs"] if row["run_id"] != run_id] == [
@@ -892,9 +962,22 @@ def assert_steer_success(owner, login, run_id, generation, *, deferred=False,
                                  "run_id": run_id, "generation": new_generation, "epoch_no": new_epoch,
                                  "parent_effect_id": command_id, "ordinal": 0}.items():
             assert successor[column] == expected, (column, successor)
+        digests = one(owner, "SELECT v24.model_digests(%s)", (run_id,))
         assert successor["request"] == {"run_id": run_id, "epoch_no": new_epoch,
                                         "generation": new_generation, "input": expected_input or {},
-                                        "instruction": instruction}, successor
+                                        "instruction": instruction,
+                                        "v": 1, "cause": "steer",
+                                        "reserve": {"tokens": new_reserve},
+                                        "digests": digests}, successor
+        for column, expected in {"run_id": run_id, "epoch_no": new_epoch,
+                                 "generation": new_generation,
+                                 "input": expected_input or {},
+                                 "instruction": instruction}.items():
+            assert successor["request"][column] == expected, (column, successor)
+        assert successor["request"]["v"] == 1, successor
+        assert successor["request"]["cause"] == "steer", successor
+        assert successor["request"]["reserve"] == {"tokens": new_reserve}, successor
+        assert successor["request"]["digests"] == digests, successor
         assert successor["outcome"] is None and successor["settled_at"] is None, successor
     for row in after["effects"]:
         if row["effect_id"] not in old_effects:
@@ -1012,9 +1095,14 @@ def respond_fixture(owner, login):
     with owner.cursor() as cur:
         cur.execute("UPDATE v24.effects SET status='cancelled',settled_at=now() "
                     "WHERE effect_id=%s", (origin_id,))
+        # W1 pre-debits the model reserve at admission, so the owner fixture must
+        # refund the archived model exactly as a real archive would (addendum A).
         cur.execute("UPDATE v24.runs SET status='waiting',interaction=%s,"
+                    "remaining_tokens=CASE WHEN remaining_tokens IS NULL THEN NULL "
+                    "ELSE remaining_tokens+(SELECT coalesce((request->'reserve'->>'tokens')::bigint,0) "
+                    "FROM v24.effects WHERE effect_id=%s) END,"
                     "driving_generation=4,epoch_no=3,revision=7 WHERE run_id=%s",
-                    (Json(interaction), run_id))
+                    (Json(interaction), origin_id, run_id))
     owner.commit()
     return run_id, interaction
 
@@ -1067,10 +1155,18 @@ def assert_respond_success(owner, login, run_id, interaction, *, key=None):
     after = state(owner)
     owner.rollback()
     run = next(row for row in after["runs"] if row["run_id"] == str(run_id))
+    reserve = one(owner, "SELECT v24.model_reserve(%s)", (old_run["remaining_tokens"],))
+    expected_steps = old_run["remaining_steps"] - 1
+    expected_tokens = (None if old_run["remaining_tokens"] is None
+                       else old_run["remaining_tokens"] - reserve)
     expected_run = {**old_run, "status": "running", "interaction": None,
                     "driving_generation": generation + 1, "revision": old_run["revision"] + 1,
+                    "remaining_steps": expected_steps, "remaining_tokens": expected_tokens,
                     "updated_at": run["updated_at"]}
     assert run == expected_run and run["updated_at"] >= old_run["updated_at"], run
+    assert run["remaining_steps"] == old_run["remaining_steps"] - 1, run
+    if expected_tokens is not None:
+        assert run["remaining_tokens"] == old_run["remaining_tokens"] - reserve, run
     assert [r for r in after["runs"] if r["run_id"] != str(run_id)] == [
         r for r in before["runs"] if r["run_id"] != str(run_id)], "changed another run"
     old_effects = {row["effect_id"]: row for row in before["effects"]}
@@ -1086,9 +1182,21 @@ def assert_respond_success(owner, login, run_id, interaction, *, key=None):
                              "parent_effect_id": command_id, "ordinal": 0,
                              "replay_policy": "no_replay", "outcome": None, "settled_at": None}.items():
         assert model[column] == expected, (column, model)
+    digests = one(owner, "SELECT v24.model_digests(%s)", (run_id,))
     assert model["request"] == {"run_id": str(run_id), "epoch_no": old_run["epoch_no"],
                                 "generation": generation + 1, "response": answer,
-                                "origin_effect_id": interaction["origin_effect_id"]}, model
+                                "origin_effect_id": interaction["origin_effect_id"],
+                                "v": 1, "cause": "respond",
+                                "reserve": {"tokens": reserve},
+                                "digests": digests}, model
+    for column, expected in {"run_id": str(run_id), "epoch_no": old_run["epoch_no"],
+                             "generation": generation + 1, "response": answer,
+                             "origin_effect_id": interaction["origin_effect_id"]}.items():
+        assert model["request"][column] == expected, (column, model)
+    assert model["request"]["v"] == 1, model
+    assert model["request"]["cause"] == "respond", model
+    assert model["request"]["reserve"] == {"tokens": reserve}, model
+    assert model["request"]["digests"] == digests, model
     assert len([row for row in after["effects"] if row["run_id"] == str(run_id)
                 and row["kind"] == "model_call" and row["status"] == "ready"]) == 1
     events = [row for row in after["events"] if row not in before["events"]]
