@@ -1,6 +1,6 @@
-# v24 覆盖矩阵（S1–S5）
+# v24 覆盖矩阵（S1–S5 已验收；G5/G6/G7 未验证）
 
-> 收尾稿：2026-10-24。覆盖 S1、S2、S3、S4、S5。断言口径以各 stage 计划和[设计稿](../designs/v24-pg-agent-2026-10-22.md)为准。以下记录本轮八个 gate 的实际结果；S4 完成后 G2b 全绿，`blocked_unknown` 成为真实生产者，G2 父门完成；**S5 已完成，G4-A…G4-Q 全绿，G4 父门完成（17/17）**。S5 只证串行 request-key 阶段（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进），**不证**崩溃/恢复/reclaim（S6）与并发面（S7）；其余边界见 §4。
+> 收尾稿：2026-10-24。覆盖 S1、S2、S3、S4、S5。断言口径以各 stage 计划和[设计稿](../designs/v24-pg-agent-2026-10-22.md)为准。以下记录本轮八个 gate 的实际结果；S4 完成后 G2b 全绿，`blocked_unknown` 成为真实生产者，G2 父门完成；**S5 已完成，G4-A…G4-Q 全绿，G4 父门完成（17/17）**。S5 只证串行 request-key 阶段（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进），**不证**崩溃/恢复/reclaim（S6）与并发面（S7）；其余边界见 §4。**本轮范围：S1–S5 已实现并全绿；G5/G6/G7 未验证（分别归 S6/S8/S7），见 §2.7。**
 
 ## 0. 运行环境与最终证据
 
@@ -213,6 +213,16 @@ S1 的 W5 需要一个与 advance 共享 delta 应用的 INVOKER helper `validat
 | G4 | G4-A…G4-Q（17 条具名断言） | **完成**：本轮 `F` 全部通过（17/17） |
 | G4 | 父门 | **完成（G4-A…Q）**，17/17 |
 
+### 2.7 G5 / G6 / G7 父门状态（未验证）
+
+本表只登记状态与断言来源，不产生证据；三行在 gate 实跑前不得改为「完成」。
+
+| 父门 | 状态 | 断言来源 | 缺口 |
+|---|---|---|---|
+| G5 crash/replay | **未验证** | 设计稿 §9 G5 行 + 附录 C.1（K1–K10）+ 附录 C.3（`command_recover` 为 INVOKER wrapper + `recoverable_effects` 只读 STABLE DEFINER 发现面，写经 `advance`） | S6 未实现；无 `v24/s6/test_g5.py`；尚无独立 OS 子进程 + 持久 journal 证据 |
+| G7 spawn/child run | **未验证** | 设计稿 §5.5 + 附录 C.2（G7-A…H 与强制负例） | S8 未实现；无 spawn 解释器、无 `v24/s8/test_g7.py` |
+| G6 三面并发 | **未验证** | 设计稿 §9 G6 行 + §7 矩阵 + 附录 C.2 的 spawn 负例 | S7 未实现；G6 需先消费 G7 证据，不能在 G7 前收口 |
+
 ## 3. 错误码覆盖（23 码）
 
 `error_v1` 接受全部 23 码（签名冻结，G1-A 已逐码断言）。**能产生**与**能接受**是两件事；S5 收口后 23 码均有实测生产者，未产生集合为空。
@@ -259,7 +269,7 @@ S5 收口后，`error_v1` 的 23 码闭集与生产者集合相同：**没有**�
 | owner 级联 / scope close / 完整 dispose 闭包 | **已验证（S5）**：G4-A（4 节点/3 边合并 DAG、child-before-owner 首现序）、G4-C（consumer 先于 provider）、G4-P（墓碑只在 child/贡献/episode 义务清零后）、G4-Q（有界阶段）；child 先于 owner 的 dispose 级联另由 `g4_cascade` 的 `[G4-W1]` 断言（首 stage 标记 3 个 install、installs+fibers 合计 ≤16、1 successor、root release 晚于 child `disposed_at`）。scope close 由 G4-G/G4-O 覆盖（phase 序、`child.closed_at < parent.closed_at`、close 后无新准入） |
 | **S5 证明边界** | **仅串行 request-key 阶段**：每个新 key 推进一个 bounded phase（≤16 行、≤16 successor），无 worker、无自动推进；G4 的命令/回执串行执行，release/inspect 回执直接提交，无外部 host 进程。**不证**崩溃/恢复/reclaim（S6），**不证**并发面（S7） |
 | interaction 生产 | **已验证（S4）**：G2b-H 由 model outcome 真实生产 `runs.interaction` 与 `waiting`；S3 仅 seed 消费 |
-| spawn / child run | **未实现（S6 及以后）**：S4/S5 均无 spawn 解释器；任何未建模的 intent/结果键在 C19 结果键闭集或（unknown 类）`v_executable` 守卫处 W0 拒绝，不建 child run |
+| spawn / child run | **未实现（S8）**：S8/G7 按设计稿 §5.5 + 附录 C.2 实施；S4/S5 无 spawn 解释器。任何未建模的 intent/结果键在 C19 结果键闭集或（unknown 类）`v_executable` 守卫处 W0 拒绝，不建 child run |
 | 完整崩溃恢复 / reclaim | **未验证 / S6**：S4 只保留“过期 lease 不产生第二次 attempt”（D-S4-1/D-S4-7）；S5 只做命令驱动的显式 inspect 收敛，不做 crash 检测、自动 reclaim 或后台 inspect；这些仍归 S6 |
 | `resolve` 只读 | S2 gate 曾以 owner 测试；S3 W1 将它改为 DEFINER，并在 `V` 通过真实 service/operator/admin LOGIN 验证；poll/wait 同样由 `V` 验证 |
 | 并发矩阵 | S4 新增 G2b-E（同 tool claim 并发）、G2b-F（同批两 tool 并发）、G2b-O（cancel×T2 两序）三组两连接 + Barrier/held-G + `pg_blocking_pids()` 证据；G1-L、G3a-F、G3b-5 仍有效；G3b-4 为顺序场景；**S5 的 G4 全为串行阶段，不新增并发证据**；**完整三面并发矩阵：未验证 / S7/G6** |
@@ -274,3 +284,4 @@ S5 收口后，`error_v1` 的 23 码闭集与生产者集合相同：**没有**�
 - G2 父门：**完成（G2a+G2b）**。G3 父门：**完成（G3a+G3b）**。G4 父门：**完成（G4-A…Q，17/17）**。
 - 错误码：**23 个有生产者、0 个未产生**。S5 把最后一个未产生码 `cleanup_cycle` 接入（`46_cleanup.sql:148` helper，`:852`/`:879` 与 `40_interpreters.sql:2871` 抛出；`G4-E`/`G4-M-5` 触发）；`blocked_unknown` 由 S4 新增，`invalid_outcome` 从 install 预检扩展到 loop 结构路径。
 - S5 边界：inspect 收敛、owner 级联/scope close/完整 dispose 闭包已由 G4 验证；仅覆盖**串行 request-key 阶段**（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进）。崩溃恢复/reclaim 归 S6；完整并发矩阵归 S7。真实 provider/网络仍不作证明。
+- 范围外：G5（S6）、G7（S8）、G6（S7）均**未验证**，本矩阵不宣称任何崩溃/恢复、spawn 或三面并发证据；顺序 S6 → S8 → S7，S7 仍为最终验收。

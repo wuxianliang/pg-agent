@@ -2,7 +2,7 @@
 
 > 收尾稿：2026-10-24。本文件是 S1/S2/S3/S4/S5 里程碑的收尾工件，记录各计划 §7 的实施偏差。**S5 W1–W4 已实现，W5 为收尾（本台账、矩阵、README 与本地提交）**；2026-10-24 本轮八个 gate 串行实跑全部退出 0：load、`s1/setup_db.py --self-check`、`s1/test_ddl.py`、`s1/test_g1.py`、`s2/test_g3a.py`、`s3/test_g2.py`、`s4/test_g2b.py`、`s5/test_g4.py`（命令与结果见矩阵 §0）。规则：**每条与设计稿不一致的实现都必须具名落账，不得静默改规格**；规格修改走「设计稿修订 + Oracle 复审」（pre-plan §1.2）。历史失败追加修正结果，不覆盖、不删去。
 
-裁决来源：`docs/reviews/v24-three-doc-consistency-2026-10-23.md`（chat `untitled-chat-1EDE09`，14 项）、W5/W6 实施裁决（chat `untitled-chat-B38EF4`、`untitled-chat-F1CED0`）、S5 计划与逐 W 实施裁决（chat `untitled-chat-DFBC85`，2026-10-24：F1=A、F2=A、F2a=A、F2b=A、F3=A、F3a=A、F4=B′、F5=A、D-S5-1=A）。设计稿 652 行、pre-plan 354 行，R5 修订为行内改写，两份文件行号未位移，因此 `L###` 引用继续有效。
+裁决来源：`docs/reviews/v24-three-doc-consistency-2026-10-23.md`（chat `untitled-chat-1EDE09`，14 项）、W5/W6 实施裁决（chat `untitled-chat-B38EF4`、`untitled-chat-F1CED0`）、S5 计划与逐 W 实施裁决（chat `untitled-chat-DFBC85`，2026-10-24：F1=A、F2=A、F2a=A、F2b=A、F3=A、F3a=A、F4=B′、F5=A、D-S5-1=A）。设计稿 652 行、pre-plan 354 行，R5 修订为行内改写，两份文件行号未位移，因此 `L###` 引用继续有效。R6 只追加设计稿附录 C（1–652 行不变），但 pre-plan 增加 S8/C16/O11–O13 等行，pre-plan 的旧 `L###` 引用须按 R5 版本核对；设计稿 1–652 的 `L###` 继续有效。R6（2026-10-24，chat `untitled-chat-028D07`）为设计稿规格修订（附录 C），尚无产品代码，见 §1.8。
 
 ## 1. 规格分歧 D1–D14
 
@@ -137,6 +137,17 @@ Oracle 逐 W 终判与终判时记录的残余风险（run log Turn 10–13；�
 | D-S4-3 | S3 G2a-7/G2a-8 的终端循环期望 `already_terminal` | `blocked_unknown` 优先；其它 terminal 断言保留 | 新状态在 S3 不存在，故无旧断言被误伤；`blocked_unknown` 是 S4 的明确优先级 |
 | — | S3 把 `interaction_mismatch` 记为 W0 | S4 更正为 **W1**：领域零写 + 一条 failed `command_respond` effect 与其 request receipt | `G2b-I/consumed` 的 `assert_respond_mismatch_w1`；矩阵 §3.1 已改 |
 
+### 1.8 R6 规格修订（2026-10-24；设计稿，无产品代码）
+
+以下四条是 **Oracle 批准的规格修订**，不是实现偏差；当前没有任何产品代码/测试改动。
+
+| # | 修订 | 设计稿位置 | 采用 | 状态 |
+|---|---|---|---|---|
+| D-R6-1 | O7 kill 点数不一致：§9 说「7 个 kill 点」，§8 列十行 | §9 G5 行、§8 | §8 十行为权威；§9 行内改为「10 个 kill 点（§8 十行；附录 C.1）」 | Oracle R6 Q1=A；spec revision approved, no product code yet |
+| D-R6-2 | spawn/child run 无阶段归属（原计划排到 S5/S6 之后） | §5.5；pre-plan §0/§2.3/§3 | 新增阶段 S8 + gate G7；顺序 S6 → S8 → S7；S7 仍最终验收 | Oracle R6 Q2=A；spec revision approved, no product code yet |
+| D-R6-3 | 过期 claim 无统一收敛入口、恢复读面 ACL 未定义 | 附录 C.3 | 新增 `command_recover(scope)`（INVOKER wrapper）+ `recoverable_effects(scope)`（只读 `STABLE` DEFINER 发现面，owner `v24_owner`、固定 `search_path`、零 DML）：G 下扫过期 claim，`replay_policy` 分流，≤16 一批、一个事务；所有写经 `advance`；协议角色零表权；无第二状态机 | Oracle R6 Q3=B / Q3a=A；spec revision approved, no product code yet |
+| D-R6-4 | G5 重启证据不足：同进程新连接不能证明崩溃恢复 | §9.1；附录 C.1 | 每个 kill 点独立 OS 子进程 + 持久 journal；父进程重启仅用 resolve + 未结算 effect 收敛 | Oracle R6 Q4=A；spec revision approved, no product code yet |
+
 ## 2. 实施披露（不是规格偏差）
 
 以下条目改动的是 DDL 细节或测试夹具，不改变设计语义；列在此处是为了让复核者能对着代码找到它们。
@@ -233,3 +244,4 @@ S1 四次是夹具缺陷；S2 六次是夹具/测试断言缺陷或局部 SQL �
 - **FakeLLM/FakeTool/FakeCleanupHost 不是 transport 证明**：纯进程内、无套接字；S5 甚至没有 FakeCleanupHost 文件（§2.2），回执直接经协议提交。真实 IO 不在 gate 内。
 - **仍未关闭的披露**：D-S5-8 的 dispose 闭包边未扩（锁序留 S7）；D-S5-10 无跨 scope child install 专用 fixture（代码路径成立，证据缺口）；A-S5-1…9 的逐条理由见 §1.6。
 - **历史口径更新**：S4 的「22 个有生产者、1 个未产生」由本节更新为 23/0；S1–S4 的其它验收结论与边界（FakeLLM/FakeTool、真实 IO、S6/S7）继续有效。
+- **R6 规格修订已入账**（D-R6-1…4，§1.8）：设计稿附录 C 与 pre-plan S8/G7 已同步，但 S6/S8/S7 **尚无产品代码或 gate 证据**；G5/G6/G7 仍为未验证。
