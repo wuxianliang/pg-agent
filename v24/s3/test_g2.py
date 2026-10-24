@@ -1,4 +1,4 @@
-"""G2a-0/1/2/3/4/5/6/7/8/10 and G3b pin lifecycle: real protocol LOGINs."""
+"""G2a-0/1/2/3/4/5/6/7/8/10/11 and G3b pin lifecycle: real protocol LOGINs."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -529,6 +529,79 @@ def start_boundaries(db, owner):
     owner.rollback()
     login.close()
     print("[G2a-10] exact min/max/optional budgets; malformed/negative/zero/unknown W0; all caps+1/huge W1; requires/key limits")
+
+
+def assert_claim_rejected(owner, login, effect_id, label):
+    """S3.1 W0 claim rejection: exact error, ten-table equality, untouched claim columns."""
+    before = state(owner)
+    owner.rollback()
+    response = advance(login, effect_id, claim())
+    assert response == {"v": 1, "error": {"code": "invalid_args", "detail": {}}}, (label, response)
+    login.commit()
+    after = state(owner)
+    owner.rollback()
+    assert after == before, (label, "claim rejection wrote rows")
+    row = next(row for row in after["effects"] if row["effect_id"] == str(effect_id))
+    assert row["status"] == "ready" and row["attempt_no"] == 0 and row["fence"] == 0, (label, row)
+    assert row["claim_owner"] is None and row["lease_until"] is None, (label, row)
+
+
+def claim_guard(db, owner):
+    """G2a-11: only host_prepare/host_release are claimable until S4 settlement."""
+    login = db.connect("service")
+    root, live, creator = start_fixture(owner, login, realm="claim-guard")
+    response, _ = start(login, root, live["fiber"], {},
+                        {"steps": 2, "tool_calls": 1, "wall_ms": 1000},
+                        f"claim-guard-{uuid4()}")
+    login.commit()
+    assert response.get("disposition") == "committed", response
+    run_id, model_id = response["emitted"]
+    model = one(owner, "SELECT to_jsonb(e) FROM v24.effects e WHERE effect_id=%s", (model_id,))
+    assert model["kind"] == "model_call" and model["status"] == "ready", model
+    assert model["request"]["run_id"] == run_id, model
+    assert model["attempt_no"] == 0 and model["fence"] == 0, model
+    assert model["claim_owner"] is None and model["lease_until"] is None, model
+    owner.rollback()
+    assert_claim_rejected(owner, login, model_id, "real model_call")
+
+    for kind in ("tool_call", "inspect_resource"):
+        effect_id = uuid4()
+        seed_effect(owner, effect_id, kind=kind, status="ready")
+        owner.commit()
+        assert_claim_rejected(owner, login, effect_id, f"seeded {kind}")
+
+    for kind in ("command_install", "fiber_reconcile"):
+        effect_id = uuid4()
+        extra = {"fiber_id": live["fiber"]} if kind == "fiber_reconcile" else {}
+        seed_effect(owner, effect_id, kind=kind, status="ready", **extra)
+        owner.commit()
+        assert_claim_rejected(owner, login, effect_id, kind)
+
+    # S1 install fixture / existing host claim path: not over-blocked.
+    install = seed_install(owner, scope_id=root, creator=creator, state="preparing")
+    effect_id = uuid4()
+    seed_effect(owner, effect_id, kind="host_prepare", status="ready",
+                request=Json({"install_id": str(install),
+                              "reservation": f"v24:host_prepare:{effect_id}"}))
+    owner.commit()
+    before = state(owner)
+    owner.rollback()
+    claimed = advance(login, effect_id, claim())
+    login.commit()
+    assert claimed == {"v": 1, "disposition": "committed", "effect_id": str(effect_id),
+                       "emitted": [], "revision": 0,
+                       "claim": {"attempt": 1, "fence": 1, "owner": db.roles["service"]}}, claimed
+    after = state(owner)
+    owner.rollback()
+    for table in EXPECTED_TABLES - {"effects"}:
+        assert after[table] == before[table], (table, "host_prepare claim wrote extra rows")
+    row = next(row for row in after["effects"] if row["effect_id"] == str(effect_id))
+    assert row["status"] == "claimed" and row["attempt_no"] == 1 and row["fence"] == 1, row
+    assert row["claim_owner"] == db.roles["service"] and row["lease_until"] is not None, row
+    login.close()
+    print("[G2a-11] claim allowlist: real model_call and owner-seeded tool_call/inspect_resource/"
+          "command_install/fiber_reconcile reject invalid_args with ten-table byte-equal snapshots "
+          "and untouched attempt/fence/owner/lease; host_prepare still claims; temporary until S4")
 
 
 def cancel(conn, run_id, generation, key):
@@ -1359,6 +1432,7 @@ def main():
         ownerless_start(db, owner)
         start_failures(db, owner)
         start_boundaries(db, owner)
+        claim_guard(db, owner)
         poll_contract(db, owner)
         wait_check_contract(db, owner)
         cancel_contract(db, owner)
@@ -1370,7 +1444,7 @@ def main():
         start_off_orders(db, owner)
         _assert_closed_catalog(owner)
     print("[passed] v24 S3 W1-W7: read surface + start + poll/wait_check + cancel + steer + respond "
-          "(G2a-0/1/2/3/4/5/6/7/8/10; G3b-1..5; claimed/unknown settlement release reserved S4)")
+          "(G2a-0/1/2/3/4/5/6/7/8/10/11; G3b-1..5; claimed/unknown settlement release reserved S4)")
     return 0
 
 

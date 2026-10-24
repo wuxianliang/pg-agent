@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import base64
 import hashlib
 import json
@@ -348,7 +348,10 @@ def claims_and_receipts(owner, service, login):
         rejects_without_writes(owner, service, uuid4(), settlement(cls), "effect_id_conflict")
     command_id = seed_effect(owner, kind="command_install")
     rejects_without_writes(owner, service, command_id, claim(), "invalid_args")
-    eid = seed_effect(owner, kind="tool_call")
+    # S3.1 temporary allowlist: only host_prepare/host_release are claimable
+    # until S4 adds model/tool settlement. The claim lifecycle itself is
+    # unchanged; this fixture exercises it through a host effect.
+    eid = seed_effect(owner, kind="host_prepare")
     before = state(owner)
     token = {"attempt": 1, "fence": 1, "owner": login}
     expect_envelope(advance(service, eid, claim()), eid, "committed", token)
@@ -372,13 +375,18 @@ def claims_and_receipts(owner, service, login):
     token = {"attempt": 2, "fence": 2, "owner": login}
     expect_envelope(advance(service, eid, claim()), eid, "committed", token)
     service.commit()
+    # Non-host kinds are not claimable until S4 settlement exists.
+    unsupported = seed_effect(owner, kind="tool_call", status="claimed", attempt_no=2,
+                              fence=2, claim_owner=login,
+                              lease_until=datetime.now(timezone.utc) + timedelta(minutes=5))
+    rejects_without_writes(owner, service, unsupported, claim(), "invalid_args")
     for cls in ("success", "failure", "unknown"):
         for attempt, fence, who in ((1, 1, login), (2, 1, login), (1, 2, login), (2, 2, "spoof")):
             rejects_without_writes(owner, service, eid, settlement(cls, who, attempt, fence), "stale_claim")
         # Non-host_prepare kinds retain the explicit unsupported boundary.
         before = state(owner)
         sqlstate(service, "0A000", lambda cls=cls: advance(
-            service, eid, settlement(cls, login, 2, 2)), "v24.interpret_settlement:")
+            service, unsupported, settlement(cls, login, 2, 2)), "v24.interpret_settlement:")
         service.commit()
         assert state(owner) == before
         owner.rollback()

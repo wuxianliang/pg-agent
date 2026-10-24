@@ -17,7 +17,7 @@
 | 3 | `uv run python v24/s1/test_ddl.py` | 0 |
 | 4 | `uv run python v24/s1/test_g1.py` | 0 |
 | 5 | `uv run python v24/s2/test_g3a.py` | 0（本轮实跑；S2 W1–W6） |
-| 6 | `uv run python v24/s3/test_g2.py` | 0（本轮实跑；G2a-0…8/10、G3b-1…5 passed） |
+| 6 | `uv run python v24/s3/test_g2.py` | 0（本轮实跑；G2a-0…8/10/11、G3b-1…5 passed） |
 
 ### 0.1 历史失败（追加修正结果，不覆盖）
 
@@ -102,7 +102,7 @@ S1 的 W5 需要一个与 advance 共享 delta 应用的 INVOKER helper `validat
 
 ## 2.2 S3 具名断言 G2a / G3b
 
-`V` 包含 G2a-0（读面 ACL/resolve）、G2a-1…8、G2a-10；G2a-9（四写共用 advance、每个 command effect 同事务 settled + request response、poll/wait 零写）由各 verb receipt/replay、事件及十表快照断言覆盖。以下新增断言均由本轮 `V` 实跑通过。`run_owner`/`run_projection` 是内部 DEFINER helper，不授予协议角色 EXECUTE；仅 poll/wait_check 等公共读入口获准调用。`runs` 自 S3 start 起有写入者；revision 从 1 起并在可见状态变化时递增，不再恒为 0。
+`V` 包含 G2a-0（读面 ACL/resolve）、G2a-1…8、G2a-10、G2a-11；G2a-9（四写共用 advance、每个 command effect 同事务 settled + request response、poll/wait 零写）由各 verb receipt/replay、事件及十表快照断言覆盖。以下新增断言均由本轮 `V` 实跑通过。`run_owner`/`run_projection` 是内部 DEFINER helper，不授予协议角色 EXECUTE；仅 poll/wait_check 等公共读入口获准调用。`runs` 自 S3 start 起有写入者；revision 从 1 起并在可见状态变化时递增，不再恒为 0。
 
 | ID | 断言 | 当前证据/状态 |
 |---|---|---|
@@ -117,6 +117,7 @@ S1 的 W5 需要一个与 advance 共享 delta 应用的 INVOKER helper `validat
 | G2a-8 | respond interaction consumption/mismatch/terminal/replay | `V.respond_contract`；通过 |
 | G2a-9 | four write verbs share advance receipt/replay; poll/wait ten-table snapshots unchanged | `V` per-verb assertions；通过 |
 | G2a-10 | budget bounds/defaults, malformed inputs, requires limits | `V.start_boundaries`；通过 |
+| G2a-11 | claim 仅允许 `host_prepare`/`host_release`；真实 `model_call` 与 seeded `tool_call`/`inspect_resource`/`command_*`/`fiber_reconcile` 一律 `invalid_args` 十表零写；`host_prepare` 仍可 claim | `V.claim_guard`；通过 |
 | G3b-1 | run pin 挡 provider release；无引用 run cancel 后释放并允许 off/close | `V`；通过 |
 | G3b-2 | claimed tool_call 引用 pin 时 cancel 保持 claimed+cancel_requested、pin 留存；完整静默释放归 S4 | cancel/pin 留存断言通过；完整 claimed/unknown settlement release **未验证 / S4** |
 | G3b-3 | withdraw 后新 start 得 `dependency_unresolved`，已存在 run pin/run 仍有效 | `V`；通过 |
@@ -181,6 +182,7 @@ S1 的 W5 需要一个与 advance 共享 delta 应用的 INVOKER helper `validat
 | 真实 host IO / 网络 | FakeHost 纯进程内、无套接字；不是 transport 证明 |
 | 崩溃恢复 | 只测两个 journal 窗口；完整 recovery 归 S6 |
 | `advance.revision` | S3 `start` 写 `revision=1`，可见状态变化由 advance 更新；已不再是常量 0 |
+| **P1/S3.1 claim guard** | pre：非 host effect（如 `model_call`）claim 成功 → settle 仅支持 `host_prepare`/`host_release`，得 `0A000`；claim 已 COMMIT ⇒ effect 永久 `claimed`、run 卡死。post：claim 改为 allowlist，仅 `host_prepare`/`host_release` 可 claim，其余 kind（`command_*`/`fiber_reconcile`/`model_call`/`tool_call`/`inspect_resource`）一律 W0 `invalid_args` 十表零写，终态仍拒；`host_prepare` claim 仍成功。移除点：S4 增加 model/tool settlement 时。证据：`V.G2a-11` |
 | DDL 语义 vs advance 语义 | G1-O 证明 DDL 能拒绝；advance 语义由 G1/G3a/G2a/G3b 的具名断言分列 |
 
 ## 5. 结论

@@ -484,9 +484,11 @@ BEGIN
     v_delta := v24.interpret_command(p_effect_id, v_principal, p_outcome, v_closure);
   ELSIF v_class = 'claim' THEN
     SELECT * INTO v_effect FROM v24.effects WHERE effect_id=p_effect_id;
-    -- fiber_reconcile is DB-only work (no host IO, no claim); claiming it
-    -- would create a second lifecycle queue.
-    IF v_effect.kind LIKE 'command\_%' OR v_effect.kind = 'fiber_reconcile' OR
+    -- S3.1 temporary allowlist: settlement handles only host_prepare and
+    -- host_release. Claiming any other kind would commit a claim that
+    -- settlement must reject (0A000), wedging the effect and its run.
+    -- Remove this allowlist in S4, when model/tool settlement adds those kinds.
+    IF v_effect.kind NOT IN ('host_prepare','host_release') OR
        v_effect.status IN ('succeeded','failed','unknown','cancelled') THEN
       RETURN v24.error_v1('invalid_args');
     END IF;

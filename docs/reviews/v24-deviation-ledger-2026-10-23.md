@@ -40,7 +40,7 @@
 | D-S2-10 | delta 的 `effect` 补丁可写归属列 | S1 计划 §4.14.4 的 `effect` 只有 status/outcome | 可选 `scope_id`/`fiber_id`/`episode_id`，校验一致 | W1 失败 receipt 也带 fiber 归属；`R` 的 CAS/失败断言 |
 | D-S2-11 | 闭包/applier 直接改 30/40 | S2 计划 §4.0 原写「45 覆盖分派函数」 | 45 只放 `resolve`、wrapper、索引 | 复制数百行函数会产生两份定义并漂移；`git diff` 可审 |
 
-### 1.2 S3 分歧与实施裁决（D-S3-1…7）
+### 1.2 S3 分歧与实施裁决（D-S3-1…8）
 
 | # | 分歧 | 设计/计划位置 | 采用 | 落位 / 证据 |
 |---|---|---|---|---|
@@ -51,6 +51,7 @@
 | D-S3-5 | steer 立即续链边界 | §4.6 对旧 claimed 后继的说明 | 无旧 claimed 时立即建 model_call；有 claimed 时 pending_steer，不建 successor | 避免旧/新驱动重叠；applier 先写 effects 更新，再插 successor，以满足 `u_effects_model_call` |
 | D-S3-6 | interaction 生产归属 | §4.7 model outcome 路径 | S3 只消费测试 seed interaction，生产归 S4 | S3 不声称生产覆盖 |
 | D-S3-7 | owner fiber scope 与 run scope | §4.2 未明确 | start 要求二者 scope 相同 | 防止跨 scope run pin 的歧义 |
+| D-S3-8 | claim 曾接受除 `command_*`/`fiber_reconcile`/终态外的任意 kind | §4.16/§7.1 claim 资格；S3 计划未含 model/tool settlement | 临时 allowlist：仅 `host_prepare`/`host_release` 可 claim；其余 kind 一律 W0 `invalid_args` 零写；终态仍拒 | 结算器当前只处理 `host_prepare`/`host_release`；提前 claim `model_call`/`tool_call` 会在 claim COMMIT 后 settle 得 `0A000`，effect 永久 `claimed` 并卡死 run。S4 增加 model/tool settlement 时移除此 allowlist；`V.G2a-11` 断言真实 `model_call`、seeded `tool_call`/`inspect_resource`/`command_*`/`fiber_reconcile` 均拒且十表零写，`host_prepare` 仍可 claim |
 
 ### 1.3 S3 实施披露（非额外规格变更）
 
