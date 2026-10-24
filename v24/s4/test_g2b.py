@@ -1,4 +1,4 @@
-"""G2b W1 subset: model-only loop spine, claim/settle, stage guard, reserve.
+"""G2b W1-W2 subset: loop spine (model/tool), claim/settle, batch barrier, reserve.
 
 The gate drives the real protocol through LOGIN roles and only simulates the
 external model call in process.  A claim is always COMMITted and the worker
@@ -7,14 +7,15 @@ No sockets, files, randomness, or sleeps are used.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
 import inspect
 import json
 import re
 import socket
 import sys
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 S1 = Path(__file__).resolve().parent.parent / "s1"
 S2 = Path(__file__).resolve().parent.parent / "s2"
@@ -259,7 +260,7 @@ def model_only_spine(db, owner):
     assert model["request"]["cause"] == "start", model
     assert model["request"]["reserve"] == {"tokens": 4096}, model
     assert read(owner, "SELECT count(*) FROM v24.requests WHERE effect_id=%s", (model_id,)) == 0
-    print("[G2b-A] start: run running turn_no=0 steps=6 tokens=904; one ready "
+    print("[G2b-A/w1] start: run running turn_no=0 steps=6 tokens=904; one ready "
           "model reserve=4096 cause=start; no model request row")
 
     llm = FakeLLM([
@@ -293,7 +294,7 @@ def model_only_spine(db, owner):
     assert run["remaining_steps"] == 5 and run["remaining_tokens"] == 904, run
     assert run["turn_no"] == 1, run
     assert_ledger(owner, run_id, 5000, (0, 4096, 904))
-    print("[G2b-A] settlement: effect succeeded, exactly one continuation "
+    print("[G2b-A/w1] settlement: effect succeeded, exactly one continuation "
           "(parent=model, ordinal=0, state={}, batch_digest=sha256(''), reserve "
           "pre-debited); run steps=5 tokens=904 turn_no=1")
 
@@ -322,7 +323,7 @@ def model_only_spine(db, owner):
                 (model_id, continuation_id)) == 0
     assert [call["cause"] for call in llm.calls] == ["start", "continuation"], llm.calls
     assert llm.calls[0] == model["request"] and llm.calls[1] == continuation["request"], llm.calls
-    print("[G2b-A] final: run completed close_reason=final final_text='done' "
+    print("[G2b-A/w1] final: run completed close_reason=final final_text='done' "
           "turn_no=2 ended_at set; zero ready/claimed, zero tool effects, zero "
           "model request rows; FakeLLM calls start+continuation")
 
@@ -361,14 +362,14 @@ def real_claim_settle(db, owner):
 
 
 def stage_guard(db, owner):
-    """G2b-C: W1 allowlist is exactly host*+model; exhaustive non-member rejection."""
+    """G2b-C: W2 allowlist is exactly host*+model+tool; exhaustive non-member rejection."""
     service = db.connect("service")
     root, live, creator = loop_fixture(owner, service, realm="g2b-c")
     kinds = read(owner, "SELECT v24.claimable_kinds()")
-    assert kinds == ["host_prepare", "host_release", "model_call"], kinds
-    assert set(kinds) == {"host_prepare", "host_release", "model_call"}, kinds
+    assert kinds == ["host_prepare", "host_release", "model_call", "tool_call"], kinds
+    assert set(kinds) == {"host_prepare", "host_release", "model_call", "tool_call"}, kinds
     print(f"[G2b-C] claimable_kinds() exactly {kinds}")
-    non_members = ("tool_call", "inspect_resource") + COMMAND_KINDS + ("fiber_reconcile",)
+    non_members = ("inspect_resource",) + COMMAND_KINDS + ("fiber_reconcile",)
     assert len(COMMAND_KINDS) == 8, COMMAND_KINDS
     for kind in non_members:
         effect_id = uuid4()
@@ -844,6 +845,414 @@ def structural_retry_and_semantic(db, owner):
           "receipt_conflict; both ten-table byte-equal")
 
 
+# ---------------------------------------------------------------------------
+# S4 W2: tool settlement, the C20 batch barrier, and the tool_calls budget.
+
+def md5_uuid(text):
+    return str(UUID(hashlib.md5(text.encode()).hexdigest()))
+
+
+def hexbyte(value):
+    return value[2:] if value.startswith("\\x") else value
+
+
+def settle_tool(login, effect_id, token, class_name, result):
+    outcome = {"v": 1, "class": class_name, "claim": token,
+               "body": {"kind": "tool_call", "result": result}}
+    response = advance(login, effect_id, outcome)
+    login.commit()
+    return response, outcome
+
+
+def tool_rows(owner, run_id):
+    return read(owner, """SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.ordinal),'[]'::jsonb)
+        FROM v24.effects e WHERE e.run_id=%s AND e.kind='tool_call'""", (run_id,))
+
+
+def run_pins(owner, run_id):
+    return read(owner, """SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.key),'[]'::jsonb)
+        FROM v24.pins p WHERE p.consumer_run_id=%s""", (run_id,))
+
+
+def batch_digest(ids):
+    return hashlib.sha256(",".join(ids).encode()).hexdigest()
+
+
+def db_batch_digest(owner, model_id):
+    return read(owner, """SELECT encode(sha256(convert_to(
+            coalesce(string_agg(t.effect_id::text, ',' ORDER BY t.ordinal),''),'UTF8')),'hex')
+        FROM v24.effects t WHERE t.parent_effect_id=%s AND t.kind='tool_call'""", (model_id,))
+
+
+def make_tool_calls(keys):
+    return [{"key": key, "args": {"n": index}} for index, key in enumerate(keys)]
+
+
+def start_tool_run(owner, service, realm, keys, budget):
+    root, live, _ = loop_fixture(owner, service, realm=realm, requires=tuple(keys))
+    request = {"requires": [{"key": key} for key in keys]}
+    response, _ = start(service, root, live["fiber"], request, budget, f"{realm}-{uuid4()}")
+    service.commit()
+    assert_owner_envelope(response)
+    return response["emitted"][0], response["emitted"][1]
+
+
+def settle_tool_batch(owner, service, run_id, model_id, keys, text="go"):
+    pins = {pin["key"]: pin for pin in run_pins(owner, run_id)}
+    token = claim_effect(service, model_id)
+    response, _ = settle(service, model_id, token, "success",
+                         {"text": text, "tool_calls": make_tool_calls(keys)})
+    assert_owner_envelope(response)
+    ids = [md5_uuid(f"{model_id}:tool_call:{index}") for index in range(len(keys))]
+    assert response["emitted"] == ids, response
+    return ids, batch_digest(ids), pins
+
+
+def tool_batch_spine(db, owner):
+    """G2b-A (full): model tool batch -> three claim/settle -> one continuation -> final."""
+    service = db.connect("service")
+    keys = ("alpha", "beta", "gamma")
+    budget = {"steps": 7, "tool_calls": 3, "tokens": 5000, "wall_ms": 600000}
+    run_id, model_id = start_tool_run(owner, service, "g2b-a-full", keys, budget)
+    ids, digest, pins = settle_tool_batch(owner, service, run_id, model_id, keys)
+
+    tools = tool_rows(owner, run_id)
+    assert [tool["ordinal"] for tool in tools] == [0, 1, 2], tools
+    assert [tool["effect_id"] for tool in tools] == ids, tools
+    assert db_batch_digest(owner, model_id) == digest
+    for index, tool in enumerate(tools):
+        key = keys[index]
+        assert tool["status"] == "ready" and tool["kind"] == "tool_call", tool
+        assert tool["parent_effect_id"] == model_id, tool
+        assert tool["pin_id"] == pins[key]["pin_id"], tool
+        request = tool["request"]
+        assert request["ordinal"] == index and request["key"] == key, request
+        assert request["batch_digest"] == digest, request
+        assert request["descriptor_digest"] == hexbyte(pins[key]["descriptor_digest"]), request
+    run = run_row(owner, run_id)
+    assert run["status"] == "running" and run["turn_no"] == 1, run
+    assert run["remaining_steps"] == 6 and run["remaining_tool_calls"] == 0, run
+    assert run["remaining_tokens"] == 5000, run
+    assert read(owner, "SELECT count(*) FROM v24.events WHERE entity_id=%s "
+                       "AND event_kind='tool_batch_admitted'", (run_id,)) == 1
+    print("[G2b-A] model batch: 3 ready tools ordinal 0..2, deterministic ids, "
+          "pin-bound by key, one recomputed batch_digest; run turn=1 steps=6 "
+          "tokens=5000 tool_calls=0; tool_batch_admitted once")
+
+    continuation = None
+    for index, tool_id in enumerate(ids):
+        token = claim_effect(service, tool_id)
+        response, _ = settle_tool(service, tool_id, token, "success",
+                                  {"status": "ok", "output": {"i": index},
+                                   "usage": {"wall_ms": 5}})
+        assert_owner_envelope(response)
+        if index < 2:
+            assert response["emitted"] == [], response
+        else:
+            assert len(response["emitted"]) == 1, response
+            continuation = response["emitted"][0]
+        run = run_row(owner, run_id)
+        assert run["turn_no"] == index + 2, run
+        assert run["remaining_tool_calls"] == 0, run
+    assert continuation == md5_uuid(f"{model_id}:continuation"), continuation
+    cont = effect_row(owner, continuation)
+    assert cont["parent_effect_id"] == ids[2], cont
+    assert cont["ordinal"] == 0 and cont["kind"] == "model_call", cont
+    assert cont["request"]["cause"] == "continuation", cont
+    assert cont["request"]["batch_digest"] == digest, cont
+    assert cont["request"]["state"] == {}, cont
+    run = run_row(owner, run_id)
+    assert run["turn_no"] == 4, run
+    assert run["remaining_steps"] == 5 and run["remaining_tokens"] == 904, run
+    assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                       "AND kind='model_call'", (run_id,)) == 2
+    print("[G2b-A] tool settlements: first two 0 successors; closing settlement "
+          "(ordinal 2) creates exactly one continuation parent=max-ordinal tool, "
+          "ordinal=0, same batch_digest; steps=5 tokens=904; two model effects total")
+
+    token = claim_effect(service, continuation)
+    settled, _ = settle(service, continuation, token, "success",
+                        {"text": "done", "final": {"text": "done"}})
+    assert_owner_envelope(settled)
+    assert settled["emitted"] == []
+    run = run_row(owner, run_id)
+    assert run["status"] == "completed" and run["close_intent"] == {"kind": "final"}, run
+    assert run["result"]["close_reason"] == "final", run
+    assert run["result"]["final_text"] == "done", run
+    assert run["turn_no"] == 5 and run["remaining_steps"] == 5, run
+    assert run["remaining_tokens"] == 5000, run
+    assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                       "AND kind IN ('model_call','tool_call') "
+                       "AND status IN ('ready','claimed')", (run_id,)) == 0
+    print("[G2b-A] final: completed/close_reason=final, turn=5, tokens refunded "
+          "to 5000, zero ready/claimed business effects")
+
+
+def tool_settlement_counters(db, owner):
+    """G2b-D: real tool claim->settle success and failure; receipt, pin, counters."""
+    service = db.connect("service")
+    keys = ("d0", "d1")
+    budget = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
+    run_id, model_id = start_tool_run(owner, service, "g2b-d", keys, budget)
+    ids, _, pins = settle_tool_batch(owner, service, run_id, model_id, keys)
+    base = run_row(owner, run_id)
+    assert base["turn_no"] == 1 and base["remaining_tool_calls"] == 0, base
+
+    token = claim_effect(service, ids[0])
+    response, receipt = settle_tool(service, ids[0], token, "success",
+                                    {"status": "ok", "output": {"v": 1},
+                                     "usage": {"wall_ms": 11}})
+    assert_owner_envelope(response)
+    assert response["emitted"] == [], response
+    tool = effect_row(owner, ids[0])
+    run = run_row(owner, run_id)
+    assert tool["status"] == "succeeded" and tool["outcome"] == receipt, tool
+    assert tool["outcome"]["class"] == "success", tool
+    assert tool["resource_quiesced_at"] is not None and tool["settled_at"] is not None, tool
+    assert tool["claim_owner"] is None and tool["lease_until"] is None, tool
+    assert tool["pin_id"] == pins[keys[0]]["pin_id"], tool
+    assert run["turn_no"] == base["turn_no"] + 1, run
+    assert run["remaining_tool_calls"] == base["remaining_tool_calls"], run
+    assert run["remaining_tokens"] == base["remaining_tokens"] == 5000, run
+    assert run["remaining_wall_ms"] <= base["remaining_wall_ms"], run
+    assert read(owner, "SELECT count(*) FROM v24.events WHERE entity_id=%s "
+                       "AND event_kind='tool_call_settled'", (run_id,)) == 1
+    print("[G2b-D] tool success: effect succeeded with byte-equal receipt, exact "
+          "pin_id, quiesced/settled, claim columns cleared; run turn+1, tool_calls "
+          "and tokens unchanged, wall debited")
+
+    token = claim_effect(service, ids[1])
+    before_fail = run_row(owner, run_id)
+    response, receipt = settle_tool(service, ids[1], token, "failure",
+                                    {"status": "error", "output": {"why": "boom"},
+                                     "usage": None})
+    assert_owner_envelope(response)
+    assert len(response["emitted"]) == 1, response
+    tool = effect_row(owner, ids[1])
+    run = run_row(owner, run_id)
+    assert tool["status"] == "failed" and tool["outcome"] == receipt, tool
+    assert tool["outcome"]["class"] == "failure", tool
+    assert tool["resource_quiesced_at"] is not None, tool
+    assert run["status"] == "running", run
+    assert run["turn_no"] == before_fail["turn_no"] + 1, run
+    assert run["remaining_steps"] == before_fail["remaining_steps"] - 1, run
+    cont = effect_row(owner, response["emitted"][0])
+    assert cont["parent_effect_id"] == ids[1], cont
+    assert read(owner, "SELECT count(*) FROM v24.events WHERE entity_id=%s "
+                       "AND event_kind='tool_call_failed'", (run_id,)) == 1
+    assert read(owner, "SELECT count(*) FROM v24.events WHERE entity_id=%s "
+                       "AND event_kind='tool_batch_completed'", (run_id,)) == 1
+    print("[G2b-D] tool failure: effect failed with receipt, run still running "
+          "(single tool failure does not fail the run), turn+1, closing settlement "
+          "creates one continuation, tool_call_failed + tool_batch_completed once")
+
+
+def tool_batch_claims_and_guards(db, owner):
+    """G2b-E/G2b-G: independent claims, one closure, second-model guards."""
+    service = db.connect("service")
+    second = db.connect("service")
+    keys = ("e0", "e1")
+    budget = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
+    run_id, model_id = start_tool_run(owner, service, "g2b-e", keys, budget)
+    ids, _, _ = settle_tool_batch(owner, service, run_id, model_id, keys)
+
+    token0 = claim_effect(service, ids[0])
+    token1 = claim_effect(service, ids[1])
+    assert token0["attempt"] == 1 and token1["attempt"] == 1, (token0, token1)
+    tool = effect_row(owner, ids[0])
+    assert tool["status"] == "claimed" and tool["attempt_no"] == 1, tool
+    deferred = advance(second, ids[0], claim())
+    second.commit()
+    assert deferred.get("disposition") == "deferred" and deferred["claim"] is None, deferred
+    tool = effect_row(owner, ids[0])
+    assert tool["status"] == "claimed" and tool["attempt_no"] == 1 and tool["fence"] == 1, tool
+    print("[G2b-E] both batch tools claim independently (attempt=1); a second "
+          "claimant on one tool is deferred and does not bump attempt/fence")
+
+    response, _ = settle_tool(service, ids[0], token0, "success",
+                              {"status": "ok", "output": {}, "usage": None})
+    assert_owner_envelope(response)
+    assert response["emitted"] == [], response
+    response, _ = settle_tool(service, ids[1], token1, "success",
+                              {"status": "ok", "output": {}, "usage": None})
+    assert_owner_envelope(response)
+    assert len(response["emitted"]) == 1, response
+    continuation = response["emitted"][0]
+    assert effect_row(owner, continuation)["parent_effect_id"] == ids[1]
+    models = read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                         "AND kind='model_call'", (run_id,))
+    assert models == 2, models
+    print("[G2b-E] first settlement with a live sibling -> 0 successors; closing "
+          "settlement -> exactly one continuation (parent=max-ordinal tool)")
+
+    # A second ready model cannot exist by construction: u_effects_model_call
+    # admits at most one ready|claimed model per run.  The observable guarantee
+    # is the 23505 net; the applier's clean precheck stays defensive.
+    sqlstate(owner, "23505", lambda: seed_effect(owner, uuid4(), kind="model_call",
+                                                 status="ready", run_id=run_id),
+             message="u_effects_model_call")
+    print("[G2b-G] a second ready model is impossible by construction; direct "
+          "INSERT hits 23505 (u_effects_model_call is the last-resort net)")
+
+    # C20 step 2: an extra claimed tool under the same model observes the batch
+    # already closed -> invalid_outcome W0.
+    extra = uuid4()
+    pin = run_pins(owner, run_id)[0]
+    seed_effect(owner, extra, kind="tool_call", status="claimed", run_id=run_id,
+                parent_effect_id=model_id, ordinal=3, pin_id=pin["pin_id"],
+                epoch_no=1, generation=1, attempt_no=1, fence=1,
+                claim_owner=db.roles["service"],
+                lease_until=datetime.now(timezone.utc) + timedelta(minutes=5))
+    owner.commit()
+    token = {"attempt": 1, "fence": 1, "owner": db.roles["service"]}
+    before = snapshot(owner)
+    closed, _ = settle_tool(service, extra, token, "success",
+                            {"status": "ok", "output": {}, "usage": None})
+    assert closed == {"v": 1, "error": {"code": "invalid_outcome", "detail": {}}}, closed
+    assert snapshot(owner) == before, "duplicate-continuation W0 wrote rows"
+    assert effect_row(owner, extra)["status"] == "claimed"
+    print("[G2b-G] an extra claimed tool on a closed batch -> invalid_outcome "
+          "W0 (continuation already exists), ten tables byte-equal")
+
+
+def tool_batch_settlement_order(db, owner):
+    """G2b-F: both orders give one continuation; parent is always the max-ordinal tool."""
+    service = db.connect("service")
+    keys = ("f0", "f1")
+    budget = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
+    for order in ((0, 1), (1, 0)):
+        realm = f"g2b-f-{order[0]}{order[1]}"
+        run_id, model_id = start_tool_run(owner, service, realm, keys, budget)
+        ids, digest, _ = settle_tool_batch(owner, service, run_id, model_id, keys)
+        tokens = [claim_effect(service, tool_id) for tool_id in ids]
+        continuation = None
+        for step, index in enumerate(order):
+            response, _ = settle_tool(service, ids[index], tokens[index], "success",
+                                      {"status": "ok", "output": {"i": index},
+                                       "usage": None})
+            assert_owner_envelope(response)
+            if step == 0:
+                assert response["emitted"] == [], (order, response)
+            else:
+                assert len(response["emitted"]) == 1, (order, response)
+                continuation = response["emitted"][0]
+        assert continuation == md5_uuid(f"{model_id}:continuation"), continuation
+        cont = effect_row(owner, continuation)
+        assert cont["parent_effect_id"] == ids[1], (order, cont)
+        assert cont["ordinal"] == 0 and cont["request"]["batch_digest"] == digest, (order, cont)
+        assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                           "AND effect_id=%s", (run_id, continuation)) == 1
+        print(f"[G2b-F] settlement order {order}: exactly one continuation "
+              f"parent=ordinal-1 tool (creator-independent), batch digest equal")
+
+
+def tool_call_budget(db, owner):
+    """G2b-K: 17 is structural W0, exactly 16 is accepted, 5 with 2 left seals."""
+    service = db.connect("service")
+    budget = {"steps": 7, "tool_calls": 16, "tokens": 5000, "wall_ms": 600000}
+    run_id, model_id = start_tool_run(owner, service, "g2b-k17", ("only",), budget)
+    token = claim_effect(service, model_id)
+    before = snapshot(owner)
+    response, _ = settle(service, model_id, token, "success",
+                         {"tool_calls": make_tool_calls([f"k{i}" for i in range(17)])})
+    assert response == {"v": 1, "error": {"code": "invalid_outcome", "detail": {}}}, response
+    assert snapshot(owner) == before, "17 tool_calls wrote rows"
+    model = effect_row(owner, model_id)
+    assert model["status"] == "claimed" and model["attempt_no"] == 1, model
+    assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                       "AND kind='tool_call'", (run_id,)) == 0
+    print("[G2b-K] 17 tool_calls: structural invalid_outcome W0, ten tables "
+          "byte-equal, model still claimed, 0 tool effects (no truncation)")
+
+    keys16 = tuple(f"k{i}" for i in range(16))
+    budget16 = {"steps": 8, "tool_calls": 16, "tokens": 5000, "wall_ms": 600000}
+    run16, model16 = start_tool_run(owner, service, "g2b-k16", keys16, budget16)
+    ids, digest, _ = settle_tool_batch(owner, service, run16, model16, keys16)
+    tools = tool_rows(owner, run16)
+    assert len(tools) == 16, tools
+    assert [tool["ordinal"] for tool in tools] == list(range(16)), tools
+    assert [tool["effect_id"] for tool in tools] == ids, tools
+    assert db_batch_digest(owner, model16) == digest
+    run = run_row(owner, run16)
+    assert run["remaining_tool_calls"] == 0 and run["turn_no"] == 1, run
+    print("[G2b-K] exactly 16 tool_calls accepted: 16 ready tools ordinal 0..15, "
+          "one digest, tool_calls budget fully debited")
+
+    keys5 = ("b0", "b1", "b2", "b3", "b4")
+    budget5 = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
+    run5, model5 = start_tool_run(owner, service, "g2b-k-budget", keys5, budget5)
+    token5 = claim_effect(service, model5)
+    response, receipt = settle(service, model5, token5, "success",
+                               {"text": "too many", "tool_calls": make_tool_calls(keys5)})
+    assert_owner_envelope(response)
+    assert response["emitted"] == [], response
+    model = effect_row(owner, model5)
+    run = run_row(owner, run5)
+    assert model["status"] == "succeeded" and model["outcome"] == receipt, model
+    assert run["status"] == "completed", run
+    assert run["close_intent"] == {"kind": "budget"}, run
+    assert run["result"]["close_reason"] == "budget_exhausted", run
+    assert run["turn_no"] == 1 and run["remaining_tool_calls"] == 2, run
+    assert run["remaining_steps"] == 6 and run["remaining_tokens"] == 5000, run
+    assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                       "AND kind='tool_call'", (run5,)) == 0
+    print("[G2b-K/budget] 5 tool_calls with 2 remaining: model succeeded, 0 tool "
+          "effects, run completed/budget_exhausted, tool_calls budget unchanged")
+
+
+def tool_unknown_wall(db, owner):
+    """G2b-N: tool unknown keeps its receipt, blocks the run, retains its pin."""
+    service = db.connect("service")
+    keys = ("u0", "u1")
+    budget = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
+    run_id, model_id = start_tool_run(owner, service, "g2b-n", keys, budget)
+    ids, _, pins = settle_tool_batch(owner, service, run_id, model_id, keys)
+    token0 = claim_effect(service, ids[0])
+    token1 = claim_effect(service, ids[1])
+    base = run_row(owner, run_id)
+    response, receipt = settle_tool(service, ids[0], token0, "unknown",
+                                    {"status": "error", "output": {"lost": True},
+                                     "usage": {"wall_ms": 9}})
+    assert_owner_envelope(response)
+    assert response["emitted"] == [], response
+    tool = effect_row(owner, ids[0])
+    run = run_row(owner, run_id)
+    assert tool["status"] == "unknown" and tool["outcome"] == receipt, tool
+    assert tool["outcome"]["class"] == "unknown", tool
+    assert tool["resource_quiesced_at"] is None, tool
+    assert run["status"] == "blocked_unknown", run
+    assert run["close_intent"]["kind"] == "unknown", run
+    assert run["pending_steer"] is None and run["interaction"] is None, run
+    assert run["turn_no"] == base["turn_no"] + 1, run
+    assert run["remaining_tokens"] == base["remaining_tokens"], run
+    own_pin = next(pin for pin in run_pins(owner, run_id)
+                   if pin["pin_id"] == pins[keys[0]]["pin_id"])
+    assert own_pin["released_at"] is None and own_pin["released_by_effect"] is None, own_pin
+    assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                       "AND kind='model_call'", (run_id,)) == 1
+    print("[G2b-N] tool unknown: effect unknown with original receipt byte-equal, "
+          "resource_quiesced NULL, run blocked_unknown, 0 successors, tokens "
+          "untouched, own pin retained")
+
+    before = snapshot(owner)
+    claim_again = advance(service, ids[0], claim())
+    service.commit()
+    assert claim_again == {"v": 1, "error": {"code": "invalid_args", "detail": {}}}, claim_again
+    assert snapshot(owner) == before, "unknown re-claim wrote rows"
+    print("[G2b-N] a later claim on the unknown tool is invalid_args with a "
+          "byte-equal snapshot")
+
+    before = snapshot(owner)
+    late = advance(service, ids[1], {"v": 1, "class": "success", "claim": token1,
+                                     "body": {"kind": "tool_call",
+                                              "result": {"status": "ok", "output": {}}}})
+    service.commit()
+    assert late == {"v": 1, "error": {"code": "blocked_unknown", "detail": {}}}, late
+    assert snapshot(owner) == before, "blocked_unknown run settlement wrote rows"
+    print("[G2b-N] a sibling settlement on the blocked_unknown run is W0 "
+          "blocked_unknown with a byte-equal snapshot")
+
+
 def main():
     install_no_network()
     try:
@@ -859,10 +1268,16 @@ def main():
             unknown_path(db, owner)
             regression_surface(db, owner)
             structural_retry_and_semantic(db, owner)
+            tool_batch_spine(db, owner)
+            tool_settlement_counters(db, owner)
+            tool_batch_claims_and_guards(db, owner)
+            tool_batch_settlement_order(db, owner)
+            tool_call_budget(db, owner)
+            tool_unknown_wall(db, owner)
             _assert_closed_catalog(owner)
     finally:
         restore_no_network()
-    print("[passed] v24 S4 W1")
+    print("[passed] v24 S4 W1-W2")
     return 0
 
 

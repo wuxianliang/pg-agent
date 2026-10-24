@@ -1,8 +1,9 @@
--- S4 W1: native agent loop helpers, model settlement interpreter and applier.
--- Every function here is INVOKER, carries an explicit search_path and is revoked
--- from every protocol role by 50_permissions.sql.  `advance` remains the only
--- privileged terminal writer.  W1 implements the model branch only: tool
--- admission, interaction production and pending_steer consumption are later Ws.
+-- S4 W1/W2: native agent loop helpers, model/tool settlement interpreters and
+-- the loop applier.  Every function here is INVOKER, carries an explicit
+-- search_path and is revoked from every protocol role by 50_permissions.sql.
+-- `advance` remains the only privileged terminal writer.  W2 adds the model
+-- tool-call branch, tool settlement, the batch barrier and tool claim opening;
+-- interaction production and pending_steer consumption are later Ws.
 
 -- Numeric policy lives in exactly one place so gates can assert the contract.
 CREATE FUNCTION v24.loop_policy() RETURNS jsonb LANGUAGE sql IMMUTABLE
@@ -39,15 +40,20 @@ CREATE FUNCTION v24.model_effect_id(p_parent uuid, p_ordinal int) RETURNS uuid
 LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, v24
 AS $$ SELECT md5(p_parent::text||':model_call:'||p_ordinal)::uuid $$;
 
+-- C20 identity: a tool effect's id is derived from its source model and ordinal.
+CREATE FUNCTION v24.tool_effect_id(p_model uuid, p_ordinal int) RETURNS uuid
+LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, v24
+AS $$ SELECT md5(p_model::text||':tool_call:'||p_ordinal)::uuid $$;
+
 CREATE FUNCTION v24.continuation_effect_id(p_model uuid) RETURNS uuid
 LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, v24
 AS $$ SELECT md5(p_model::text||':continuation')::uuid $$;
 
--- C18 single source of truth.  W2 appends 'tool_call' in the same commit that
--- opens tool settlement.
+-- C18 single source of truth.  W2 opens tool_call in the same commit that
+-- enables tool settlement.
 CREATE FUNCTION v24.claimable_kinds() RETURNS text[] LANGUAGE sql IMMUTABLE
 SET search_path = pg_catalog, v24
-AS $$ SELECT ARRAY['host_prepare','host_release','model_call']::text[] $$;
+AS $$ SELECT ARRAY['host_prepare','host_release','model_call','tool_call']::text[] $$;
 
 -- C23 seal predicate.  p_close_intent / p_interaction / p_pending_steer are the
 -- values the current advance is ABOUT to persist (the interpreter cannot read
@@ -104,6 +110,7 @@ DECLARE
   e v24.effects%ROWTYPE;
   r v24.runs%ROWTYPE;
   parent v24.effects%ROWTYPE;
+  v_model_parent v24.effects%ROWTYPE;
   v_class text := p_outcome->>'class';
   v_res jsonb := p_outcome->'body'->'result';
   v_item jsonb;
@@ -113,6 +120,7 @@ DECLARE
   v_refund bigint;
   v_turn bigint;
   v_steps int;
+  v_tool_calls int;
   v_wall bigint;
   v_tokens bigint;
   v_late boolean := false;
@@ -139,6 +147,10 @@ DECLARE
   v_final_text text;
   v_budget jsonb;
   v_reserve_next bigint;
+  v_n_tools int := 0;
+  v_i int;
+  v_pin_id uuid;
+  v_pin_digest text;
 BEGIN
   SELECT * INTO e FROM v24.effects WHERE effect_id = p_effect_id;
   IF NOT FOUND OR e.kind <> 'model_call' THEN
@@ -232,6 +244,8 @@ BEGIN
      AND v_res->'final' IS NOT NULL AND v_res->'final' <> 'null'::jsonb THEN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
   END IF;
+  v_n_tools := CASE WHEN jsonb_typeof(v_res->'tool_calls') = 'array'
+                    THEN jsonb_array_length(v_res->'tool_calls') ELSE 0 END;
 
   -- C17 request envelope: key closure, deterministic identity, allocation and
   -- digests.  A claim-time gate performed the same check; settlement repeats it
@@ -318,8 +332,25 @@ BEGIN
       RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
     END IF;
     IF v_cause = 'continuation' THEN
-      IF parent.kind <> 'model_call'
-         OR e.effect_id IS DISTINCT FROM md5(e.parent_effect_id::text||':continuation')::uuid THEN
+      IF parent.kind = 'model_call' THEN
+        IF e.effect_id IS DISTINCT FROM
+           md5(e.parent_effect_id::text||':continuation')::uuid THEN
+          RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+        END IF;
+      ELSIF parent.kind = 'tool_call' THEN
+        -- C20: a tool-batch continuation's parent is the max-ordinal tool; its
+        -- deterministic identity derives from the model batch parent.
+        SELECT * INTO v_model_parent FROM v24.effects p
+         WHERE p.effect_id = parent.parent_effect_id;
+        IF NOT FOUND
+           OR parent.parent_effect_id IS NULL
+           OR v_model_parent.kind <> 'model_call'
+           OR v_model_parent.run_id IS DISTINCT FROM e.run_id
+           OR e.effect_id IS DISTINCT FROM
+              md5(parent.parent_effect_id::text||':continuation')::uuid THEN
+          RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+        END IF;
+      ELSE
         RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
       END IF;
     ELSE
@@ -357,16 +388,11 @@ BEGIN
     v_semantic := true;
   END IF;
 
-  -- W1 admits no tool successors.  Valid tool keys are still W2 work, so a
-  -- structurally valid batch is W0 here and no tool effect is created.
-  IF NOT v_semantic
-     AND (CASE WHEN jsonb_typeof(v_res->'tool_calls') = 'array'
-               THEN jsonb_array_length(v_res->'tool_calls') ELSE 0 END) > 0 THEN
-    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
-  END IF;
-
+  -- W2 admits a structurally valid tool batch only through the dedicated
+  -- branch below; semantic violations already became unknown above.
   v_turn := r.turn_no + 1;
   v_steps := r.remaining_steps;
+  v_tool_calls := r.remaining_tool_calls;
   v_wall := greatest(0, r.remaining_wall_ms -
     coalesce((extract(epoch from (now()-e.created_at))*1000)::bigint,0));
   IF v_class IN ('success','failure') AND NOT v_semantic THEN
@@ -459,7 +485,7 @@ BEGIN
          ORDER BY e2.created_at, e2.effect_id LIMIT 1;
         IF v_budget IS NULL OR jsonb_typeof(v_budget) IS DISTINCT FROM 'object' THEN
           v_budget := jsonb_build_object('steps',v_steps,'tokens',coalesce(v_tokens,0),
-            'tool_calls',r.remaining_tool_calls,'wall_ms',v_wall);
+            'tool_calls',v_tool_calls,'wall_ms',v_wall);
         END IF;
         v_status := 'completed';
         v_result := jsonb_build_object('v',1,'close_reason','final',
@@ -483,9 +509,94 @@ BEGIN
             'event_kind','model_call_settled','payload',jsonb_build_object(
               'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',false)));
       END IF;
+    ELSIF v_n_tools > 0 THEN
+      -- C20/F3=A: a structurally valid batch reserves one tool_call per item.
+      IF v_n_tools > r.remaining_tool_calls THEN
+        -- Budget exhausted: the model effect still succeeds and no tool is
+        -- admitted; this is a seal, never an error (C23 tool_calls rule).
+        v_close := jsonb_build_object('kind','budget');
+        v_sealed := v24.loop_sealable(e.run_id,p_effect_id,v_close,NULL,r.pending_steer);
+        IF v_sealed THEN
+          SELECT e2.request->'budget' INTO v_budget FROM v24.effects e2
+           WHERE e2.run_id = e.run_id AND e2.kind = 'model_call' AND e2.request ? 'budget'
+           ORDER BY e2.created_at, e2.effect_id LIMIT 1;
+          IF v_budget IS NULL OR jsonb_typeof(v_budget) IS DISTINCT FROM 'object' THEN
+            v_budget := jsonb_build_object('steps',v_steps,'tokens',coalesce(v_tokens,0),
+              'tool_calls',v_tool_calls,'wall_ms',v_wall);
+          END IF;
+          v_status := 'completed';
+          v_result := jsonb_build_object('v',1,'close_reason','budget_exhausted',
+            'final_text',NULL,'turn_no',v_turn,'budget',v_budget);
+          v_interaction := NULL; v_pending := NULL; v_ended := now();
+          v_pins := v24.run_pin_release_set(e.run_id,p_effect_id,v_status,p_effect_id);
+          v_events := jsonb_build_array(
+            jsonb_build_object('entity_type','run','entity_id',e.run_id,
+              'event_kind','model_call_settled','payload',jsonb_build_object(
+                'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',false)),
+            jsonb_build_object('entity_type','run','entity_id',e.run_id,
+              'event_kind','budget_exhausted','payload',jsonb_build_object(
+                'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn)),
+            jsonb_build_object('entity_type','run','entity_id',e.run_id,
+              'event_kind','run_completed','payload',jsonb_build_object(
+                'run_id',e.run_id,'close_reason','budget_exhausted','turn_no',v_turn)));
+        ELSE
+          v_status := r.status;
+          v_result := r.result;
+          v_interaction := r.interaction; v_pending := r.pending_steer;
+          v_ended := r.ended_at;
+          v_events := jsonb_build_array(
+            jsonb_build_object('entity_type','run','entity_id',e.run_id,
+              'event_kind','model_call_settled','payload',jsonb_build_object(
+                'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',false)));
+        END IF;
+      ELSE
+        v_tool_calls := v_tool_calls - v_n_tools;
+        v_status := r.status;
+        v_close := r.close_intent; v_result := r.result;
+        v_interaction := r.interaction; v_pending := r.pending_steer;
+        v_ended := r.ended_at;
+        -- batch_digest = sha256(tool ids ordered by ordinal), C20.
+        SELECT encode(sha256(convert_to(string_agg(
+                 v24.tool_effect_id(p_effect_id,g)::text, ',' ORDER BY g),'UTF8')),'hex')
+          INTO v_batch FROM generate_series(0,v_n_tools-1) g;
+        FOR v_i IN 0..v_n_tools-1 LOOP
+          v_item := v_res->'tool_calls'->v_i;
+          -- C22: every tool binds exactly one live run pin by key; the pin
+          -- descriptor digest is frozen into the request.
+          SELECT p.pin_id, encode(p.descriptor_digest,'hex')
+            INTO v_pin_id, v_pin_digest
+            FROM v24.pins p
+           WHERE p.consumer_run_id = e.run_id AND p.released_at IS NULL
+             AND p.key = v_item->>'key'
+           ORDER BY p.pin_id LIMIT 1;
+          IF v_pin_id IS NULL OR v_pin_digest IS NULL THEN
+            RETURN jsonb_build_object('write',false,
+              'error',v24.error_v1('invalid_outcome'));
+          END IF;
+          v_succ := v_succ || jsonb_build_array(jsonb_build_object(
+            'effect_id',v24.tool_effect_id(p_effect_id,v_i),
+            'parent_effect_id',p_effect_id,'ordinal',v_i,'kind','tool_call',
+            'run_id',r.run_id,'fiber_id',r.owner_fiber_id,'episode_id',r.owner_episode_id,
+            'epoch_no',r.epoch_no,'generation',r.driving_generation,
+            'pin_id',v_pin_id,'replay_policy','no_replay',
+            'request',jsonb_build_object(
+              'v',1,'run_id',r.run_id,'epoch_no',r.epoch_no,
+              'generation',r.driving_generation,'ordinal',v_i,
+              'key',v_item->>'key','args',v_item->'args',
+              'descriptor_digest',v_pin_digest,'batch_digest',v_batch)));
+        END LOOP;
+        v_events := jsonb_build_array(
+          jsonb_build_object('entity_type','run','entity_id',e.run_id,
+            'event_kind','model_call_settled','payload',jsonb_build_object(
+              'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',false)),
+          jsonb_build_object('entity_type','run','entity_id',e.run_id,
+            'event_kind','tool_batch_admitted','payload',jsonb_build_object(
+              'run_id',e.run_id,'effect_id',p_effect_id,'tool_calls',v_n_tools,
+              'batch_digest',v_batch)));
+      END IF;
     ELSE
       -- Plain non-final text.  W1 continues from the settling model itself; the
-      -- tool-batch max-ordinal parent rule belongs to W2.
+      -- tool-batch max-ordinal parent rule belongs to W2 tool settlement.
       v_admit := v_steps >= 1 AND v_wall > 0
                  AND (v_tokens IS NULL OR v_tokens > 0);
       IF v_admit THEN
@@ -508,7 +619,8 @@ BEGIN
             ORDER BY x.created_at DESC, x.effect_id DESC LIMIT 1),
           '{}'::jsonb);
         v_succ := jsonb_build_array(jsonb_build_object(
-          'effect_id',v_new_model,'ordinal',0,'kind','model_call',
+          'effect_id',v_new_model,'parent_effect_id',p_effect_id,
+          'ordinal',0,'kind','model_call',
           'run_id',r.run_id,'fiber_id',r.owner_fiber_id,'episode_id',r.owner_episode_id,
           'epoch_no',r.epoch_no,'generation',r.driving_generation,'pin_id',NULL,
           'replay_policy','no_replay',
@@ -530,7 +642,7 @@ BEGIN
            ORDER BY e2.created_at, e2.effect_id LIMIT 1;
           IF v_budget IS NULL OR jsonb_typeof(v_budget) IS DISTINCT FROM 'object' THEN
             v_budget := jsonb_build_object('steps',v_steps,'tokens',coalesce(v_tokens,0),
-              'tool_calls',r.remaining_tool_calls,'wall_ms',v_wall);
+              'tool_calls',v_tool_calls,'wall_ms',v_wall);
           END IF;
           v_status := 'completed';
           v_result := jsonb_build_object('v',1,'close_reason','budget_exhausted',
@@ -571,7 +683,7 @@ BEGIN
           'turn_no',v_turn,
           'remaining_steps',v_steps,
           'remaining_tokens',v_tokens,
-          'remaining_tool_calls',r.remaining_tool_calls,
+          'remaining_tool_calls',v_tool_calls,
           'remaining_wall_ms',v_wall,
           'interaction',v_interaction,
           'pending_steer',v_pending,
@@ -588,10 +700,298 @@ BEGIN
 END;
 $$;
 
--- S4 loop delta applier.  W1 accepts only model_call successors; the delta key
--- closure is exactly {write,domain,effect,events,successors} and every check
--- finishes before the first write.  DML order: run -> effect -> events ->
--- successors -> pins.
+-- C19 tool settlement.  Structural failures are W0 and precede every DML; the
+-- C20 batch barrier runs after the effect has been admitted to settle, in the
+-- exact order fixed by the plan (siblings -> replay -> late -> model -> admit).
+CREATE FUNCTION v24.interpret_tool_settlement(p_effect_id uuid, p_principal uuid,
+  p_outcome jsonb, p_closure jsonb) RETURNS jsonb
+LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
+DECLARE
+  e v24.effects%ROWTYPE;
+  r v24.runs%ROWTYPE;
+  parent v24.effects%ROWTYPE;
+  v_class text := p_outcome->>'class';
+  v_res jsonb := p_outcome->'body'->'result';
+  v_status text;
+  v_result text;
+  v_usage jsonb;
+  v_effect_status text;
+  v_quiesced boolean := true;
+  v_close jsonb;
+  v_run_result jsonb;
+  v_interaction jsonb;
+  v_pending jsonb;
+  v_ended timestamptz;
+  v_turn bigint;
+  v_wall bigint;
+  v_steps int;
+  v_tokens bigint;
+  v_tool_calls int;
+  v_late boolean := false;
+  v_sibling boolean := false;
+  v_sealed boolean := false;
+  v_admit boolean := false;
+  v_model uuid;
+  v_max_ord int;
+  v_cont uuid;
+  v_reserve bigint;
+  v_batch text;
+  v_input jsonb;
+  v_digests jsonb;
+  v_events jsonb := '[]'::jsonb;
+  v_succ jsonb := '[]'::jsonb;
+  v_pins jsonb := '[]'::jsonb;
+  v_budget jsonb;
+  v_fact_event text;
+BEGIN
+  SELECT * INTO e FROM v24.effects WHERE effect_id = p_effect_id;
+  IF NOT FOUND OR e.kind <> 'tool_call' THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+  END IF;
+  SELECT * INTO r FROM v24.runs WHERE run_id = e.run_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+  END IF;
+  -- A run already at the unknown wall accepts no further business settlement.
+  IF r.status = 'blocked_unknown' THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('blocked_unknown'));
+  END IF;
+
+  -- C19.0 structural class: receipt, result closure and class/status pairing,
+  -- all before any DML.  The tool result schema is exactly
+  -- {status: ok|error, output: object, usage: {wall_ms} | null}.
+  IF (p_outcome->>'v') IS DISTINCT FROM '1'
+     OR v_class IS NULL OR v_class NOT IN ('success','failure','unknown')
+     OR jsonb_typeof(p_outcome->'body') IS DISTINCT FROM 'object'
+     OR (p_outcome->'body'->>'kind') IS DISTINCT FROM 'tool_call' THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+  END IF;
+  IF jsonb_typeof(v_res) IS DISTINCT FROM 'object' THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+  END IF;
+  IF NOT (v_res ?& ARRAY['status','output'])
+     OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_res) k
+                 WHERE k NOT IN ('status','output','usage')) THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+  END IF;
+  v_result := v_res->>'status';
+  IF v_result IS NULL OR v_result NOT IN ('ok','error')
+     OR jsonb_typeof(v_res->'output') IS DISTINCT FROM 'object' THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+  END IF;
+  IF v_class = 'success' AND v_result IS DISTINCT FROM 'ok' THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+  END IF;
+  IF v_class = 'failure' AND v_result IS DISTINCT FROM 'error' THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+  END IF;
+  v_usage := v_res->'usage';
+  IF v_usage IS NOT NULL AND v_usage <> 'null'::jsonb THEN
+    IF jsonb_typeof(v_usage) IS DISTINCT FROM 'object'
+       OR NOT (v_usage ? 'wall_ms')
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_usage) k WHERE k <> 'wall_ms')
+       OR jsonb_typeof(v_usage->'wall_ms') IS DISTINCT FROM 'number'
+       OR (v_usage->>'wall_ms') !~ '^[0-9]+$' THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    END IF;
+    BEGIN
+      PERFORM (v_usage->>'wall_ms')::bigint;
+    EXCEPTION WHEN numeric_value_out_of_range THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    END;
+  END IF;
+
+  v_turn := r.turn_no + 1;
+  v_wall := greatest(0, r.remaining_wall_ms -
+    coalesce((extract(epoch from (now()-e.created_at))*1000)::bigint,0));
+  v_steps := r.remaining_steps;
+  v_tokens := r.remaining_tokens;
+  v_tool_calls := r.remaining_tool_calls;
+
+  IF v_class = 'unknown' THEN
+    -- C19 unknown wall: keep the original receipt, never quiesce this pin.
+    v_status := 'blocked_unknown';
+    v_effect_status := 'unknown';
+    v_quiesced := false;
+    v_close := jsonb_build_object('kind','unknown','reason','outcome_unknown',
+                                  'effect_id',p_effect_id);
+    v_run_result := jsonb_build_object('v',1,'close_reason','unknown','turn_no',v_turn);
+    v_interaction := NULL; v_pending := NULL; v_ended := now();
+    -- Keep the settling unknown effect as a pin blocker (resource not quiesced).
+    v_pins := v24.run_pin_release_set(e.run_id,NULL,'blocked_unknown',p_effect_id);
+    v_events := jsonb_build_array(
+      jsonb_build_object('entity_type','run','entity_id',e.run_id,
+        'event_kind','tool_call_unknown','payload',jsonb_build_object(
+          'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,
+          'reason','outcome_unknown')),
+      jsonb_build_object('entity_type','run','entity_id',e.run_id,
+        'event_kind','run_blocked_unknown','payload',jsonb_build_object(
+          'run_id',e.run_id,'reason','outcome_unknown','effect_id',p_effect_id)));
+  ELSE
+    v_effect_status := CASE WHEN v_class = 'failure' THEN 'failed' ELSE 'succeeded' END;
+    v_quiesced := true;
+    v_fact_event := CASE WHEN v_class = 'failure'
+                         THEN 'tool_call_failed' ELSE 'tool_call_settled' END;
+    -- Default late-preserving run values; a normal settlement overwrites only
+    -- the columns it actually advances.
+    v_status := r.status;
+    v_close := r.close_intent; v_run_result := r.result;
+    v_interaction := r.interaction; v_pending := r.pending_steer;
+    v_ended := r.ended_at;
+
+    IF e.parent_effect_id IS NULL OR e.ordinal IS NULL THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    END IF;
+    SELECT * INTO parent FROM v24.effects p WHERE p.effect_id = e.parent_effect_id;
+    IF NOT FOUND OR parent.kind <> 'model_call'
+       OR parent.run_id IS DISTINCT FROM e.run_id THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    END IF;
+
+    -- C20 step 3's late fact (terminal run or old generation) also decides
+    -- whether this settlement may release terminal-run pins (C22).
+    v_late := r.status IN ('completed','failed','cancelled','blocked_unknown')
+              OR e.generation IS DISTINCT FROM r.driving_generation;
+    IF v_late AND r.status IN ('completed','failed','cancelled') THEN
+      v_pins := v24.run_pin_release_set(e.run_id,p_effect_id,r.status,p_effect_id);
+    END IF;
+
+    -- C20 step 1: a live sibling means this batch is not closed.
+    SELECT EXISTS (SELECT 1 FROM v24.effects x
+                    WHERE x.parent_effect_id = e.parent_effect_id
+                      AND x.kind = 'tool_call'
+                      AND x.effect_id <> p_effect_id
+                      AND x.status IN ('ready','claimed')) INTO v_sibling;
+    IF NOT v_sibling THEN
+      -- C20 step 2: the unique continuation was already published.
+      IF EXISTS (SELECT 1 FROM v24.effects x
+                  WHERE x.effect_id = v24.continuation_effect_id(e.parent_effect_id)) THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+      -- C20 step 3: a terminal run or an old generation observes only facts.
+      IF NOT v_late THEN
+        -- C20 step 4: never race the partial unique model_call index.
+        IF EXISTS (SELECT 1 FROM v24.effects x
+                    WHERE x.run_id = e.run_id AND x.kind = 'model_call'
+                      AND x.status IN ('ready','claimed')) THEN
+          RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+        END IF;
+        -- C20 step 5: admission guards, then exactly one continuation.
+        v_admit := v_steps >= 1 AND v_wall > 0
+                   AND (v_tokens IS NULL OR v_tokens > 0);
+        IF v_admit THEN
+          v_reserve := v24.model_reserve(v_tokens);
+          v_steps := v_steps - 1;
+          v_tokens := CASE WHEN v_tokens IS NULL THEN NULL
+                           ELSE v_tokens - v_reserve END;
+          SELECT max(t.ordinal) INTO v_max_ord FROM v24.effects t
+           WHERE t.parent_effect_id = e.parent_effect_id AND t.kind = 'tool_call';
+          v_model := e.parent_effect_id;
+          v_cont := v24.continuation_effect_id(v_model);
+          SELECT encode(sha256(convert_to(
+                   coalesce(string_agg(t.effect_id::text, ',' ORDER BY t.ordinal),''),
+                   'UTF8')),'hex')
+            INTO v_batch FROM v24.effects t
+           WHERE t.parent_effect_id = v_model AND t.kind = 'tool_call';
+          v_digests := v24.model_digests(e.run_id);
+          -- start/steer/continuation/respond model requests may omit input;
+          -- inherit the most recent model input like W1's plain continuation.
+          v_input := coalesce(parent.request->'input',
+            (SELECT x.request->'input' FROM v24.effects x
+              WHERE x.run_id = e.run_id AND x.kind = 'model_call'
+                AND x.effect_id <> v_model AND x.request ? 'input'
+              ORDER BY x.created_at DESC, x.effect_id DESC LIMIT 1),
+            '{}'::jsonb);
+          v_status := r.status;
+          v_close := NULL; v_run_result := NULL;
+          v_interaction := r.interaction; v_pending := r.pending_steer;
+          v_ended := r.ended_at;
+          v_succ := jsonb_build_array(jsonb_build_object(
+            'effect_id',v_cont,
+            'parent_effect_id',v24.tool_effect_id(v_model,v_max_ord),
+            'ordinal',0,'kind','model_call',
+            'run_id',r.run_id,'fiber_id',r.owner_fiber_id,'episode_id',r.owner_episode_id,
+            'epoch_no',r.epoch_no,'generation',r.driving_generation,'pin_id',NULL,
+            'replay_policy','no_replay',
+            'request',jsonb_build_object(
+              'v',1,'cause','continuation','run_id',r.run_id,'epoch_no',r.epoch_no,
+              'generation',r.driving_generation,'input',v_input,
+              'reserve',jsonb_build_object('tokens',v_reserve),
+              'digests',v_digests,'batch_digest',v_batch,'state','{}'::jsonb)));
+        ELSE
+          v_close := jsonb_build_object('kind','budget');
+          v_sealed := v24.loop_sealable(e.run_id,p_effect_id,v_close,NULL,r.pending_steer);
+          IF v_sealed THEN
+            SELECT e2.request->'budget' INTO v_budget FROM v24.effects e2
+             WHERE e2.run_id = e.run_id AND e2.kind = 'model_call' AND e2.request ? 'budget'
+             ORDER BY e2.created_at, e2.effect_id LIMIT 1;
+            IF v_budget IS NULL OR jsonb_typeof(v_budget) IS DISTINCT FROM 'object' THEN
+              v_budget := jsonb_build_object('steps',v_steps,'tokens',coalesce(v_tokens,0),
+                'tool_calls',v_tool_calls,'wall_ms',v_wall);
+            END IF;
+            v_status := 'completed';
+            v_run_result := jsonb_build_object('v',1,'close_reason','budget_exhausted',
+              'final_text',NULL,'turn_no',v_turn,'budget',v_budget);
+            v_interaction := NULL; v_pending := NULL; v_ended := now();
+            v_pins := v24.run_pin_release_set(e.run_id,p_effect_id,v_status,p_effect_id);
+          END IF;
+        END IF;
+      END IF;
+    END IF;
+
+    v_events := jsonb_build_array(
+      jsonb_build_object('entity_type','run','entity_id',e.run_id,
+        'event_kind',v_fact_event,'payload',jsonb_build_object(
+          'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',v_late)));
+    IF NOT v_sibling AND NOT v_late THEN
+      v_events := v_events || jsonb_build_array(
+        jsonb_build_object('entity_type','run','entity_id',e.run_id,
+          'event_kind','tool_batch_completed','payload',jsonb_build_object(
+            'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn)));
+      IF v_sealed THEN
+        v_events := v_events || jsonb_build_array(
+          jsonb_build_object('entity_type','run','entity_id',e.run_id,
+            'event_kind','budget_exhausted','payload',jsonb_build_object(
+              'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn)),
+          jsonb_build_object('entity_type','run','entity_id',e.run_id,
+            'event_kind','run_completed','payload',jsonb_build_object(
+              'run_id',e.run_id,'close_reason','budget_exhausted','turn_no',v_turn)));
+      END IF;
+    END IF;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'write',true,
+    'domain',jsonb_build_object('update',jsonb_build_object(
+      'runs',jsonb_build_array(jsonb_build_object(
+        'key',jsonb_build_object('run_id',e.run_id),
+        'set',jsonb_build_object(
+          'status',v_status,
+          'turn_no',v_turn,
+          'remaining_steps',v_steps,
+          'remaining_tokens',v_tokens,
+          'remaining_tool_calls',v_tool_calls,
+          'remaining_wall_ms',v_wall,
+          'interaction',v_interaction,
+          'pending_steer',v_pending,
+          'close_intent',v_close,
+          'result',v_run_result,
+          'revision',r.revision + 1,
+          'ended_at',v_ended,
+          'updated_at',now()))),
+      'pins',v_pins)),
+    'effect',jsonb_build_object('status',v_effect_status,
+      'outcome',p_outcome,'resource_quiesced',v_quiesced),
+    'events',v_events,
+    'successors',v_succ);
+END;
+$$;
+
+-- S4 loop delta applier.  W2 accepts deterministic tool_call successors from a
+-- model settlement and at most one deterministic model_call continuation from a
+-- model or tool settlement; the delta key closure is exactly
+-- {write,domain,effect,events,successors} and every check finishes before the
+-- first write.  DML order: run -> effect -> events -> successors -> pins.
 CREATE FUNCTION v24.validate_and_apply_loop_delta(p_effect_id uuid, p_principal uuid,
   p_outcome jsonb, p_delta jsonb, p_closure jsonb) RETURNS jsonb
 LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
@@ -615,6 +1015,15 @@ DECLARE
   v_succs jsonb;
   v_effect_status text;
   v_quiesced boolean;
+  v_succ_kind text;
+  v_succ_parent uuid;
+  v_succ_ord int;
+  v_tool_n int := 0;
+  v_model_n int := 0;
+  v_model_src uuid;
+  v_max_ord int;
+  v_batch_calc text;
+  v_succ_pin v24.pins%ROWTYPE;
   v_event_kinds text[] := ARRAY[
     'model_call_requested','model_call_settled','model_call_failed','model_call_unknown',
     'tool_call_settled','tool_call_failed','tool_call_unknown','tool_batch_admitted',
@@ -661,11 +1070,15 @@ BEGIN
   END IF;
 
   SELECT * INTO e FROM v24.effects WHERE effect_id = p_effect_id;
-  IF NOT FOUND OR e.kind <> 'model_call' THEN
+  IF NOT FOUND OR e.kind NOT IN ('model_call','tool_call') THEN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
   SELECT * INTO r FROM v24.runs WHERE run_id = e.run_id;
-  IF NOT FOUND OR r.status IN ('completed','failed','cancelled','blocked_unknown') THEN
+  -- A tool may settle late on a sealed run (cancel leaves claimed tools alive);
+  -- the model interpreter never emits a delta for a terminal run.
+  IF NOT FOUND
+     OR (r.status IN ('completed','failed','cancelled','blocked_unknown')
+         AND e.kind <> 'tool_call') THEN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
 
@@ -736,7 +1149,7 @@ BEGIN
   BEGIN
     v_status := set_r->>'status';
     IF v_status IS NULL OR v_status NOT IN
-         ('running','waiting','completed','failed','blocked_unknown') THEN
+         ('running','waiting','completed','failed','blocked_unknown','cancelled') THEN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
     IF jsonb_typeof(set_r->'turn_no') IS DISTINCT FROM 'number'
@@ -770,7 +1183,7 @@ BEGIN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
     -- Terminal shape is exclusive: ended_at is non-null iff the run is terminal.
-    IF v_status IN ('completed','failed','blocked_unknown') THEN
+    IF v_status IN ('completed','failed','blocked_unknown','cancelled') THEN
       IF set_r->'ended_at' = 'null'::jsonb THEN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
@@ -791,29 +1204,46 @@ BEGIN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
     IF v_status IN ('completed','failed') THEN
-      IF NOT v24.loop_sealable(e.run_id,p_effect_id,set_r->'close_intent',
-                               set_r->'interaction',set_r->'pending_steer') THEN
-        RETURN v24.error_v1('invalid_outcome');
-      END IF;
-      IF v_status = 'completed' THEN
-        IF set_r->'close_intent'->>'kind' IS NULL
-           OR set_r->'close_intent'->>'kind' NOT IN ('final','budget') THEN
-          RETURN v24.error_v1('invalid_outcome');
-        END IF;
-        IF set_r->'result'->>'close_reason' IS DISTINCT FROM
-           (CASE WHEN set_r->'close_intent'->>'kind' = 'final'
-                 THEN 'final' ELSE 'budget_exhausted' END) THEN
+      IF v_status = r.status THEN
+        -- A late tool settlement must preserve the existing seal byte for byte.
+        IF set_r->'close_intent' IS DISTINCT FROM
+              coalesce(r.close_intent,'null'::jsonb)
+           OR set_r->'result' IS DISTINCT FROM coalesce(r.result,'null'::jsonb) THEN
           RETURN v24.error_v1('invalid_outcome');
         END IF;
       ELSE
-        IF set_r->'close_intent'->>'kind' IS DISTINCT FROM 'abort'
-           OR set_r->'result'->>'close_reason' IS DISTINCT FROM 'provider_failure' THEN
+        IF NOT v24.loop_sealable(e.run_id,p_effect_id,set_r->'close_intent',
+                                 set_r->'interaction',set_r->'pending_steer') THEN
           RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        IF v_status = 'completed' THEN
+          IF set_r->'close_intent'->>'kind' IS NULL
+             OR set_r->'close_intent'->>'kind' NOT IN ('final','budget') THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+          IF set_r->'result'->>'close_reason' IS DISTINCT FROM
+             (CASE WHEN set_r->'close_intent'->>'kind' = 'final'
+                   THEN 'final' ELSE 'budget_exhausted' END) THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+        ELSE
+          IF set_r->'close_intent'->>'kind' IS DISTINCT FROM 'abort'
+             OR set_r->'result'->>'close_reason' IS DISTINCT FROM 'provider_failure' THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
         END IF;
       END IF;
     ELSIF v_status = 'blocked_unknown' THEN
       IF set_r->'close_intent'->>'kind' IS DISTINCT FROM 'unknown'
          OR set_r->'result'->>'close_reason' IS DISTINCT FROM 'unknown' THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    ELSIF v_status = 'cancelled' THEN
+      -- Cancel is the only cancelled writer; a settlement may only preserve it.
+      IF r.status IS DISTINCT FROM 'cancelled'
+         OR set_r->'close_intent' IS DISTINCT FROM
+            coalesce(r.close_intent,'null'::jsonb)
+         OR set_r->'result' IS DISTINCT FROM coalesce(r.result,'null'::jsonb) THEN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
     ELSE
@@ -822,24 +1252,39 @@ BEGIN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
     END IF;
-    -- Effect status and run state must agree.
+    -- Effect status and run state must agree.  A tool failure never fails the
+    -- run; a late tool settlement preserves whatever terminal state it found.
     IF v_effect_status = 'unknown' AND v_status <> 'blocked_unknown' THEN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
-    IF v_effect_status = 'failed' AND v_status <> 'failed' THEN
-      RETURN v24.error_v1('invalid_outcome');
+    IF v_effect_status = 'failed' THEN
+      IF e.kind = 'model_call' AND v_status <> 'failed' THEN
+        RETURN v24.error_v1('invalid_outcome');
+      ELSIF e.kind = 'tool_call'
+            AND v_status NOT IN ('running','waiting','completed','failed','cancelled') THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
     END IF;
-    IF v_effect_status = 'succeeded'
-       AND v_status NOT IN ('running','waiting','completed') THEN
-      RETURN v24.error_v1('invalid_outcome');
+    IF v_effect_status = 'succeeded' THEN
+      IF e.kind = 'model_call' AND v_status NOT IN ('running','waiting','completed') THEN
+        RETURN v24.error_v1('invalid_outcome');
+      ELSIF e.kind = 'tool_call'
+            AND v_status NOT IN ('running','waiting','completed','failed','cancelled') THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
     END IF;
   EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
       OR invalid_parameter_value THEN
     RETURN v24.error_v1('invalid_outcome');
   END;
 
-  -- C22: the supplied pin set must be exactly the recomputed release set.
-  v_expected_pins := v24.run_pin_release_set(e.run_id,p_effect_id,v_status,p_effect_id);
+  -- C22: the supplied pin set must be exactly the recomputed release set.  An
+  -- unquiesced unknown effect still blocks its own pin, so it is not excluded.
+  IF v_effect_status = 'unknown' AND NOT v_quiesced THEN
+    v_expected_pins := v24.run_pin_release_set(e.run_id,NULL,v_status,p_effect_id);
+  ELSE
+    v_expected_pins := v24.run_pin_release_set(e.run_id,p_effect_id,v_status,p_effect_id);
+  END IF;
   pins := coalesce(upd->'pins','[]'::jsonb);
   IF pins IS DISTINCT FROM v_expected_pins THEN
     RETURN v24.error_v1('invalid_outcome');
@@ -877,36 +1322,55 @@ BEGIN
     RETURN v24.error_v1('invalid_outcome');
   END;
 
-  -- Successors: W1 only accepts a deterministic model continuation.
+  -- Successors: deterministic tool_call effects from a model settlement, or
+  -- exactly one deterministic model_call continuation from either settlement.
   v_succs := coalesce(p_delta->'successors','[]'::jsonb);
   IF jsonb_typeof(v_succs) IS DISTINCT FROM 'array'
      OR jsonb_array_length(v_succs) > 16 THEN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
   BEGIN
+    SELECT count(*) FILTER (WHERE x->>'kind' = 'tool_call'),
+           count(*) FILTER (WHERE x->>'kind' = 'model_call')
+      INTO v_tool_n, v_model_n
+      FROM jsonb_array_elements(v_succs) x;
+    IF v_tool_n + v_model_n <> jsonb_array_length(v_succs)
+       OR v_model_n > 1
+       OR (v_tool_n > 0 AND v_model_n > 0)
+       OR (v_tool_n > 0 AND e.kind <> 'model_call') THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    IF v_tool_n > 0 THEN
+      -- The batch is exactly this model's successor set, ordinal 0..N-1.
+      SELECT encode(sha256(convert_to(string_agg(
+               v24.tool_effect_id(p_effect_id,g)::text, ',' ORDER BY g),'UTF8')),'hex')
+        INTO v_batch_calc FROM generate_series(0,v_tool_n-1) g;
+    END IF;
     FOR succ IN SELECT value FROM jsonb_array_elements(v_succs) LOOP
       IF jsonb_typeof(succ) IS DISTINCT FROM 'object' THEN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
-      IF NOT (succ ?& ARRAY['effect_id','ordinal','kind','run_id','epoch_no',
-                            'generation','pin_id','request'])
+      IF NOT (succ ?& ARRAY['effect_id','parent_effect_id','ordinal','kind','run_id',
+                            'epoch_no','generation','pin_id','request'])
          OR EXISTS (SELECT 1 FROM jsonb_object_keys(succ) k
-                     WHERE k NOT IN ('effect_id','ordinal','kind','run_id','fiber_id',
-                                     'episode_id','epoch_no','generation','pin_id',
-                                     'replay_policy','request')) THEN
+                     WHERE k NOT IN ('effect_id','parent_effect_id','ordinal','kind',
+                                     'run_id','fiber_id','episode_id','epoch_no',
+                                     'generation','pin_id','replay_policy','request')) THEN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
-      IF succ->>'kind' IS DISTINCT FROM 'model_call'
+      v_succ_kind := succ->>'kind';
+      IF v_succ_kind IS NULL OR v_succ_kind NOT IN ('tool_call','model_call')
+         OR jsonb_typeof(succ->'parent_effect_id') IS DISTINCT FROM 'string'
+         OR jsonb_typeof(succ->'effect_id') IS DISTINCT FROM 'string'
          OR jsonb_typeof(succ->'ordinal') IS DISTINCT FROM 'number'
-         OR (succ->>'ordinal')::int IS DISTINCT FROM 0
-         OR succ->>'effect_id' IS NULL
-         OR (succ->>'effect_id')::uuid IS DISTINCT FROM v24.continuation_effect_id(p_effect_id)
-         OR (succ->>'run_id')::uuid IS DISTINCT FROM e.run_id
+         OR (succ->>'ordinal') !~ '^[0-9]+$'
+         OR (succ->>'ordinal')::int > 15
+         OR jsonb_typeof(succ->'run_id') IS DISTINCT FROM 'string'
+         OR (succ->>'run_id') IS DISTINCT FROM e.run_id::text
          OR jsonb_typeof(succ->'epoch_no') IS DISTINCT FROM 'number'
          OR jsonb_typeof(succ->'generation') IS DISTINCT FROM 'number'
          OR (succ->>'epoch_no')::bigint IS DISTINCT FROM r.epoch_no
          OR (succ->>'generation')::bigint IS DISTINCT FROM r.driving_generation
-         OR succ->'pin_id' <> 'null'::jsonb
          OR (succ ? 'fiber_id'
              AND (succ->>'fiber_id')::uuid IS DISTINCT FROM r.owner_fiber_id)
          OR (succ ? 'episode_id'
@@ -915,59 +1379,161 @@ BEGIN
              AND succ->>'replay_policy' IS DISTINCT FROM 'no_replay') THEN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
+      v_succ_parent := (succ->>'parent_effect_id')::uuid;
+      v_succ_ord := (succ->>'ordinal')::int;
       v_succ_req := succ->'request';
       IF jsonb_typeof(v_succ_req) IS DISTINCT FROM 'object' THEN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
-      IF NOT (v_succ_req ?& ARRAY['v','cause','run_id','epoch_no','generation',
-                                  'input','reserve','digests','batch_digest','state'])
-         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_succ_req) k
-                     WHERE k NOT IN ('v','cause','run_id','epoch_no','generation',
-                                     'input','reserve','digests','batch_digest','state')) THEN
-        RETURN v24.error_v1('invalid_outcome');
-      END IF;
-      IF jsonb_typeof(v_succ_req->'reserve') IS DISTINCT FROM 'object'
-         OR jsonb_typeof(v_succ_req->'digests') IS DISTINCT FROM 'object' THEN
-        RETURN v24.error_v1('invalid_outcome');
-      END IF;
-      IF v_succ_req->>'v' IS DISTINCT FROM '1'
-         OR v_succ_req->>'cause' IS DISTINCT FROM 'continuation'
-         OR v_succ_req->>'run_id' IS DISTINCT FROM e.run_id::text
-         OR jsonb_typeof(v_succ_req->'epoch_no') IS DISTINCT FROM 'number'
-         OR jsonb_typeof(v_succ_req->'generation') IS DISTINCT FROM 'number'
-         OR (v_succ_req->>'epoch_no')::bigint IS DISTINCT FROM r.epoch_no
-         OR (v_succ_req->>'generation')::bigint IS DISTINCT FROM r.driving_generation
-         OR jsonb_typeof(v_succ_req->'input') IS DISTINCT FROM 'object'
-         OR (SELECT count(*) FROM jsonb_object_keys(v_succ_req->'reserve')) <> 1
-         OR NOT (v_succ_req->'reserve' ? 'tokens')
-         OR jsonb_typeof(v_succ_req->'reserve'->'tokens') IS DISTINCT FROM 'number'
-         OR (v_succ_req->'reserve'->>'tokens') IS NULL
-         OR (v_succ_req->'reserve'->>'tokens') !~ '^[0-9]+$'
-         OR (v_succ_req->'reserve'->>'tokens')::bigint >
-            (v24.loop_policy()->>'reserve_tokens')::bigint
-         OR v_succ_req->'digests' IS DISTINCT FROM e.request->'digests'
-         OR jsonb_typeof(v_succ_req->'batch_digest') IS DISTINCT FROM 'string'
-         OR (v_succ_req->>'batch_digest') IS NULL
-         OR (v_succ_req->>'batch_digest') !~ '^[0-9a-f]{64}$'
-         OR jsonb_typeof(v_succ_req->'state') IS DISTINCT FROM 'object'
-         OR octet_length(v24.canonical_json(v_succ_req->'state')) >
-            (v24.loop_policy()->>'max_state_bytes')::int THEN
-        RETURN v24.error_v1('invalid_outcome');
+      IF v_succ_kind = 'tool_call' THEN
+        -- C20: tool children of the settling model, ordinal in 0..15, and the
+        -- effect id is derived from (parent, ordinal).
+        IF v_succ_parent IS DISTINCT FROM p_effect_id
+           OR (succ->>'effect_id')::uuid IS DISTINCT FROM
+              v24.tool_effect_id(p_effect_id,v_succ_ord)
+           OR jsonb_typeof(succ->'pin_id') IS DISTINCT FROM 'string' THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        IF NOT (v_succ_req ?& ARRAY['v','run_id','epoch_no','generation','ordinal',
+                                    'key','args','descriptor_digest','batch_digest'])
+           OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_succ_req) k
+                       WHERE k NOT IN ('v','run_id','epoch_no','generation','ordinal',
+                                       'key','args','descriptor_digest','batch_digest')) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        IF v_succ_req->>'v' IS DISTINCT FROM '1'
+           OR v_succ_req->>'run_id' IS DISTINCT FROM e.run_id::text
+           OR jsonb_typeof(v_succ_req->'epoch_no') IS DISTINCT FROM 'number'
+           OR jsonb_typeof(v_succ_req->'generation') IS DISTINCT FROM 'number'
+           OR jsonb_typeof(v_succ_req->'ordinal') IS DISTINCT FROM 'number'
+           OR (v_succ_req->>'epoch_no')::bigint IS DISTINCT FROM r.epoch_no
+           OR (v_succ_req->>'generation')::bigint IS DISTINCT FROM r.driving_generation
+           OR (v_succ_req->>'ordinal')::int IS DISTINCT FROM v_succ_ord
+           OR jsonb_typeof(v_succ_req->'key') IS DISTINCT FROM 'string'
+           OR length(v_succ_req->>'key') NOT BETWEEN 1 AND 256
+           OR jsonb_typeof(v_succ_req->'args') IS DISTINCT FROM 'object'
+           OR jsonb_typeof(v_succ_req->'descriptor_digest') IS DISTINCT FROM 'string'
+           OR (v_succ_req->>'descriptor_digest') !~ '^([0-9a-f]{2})+$'
+           OR length(v_succ_req->>'descriptor_digest') > 256
+           OR jsonb_typeof(v_succ_req->'batch_digest') IS DISTINCT FROM 'string'
+           OR (v_succ_req->>'batch_digest') !~ '^[0-9a-f]{64}$'
+           OR (v_succ_req->>'batch_digest') IS DISTINCT FROM v_batch_calc THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        -- C22 pin binding: same run, key, live, descriptor digest equal.
+        SELECT * INTO v_succ_pin FROM v24.pins p
+         WHERE p.pin_id = (succ->>'pin_id')::uuid;
+        IF NOT FOUND
+           OR v_succ_pin.consumer_run_id IS DISTINCT FROM e.run_id
+           OR v_succ_pin.released_at IS NOT NULL
+           OR v_succ_pin.key IS DISTINCT FROM v_succ_req->>'key'
+           OR encode(v_succ_pin.descriptor_digest,'hex') IS DISTINCT FROM
+              v_succ_req->>'descriptor_digest' THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      ELSE
+        -- The single continuation: parent identity and deterministic id depend
+        -- on the settlement kind (model plain text vs tool-batch closure).
+        IF v_succ_ord <> 0 OR succ->'pin_id' <> 'null'::jsonb THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        IF e.kind = 'model_call' THEN
+          IF v_succ_parent IS DISTINCT FROM p_effect_id THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+          v_model_src := p_effect_id;
+        ELSE
+          SELECT max(t.ordinal) INTO v_max_ord FROM v24.effects t
+           WHERE t.parent_effect_id = e.parent_effect_id AND t.kind = 'tool_call';
+          IF v_max_ord IS NULL
+             OR v_succ_parent IS DISTINCT FROM
+                v24.tool_effect_id(e.parent_effect_id,v_max_ord) THEN
+            RETURN v24.error_v1('invalid_outcome');
+          END IF;
+          v_model_src := e.parent_effect_id;
+        END IF;
+        IF (succ->>'effect_id')::uuid IS DISTINCT FROM
+           v24.continuation_effect_id(v_model_src) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        SELECT encode(sha256(convert_to(
+                 coalesce(string_agg(t.effect_id::text, ',' ORDER BY t.ordinal),''),
+                 'UTF8')),'hex')
+          INTO v_batch_calc FROM v24.effects t
+         WHERE t.parent_effect_id = v_model_src AND t.kind = 'tool_call';
+        IF NOT (v_succ_req ?& ARRAY['v','cause','run_id','epoch_no','generation',
+                                    'input','reserve','digests','batch_digest','state'])
+           OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_succ_req) k
+                       WHERE k NOT IN ('v','cause','run_id','epoch_no','generation',
+                                       'input','reserve','digests','batch_digest','state')) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        IF v_succ_req->>'v' IS DISTINCT FROM '1'
+           OR v_succ_req->>'cause' IS DISTINCT FROM 'continuation'
+           OR v_succ_req->>'run_id' IS DISTINCT FROM e.run_id::text
+           OR jsonb_typeof(v_succ_req->'epoch_no') IS DISTINCT FROM 'number'
+           OR jsonb_typeof(v_succ_req->'generation') IS DISTINCT FROM 'number'
+           OR (v_succ_req->>'epoch_no')::bigint IS DISTINCT FROM r.epoch_no
+           OR (v_succ_req->>'generation')::bigint IS DISTINCT FROM r.driving_generation
+           OR jsonb_typeof(v_succ_req->'input') IS DISTINCT FROM 'object'
+           OR jsonb_typeof(v_succ_req->'reserve') IS DISTINCT FROM 'object'
+           OR (SELECT count(*) FROM jsonb_object_keys(v_succ_req->'reserve')) <> 1
+           OR NOT (v_succ_req->'reserve' ? 'tokens')
+           OR jsonb_typeof(v_succ_req->'reserve'->'tokens') IS DISTINCT FROM 'number'
+           OR (v_succ_req->'reserve'->>'tokens') IS NULL
+           OR (v_succ_req->'reserve'->>'tokens') !~ '^[0-9]+$'
+           OR (v_succ_req->'reserve'->>'tokens')::bigint >
+              (v24.loop_policy()->>'reserve_tokens')::bigint
+           OR jsonb_typeof(v_succ_req->'digests') IS DISTINCT FROM 'object'
+           OR v_succ_req->'digests' IS DISTINCT FROM v24.model_digests(e.run_id)
+           OR jsonb_typeof(v_succ_req->'batch_digest') IS DISTINCT FROM 'string'
+           OR (v_succ_req->>'batch_digest') IS NULL
+           OR (v_succ_req->>'batch_digest') !~ '^[0-9a-f]{64}$'
+           OR (v_succ_req->>'batch_digest') IS DISTINCT FROM v_batch_calc
+           OR jsonb_typeof(v_succ_req->'state') IS DISTINCT FROM 'object'
+           OR octet_length(v24.canonical_json(v_succ_req->'state')) >
+              (v24.loop_policy()->>'max_state_bytes')::int THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
       END IF;
     END LOOP;
+    IF v_tool_n > 0 THEN
+      -- Tool ordinals are contiguous 0..N-1 (no partial batch, C20 R3).
+      IF (SELECT min((x->>'ordinal')::int) FROM jsonb_array_elements(v_succs) x) <> 0
+         OR (SELECT max((x->>'ordinal')::int) FROM jsonb_array_elements(v_succs) x)
+            <> v_tool_n - 1
+         OR (SELECT count(DISTINCT (x->>'ordinal')::int)
+               FROM jsonb_array_elements(v_succs) x) <> v_tool_n THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    END IF;
     IF EXISTS (SELECT 1 FROM jsonb_array_elements(v_succs) x
                 GROUP BY x->>'effect_id' HAVING count(*) > 1) THEN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
-    IF EXISTS (SELECT 1 FROM v24.effects x WHERE x.run_id = e.run_id
-                AND x.effect_id <> p_effect_id
-                AND x.kind = 'model_call' AND x.status IN ('ready','claimed')) THEN
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(v_succs) x
+                GROUP BY x->>'parent_effect_id', x->>'ordinal' HAVING count(*) > 1) THEN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
-    -- Deterministic continuation identity is already taken (never a 23505 path).
-    IF EXISTS (SELECT 1 FROM v24.effects x
-                WHERE x.effect_id = v24.continuation_effect_id(p_effect_id)) THEN
+    -- No successor may collide with an existing (parent_effect_id, ordinal).
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(v_succs) x
+                JOIN v24.effects ex
+                  ON ex.parent_effect_id = (x->>'parent_effect_id')::uuid
+                 AND ex.ordinal = (x->>'ordinal')::int) THEN
       RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    IF v_model_n = 1 THEN
+      -- The partial unique index must never be reached through this path.
+      IF EXISTS (SELECT 1 FROM v24.effects x WHERE x.run_id = e.run_id
+                  AND x.effect_id <> p_effect_id
+                  AND x.kind = 'model_call' AND x.status IN ('ready','claimed')) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      -- The deterministic continuation identity is already taken.
+      IF EXISTS (SELECT 1 FROM v24.effects x
+                  WHERE x.effect_id = (v_succs->0->>'effect_id')::uuid) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
     END IF;
   EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
       OR invalid_parameter_value THEN
@@ -1027,11 +1593,13 @@ BEGIN
     INSERT INTO v24.effects(effect_id,parent_effect_id,ordinal,requester_id,scope_id,run_id,
       fiber_id,episode_id,pin_id,epoch_no,generation,kind,status,request,request_digest,
       replay_policy,outcome,settled_at)
-    VALUES (v_new_id,p_effect_id,0,p_principal,e.scope_id,e.run_id,
+    VALUES (v_new_id,(succ->>'parent_effect_id')::uuid,(succ->>'ordinal')::int,
+      p_principal,e.scope_id,e.run_id,
       coalesce((succ->>'fiber_id')::uuid,r.owner_fiber_id),
       coalesce((succ->>'episode_id')::uuid,r.owner_episode_id),
-      NULL,(succ->>'epoch_no')::bigint,(succ->>'generation')::bigint,
-      'model_call','ready',succ->'request',
+      (succ->>'pin_id')::uuid,(succ->>'epoch_no')::bigint,
+      (succ->>'generation')::bigint,
+      succ->>'kind','ready',succ->'request',
       sha256(convert_to(v24.canonical_json(succ->'request'),'UTF8')),
       'no_replay',NULL,NULL);
     v_emitted := v_emitted || jsonb_build_array(v_new_id);

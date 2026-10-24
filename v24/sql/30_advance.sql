@@ -105,7 +105,10 @@ DECLARE
   v_req jsonb;
   v_cause text;
   v_parent v24.effects%ROWTYPE;
+  v_model_parent v24.effects%ROWTYPE;
   v_req_keys text[];
+  v_pin v24.pins%ROWTYPE;
+  v_batch text;
 BEGIN
   -- 1 / A: all untrusted shapes are checked before authentication or locks.
   IF p_effect_id IS NULL OR jsonb_typeof(p_outcome) IS DISTINCT FROM 'object'
@@ -590,9 +593,25 @@ BEGIN
         RETURN v24.error_v1('invalid_args');
       END IF;
       IF v_cause = 'continuation' THEN
-        IF v_parent.kind <> 'model_call'
-           OR v_effect.effect_id <>
-              md5(v_effect.parent_effect_id::text||':continuation')::uuid THEN
+        IF v_parent.kind = 'model_call' THEN
+          IF v_effect.effect_id <>
+             md5(v_effect.parent_effect_id::text||':continuation')::uuid THEN
+            RETURN v24.error_v1('invalid_args');
+          END IF;
+        ELSIF v_parent.kind = 'tool_call' THEN
+          -- C20: a tool-batch continuation's parent is the max-ordinal tool,
+          -- but its deterministic identity derives from the model batch parent.
+          SELECT * INTO v_model_parent FROM v24.effects p
+           WHERE p.effect_id = v_parent.parent_effect_id;
+          IF NOT FOUND
+             OR v_parent.parent_effect_id IS NULL
+             OR v_model_parent.kind <> 'model_call'
+             OR v_model_parent.run_id IS DISTINCT FROM v_effect.run_id
+             OR v_effect.effect_id <>
+                md5(v_parent.parent_effect_id::text||':continuation')::uuid THEN
+            RETURN v24.error_v1('invalid_args');
+          END IF;
+        ELSE
           RETURN v24.error_v1('invalid_args');
         END IF;
       ELSE
@@ -601,6 +620,78 @@ BEGIN
               md5(v_effect.parent_effect_id::text||':model_call:0')::uuid THEN
           RETURN v24.error_v1('invalid_args');
         END IF;
+      END IF;
+    ELSIF v_effect.kind = 'tool_call' THEN
+      -- C18 condition 2 for tools: request closure, deterministic id, parent
+      -- model, live pin binding and the C20 batch digest all before execution.
+      v_req := v_effect.request;
+      IF jsonb_typeof(v_req) IS DISTINCT FROM 'object' THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      v_req_keys := ARRAY['v','run_id','epoch_no','generation','ordinal',
+                          'key','args','descriptor_digest','batch_digest'];
+      IF NOT (v_req ?& v_req_keys)
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_req) k
+                     WHERE k <> ALL(v_req_keys)) THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      IF v_effect.pin_id IS NULL
+         OR v_effect.parent_effect_id IS NULL
+         OR v_effect.ordinal IS NULL THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      BEGIN
+        IF (v_req->>'v') IS DISTINCT FROM '1'
+           OR jsonb_typeof(v_req->'run_id') IS DISTINCT FROM 'string'
+           OR v_req->>'run_id' IS DISTINCT FROM v_effect.run_id::text
+           OR jsonb_typeof(v_req->'epoch_no') IS DISTINCT FROM 'number'
+           OR jsonb_typeof(v_req->'generation') IS DISTINCT FROM 'number'
+           OR (v_req->>'epoch_no') !~ '^[0-9]+$'
+           OR (v_req->>'generation') !~ '^[0-9]+$'
+           OR (v_req->>'epoch_no')::bigint IS DISTINCT FROM v_effect.epoch_no
+           OR (v_req->>'generation')::bigint IS DISTINCT FROM v_effect.generation
+           OR jsonb_typeof(v_req->'ordinal') IS DISTINCT FROM 'number'
+           OR (v_req->>'ordinal') !~ '^[0-9]+$'
+           OR (v_req->>'ordinal')::int IS DISTINCT FROM v_effect.ordinal
+           OR v_effect.ordinal NOT BETWEEN 0 AND 15
+           OR jsonb_typeof(v_req->'key') IS DISTINCT FROM 'string'
+           OR length(v_req->>'key') NOT BETWEEN 1 AND 256
+           OR jsonb_typeof(v_req->'args') IS DISTINCT FROM 'object'
+           OR jsonb_typeof(v_req->'descriptor_digest') IS DISTINCT FROM 'string'
+           OR (v_req->>'descriptor_digest') !~ '^([0-9a-f]{2})+$'
+           OR length(v_req->>'descriptor_digest') > 256
+           OR jsonb_typeof(v_req->'batch_digest') IS DISTINCT FROM 'string'
+           OR (v_req->>'batch_digest') !~ '^[0-9a-f]{64}$' THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+      EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
+          OR invalid_parameter_value THEN
+        RETURN v24.error_v1('invalid_args');
+      END;
+      SELECT * INTO v_parent FROM v24.effects p
+       WHERE p.effect_id = v_effect.parent_effect_id;
+      IF NOT FOUND OR v_parent.kind <> 'model_call'
+         OR v_parent.run_id IS DISTINCT FROM v_effect.run_id
+         OR v_effect.effect_id <>
+            v24.tool_effect_id(v_effect.parent_effect_id,v_effect.ordinal) THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      SELECT * INTO v_pin FROM v24.pins p WHERE p.pin_id = v_effect.pin_id;
+      IF NOT FOUND
+         OR v_pin.consumer_run_id IS DISTINCT FROM v_effect.run_id
+         OR v_pin.released_at IS NOT NULL
+         OR v_pin.key IS DISTINCT FROM v_req->>'key'
+         OR v_pin.descriptor_digest IS DISTINCT FROM
+            decode(v_req->>'descriptor_digest','hex') THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      SELECT encode(sha256(convert_to(
+               coalesce(string_agg(t.effect_id::text, ',' ORDER BY t.ordinal),''),
+               'UTF8')),'hex')
+        INTO v_batch FROM v24.effects t
+       WHERE t.parent_effect_id = v_effect.parent_effect_id AND t.kind = 'tool_call';
+      IF v_batch IS DISTINCT FROM v_req->>'batch_digest' THEN
+        RETURN v24.error_v1('invalid_args');
       END IF;
     END IF;
     -- D-S4-1: an expired business lease is not a second attempt. host kinds

@@ -376,8 +376,9 @@ def claims_and_receipts(owner, service, login):
     token = {"attempt": 2, "fence": 2, "owner": login}
     expect_envelope(advance(service, eid, claim()), eid, "committed", token)
     service.commit()
-    # Non-host kinds are not claimable until S4 settlement exists.
-    unsupported = seed_effect(owner, kind="tool_call", status="claimed", attempt_no=2,
+    # W2 opened tool_call; the unsupported-handler boundary is now
+    # inspect_resource, whose settlement remains S5.
+    unsupported = seed_effect(owner, kind="inspect_resource", status="claimed", attempt_no=2,
                               fence=2, claim_owner=login,
                               lease_until=datetime.now(timezone.utc) + timedelta(minutes=5))
     rejects_without_writes(owner, service, unsupported, claim(), "invalid_args")

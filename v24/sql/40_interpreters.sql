@@ -179,7 +179,7 @@ DECLARE
 BEGIN
   -- W5 mode is inferred from the authenticated outcome class, never the delta.
   -- Leave the W4 scope-command path below unchanged.
-  IF kind = 'model_call' THEN
+  IF kind IN ('model_call','tool_call') THEN
     RETURN v24.validate_and_apply_loop_delta(p_effect_id, p_principal, p_outcome, p_delta, p_closure);
   END IF;
   IF p_outcome->>'class' IN ('success','failure','unknown') OR kind = 'command_install' THEN
@@ -2429,6 +2429,8 @@ BEGIN
   SELECT * INTO e FROM v24.effects WHERE effect_id=p_effect_id;
   IF e.kind = 'model_call' THEN
     RETURN v24.interpret_model_settlement(p_effect_id,p_principal,p_outcome,p_closure);
+  ELSIF e.kind = 'tool_call' THEN
+    RETURN v24.interpret_tool_settlement(p_effect_id,p_principal,p_outcome,p_closure);
   ELSIF e.kind = 'host_prepare' THEN
     SELECT * INTO i FROM v24.installs WHERE install_id=(e.request->>'install_id')::uuid;
     IF NOT FOUND OR i.state <> 'preparing' THEN
