@@ -573,7 +573,7 @@ def reserve_conservation(db, owner):
 
 
 def unknown_path(db, owner):
-    """G2b-T-1/2/3: unknown wall, same-receipt replay, altered receipt conflict."""
+    """G2b-V: unknown wall, same-receipt replay, altered receipt conflict."""
     service = db.connect("service")
     root, live, _ = loop_fixture(owner, service, realm="g2b-t")
     budget = {"steps": 7, "tool_calls": 3, "tokens": 5000, "wall_ms": 600000}
@@ -602,7 +602,7 @@ def unknown_path(db, owner):
     assert read(owner, "SELECT count(*) FROM v24.pins WHERE consumer_run_id=%s",
                 (run_id,)) == 0
     assert_ledger(owner, run_id, 5000, (4096, 0, 904))
-    print("[G2b-T-1] unknown: effect unknown resource_quiesced_at NULL, run "
+    print("[G2b-V/unknown-wall] unknown: effect unknown resource_quiesced_at NULL, run "
           "blocked_unknown close_intent outcome_unknown, no successor, turn_no=1, "
           "reserve 4096 not refunded (remaining=904); model pin_id NULL and no run pin")
 
@@ -613,7 +613,7 @@ def unknown_path(db, owner):
     assert replay["emitted"] == [] and replay["revision"] == 0, replay
     after = snapshot(owner)
     assert after == before, "unknown replay wrote rows"
-    print("[G2b-T-2] same receipt replay: disposition=replay, emitted=[], revision=0, "
+    print("[G2b-V/replay] same receipt replay: disposition=replay, emitted=[], revision=0, "
           "ten-table byte-equal")
 
     before = snapshot(owner)
@@ -624,7 +624,7 @@ def unknown_path(db, owner):
     assert conflict == {"v": 1, "error": {"code": "receipt_conflict", "detail": {}}}, conflict
     after = snapshot(owner)
     assert after == before, "receipt conflict wrote rows"
-    print("[G2b-T-3] altered receipt for the same effect: receipt_conflict, "
+    print("[G2b-V/receipt-conflict] altered receipt for the same effect: receipt_conflict, "
           "ten-table byte-equal")
 
 
@@ -2620,6 +2620,263 @@ def settlement_pin_release(db, owner):
         service.close()
 
 
+def zero_write_negatives(db, owner):
+    """G2b-T-1..T-10: ten named ten-table zero-write negatives.
+
+    Nine are reached through the public claim/settlement API.  T-5 is a
+    defensive duplicate-ordinal precheck in the INVOKER loop applier (the
+    interpreter can only emit contiguous unique ordinals), and T-9 probes the
+    frozen seal predicate itself: G2b-M covers the settlement-level behaviour
+    (a final with a ready effect writes only close_intent, by design).
+    """
+    service = db.connect("service")
+    budget = {"steps": 7, "tool_calls": 3, "tokens": 5000, "wall_ms": 600000}
+    try:
+        # T-1: an unopened kind cannot be claimed (inspect_resource opens in S5).
+        root, live, _ = loop_fixture(owner, service, realm="g2b-t1")
+        effect_id = uuid4()
+        seed_effect(owner, effect_id, kind="inspect_resource", status="ready")
+        owner.commit()
+        assert_claim_rejected(owner, service, effect_id, "G2b-T-1 inspect_resource")
+        print("[G2b-T-1] inspect_resource claim: invalid_args, attempt/fence stay 0, "
+              "ten-table byte-equal")
+
+        # T-2: a settlement receipt without body.kind is structural W0.
+        root, live, _ = loop_fixture(owner, service, realm="g2b-t2")
+        response, _ = start(service, root, live["fiber"], {}, budget,
+                            f"g2b-t2-{uuid4()}")
+        service.commit()
+        assert_owner_envelope(response)
+        run_id, model_id = response["emitted"]
+        token = claim_effect(service, model_id)
+        before = snapshot(owner)
+        missing_kind = {"v": 1, "class": "success", "claim": token,
+                        "body": {"result": {}}}
+        response = advance(service, model_id, missing_kind)
+        service.commit()
+        assert response == {"v": 1, "error": {"code": "invalid_outcome",
+                                              "detail": {}}}, response
+        assert snapshot(owner) == before, "missing body.kind wrote rows"
+        assert effect_row(owner, model_id)["status"] == "claimed"
+        print("[G2b-T-2] missing body.kind: invalid_outcome, effect stays claimed, "
+              "ten-table byte-equal")
+
+        # T-3: a model result with 17 tool_calls is structural W0 (max is 16).
+        root, live, _ = loop_fixture(owner, service, realm="g2b-t3")
+        response, _ = start(service, root, live["fiber"], {}, budget,
+                            f"g2b-t3-{uuid4()}")
+        service.commit()
+        assert_owner_envelope(response)
+        run_id, model_id = response["emitted"]
+        token = claim_effect(service, model_id)
+        before = snapshot(owner)
+        seventeen = {"v": 1, "class": "success", "claim": token,
+                     "body": {"kind": "model_call",
+                              "result": {"tool_calls":
+                                         make_tool_calls([f"k{i}" for i in range(17)])}}}
+        response = advance(service, model_id, seventeen)
+        service.commit()
+        assert response == {"v": 1, "error": {"code": "invalid_outcome",
+                                              "detail": {}}}, response
+        assert snapshot(owner) == before, "17 tool_calls wrote rows"
+        assert effect_row(owner, model_id)["status"] == "claimed"
+        print("[G2b-T-3] 17 tool_calls: invalid_outcome, no partial batch, effect "
+              "stays claimed, ten-table byte-equal")
+
+        # T-4: a tool claim whose request key is not one of the live run pins.
+        # The effect row is immutable after insert, so seed a second ready tool
+        # at a free ordinal and bind it to the pin of a different key.
+        run_id, model_id = start_tool_run(owner, service, "g2b-t4", ("t4",), budget)
+        ids, _, _ = settle_tool_batch(owner, service, run_id, model_id, ("t4",))
+        run = run_row(owner, run_id)
+        pin = run_pins(owner, run_id)[0]
+        tool_id = md5_uuid(f"{model_id}:tool_call:1")
+        request = {"v": 1, "run_id": run_id, "epoch_no": run["epoch_no"],
+                   "generation": run["driving_generation"], "ordinal": 1,
+                   "key": "ghost-not-pinned", "args": {},
+                   "descriptor_digest": hexbyte(pin["descriptor_digest"]),
+                   "batch_digest": batch_digest([ids[0], tool_id])}
+        with owner.cursor() as cur:
+            insert(cur, "effects", effect_id=tool_id, parent_effect_id=model_id,
+                   ordinal=1, requester_id=uuid4(), run_id=run_id,
+                   pin_id=pin["pin_id"], epoch_no=run["epoch_no"],
+                   generation=run["driving_generation"], kind="tool_call",
+                   status="ready", request=Json(request), request_digest=DIGEST,
+                   replay_policy="no_replay")
+        owner.commit()
+        before = snapshot(owner)
+        response = advance(service, tool_id, claim())
+        service.commit()
+        assert response == {"v": 1, "error": {"code": "invalid_args",
+                                              "detail": {}}}, response
+        assert snapshot(owner) == before, "unpinned tool key wrote rows"
+        print("[G2b-T-4] tool request key not in live run pins: claim invalid_args "
+              "(C18 pin gate), ten-table byte-equal")
+
+        # T-5: duplicate ordinal is a defensive applier precheck.  Reach it with a
+        # real interpreted delta whose first successor is duplicated.
+        run_id, model_id = start_tool_run(owner, service, "g2b-t5",
+                                          ("t5a", "t5b"), budget)
+        token = claim_effect(service, model_id)
+        principal = one(service, "SELECT v24.principal_id(session_user)")
+        service.commit()
+        outcome = {"v": 1, "class": "success", "claim": token,
+                   "body": {"kind": "model_call",
+                            "result": {"text": "go",
+                                       "tool_calls": make_tool_calls(("t5a", "t5b"))}}}
+        delta = one(owner, "SELECT v24.interpret_model_settlement(%s,%s,%s,"
+                           "'{}'::jsonb)", (model_id, principal, Json(outcome)))
+        owner.commit()
+        assert delta.get("error") is None and len(delta["successors"]) == 2, delta
+        delta["successors"] = [delta["successors"][0], dict(delta["successors"][0])]
+        before = snapshot(owner)
+        refusal = one(owner, "SELECT v24.validate_and_apply_loop_delta(%s,%s,%s,%s,"
+                             "'{}'::jsonb)", (model_id, principal, Json(outcome),
+                                              Json(delta)))
+        owner.commit()
+        assert refusal == {"v": 1, "error": {"code": "invalid_outcome",
+                                             "detail": {}}}, refusal
+        assert snapshot(owner) == before, "duplicate ordinal wrote rows"
+        print("[G2b-T-5] duplicate successor ordinal: defensive loop-applier "
+              "precheck invalid_outcome, ten-table byte-equal")
+
+        # T-6: a deterministic-id conflict at claim.  Seed a second ready tool at
+        # a free ordinal whose effect id does not derive from (parent, ordinal).
+        run_id, model_id = start_tool_run(owner, service, "g2b-t6", ("t6",), budget)
+        ids, _, _ = settle_tool_batch(owner, service, run_id, model_id, ("t6",))
+        run = run_row(owner, run_id)
+        pin = run_pins(owner, run_id)[0]
+        tool_id = str(uuid4())
+        request = {"v": 1, "run_id": run_id, "epoch_no": run["epoch_no"],
+                   "generation": run["driving_generation"], "ordinal": 1,
+                   "key": "t6", "args": {},
+                   "descriptor_digest": hexbyte(pin["descriptor_digest"]),
+                   "batch_digest": batch_digest([ids[0], tool_id])}
+        with owner.cursor() as cur:
+            insert(cur, "effects", effect_id=tool_id, parent_effect_id=model_id,
+                   ordinal=1, requester_id=uuid4(), run_id=run_id,
+                   pin_id=pin["pin_id"], epoch_no=run["epoch_no"],
+                   generation=run["driving_generation"], kind="tool_call",
+                   status="ready", request=Json(request), request_digest=DIGEST,
+                   replay_policy="no_replay")
+        owner.commit()
+        before = snapshot(owner)
+        response = advance(service, tool_id, claim())
+        service.commit()
+        assert response == {"v": 1, "error": {"code": "invalid_args",
+                                              "detail": {}}}, response
+        assert snapshot(owner) == before, "deterministic-id conflict wrote rows"
+        print("[G2b-T-6] deterministic-id conflict (effect id still derives from "
+              "ordinal 0): claim invalid_args, ten-table byte-equal")
+
+        # T-7: a stale claim token settles nothing.
+        root, live, _ = loop_fixture(owner, service, realm="g2b-t7")
+        response, _ = start(service, root, live["fiber"], {}, budget,
+                            f"g2b-t7-{uuid4()}")
+        service.commit()
+        assert_owner_envelope(response)
+        run_id, model_id = response["emitted"]
+        token = claim_effect(service, model_id)
+        wrong = dict(token, attempt=token["attempt"] + 1, fence=token["fence"] + 1)
+        before = snapshot(owner)
+        response = advance(service, model_id,
+                           {"v": 1, "class": "success", "claim": wrong,
+                            "body": {"kind": "model_call", "result": {"text": "x"}}})
+        service.commit()
+        assert response == {"v": 1, "error": {"code": "stale_claim",
+                                              "detail": {}}}, response
+        assert snapshot(owner) == before, "wrong token wrote rows"
+        assert effect_row(owner, model_id)["status"] == "claimed"
+        print("[G2b-T-7] wrong claim token: stale_claim, effect stays claimed, "
+              "ten-table byte-equal")
+
+        # T-8: an unknown receipt that tries to carry a successor is structurally
+        # rejected; an unknown settlement never publishes successors.
+        run_id, model_id = start_tool_run(owner, service, "g2b-t8", ("t8",), budget)
+        ids, _, _ = settle_tool_batch(owner, service, run_id, model_id, ("t8",))
+        tool_id = ids[0]
+        token = claim_effect(service, tool_id)
+        before = snapshot(owner)
+        forged = {"v": 1, "class": "unknown", "claim": token,
+                  "body": {"kind": "tool_call",
+                           "result": {"status": "ok", "output": {},
+                                      "successors": [{"effect_id": str(uuid4()),
+                                                      "ordinal": 0}]}}}
+        response = advance(service, tool_id, forged)
+        service.commit()
+        assert response == {"v": 1, "error": {"code": "invalid_args",
+                                              "detail": {}}}, response
+        assert snapshot(owner) == before, "unknown-with-successor wrote rows"
+        assert effect_row(owner, tool_id)["status"] == "claimed"
+        print("[G2b-T-8] unknown receipt carrying a successor: advance envelope "
+              "guard invalid_args (class=unknown + nested successors), effect stays "
+              "claimed, ten-table byte-equal")
+
+        # T-9: a seal is refused while a ready business effect exists.  G2b-M is
+        # the settlement-level counterpart (it writes only close_intent).
+        root, live, _ = loop_fixture(owner, service, realm="g2b-t9", requires=("t9",))
+        response, _ = start(service, root, live["fiber"],
+                            {"requires": [{"key": "t9"}]}, budget,
+                            f"g2b-t9-{uuid4()}")
+        service.commit()
+        assert_owner_envelope(response)
+        run_id, model_id = response["emitted"]
+        run = run_row(owner, run_id)
+        pin = run_pins(owner, run_id)[0]
+        tool_id = md5_uuid(f"{model_id}:tool_call:0")
+        request = {"v": 1, "run_id": run_id, "epoch_no": run["epoch_no"],
+                   "generation": run["driving_generation"], "ordinal": 0,
+                   "key": pin["key"], "args": {},
+                   "descriptor_digest": hexbyte(pin["descriptor_digest"]),
+                   "batch_digest": batch_digest([tool_id])}
+        with owner.cursor() as cur:
+            insert(cur, "effects", effect_id=tool_id, parent_effect_id=model_id,
+                   ordinal=0, requester_id=uuid4(), run_id=run_id,
+                   pin_id=pin["pin_id"], epoch_no=run["epoch_no"],
+                   generation=run["driving_generation"], kind="tool_call",
+                   status="ready", request=Json(request), request_digest=DIGEST,
+                   replay_policy="no_replay")
+        owner.commit()
+        token = claim_effect(service, model_id)
+        settled, _ = settle(service, model_id, token, "success",
+                            {"text": "done", "final": {"text": "done"},
+                             "usage": {"tokens": 40, "wall_ms": 5}})
+        assert_owner_envelope(settled)
+        assert run_row(owner, run_id)["close_intent"] == {"kind": "final"}
+        before = snapshot(owner)
+        sealable = one(owner, "SELECT v24.loop_sealable(%s,%s,%s,NULL,NULL)",
+                       (run_id, model_id, Json({"kind": "final"})))
+        owner.commit()
+        assert sealable is False, sealable
+        assert snapshot(owner) == before, "refused seal wrote rows"
+        assert read(owner, "SELECT count(*) FROM v24.events WHERE entity_id=%s "
+                           "AND event_kind='run_completed'", (run_id,)) == 0
+        print("[G2b-T-9] seal with a ready effect: loop_sealable=false, no "
+              "run_completed, ten-table byte-equal")
+
+        # T-10: a settlement on an already-blocked_unknown run is a W0 wall.
+        keys = ("t10a", "t10b")
+        run_id, model_id = start_tool_run(owner, service, "g2b-t10", keys, budget)
+        ids, _, _ = settle_tool_batch(owner, service, run_id, model_id, keys)
+        token0 = claim_effect(service, ids[0])
+        token1 = claim_effect(service, ids[1])
+        response, _ = settle_tool(service, ids[0], token0, "unknown",
+                                  {"status": "error", "output": {"lost": True},
+                                   "usage": {"wall_ms": 3}})
+        assert_owner_envelope(response)
+        assert run_row(owner, run_id)["status"] == "blocked_unknown"
+        before = snapshot(owner)
+        late, _ = settle_tool(service, ids[1], token1, "success",
+                              {"status": "ok", "output": {}})
+        assert late == {"v": 1, "error": {"code": "blocked_unknown",
+                                          "detail": {}}}, late
+        assert snapshot(owner) == before, "settlement on blocked_unknown wrote rows"
+        print("[G2b-T-10] settlement on an already-blocked_unknown run: "
+              "blocked_unknown, ten-table byte-equal")
+    finally:
+        service.close()
+
+
 def main():
     install_no_network()
     try:
@@ -2651,10 +2908,11 @@ def main():
             pending_steer_unknown(db, owner)
             completed_pin_release(db, owner)
             settlement_pin_release(db, owner)
+            zero_write_negatives(db, owner)
             _assert_closed_catalog(owner)
     finally:
         restore_no_network()
-    print("[passed] v24 S4 W1-W5")
+    print("[passed] v24 S4 W1-W6")
     return 0
 
 

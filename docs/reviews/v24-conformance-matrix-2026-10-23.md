@@ -1,14 +1,14 @@
-# v24 覆盖矩阵（S1 + S2 + S3）
+# v24 覆盖矩阵（S1–S4）
 
-> 收尾稿：2026-10-24。覆盖 S1、S2、S3。断言口径以各 stage 计划和[设计稿](../designs/v24-pg-agent-2026-10-22.md)为准。以下记录本轮六个 gate 的实际结果；S3 的 G2b 与 G3b-2 完整 claimed/unknown settlement release 仍按边界保留。
+> 收尾稿：2026-10-24。覆盖 S1、S2、S3、S4。断言口径以各 stage 计划和[设计稿](../designs/v24-pg-agent-2026-10-22.md)为准。以下记录本轮七个 gate 的实际结果；S4 完成后 G2b 全绿，`blocked_unknown` 成为真实生产者，G2 父门完成。S4 的边界（inspect/owner/scope close、崩溃恢复、完整并发矩阵）见 §4。
 
 ## 0. 运行环境与最终证据
 
-本轮于 2026-10-24 按下表顺序串行实跑全部六个命令，均退出 0。`V` 终端输出 `[passed] v24 S3 W1-W7`，具名包含 `G3b-1..5` 与 `claimed/unknown settlement release reserved S4`。
+本轮于 2026-10-24 按下表顺序串行实跑全部七个命令，均退出 0。`V` 终端输出 `[passed] v24 S3 W1-W7`，具名包含 `G3b-1..5`；`G` 终端输出 `[passed] v24 S4 W1-W6`，具名包含 `G2b-A…V` 与 `G2b-T-1…T-10`。
 
 环境：PostgreSQL 18.4（pgembed），Python 3.12，psycopg2 2.9.12，工作树 `.claude/worktrees/v99`，分支 `v24`。
 
-简称：`T`=`v24/s1/test_g1.py`，`D`=`v24/s1/test_ddl.py`，`S`=`v24/s1/setup_db.py`，`L`=`v24/load.py`，`R`=`v24/s2/test_g3a.py`; `V`=`v24/s3/test_g2.py`。`T.state` / `R.state` 对十表做全列全行快照（含 bytea、receipt、claim 字段）。S2 的零写分两级：**W0** = 十表全快照相等；**W1** = 除本次 command 的 `effects`/`requests` receipt 外零 diff。`R` 用 `domain_state`（去掉 effects/requests）断言 W1 的领域零写。
+简称：`T`=`v24/s1/test_g1.py`，`D`=`v24/s1/test_ddl.py`，`S`=`v24/s1/setup_db.py`，`L`=`v24/load.py`，`R`=`v24/s2/test_g3a.py`，`V`=`v24/s3/test_g2.py`，`G`=`v24/s4/test_g2b.py`。`T.state` / `R.state` / `G.snapshot` 对十表做全列全行快照（含 bytea、receipt、claim 字段）。S2 的零写分两级：**W0** = 十表全快照相等；**W1** = 除本次 command 的 `effects`/`requests` receipt 外零 diff。`R` 用 `domain_state`（去掉 effects/requests）断言 W1 的领域零写；S4 的 `G2b-T-1…T-10` 一律用 W0。
 
 | # | 命令 | 退出码 |
 |---:|---|---:|
@@ -18,6 +18,7 @@
 | 4 | `uv run python v24/s1/test_g1.py` | 0 |
 | 5 | `uv run python v24/s2/test_g3a.py` | 0（本轮实跑；S2 W1–W6） |
 | 6 | `uv run python v24/s3/test_g2.py` | 0（本轮实跑；G2a-0…8/10/11、G3b-1…5 passed） |
+| 7 | `uv run python v24/s4/test_g2b.py` | 0（本轮实跑；G2b-A…V、G2b-T-1…T-10 passed） |
 
 ### 0.1 历史失败（追加修正结果，不覆盖）
 
@@ -34,7 +35,7 @@
 | S2 W6 | `R` 退出 1：`request_conflict` | 测试把 scope 与 install 用了同一个 `request_key`；`requests(principal_id,request_key)` 全局唯一 | scope key 改为独立值；转 0 |
 | S2 W5 | `R` 退出 1：succeeded reconcile 计数断言失败 | 一次 on + 一次 off 各结算一条，测试却假设只有一条 | 改为断言 ready=0 且存在 `stage=deactivate/result=closed` 的那条；转 0 |
 
-以上均为**夹具/探针/测试断言缺陷**或局部 SQL 质量问题，不是设计语义变更；全部在对应里程碑提交前修正，未以降低断言的方式绕过。
+以上均为**夹具/探针/测试断言缺陷**或局部 SQL 质量问题，不是设计语义变更；全部在对应里程碑提交前修正，未以降低断言的方式绕过。S4 W1–W5 的历史失败与评审阻塞（含 W4 Oracle BLOCK）追加在[台账](v24-deviation-ledger-2026-10-23.md) §4，不在本表重复。
 
 ## 1. S1 具名断言 G1-A … G1-R
 
@@ -129,27 +130,73 @@ S1 的 W5 需要一个与 advance 共享 delta 应用的 INVOKER helper `validat
 | 父门 | 子门 | 状态 |
 |---|---|---|
 | G2 | G2a | 完成：本轮 `V` 全绿 |
-| G2 | G2b | 未验证 / S4：完整 T2/unknown wall |
-| G2 | 父门 | **部分（G2a 绿；G2b 保留 S4）** |
+| G2 | G2b | **完成**：本轮 `G` 的 G2b-A…V 全绿，G2b-T-1…T-10 十条具名零写负例通过 |
+| G2 | 父门 | **完成（G2a+G2b）** |
+
+### 2.4 S4 具名断言 G2b-A … G2b-V
+
+`G` 驱动真实协议（LOGIN 角色 + `start`/`claim`/settlement），FakeLLM/FakeTool 只在两次 advance 之间于进程内计算，无套接字、无 sleep。每条断言同时核对 effect 唯一结算、successor 条数、事件、pin 集合与读请求前后快照。
+
+| ID | 生产者（`G`） | 证据要点 | 结果 |
+|---|---|---|---|
+| G2b-A | `model_only_spine`（`[G2b-A/w1]`）、`tool_batch_spine`（`[G2b-A]`） | W1 纯文本续链 + W2 完整脊柱：start→model→3 条 ready tool（ordinal 0..2、确定性 id、pin 绑定、同一 `batch_digest`）→各自 claim/settle→恰 1 条 continuation（parent=max-ordinal tool、ordinal=0）→final completed；turn/tokens/effect 计数逐步断言 | 通过 |
+| G2b-B | `real_claim_settle` | 真实 model claim 得 `{attempt:1,fence:1,owner}`；success 结算后 succeeded、`resource_quiesced_at` 非空、turn=1、无 requests 行 | 通过 |
+| G2b-C | `stage_guard` | `claimable_kinds()` 恰为 host 两 kind+model+tool；`inspect_resource`/`command_*`/`fiber_reconcile` 逐一 `invalid_args` 十表零写；`host_prepare` 仍可 claim | 通过 |
+| G2b-D | `tool_settlement_counters` | 批次内 tool success/failure 各 claim→settle；effect 状态/receipt、turn+1、`tool_call_settled`/`tool_call_failed` 事件 | 通过 |
+| G2b-E | `tool_batch_claims_and_guards` | 4 个 fresh fixture、两连接+Barrier 的同 tool 并发 claim：恰一个 token、一个 `deferred`、attempt=1；结算后再 claim `invalid_args`；`pg_blocking_pids`/未授予 advisory lock 证明 G 阻塞 | 通过 |
+| G2b-F | `tool_batch_settlement_order` | 2 个 fresh fixture、两连接分别 claim 同批两个不同 tool：两个都拿 token、effect_id 不同、attempt 各 1；继续结算后 continuation 唯一且父为 max-ordinal；creator 随顺序翻转 | 通过 |
+| G2b-G | `tool_batch_claims_and_guards` | 同 run 第二条 ready model 直接 INSERT 撞 `u_effects_model_call` 得 `23505`（整事务回滚）；已闭合批次上多余 `claimed` tool → `invalid_outcome` W0、十表相等、该 effect 仍 `claimed`；第二 model 预检是防御性的（D-S4-10） | 通过 |
+| G2b-H | `interaction_production` | model success 带 interaction ⇒ run `waiting`、`runs.interaction` 六字段全对（id=origin=model id）、0 successor、1 条 `interaction_created`；同 receipt replay 字节相等 | 通过 |
+| G2b-I | `interaction_respond_chain` | respond 消费 ⇒ running、generation+1、恰 1 条 cause=respond model（response/origin/digests）、`interaction_responded`；第二 key ⇒ `interaction_mismatch` **W1**（领域零写 + 一条 failed `command_respond` + receipt） | 通过 |
+| G2b-J | `steps_budget_and_admission` | steps=1/tokens=0/continuation 准入三路：不建 reserve-0 model，写 completed+`close_reason='budget_exhausted'`，0 successor | 通过 |
+| G2b-K | `tool_call_budget` | 17 个 tool_calls ⇒ `invalid_outcome` W0、无部分批次；16 个照常准入；5 个但只剩 2 ⇒ budget seal、0 tool effect、model 仍 succeeded | 通过 |
+| G2b-L | `reserve_conservation` | 准入 reserve=4096 预扣、usage 40 退 4056；守恒账 `initial=spent+active+remaining`；usage>reserve 属语义 unknown（不是 W0）、unknown 不退；token-0 steer/respond 封口；NULL budget 豁免 | 通过 |
+| G2b-M | `pending_final_seal` | final 但有 ready tool ⇒ 只写 `close_intent={kind:'final'}`、status 不变、0 successor；drain 后同一 close_intent 封 completed，`final_text` 取自 final receipt，预算快照冻结 | 通过 |
+| G2b-N | `tool_unknown_wall` | tool unknown ⇒ effect unknown + 原始 receipt + `resource_quiesced_at IS NULL`、run blocked_unknown、pending/interaction NULL、0 successor、自身 pin 保留；再 claim `invalid_args`；sibling settlement/steer/respond 均 `blocked_unknown` W0 | 通过 |
+| G2b-O | `cancel_t2_two_orders`、`cancel_t2_tool_unknown` | 两序均两连接 + held-G advisory barrier + `pg_blocking_pids()`：①settle→cancel：事实保留、cancel seal；②cancel→settle：claimed 变 cancel_requested、late success 只记事实/成本、0 successor；cancel-late tool unknown 保留 cancelled/close_intent/result、`resource_quiesced_at=NULL`、只发 `tool_call_unknown(late=true)`、0 successor、自身 pin 保留 | 通过 |
+| G2b-P | `pending_steer_consumption` | claimed tool 使 steer 写 pending、0 model；latest wins；该 tool 结算 ⇒ 恰 1 条 cause=steer model（epoch/generation/instruction/input/reserve/digests 全等）、pending 清空、`pending_steer_consumed`、无旧 continuation；再次 steer 只消费最新 | 通过 |
+| G2b-Q | `pending_steer_unknown` | 旧代 tool unknown ⇒ blocked_unknown、pending 清空、0 model、无 continuation、无 consumed 事件 | 通过 |
+| G2b-R | `completed_pin_release` | final model 使 run completed 的同一次 advance 释放全部 run pin，`released_by_effect`=该 final effect | 通过 |
+| G2b-S | `settlement_pin_release` | 最后一条 tool 成功封 completed 时同 advance 释放全部 pin；unknown tool 只保留自己那条 pin，其余已结算 sibling 的 pin 释放 | 通过 |
+| G2b-T | `zero_write_negatives`（`[G2b-T-1]`…`[G2b-T-10]`） | 十条具名十表零写负例，见 §2.4.1；每条 `snapshot(owner)` 前后逐字节相等 | 通过 |
+| G2b-U | `regression_surface` | `error_v1` 仍接受 23 码；host_prepare claim→settle；poll/wait 顶层与投影键集不变；resolve 两次 live 读零写；steer 同 key replay 字节相等；FakeLLM/FakeTool 契约；socket 守卫与源码 import 扫描 | 通过 |
+| G2b-V | `structural_retry_and_semantic`（`[G2b-V-1..4]`）、`unknown_path`（`[G2b-V/unknown-wall]`/`[G2b-V/replay]`/`[G2b-V/receipt-conflict]`） | ①同一非法结构 receipt 连交两次均 `invalid_outcome`、十表相等、预算/turn 不变；②随后同一 token 合法 receipt 正常成功结算；③model 的 tool key ∉ live pins 属语义类（effect unknown + 原始 success receipt + run blocked_unknown + pin 保留 + `model_call_unknown{reason:'semantic_violation'}`）；④语义类后同 digest replay、异 digest `receipt_conflict` | 通过 |
+
+#### 2.4.1 G2b-T 十条零写负例
+
+| ID | 场景 | 路径 / 判定 | 结果 |
+|---|---|---|---|
+| G2b-T-1 | 未打开 kind claim（`inspect_resource`） | 公共 claim → `invalid_args`；attempt/fence 仍 0；十表相等 | 通过 |
+| G2b-T-2 | 缺 `body.kind` | model settlement → `invalid_outcome`；effect 仍 `claimed` | 通过 |
+| G2b-T-3 | 17 个 `tool_calls` | model settlement → `invalid_outcome`；无部分批次；effect 仍 `claimed` | 通过 |
+| G2b-T-4 | tool key 不在 run pins | 公共 claim 的 C18 pin 门 → `invalid_args`；与 G2b-V-3 的结算期语义 unknown 是两条不同路径 | 通过 |
+| G2b-T-5 | 重复 ordinal | `v24.validate_and_apply_loop_delta` 的防御性预检（用真实 delta 复制 successor 0 直达；公共 `advance` 不可达）→ `invalid_outcome` | 通过 |
+| G2b-T-6 | 确定性 id 冲突 | 公共 claim：新 tool 行 ordinal/request.ordinal 与 `tool_effect_id(parent,ordinal)` 不符 → `invalid_args` | 通过 |
+| G2b-T-7 | 错 token | 公共 settlement → `stale_claim`；effect 仍 `claimed` | 通过 |
+| G2b-T-8 | unknown 带 successor | `advance` 信封 `v_executable` 守卫（class=unknown + 任一嵌套 `successors` 对象，30_advance.sql:132–147）→ `invalid_args`；effect 仍 `claimed` | 通过 |
+| G2b-T-9 | 有 ready effect 时 seal | `v24.loop_sealable(...)` 返回 false、无 `run_completed`、十表相等；结算级“只写 close_intent”由 G2b-M 覆盖（按设计不是零写） | 通过 |
+| G2b-T-10 | 已 `blocked_unknown` run 再结算 | 公共 tool settlement → `blocked_unknown`；十表相等 | 通过 |
+
+旧标签映射：本文件此前只有 `[G2b-T-1]`（unknown wall）、`[G2b-T-2]`（replay）、`[G2b-T-3]`（receipt conflict）三个标签，均属 G2b-V 证据；W6 将其改名为 `[G2b-V/unknown-wall]`、`[G2b-V/replay]`、`[G2b-V/receipt-conflict]`（断言未动），把 `T-1…T-10` 留给上表十条零写负例。
 
 ## 3. 错误码覆盖（23 码）
 
 `error_v1` 接受全部 23 码（签名冻结，G1-A 已逐码断言）。**能产生**与**能接受**是两件事。
 
-### 3.1 有生产者的 21 码
+### 3.1 有生产者的 22 码
 
 | 码 | 写类 | 生产者证据 |
 |---|---|---|
-| `invalid_args` | W0 | `T.shapes`/`T.command_prefix`/`T.claims_and_receipts`；`R` 的 manifest 形状、CAS 参数、缺 owner 等 |
+| `invalid_args` | W0 | `T.shapes`/`T.command_prefix`/`T.claims_and_receipts`；`R` 的 manifest 形状、CAS 参数、缺 owner 等；S4 claim 前闸门 `G2b-T-1`/`G2b-T-4`/`G2b-T-6` 与 `G2b-T-8` 的 unknown+successor 信封守卫 |
 | `unauthorized` | W0 | `T.identities_and_matrix` |
 | `request_conflict` | W0 | `T.command_prefix` |
 | `effect_id_conflict` | W0 | `T.command_prefix`、`T.claims_and_receipts` |
 | `receipt_conflict` | W0 | `T.claims_and_receipts`、`T.install_settlement_w5`；`R.dispose_leaf`（dispose_pending 期间的 host_prepare） |
-| `stale_claim` | W0 | `T.claims_and_receipts`、`T.install_settlement_w5` |
+| `stale_claim` | W0 | `T.claims_and_receipts`、`T.install_settlement_w5`；S4 对 model/tool 过期 lease 与错 token 同样零写（D-S4-1，`G2b-T-7`） |
 | `retry_with_closure` | W0 | `T.closure_retry`、`R.closure_fail_closed_and_seam` |
 | `scope_closed` | W1 | `T.scope_control_w4`、`T.install_settlement_w5`、`R.fiber_control_activation` |
 | `install_identity_conflict` | W1 | `T.install_settlement_w5` |
-| `invalid_outcome` | W0（实测） | `T.install_settlement_w5`、`R` 的 delta 预检；S3 未新增该 W1 receipt 证据；model/tool outcome 的 tool_calls 超限路径归 S4（台账 I7） |
+| `invalid_outcome` | W0（实测） | `T.install_settlement_w5`、`R` 的 delta 预检；S4 扩展到 loop 的真实结构路径：`G2b-T-2`（缺 body.kind）、`G2b-T-3`（17 tool_calls）、`G2b-T-5`（重复 ordinal，applier 防御预检）、`G2b-K`、`G2b-V-1`。语义类不返回此码（结算为 unknown，见 `G2b-V-3`） |
 | `stale_generation` | W1 | `R.fiber_control_activation`（fiber CAS） |
 | `already_terminal` | W1 | `R.install_fibers`（disposed fiber）、`R.dispose_leaf`（disposed install） |
 | `install_not_ready` | W1 | `R.install_fibers`（child owner 无 active episode）、`R.fiber_control_activation`（install 非 installed） |
@@ -158,35 +205,38 @@ S1 的 W5 需要一个与 advance 共享 delta 应用的 INVOKER helper `validat
 | `provide_conflict` | W1 | `R.fiber_control_activation` |
 | `not_found_or_denied` | W0 | `V.poll_contract` / `V.wait_check_contract`；本轮通过 |
 | `registration_stale` | W0 | `V.wait_check_contract`；本轮通过 |
-| `interaction_mismatch` | W0 | `V.respond_contract`；本轮通过 |
+| `interaction_mismatch` | **W1**（S4 更正） | `G2b-I`：领域零写，但写一条 failed `command_respond` effect 与其 request receipt；S3 的 `V.respond_contract` 只覆盖不匹配拒绝，S4 补齐 receipt 写类 |
 | `provider_unavailable` | W1 | `V.start_failures`、G3b-4；本轮通过 |
-| `budget_exceeded` | W1 | `V.start_failures` / `V.start_boundaries`；本轮通过 |
+| `budget_exceeded` | W1 | `V.start_failures` / `V.start_boundaries`；S4 的预算耗尽走 `close_reason='budget_exhausted'`，不新增该码生产者 |
+| `blocked_unknown` | W0（墙）/ W1（结算） | S4 新增：`G2b-N`（tool unknown 使 run blocked_unknown；sibling settlement/steer/respond 的 W0 墙）、`G2b-T-10`（已 blocked run 再结算 W0）、`G2b-Q`（pending steer + unknown，0 model）、`G2b-O/tool-unknown`（cancel-late unknown 保留 cancelled，不产生本码） |
 
-### 3.2 仍**不能产生**的 2 码（不得计为已覆盖）
+### 3.2 仍**不能产生**的 1 码（不得计为已覆盖）
 
 | 码 | 预定阶段 | 状态 |
 |---|---|---|
-| `blocked_unknown` | S4 | 未产生：unknown wall 归 S4 |
-| `cleanup_cycle` | S5 | 未产生：清理 DAG 归 S5 |
+| `cleanup_cycle` | S5 | 未产生：全库仅出现在 `30_advance.sql:29` 的闭集白名单与测试的 23 码清单，无 `error_v1` 调用点；清理 DAG 归 S5 |
 
 ## 4. 无写入者 / 不适用 / 未验证
 
 | 项 | 处理 |
 |---|---|
 | `runs` 的领域行为 | S3 `start` 是首个 writer；revision 从 1 开始，后续可见变化递增；G2a assertion 在 `V` 本轮通过 |
-| run pin 半部 | G3b-1…5 在 `V` 本轮通过；claimed/unknown 完整释放留待 S4 |
-| `inspect_resource` 收敛 | **未验证 / S5**：S2 只把 `prepare_unknown` 停在 `dispose_pending`，不实现 inspect |
-| owner 级联 / scope close / 完整 dispose 闭包 | **未验证 / S5**：S2 只做 leaf dispose |
+| run pin 半部 | **已验证**：G2b-R 证明 completed 同 advance 释放全部 pin；G2b-S 证明最后一条 tool 封 completed 与 unknown 只保留自身 pin；G3b-2 的“claimed/unknown 完整释放”不再悬空 |
+| `inspect_resource` 收敛 | **未验证 / S5**：S4 仍不打开 claim（`G2b-T-1`），S2 只把 `prepare_unknown` 停在 `dispose_pending`；inspect 收敛归 S5 |
+| owner 级联 / scope close / 完整 dispose 闭包 | **未验证 / S5**：S2 只做 leaf dispose；S4 不扩展清理闭包 |
+| interaction 生产 | **已验证（S4）**：G2b-H 由 model outcome 真实生产 `runs.interaction` 与 `waiting`；S3 仅 seed 消费 |
+| spawn / child run | **未实现（S5/S6 之后）**：S4 无 spawn 解释器；任何未建模的 intent/结果键在 C19 结果键闭集或（unknown 类）`v_executable` 守卫处 W0 拒绝，不建 child run |
+| 完整崩溃恢复 / reclaim | **未验证 / S6**：S4 只保留“过期 lease 不产生第二次 attempt”（D-S4-1/D-S4-7）；自动 reclaim/inspect 归 S6 |
 | `resolve` 只读 | S2 gate 曾以 owner 测试；S3 W1 将它改为 DEFINER，并在 `V` 通过真实 service/operator/admin LOGIN 验证；poll/wait 同样由 `V` 验证 |
-| 并发矩阵 | 已证 G1-L 的 G 排他/首锁、G3a-F pin 屏障与 G3b-5 start/off 两连接锁屏障；G3b-4 为顺序场景；完整并发矩阵归 S7/G6 |
-| 真实 host IO / 网络 | FakeHost 纯进程内、无套接字；不是 transport 证明 |
-| 崩溃恢复 | 只测两个 journal 窗口；完整 recovery 归 S6 |
+| 并发矩阵 | S4 新增 G2b-E（同 tool claim 并发）、G2b-F（同批两 tool 并发）、G2b-O（cancel×T2 两序）三组两连接 + Barrier/held-G + `pg_blocking_pids()` 证据；G1-L、G3a-F、G3b-5 仍有效；G3b-4 为顺序场景；完整三面并发矩阵仍归 S7/G6 |
+| 真实 host IO / 网络 | FakeHost/FakeLLM/FakeTool 纯进程内、无套接字；不是 transport 证明 |
 | `advance.revision` | S3 `start` 写 `revision=1`，可见状态变化由 advance 更新；已不再是常量 0 |
-| **P1/S3.1 claim guard** | pre：非 host effect（如 `model_call`）claim 成功 → settle 仅支持 `host_prepare`/`host_release`，得 `0A000`；claim 已 COMMIT ⇒ effect 永久 `claimed`、run 卡死。post：claim 改为 allowlist，仅 `host_prepare`/`host_release` 可 claim，其余 kind（`command_*`/`fiber_reconcile`/`model_call`/`tool_call`/`inspect_resource`）一律 W0 `invalid_args` 十表零写，终态仍拒；`host_prepare` claim 仍成功。移除点：S4 增加 model/tool settlement 时。证据：`V.G2a-11` |
+| **P1/S3.1 claim guard → C18 阶段 allowlist** | S3.1 的临时 guard 仅允许 host 两 kind；S4 W1/W2 按 C18 打开 `model_call`/`tool_call`，真相源为 `v24.claimable_kinds()`（恰 host 两 kind+model+tool）。仍关闭的 kind（`inspect_resource`/`command_*`/`fiber_reconcile`）一律 W0 `invalid_args` 十表零写（G2b-C、G2b-T-1）。S4 不以“取消 guard”放行，而是把阶段集合变成可断言对象 |
 | DDL 语义 vs advance 语义 | G1-O 证明 DDL 能拒绝；advance 语义由 G1/G3a/G2a/G3b 的具名断言分列 |
 
 ## 5. 结论
 
-- 本轮六个 gate 全部实际退出 0（见 §0）；G2a 与 G3b-1…5 的结果来自 `V` 本轮通过输出。
-- G2 父门：**部分（G2a 绿；G2b 保留 S4）**。G3 父门：**完成（G3a+G3b）**。
-- 尚无生产者的只有 `blocked_unknown`（S4）与 `cleanup_cycle`（S5）；完整 claimed/unknown run pin 释放留待 S4。
+- 本轮七个 gate 全部实际退出 0（见 §0）；G2a/G3b 来自 `V`，G2b-A…V 与 G2b-T-1…T-10 来自 `G` 本轮通过输出。
+- G2 父门：**完成（G2a+G2b）**。G3 父门：**完成（G3a+G3b）**。
+- 错误码：**22 个有生产者、1 个未产生**（`cleanup_cycle` / S5）；`blocked_unknown` 由 S4 新增，`invalid_outcome` 从 install 预检扩展到 loop 结构路径。
+- S4 边界：interaction 生产已真实；inspect/owner/scope close 归 S5；崩溃恢复/reclaim 归 S6；完整并发矩阵归 S7。真实 provider/网络仍不作证明。
