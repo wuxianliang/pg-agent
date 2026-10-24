@@ -177,8 +177,8 @@ def catalog(owner):
         receipt_conflict stale_generation registration_stale already_terminal owner_closing
         install_not_ready interaction_mismatch provider_unavailable scope_closed dependency_unresolved
         provide_conflict install_identity_conflict budget_exceeded invalid_outcome stale_claim
-        cleanup_cycle retry_with_closure blocked_unknown""".split()
-    assert len(codes) == 23
+        cleanup_cycle retry_with_closure blocked_unknown spawn_key_conflict""".split()
+    assert len(codes) == 24
     for code in codes:
         assert one(owner, "SELECT v24.error_v1(%s)->'error'->>'code'", (code,)) == code
     sqlstate(owner, "22023", lambda: one(owner, "SELECT v24.error_v1('no_interpreter')"))

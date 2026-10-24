@@ -199,6 +199,45 @@ DECLARE
   v_steer_admit boolean := false;
   v_steer_sealed boolean := false;
   v_steer_reserve bigint;
+  -- S8 W1: the reserved model-outcome intent.  v_spawn holds the validated
+  -- args object; the child rows are built before any DML and emitted through
+  -- domain.insert, never through successors[] (a child is a different run).
+  v_spawn jsonb := NULL;
+  v_spawn_count int := 0;
+  v_spawn_key text;
+  v_spawn_scope uuid;
+  v_spawn_digest bytea;
+  v_child_id uuid;
+  v_child_effect_id uuid;
+  v_child_steps int;
+  v_child_tokens bigint;
+  v_child_reserve bigint;
+  v_child_tool_calls int;
+  v_child_wall bigint;
+  v_child_digests jsonb;
+  v_child_request jsonb;
+  v_child_run jsonb;
+  v_child_effect jsonb;
+  -- S8 W2: optional owner run pin and the same-key replay split.  The pin is
+  -- the child run's capability binding and lives only in v24.pins; the owner
+  -- episode also lands on the child run columns and on the child first model
+  -- effect, whose effects.pin_id stays NULL.
+  v_spawn_owner_fiber uuid;
+  v_spawn_owner_episode uuid;
+  v_spawn_owner_epoch bigint;
+  v_spawn_fiber v24.fibers%ROWTYPE;
+  v_spawn_episode v24.episodes%ROWTYPE;
+  v_spawn_install v24.installs%ROWTYPE;
+  v_spawn_activation v24.pins%ROWTYPE;
+  v_spawn_act_count int := 0;
+  v_spawn_pin jsonb;
+  v_spawn_pin_id uuid;
+  v_spawn_pins jsonb := '[]'::jsonb;
+  v_spawn_replay boolean := false;
+  v_spawn_child v24.runs%ROWTYPE;
+  v_ins_runs jsonb := '[]'::jsonb;
+  v_ins_effects jsonb := '[]'::jsonb;
+  v_domain jsonb;
 BEGIN
   SELECT * INTO e FROM v24.effects WHERE effect_id = p_effect_id;
   IF NOT FOUND OR e.kind <> 'model_call' THEN
@@ -209,6 +248,15 @@ BEGIN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
   END IF;
   IF r.status = 'blocked_unknown' THEN
+    -- S8 W1 spawn admission: a reserved intent on any non-running parent is
+    -- already_terminal.  Non-spawn settlements keep the frozen blocked_unknown
+    -- precedence (G2b-V/blocked).
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(v_res->'tool_calls') = 'array'
+               THEN v_res->'tool_calls' ELSE '[]'::jsonb END) x
+          WHERE jsonb_typeof(x) = 'object' AND x->>'key' = 'agent.spawn') THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('already_terminal'));
+    END IF;
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('blocked_unknown'));
   ELSIF r.status IN ('completed','failed') THEN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('already_terminal'));
@@ -239,11 +287,13 @@ BEGIN
   END IF;
   BEGIN
     IF v_res ? 'tool_calls' AND v_res->'tool_calls' <> 'null'::jsonb THEN
-      IF jsonb_typeof(v_res->'tool_calls') IS DISTINCT FROM 'array'
-         OR jsonb_array_length(v_res->'tool_calls') >
-            (v24.loop_policy()->>'max_tool_calls')::int THEN
+      IF jsonb_typeof(v_res->'tool_calls') IS DISTINCT FROM 'array' THEN
         RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
       END IF;
+      -- S8/R7: `agent.spawn` is a reserved intent, not a tool.  Split it out
+      -- before max_tool_calls counting so it neither consumes the tool budget
+      -- nor reaches the C22 pin-membership arm below.  v1 admits exactly one
+      -- spawn per outcome and never mixes it with ordinary tools.
       FOR v_item IN SELECT value FROM jsonb_array_elements(v_res->'tool_calls') LOOP
         IF jsonb_typeof(v_item) IS DISTINCT FROM 'object' THEN
           RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
@@ -256,7 +306,22 @@ BEGIN
            OR jsonb_typeof(v_item->'args') IS DISTINCT FROM 'object' THEN
           RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
         END IF;
+        IF v_item->>'key' = 'agent.spawn' THEN
+          v_spawn_count := v_spawn_count + 1;
+          IF v_spawn_count > 1 THEN
+            RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+          END IF;
+          v_spawn := v_item->'args';
+        ELSE
+          v_n_tools := v_n_tools + 1;
+        END IF;
       END LOOP;
+      IF v_spawn_count > 0 AND jsonb_array_length(v_res->'tool_calls') <> 1 THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+      IF v_n_tools > (v24.loop_policy()->>'max_tool_calls')::int THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
     END IF;
     v_ix := v_res->'interaction';
     IF v_ix IS NOT NULL AND v_ix <> 'null'::jsonb THEN
@@ -322,10 +387,14 @@ BEGIN
      AND v_res->'final' IS NOT NULL AND v_res->'final' <> 'null'::jsonb THEN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
   END IF;
-  v_n_tools := CASE WHEN jsonb_typeof(v_res->'tool_calls') = 'array'
-                    THEN jsonb_array_length(v_res->'tool_calls') ELSE 0 END;
-  -- C19: an interaction is never published together with a tool batch.
+  -- C19: an interaction is never published together with a tool batch or with
+  -- the reserved spawn intent.  Spawn never shares an outcome with final either.
   IF v_n_tools > 0 AND v_ix IS NOT NULL AND v_ix <> 'null'::jsonb THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+  END IF;
+  IF v_spawn IS NOT NULL
+     AND (v_ix IS NOT NULL AND v_ix <> 'null'::jsonb
+          OR v_res->'final' IS NOT NULL AND v_res->'final' <> 'null'::jsonb) THEN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
   END IF;
 
@@ -347,8 +416,9 @@ BEGIN
         WHEN 'steer' THEN ARRAY['input','instruction']
         WHEN 'respond' THEN ARRAY['response','origin_effect_id']
         WHEN 'continuation' THEN ARRAY['input','batch_digest','state']
+        WHEN 'spawn' THEN ARRAY['input','spawn_key','parent_run_id']
         ELSE ARRAY[]::text[] END;
-    IF v_cause IS NULL OR v_cause NOT IN ('start','steer','respond','continuation')
+    IF v_cause IS NULL OR v_cause NOT IN ('start','steer','respond','continuation','spawn')
        OR (e.request->>'v') IS DISTINCT FROM '1'
        OR NOT (e.request ?& v_req_keys)
        OR EXISTS (SELECT 1 FROM jsonb_object_keys(e.request) k WHERE k <> ALL(v_req_keys))
@@ -380,7 +450,7 @@ BEGIN
        OR (e.request->'digests'->>'toolset') !~ '^[0-9a-f]{64}$' THEN
       RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
     END IF;
-    IF v_cause IN ('start','steer','continuation')
+    IF v_cause IN ('start','steer','continuation','spawn')
        AND jsonb_typeof(e.request->'input') IS DISTINCT FROM 'object' THEN
       RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
     END IF;
@@ -410,10 +480,30 @@ BEGIN
       RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
     END IF;
     SELECT * INTO parent FROM v24.effects p WHERE p.effect_id = e.parent_effect_id;
-    IF NOT FOUND OR parent.run_id IS DISTINCT FROM e.run_id THEN
+    IF NOT FOUND
+       OR (v_cause <> 'spawn' AND parent.run_id IS DISTINCT FROM e.run_id) THEN
       RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
     END IF;
-    IF v_cause = 'continuation' THEN
+    IF v_cause = 'spawn' THEN
+      -- S8/R7: the child first model keeps the settling parent run's model
+      -- effect as parent_effect_id even though its run_id is the child.
+      IF parent.kind <> 'model_call'
+         OR jsonb_typeof(e.request->'spawn_key') IS DISTINCT FROM 'string'
+         OR (e.request->>'spawn_key') !~ '^[A-Za-z0-9._:-]{1,128}$'
+         OR jsonb_typeof(e.request->'parent_run_id') IS DISTINCT FROM 'string'
+         OR (e.request->>'parent_run_id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+         OR parent.run_id IS DISTINCT FROM (e.request->>'parent_run_id')::uuid
+         OR e.effect_id IS DISTINCT FROM
+            md5(e.run_id::text||':model_call:0')::uuid
+         OR NOT EXISTS (
+              SELECT 1 FROM v24.runs cr
+               WHERE cr.run_id = e.run_id
+                 AND cr.parent_run_id = parent.run_id
+                 AND cr.scope_id = e.scope_id
+                 AND cr.spawn_key = e.request->>'spawn_key') THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+    ELSIF v_cause = 'continuation' THEN
       IF parent.kind = 'model_call' THEN
         IF e.effect_id IS DISTINCT FROM
            md5(e.parent_effect_id::text||':continuation')::uuid THEN
@@ -479,6 +569,9 @@ BEGIN
   -- host legitimately used, and the late delta publishes no successor anyway.
   IF NOT v_cancel_late AND v_res ? 'tool_calls' AND v_res->'tool_calls' <> 'null'::jsonb THEN
     FOR v_item IN SELECT value FROM jsonb_array_elements(v_res->'tool_calls') LOOP
+      -- R7: the reserved spawn intent has no pin and is not a tool; the pin
+      -- membership arm must never turn its absence into a semantic unknown.
+      CONTINUE WHEN v_item->>'key' = 'agent.spawn';
       IF NOT EXISTS (SELECT 1 FROM v24.pins p
                       WHERE p.consumer_run_id = e.run_id AND p.released_at IS NULL
                         AND p.key = v_item->>'key') THEN
@@ -508,6 +601,218 @@ BEGIN
 
   v_late := e.generation IS DISTINCT FROM r.driving_generation
             OR e.epoch_no IS DISTINCT FROM r.epoch_no;
+
+  -- S8 W1 spawn admission.  Everything here is before any DML: a malformed,
+  -- terminal, duplicate or over-budget spawn leaves the model effect claimed
+  -- and the ten tables untouched.  The child rows are built as delta inserts
+  -- and only reach the applier after the parent settlement succeeds.
+  IF v_spawn IS NOT NULL THEN
+    IF r.status <> 'running' THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('already_terminal'));
+    END IF;
+    -- Spawn is a trusted success-side intent.  Unknown/semantic/late
+    -- settlements publish no successor business, so they cannot mint a child.
+    IF v_class <> 'success' OR v_semantic OR v_late THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    END IF;
+    BEGIN
+      IF jsonb_typeof(v_spawn) IS DISTINCT FROM 'object'
+         OR NOT (v_spawn ?& ARRAY['v','spawn_key','input','scope_id','budget'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_spawn) k
+                     WHERE k NOT IN ('v','spawn_key','input','scope_id','budget',
+                                     'owner_fiber_id','owner_episode_id'))
+         OR (v_spawn ? 'owner_fiber_id') IS DISTINCT FROM (v_spawn ? 'owner_episode_id')
+         OR jsonb_typeof(v_spawn->'v') IS DISTINCT FROM 'number'
+         OR (v_spawn->>'v') IS DISTINCT FROM '1'
+         OR jsonb_typeof(v_spawn->'spawn_key') IS DISTINCT FROM 'string'
+         OR (v_spawn->>'spawn_key') !~ '^[A-Za-z0-9._:-]{1,128}$'
+         OR jsonb_typeof(v_spawn->'input') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(v_spawn->'scope_id') IS DISTINCT FROM 'string'
+         OR jsonb_typeof(v_spawn->'budget') IS DISTINCT FROM 'object'
+         OR NOT (v_spawn->'budget' ?& ARRAY['steps','tokens','tool_calls','wall_ms'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_spawn->'budget') k
+                     WHERE k NOT IN ('steps','tokens','tool_calls','wall_ms'))
+         OR jsonb_typeof(v_spawn->'budget'->'steps') IS DISTINCT FROM 'number'
+         OR (v_spawn->'budget'->>'steps') !~ '^[0-9]+$'
+         OR jsonb_typeof(v_spawn->'budget'->'tool_calls') IS DISTINCT FROM 'number'
+         OR (v_spawn->'budget'->>'tool_calls') !~ '^[0-9]+$'
+         OR jsonb_typeof(v_spawn->'budget'->'wall_ms') IS DISTINCT FROM 'number'
+         OR (v_spawn->'budget'->>'wall_ms') !~ '^[0-9]+$'
+         OR jsonb_typeof(v_spawn->'budget'->'tokens') NOT IN ('number','null')
+         OR (jsonb_typeof(v_spawn->'budget'->'tokens') = 'number'
+             AND (v_spawn->'budget'->>'tokens') !~ '^[0-9]+$') THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+      v_spawn_key := v_spawn->>'spawn_key';
+      v_spawn_scope := (v_spawn->>'scope_id')::uuid;
+      v_child_steps := (v_spawn->'budget'->>'steps')::int;
+      v_child_tool_calls := (v_spawn->'budget'->>'tool_calls')::int;
+      v_child_wall := (v_spawn->'budget'->>'wall_ms')::bigint;
+      IF v_child_steps < 1 OR v_child_tool_calls < 1 OR v_child_wall < 1 THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+      IF jsonb_typeof(v_spawn->'budget'->'tokens') = 'null' THEN
+        IF r.remaining_tokens IS NOT NULL THEN
+          RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+        END IF;
+        v_child_tokens := NULL;
+      ELSE
+        v_child_tokens := (v_spawn->'budget'->>'tokens')::bigint;
+        IF v_child_tokens < 1 THEN
+          RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+        END IF;
+      END IF;
+      IF v_spawn_scope IS DISTINCT FROM r.scope_id THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+      -- §4.3 step 4: (parent_run_id,spawn_key) is the spawn identity.  Same
+      -- canonical args bytes replay the existing child (no new child, quota,
+      -- effect or event); different bytes are the 24th error code.  Both run
+      -- before any DML, so a conflict leaves the model effect claimed.
+      v_spawn_digest := sha256(convert_to(v24.canonical_json(v_spawn),'UTF8'));
+      SELECT * INTO v_spawn_child FROM v24.runs cr
+       WHERE cr.parent_run_id = r.run_id AND cr.spawn_key = v_spawn_key;
+      IF FOUND THEN
+        IF v_spawn_child.spawn_request_digest IS DISTINCT FROM v_spawn_digest THEN
+          RETURN jsonb_build_object('write',false,
+            'error',v24.error_v1('spawn_key_conflict'));
+        END IF;
+        v_spawn_replay := true;
+        v_child_id := v_spawn_child.run_id;
+        v_child_effect_id := md5(v_child_id::text||':model_call:0')::uuid;
+        v_spawn_key := v_spawn_child.spawn_key;
+      ELSE
+        -- Oracle Q6=A / D-S8-9 / D-S8-10: the child grant must fit the parent's
+        -- post-settlement balances.  Tokens are checked against the C19 refunded
+        -- v_tokens, wall against the elapsed-adjusted v_wall; both then deduct
+        -- the full child grant.  Nothing changes on failure.
+        IF v_child_steps > v_steps
+           OR v_child_tool_calls > v_tool_calls
+           OR v_child_wall > v_wall
+           OR (v_tokens IS NOT NULL
+               AND (v_child_tokens IS NULL OR v_child_tokens > v_tokens)) THEN
+          RETURN jsonb_build_object('write',false,'error',v24.error_v1('budget_exceeded'));
+        END IF;
+        -- §4.6 owner pair.  Both-or-none was checked with the args; a full pair
+        -- must name a live fiber/episode whose single live activation pin lends
+        -- the child run pin its provider tuple and descriptor.
+        IF v_spawn ? 'owner_fiber_id' THEN
+          IF jsonb_typeof(v_spawn->'owner_fiber_id') IS DISTINCT FROM 'string'
+             OR jsonb_typeof(v_spawn->'owner_episode_id') IS DISTINCT FROM 'string' THEN
+            RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+          END IF;
+          v_spawn_owner_fiber := (v_spawn->>'owner_fiber_id')::uuid;
+          v_spawn_owner_episode := (v_spawn->>'owner_episode_id')::uuid;
+          SELECT * INTO v_spawn_fiber FROM v24.fibers f
+           WHERE f.fiber_id = v_spawn_owner_fiber;
+          IF NOT FOUND OR v_spawn_fiber.scope_id IS DISTINCT FROM r.scope_id
+             OR v_spawn_fiber.disposed_at IS NOT NULL
+             OR NOT v_spawn_fiber.want_on
+             OR v_spawn_fiber.current_episode_id IS DISTINCT FROM v_spawn_owner_episode THEN
+            RETURN jsonb_build_object('write',false,
+              'error',v24.error_v1('provider_unavailable'));
+          END IF;
+          SELECT * INTO v_spawn_episode FROM v24.episodes ep
+           WHERE ep.episode_id = v_spawn_owner_episode;
+          IF NOT FOUND
+             OR v_spawn_episode.fiber_id IS DISTINCT FROM v_spawn_owner_fiber
+             OR v_spawn_episode.state IS DISTINCT FROM 'active' THEN
+            RETURN jsonb_build_object('write',false,
+              'error',v24.error_v1('provider_unavailable'));
+          END IF;
+          SELECT * INTO v_spawn_install FROM v24.installs it
+           WHERE it.install_id = v_spawn_fiber.install_id;
+          IF NOT FOUND OR v_spawn_install.state IS DISTINCT FROM 'installed' THEN
+            RETURN jsonb_build_object('write',false,
+              'error',v24.error_v1('provider_unavailable'));
+          END IF;
+          v_spawn_owner_epoch := v_spawn_episode.epoch;
+          SELECT count(*) INTO v_spawn_act_count FROM v24.pins p
+           WHERE p.consumer_type = 'activation'
+             AND p.consumer_episode_id = v_spawn_owner_episode
+             AND p.consumer_epoch = v_spawn_owner_epoch
+             AND p.released_at IS NULL;
+          IF v_spawn_act_count <> 1 THEN
+            RETURN jsonb_build_object('write',false,
+              'error',v24.error_v1('dependency_unresolved'));
+          END IF;
+          SELECT * INTO v_spawn_activation FROM v24.pins p
+           WHERE p.consumer_type = 'activation'
+             AND p.consumer_episode_id = v_spawn_owner_episode
+             AND p.consumer_epoch = v_spawn_owner_epoch
+             AND p.released_at IS NULL;
+          v_spawn_pin_id := gen_random_uuid();
+          v_spawn_pin := jsonb_build_object(
+            'pin_id',v_spawn_pin_id,'consumer_type','run',
+            'consumer_run_id',md5(r.run_id::text||':spawn:'||v_spawn_key)::uuid,
+            'consumer_epoch',v_spawn_owner_epoch,'key','run',
+            'slot_id',v_spawn_activation.slot_id,
+            'provider_fiber_id',v_spawn_activation.provider_fiber_id,
+            'provider_episode_id',v_spawn_activation.provider_episode_id,
+            'descriptor_digest',v_spawn_activation.descriptor_digest,
+            'created_by_effect',p_effect_id);
+          v_spawn_pins := jsonb_build_array(v_spawn_pin);
+        ELSE
+          v_spawn_pin_id := NULL;
+        END IF;
+        -- D-S8-9: the first model reserves against the grant, and the child run
+        -- starts with grant minus that reservation (0 when the grant is fully
+        -- reserved; NULL stays NULL).  A successful settlement then refunds only
+        -- reserve - usage, yielding grant - usage.
+        v_child_reserve := coalesce(v24.model_reserve(v_child_tokens),0);
+        v_child_id := md5(r.run_id::text||':spawn:'||v_spawn_key)::uuid;
+        v_child_effect_id := md5(v_child_id::text||':model_call:0')::uuid;
+        -- §4.5/D-S8-11: the child request digests must equal what settlement
+        -- recomputes from the prospective pin.  model_digests(child) cannot see
+        -- an uninserted pin, so the toolset digest is built from the pending pin
+        -- rows with the same key/hex ordering (start does the same in S3).
+        v_child_digests := jsonb_build_object(
+          'policy',(v24.model_digests(NULL))->>'policy',
+          'schema',(v24.model_digests(NULL))->>'schema',
+          'toolset',encode(sha256(convert_to((
+            SELECT coalesce(jsonb_agg(jsonb_build_object(
+                     'key',pn->>'key',
+                     'descriptor_digest',
+                     encode((pn->>'descriptor_digest')::bytea,'hex'))
+                   ORDER BY pn->>'key'),'[]'::jsonb)::text
+              FROM jsonb_array_elements(v_spawn_pins) pn),'UTF8')),'hex'));
+        v_child_request := jsonb_build_object(
+          'v',1,'cause','spawn','run_id',v_child_id,'epoch_no',0,'generation',0,
+          'input',v_spawn->'input',
+          'reserve',jsonb_build_object('tokens',v_child_reserve),
+          'digests',v_child_digests,
+          'spawn_key',v_spawn_key,'parent_run_id',r.run_id);
+        v_child_run := jsonb_build_object(
+          'run_id',v_child_id,'scope_id',r.scope_id,'parent_run_id',r.run_id,
+          'spawn_key',v_spawn_key,'spawn_request_digest',v_spawn_digest,
+          'owner_fiber_id',v_spawn_owner_fiber,
+          'owner_episode_id',v_spawn_owner_episode,'status','running',
+          'epoch_no',0,'registration_generation',1,'turn_no',0,'driving_generation',0,
+          'remaining_steps',v_child_steps,
+          'remaining_tokens',CASE WHEN v_child_tokens IS NULL THEN NULL
+                                  ELSE v_child_tokens - v_child_reserve END,
+          'remaining_tool_calls',v_child_tool_calls,'remaining_wall_ms',v_child_wall,
+          'revision',0,'created_at',now(),'updated_at',now());
+        v_child_effect := jsonb_build_object(
+          'effect_id',v_child_effect_id,'parent_effect_id',p_effect_id,'ordinal',0,
+          'requester_id',p_principal,'scope_id',r.scope_id,'run_id',v_child_id,
+          'fiber_id',v_spawn_owner_fiber,'episode_id',v_spawn_owner_episode,
+          -- A model_call never binds effects.pin_id: only tool_call effects use
+          -- a pin.  The owner run pin lives solely in v_spawn_pins/pins, so the
+          -- child first model stays claimable through the ordinary public path.
+          'pin_id',NULL,
+          'epoch_no',0,'generation',0,'kind','model_call','status','ready',
+          'request',v_child_request,
+          'request_digest',sha256(convert_to(v24.canonical_json(v_child_request),'UTF8')),
+          'replay_policy','no_replay');
+        v_ins_runs := jsonb_build_array(v_child_run);
+        v_ins_effects := jsonb_build_array(v_child_effect);
+      END IF;
+    EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
+        OR invalid_parameter_value OR datetime_field_overflow THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    END;
+  END IF;
 
   IF v_cancel_late THEN
     -- G2b-O order 2: cancel won the race.  The original token still reports the
@@ -744,6 +1049,18 @@ BEGIN
           'event_kind','interaction_created','payload',jsonb_build_object(
             'run_id',e.run_id,'effect_id',p_effect_id,
             'interaction_id',p_effect_id,'generation',r.driving_generation)));
+    ELSIF v_spawn IS NOT NULL THEN
+      -- S8 W1: the reserved intent settles this model normally and keeps the
+      -- parent live.  The spawn-specific quota deduction and the parent/child
+      -- events are appended after the class branch, once v_tokens carries the
+      -- ordinary C19 refund.
+      v_status := 'running';
+      v_close := NULL; v_result := NULL;
+      v_interaction := NULL; v_pending := r.pending_steer; v_ended := NULL;
+      v_events := jsonb_build_array(
+        jsonb_build_object('entity_type','run','entity_id',e.run_id,
+          'event_kind','model_call_settled','payload',jsonb_build_object(
+            'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',false)));
     ELSIF v_n_tools > 0 THEN
       -- C20/F3=A: a structurally valid batch reserves one tool_call per item.
       IF v_n_tools > r.remaining_tool_calls THEN
@@ -908,30 +1225,70 @@ BEGIN
     END IF;
   END IF;
 
+  -- S8 W1: fold the spawn into the same parent update (one revision bump) and
+  -- append the parent/child events.  Steps/tool_calls conserve exactly; wall
+  -- conserves on the elapsed-adjusted v_wall (before - elapsed = after +
+  -- child_wall); tokens deduct the full grant from the C19-refunded v_tokens.
+  -- A NULL parent token balance stays NULL.
+  IF v_spawn IS NOT NULL AND NOT v_spawn_replay THEN
+    v_steps := v_steps - v_child_steps;
+    v_tokens := CASE WHEN v_tokens IS NULL THEN NULL
+                     ELSE v_tokens - v_child_tokens END;
+    v_tool_calls := v_tool_calls - v_child_tool_calls;
+    v_wall := greatest(0, v_wall - v_child_wall);
+    v_events := v_events || jsonb_build_array(
+      jsonb_build_object('entity_type','run','entity_id',e.run_id,
+        'event_kind','run_spawned','payload',jsonb_build_object(
+          'child_run_id',v_child_id,'spawn_key',v_spawn_key,
+          'child_effect_id',v_child_effect_id,
+          'spawn_request_digest',encode(v_spawn_digest,'hex'))),
+      jsonb_build_object('entity_type','run','entity_id',v_child_id,
+        'event_kind','run_started','payload',jsonb_build_object(
+          'run_id',v_child_id,'parent_run_id',e.run_id,'spawn_key',v_spawn_key)));
+  END IF;
+
+  v_domain := jsonb_build_object('update',jsonb_build_object(
+    'runs',jsonb_build_array(jsonb_build_object(
+      'key',jsonb_build_object('run_id',e.run_id),
+      'set',jsonb_build_object(
+        'status',v_status,
+        'turn_no',v_turn,
+        'remaining_steps',v_steps,
+        'remaining_tokens',v_tokens,
+        'remaining_tool_calls',v_tool_calls,
+        'remaining_wall_ms',v_wall,
+        'interaction',v_interaction,
+        'pending_steer',v_pending,
+        'close_intent',v_close,
+        'result',v_result,
+        'revision',r.revision + 1,
+        'ended_at',v_ended,
+        'updated_at',now()))),
+    'pins',v_pins));
+  IF v_spawn IS NOT NULL AND NOT v_spawn_replay THEN
+    -- The child first model must ride inserts.effects: a successor would be
+    -- forced to keep the settling parent's run_id, but a child is a new run.
+    -- The optional owner run pin is a separate inserts.pins row; the child
+    -- first model carries effects.pin_id NULL and never references that pin.
+    v_domain := v_domain || jsonb_build_object('insert',jsonb_build_object(
+      'runs',v_ins_runs,'effects',v_ins_effects,'pins',v_spawn_pins));
+  END IF;
+
+  -- §4.7: the optional `spawned` handle is the only member outside the six-key
+  -- envelope.  A same-key replay carries the existing child and replayed=true;
+  -- the applier re-derives that flag from the stored child row rather than
+  -- trusting the echo.
   RETURN jsonb_build_object(
     'write',true,
-    'domain',jsonb_build_object('update',jsonb_build_object(
-      'runs',jsonb_build_array(jsonb_build_object(
-        'key',jsonb_build_object('run_id',e.run_id),
-        'set',jsonb_build_object(
-          'status',v_status,
-          'turn_no',v_turn,
-          'remaining_steps',v_steps,
-          'remaining_tokens',v_tokens,
-          'remaining_tool_calls',v_tool_calls,
-          'remaining_wall_ms',v_wall,
-          'interaction',v_interaction,
-          'pending_steer',v_pending,
-          'close_intent',v_close,
-          'result',v_result,
-          'revision',r.revision + 1,
-          'ended_at',v_ended,
-          'updated_at',now()))),
-      'pins',v_pins)),
+    'domain',v_domain,
     'effect',jsonb_build_object('status',v_effect_status,
       'outcome',p_outcome,'resource_quiesced',v_quiesced),
     'events',v_events,
-    'successors',v_succ);
+    'successors',v_succ)
+    || CASE WHEN v_spawn IS NOT NULL THEN jsonb_build_object('spawn',
+         jsonb_build_object('run_id',v_child_id,'spawn_key',v_spawn_key,
+           'child_effect_id',v_child_effect_id,'replayed',v_spawn_replay))
+       ELSE '{}'::jsonb END;
 END;
 $$;
 
@@ -1379,8 +1736,10 @@ $$;
 -- S4 loop delta applier.  W2 accepts deterministic tool_call successors from a
 -- model settlement and at most one deterministic model_call continuation from a
 -- model or tool settlement; the delta key closure is exactly
--- {write,domain,effect,events,successors} and every check finishes before the
--- first write.  DML order: run -> effect -> events -> successors -> pins.
+-- {write,domain,effect,events,successors,spawn} and every check finishes before
+-- the first write.  DML order: run -> pin -> effect -> events -> successors ->
+-- pin releases.  A spawned child's run pin is a separate pins row inserted
+-- with the child run; the child first model leaves effects.pin_id NULL.
 CREATE FUNCTION v24.validate_and_apply_loop_delta(p_effect_id uuid, p_principal uuid,
   p_outcome jsonb, p_delta jsonb, p_closure jsonb) RETURNS jsonb
 LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
@@ -1388,6 +1747,7 @@ DECLARE
   e v24.effects%ROWTYPE;
   r v24.runs%ROWTYPE;
   upd jsonb;
+  ins jsonb;
   set_r jsonb;
   pins jsonb;
   ev jsonb;
@@ -1405,6 +1765,36 @@ DECLARE
   v_succs jsonb;
   v_effect_status text;
   v_quiesced boolean;
+  -- S8 W1 spawn footprint state.  v_spawn is true iff domain.insert exists.
+  v_spawn boolean := false;
+  v_child v24.runs%ROWTYPE;
+  v_child_effect v24.effects%ROWTYPE;
+  v_child_id uuid;
+  v_child_effect_id uuid;
+  v_child_req jsonb;
+  v_child_args jsonb;
+  v_child_reserve bigint;
+  v_child_grant bigint;
+  v_post_tokens bigint;
+  v_wall_before bigint;
+  v_elapsed bigint;
+  -- S8 W2 spawn state: a same-key replay carries `spawn` without an insert;
+  -- the optional owner pin rides inserts.pins and is validated against the
+  -- owner fiber/episode and its single live activation pin.
+  v_spawn_replay boolean := false;
+  v_spawn_echo jsonb;
+  v_spawn_args jsonb;
+  v_spawn_digest bytea;
+  v_spawn_pin jsonb;
+  v_pin v24.pins%ROWTYPE;
+  v_owner_fiber v24.fibers%ROWTYPE;
+  v_owner_episode v24.episodes%ROWTYPE;
+  v_owner_install v24.installs%ROWTYPE;
+  v_activation v24.pins%ROWTYPE;
+  v_act_count int := 0;
+  v_child_digests jsonb;
+  v_spawned jsonb := '[]'::jsonb;
+  v_response jsonb;
   v_succ_kind text;
   v_succ_parent uuid;
   v_succ_ord int;
@@ -1433,7 +1823,8 @@ BEGIN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
   IF EXISTS (SELECT 1 FROM jsonb_object_keys(p_delta) k
-              WHERE k NOT IN ('write','domain','effect','events','successors')) THEN
+              WHERE k NOT IN ('write','domain','effect','events','successors',
+                              'spawn')) THEN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
   IF NOT (p_delta ?& ARRAY['write','domain','effect','events','successors']) THEN
@@ -1443,12 +1834,37 @@ BEGIN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
   IF NOT (p_delta->'domain' ? 'update')
-     OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_delta->'domain') k WHERE k <> 'update') THEN
+     OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_delta->'domain') k
+                 WHERE k NOT IN ('update','insert')) THEN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
   upd := p_delta->'domain'->'update';
   IF jsonb_typeof(upd) IS DISTINCT FROM 'object' THEN
     RETURN v24.error_v1('invalid_outcome');
+  END IF;
+  v_spawn := p_delta->'domain' ? 'insert';
+  -- A spawn delta always carries the `spawn` handle echo (fresh replayed=false,
+  -- same-key replay replayed=true).  Replay has no insert; the applier is the
+  -- authority and re-derives the child from the run/outcome below.
+  v_spawn_replay := (p_delta ? 'spawn') AND NOT v_spawn;
+  ins := coalesce(p_delta->'domain'->'insert','{}'::jsonb);
+  IF v_spawn THEN
+    -- W2 spawn footprint: exactly one child run, exactly one child first model
+    -- effect and at most one owner run pin; the handle echo is mandatory.  The
+    -- ordinary no-spawn path still carries only domain.update and is
+    -- byte-for-byte unchanged.
+    IF jsonb_typeof(ins) IS DISTINCT FROM 'object'
+       OR NOT (p_delta ? 'spawn')
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(ins) k
+                   WHERE k NOT IN ('runs','effects','pins'))
+       OR jsonb_typeof(coalesce(ins->'runs','[]'::jsonb)) IS DISTINCT FROM 'array'
+       OR jsonb_array_length(coalesce(ins->'runs','[]'::jsonb)) <> 1
+       OR jsonb_typeof(coalesce(ins->'effects','[]'::jsonb)) IS DISTINCT FROM 'array'
+       OR jsonb_array_length(coalesce(ins->'effects','[]'::jsonb)) <> 1
+       OR jsonb_typeof(coalesce(ins->'pins','[]'::jsonb)) IS DISTINCT FROM 'array'
+       OR jsonb_array_length(coalesce(ins->'pins','[]'::jsonb)) > 1 THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
   END IF;
   IF EXISTS (SELECT 1 FROM jsonb_object_keys(upd) k
               WHERE k NOT IN ('runs','pins')) THEN
@@ -1706,6 +2122,395 @@ BEGIN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
 
+  -- S8 W2 same-key replay.  A replay delta carries only the parent update and
+  -- the `spawn` handle; no child/quota/effect/event writes are permitted.  The
+  -- applier re-derives the existing child from the outcome args and requires
+  -- the echo to match that row, so the interpreter flag is never trusted.
+  IF v_spawn_replay THEN
+    IF e.kind <> 'model_call'
+       OR p_delta->'domain' ? 'insert'
+       OR EXISTS (SELECT 1 FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(p_delta->'events') = 'array'
+                 THEN p_delta->'events' ELSE '[]'::jsonb END) x
+            WHERE x->>'event_kind' IN ('run_spawned','run_started')) THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    v_spawn_echo := p_delta->'spawn';
+    IF jsonb_typeof(v_spawn_echo) IS DISTINCT FROM 'object'
+       OR NOT (v_spawn_echo ?& ARRAY['run_id','spawn_key','child_effect_id',
+                                     'replayed'])
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_spawn_echo) k
+                   WHERE k NOT IN ('run_id','spawn_key','child_effect_id',
+                                   'replayed'))
+       OR v_spawn_echo->'replayed' IS DISTINCT FROM 'true'::jsonb
+       OR jsonb_typeof(v_spawn_echo->'run_id') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(v_spawn_echo->'spawn_key') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(v_spawn_echo->'child_effect_id') IS DISTINCT FROM 'string' THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    SELECT value->'args' INTO v_spawn_args
+      FROM jsonb_array_elements(CASE
+             WHEN jsonb_typeof(p_outcome->'body'->'result'->'tool_calls') = 'array'
+             THEN p_outcome->'body'->'result'->'tool_calls'
+             ELSE '[]'::jsonb END) value
+     WHERE value->>'key' = 'agent.spawn';
+    IF v_spawn_args IS NULL OR jsonb_typeof(v_spawn_args) IS DISTINCT FROM 'object' THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    v_spawn_digest := sha256(convert_to(v24.canonical_json(v_spawn_args),'UTF8'));
+    SELECT * INTO v_child FROM v24.runs cr
+     WHERE cr.run_id = (v_spawn_echo->>'run_id')::uuid;
+    IF NOT FOUND
+       OR v_child.parent_run_id IS DISTINCT FROM e.run_id
+       OR v_child.scope_id IS DISTINCT FROM r.scope_id
+       OR v_child.spawn_key IS DISTINCT FROM v_spawn_echo->>'spawn_key'
+       OR v_child.spawn_request_digest IS DISTINCT FROM v_spawn_digest
+       OR v_child.run_id IS DISTINCT FROM
+          md5(e.run_id::text||':spawn:'||v_child.spawn_key)::uuid
+       OR (v_spawn_echo->>'child_effect_id')::uuid IS DISTINCT FROM
+          md5(v_child.run_id::text||':model_call:0')::uuid
+       OR NOT EXISTS (SELECT 1 FROM v24.effects ex
+                       WHERE ex.effect_id = (v_spawn_echo->>'child_effect_id')::uuid
+                         AND ex.run_id = v_child.run_id
+                         AND ex.kind = 'model_call' AND ex.ordinal = 0) THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    v_child_id := v_child.run_id;
+    v_child_effect_id := (v_spawn_echo->>'child_effect_id')::uuid;
+  END IF;
+  -- A spawn outcome without the handle echo would silently settle as an
+  -- ordinary model turn; that is not a legal delta.
+  IF NOT (v_spawn OR v_spawn_replay)
+     AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE
+           WHEN jsonb_typeof(p_outcome->'body'->'result'->'tool_calls') = 'array'
+           THEN p_outcome->'body'->'result'->'tool_calls'
+           ELSE '[]'::jsonb END) x
+           WHERE x->>'key' = 'agent.spawn') THEN
+    RETURN v24.error_v1('invalid_outcome');
+  END IF;
+
+  -- S8 W1 spawn footprint.  Exactly one child run and one child first model
+  -- effect, with deterministic identities, parent linkage, C17-compatible
+  -- request and conserved quota.  Any deviation is W0 before the first write.
+  IF v_spawn THEN
+    BEGIN
+      IF e.kind <> 'model_call' THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      IF jsonb_typeof(ins->'runs'->0) IS DISTINCT FROM 'object'
+         OR NOT (ins->'runs'->0 ?& ARRAY[
+              'run_id','scope_id','parent_run_id','spawn_key','spawn_request_digest',
+              'owner_fiber_id','owner_episode_id','status','epoch_no',
+              'registration_generation','turn_no','driving_generation',
+              'remaining_steps','remaining_tokens','remaining_tool_calls',
+              'remaining_wall_ms','revision','created_at','updated_at'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(ins->'runs'->0) k
+                     WHERE k <> ALL (ARRAY[
+              'run_id','scope_id','parent_run_id','spawn_key','spawn_request_digest',
+              'owner_fiber_id','owner_episode_id','status','epoch_no',
+              'registration_generation','turn_no','driving_generation',
+              'remaining_steps','remaining_tokens','remaining_tool_calls',
+              'remaining_wall_ms','revision','created_at','updated_at'])) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      v_child := jsonb_populate_record(NULL::v24.runs, ins->'runs'->0);
+      -- D-S8-9/D-S8-10: the parent balance this spawn is admitted against is
+      -- the same post-refund / post-elapsed value the interpreter used.
+      v_elapsed := coalesce((extract(epoch from (now()-e.created_at))*1000)::bigint,0);
+      v_wall_before := greatest(0, r.remaining_wall_ms - v_elapsed);
+      v_post_tokens := CASE WHEN r.remaining_tokens IS NULL THEN NULL
+        ELSE greatest(0, r.remaining_tokens
+          + (e.request->'reserve'->>'tokens')::bigint
+          - coalesce((p_outcome->'body'->'result'->'usage'->>'tokens')::bigint,0))
+        END;
+      IF ins->'runs'->0 IS DISTINCT FROM jsonb_build_object(
+            'run_id',v_child.run_id,'scope_id',v_child.scope_id,
+            'parent_run_id',v_child.parent_run_id,'spawn_key',v_child.spawn_key,
+            'spawn_request_digest',v_child.spawn_request_digest,
+            'owner_fiber_id',v_child.owner_fiber_id,
+            'owner_episode_id',v_child.owner_episode_id,
+            'status',v_child.status,'epoch_no',v_child.epoch_no,
+            'registration_generation',v_child.registration_generation,
+            'turn_no',v_child.turn_no,
+            'driving_generation',v_child.driving_generation,
+            'remaining_steps',v_child.remaining_steps,
+            'remaining_tokens',v_child.remaining_tokens,
+            'remaining_tool_calls',v_child.remaining_tool_calls,
+            'remaining_wall_ms',v_child.remaining_wall_ms,
+            'revision',v_child.revision,'created_at',v_child.created_at,
+            'updated_at',v_child.updated_at)
+         OR v_child.run_id IS NULL
+         OR v_child.scope_id IS DISTINCT FROM r.scope_id
+         OR v_child.parent_run_id IS DISTINCT FROM r.run_id
+         OR v_child.spawn_key IS NULL
+         OR v_child.spawn_key !~ '^[A-Za-z0-9._:-]{1,128}$'
+         OR v_child.spawn_request_digest IS NULL
+         OR (v_child.owner_fiber_id IS NULL) <> (v_child.owner_episode_id IS NULL)
+         OR v_child.status IS DISTINCT FROM 'running'
+         OR v_child.epoch_no IS DISTINCT FROM 0
+         OR v_child.registration_generation IS DISTINCT FROM 1
+         OR v_child.turn_no IS DISTINCT FROM 0
+         OR v_child.driving_generation IS DISTINCT FROM 0
+         OR v_child.revision IS DISTINCT FROM 0
+         OR v_child.created_at IS DISTINCT FROM now()
+         OR v_child.updated_at IS DISTINCT FROM now()
+         OR v_child.remaining_steps IS NULL OR v_child.remaining_steps < 1
+         OR v_child.remaining_tool_calls IS NULL OR v_child.remaining_tool_calls < 1
+         OR v_child.remaining_wall_ms IS NULL OR v_child.remaining_wall_ms < 1
+         OR (v_child.remaining_tokens IS NOT NULL AND v_child.remaining_tokens < 0)
+         OR v_child.run_id IS DISTINCT FROM
+            md5(r.run_id::text||':spawn:'||v_child.spawn_key)::uuid
+         OR v_child.remaining_steps > r.remaining_steps
+         OR v_child.remaining_tool_calls > r.remaining_tool_calls
+         OR v_child.remaining_wall_ms > v_wall_before
+         OR EXISTS (SELECT 1 FROM v24.runs cr
+                     WHERE cr.run_id = v_child.run_id
+                        OR (cr.parent_run_id = r.run_id
+                            AND cr.spawn_key = v_child.spawn_key))
+         OR (set_r->>'remaining_steps')::int IS DISTINCT FROM
+            r.remaining_steps - v_child.remaining_steps
+         OR (set_r->>'remaining_tool_calls')::int IS DISTINCT FROM
+            r.remaining_tool_calls - v_child.remaining_tool_calls
+         OR (set_r->>'remaining_wall_ms')::bigint IS DISTINCT FROM
+            greatest(0, v_wall_before - v_child.remaining_wall_ms)
+         OR v_status IS DISTINCT FROM 'running' THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+
+      -- §4.6 owner pair: the applier re-verifies the live fiber/episode and
+      -- requires exactly one live activation pin to lend the child run pin its
+      -- provider tuple.  A pair without a pin (or an ownerless run with a pin)
+      -- is structurally invalid.
+      IF v_child.owner_fiber_id IS NOT NULL THEN
+        SELECT * INTO v_owner_fiber FROM v24.fibers f
+         WHERE f.fiber_id = v_child.owner_fiber_id;
+        SELECT * INTO v_owner_episode FROM v24.episodes ep
+         WHERE ep.episode_id = v_child.owner_episode_id;
+        SELECT * INTO v_owner_install FROM v24.installs it
+         WHERE it.install_id = v_owner_fiber.install_id;
+        SELECT count(*) INTO v_act_count FROM v24.pins p
+         WHERE p.consumer_type = 'activation'
+           AND p.consumer_episode_id = v_child.owner_episode_id
+           AND p.consumer_epoch = v_owner_episode.epoch
+           AND p.released_at IS NULL;
+        IF v_owner_fiber.fiber_id IS NULL
+           OR v_owner_fiber.scope_id IS DISTINCT FROM r.scope_id
+           OR v_owner_fiber.disposed_at IS NOT NULL
+           OR NOT v_owner_fiber.want_on
+           OR v_owner_fiber.current_episode_id IS DISTINCT FROM v_child.owner_episode_id
+           OR v_owner_episode.episode_id IS NULL
+           OR v_owner_episode.fiber_id IS DISTINCT FROM v_child.owner_fiber_id
+           OR v_owner_episode.state IS DISTINCT FROM 'active'
+           OR v_owner_install.install_id IS NULL
+           OR v_owner_install.state IS DISTINCT FROM 'installed'
+           OR v_act_count <> 1
+           OR jsonb_array_length(coalesce(ins->'pins','[]'::jsonb)) <> 1 THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        SELECT * INTO v_activation FROM v24.pins p
+         WHERE p.consumer_type = 'activation'
+           AND p.consumer_episode_id = v_child.owner_episode_id
+           AND p.consumer_epoch = v_owner_episode.epoch
+           AND p.released_at IS NULL;
+      ELSIF jsonb_array_length(coalesce(ins->'pins','[]'::jsonb)) <> 0 THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+
+      IF jsonb_typeof(ins->'effects'->0) IS DISTINCT FROM 'object'
+         OR NOT (ins->'effects'->0 ?& ARRAY[
+              'effect_id','parent_effect_id','ordinal','requester_id','scope_id',
+              'run_id','fiber_id','episode_id','pin_id','epoch_no','generation',
+              'kind','status','request','request_digest','replay_policy'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(ins->'effects'->0) k
+                     WHERE k <> ALL (ARRAY[
+              'effect_id','parent_effect_id','ordinal','requester_id','scope_id',
+              'run_id','fiber_id','episode_id','pin_id','epoch_no','generation',
+              'kind','status','request','request_digest','replay_policy'])) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      v_child_effect := jsonb_populate_record(NULL::v24.effects,
+                                              ins->'effects'->0);
+      v_child_req := v_child_effect.request;
+      IF jsonb_typeof(v_child_req) = 'object'
+         AND jsonb_typeof(v_child_req->'reserve') = 'object'
+         AND jsonb_typeof(v_child_req->'reserve'->'tokens') = 'number'
+         AND (v_child_req->'reserve'->>'tokens') ~ '^[0-9]+$' THEN
+        v_child_reserve := (v_child_req->'reserve'->>'tokens')::bigint;
+      ELSE
+        v_child_reserve := NULL;
+      END IF;
+      IF v_child.remaining_tokens IS NULL OR v_child_reserve IS NULL THEN
+        v_child_grant := NULL;
+      ELSE
+        v_child_grant := v_child.remaining_tokens + v_child_reserve;
+      END IF;
+      -- The optional run pin must be exactly the §4.6 row: consumer run, the
+      -- owner episode epoch, key='run', provider tuple/digest from the single
+      -- live activation pin, created_by the settling parent effect.
+      IF jsonb_array_length(coalesce(ins->'pins','[]'::jsonb)) = 1 THEN
+        IF jsonb_typeof(ins->'pins'->0) IS DISTINCT FROM 'object'
+           OR NOT (ins->'pins'->0 ?& ARRAY[
+                'pin_id','consumer_type','consumer_run_id','consumer_epoch',
+                'key','slot_id','provider_fiber_id','provider_episode_id',
+                'descriptor_digest','created_by_effect'])
+           OR EXISTS (SELECT 1 FROM jsonb_object_keys(ins->'pins'->0) k
+                       WHERE k NOT IN (
+                'pin_id','consumer_type','consumer_run_id','consumer_epoch',
+                'key','slot_id','provider_fiber_id','provider_episode_id',
+                'descriptor_digest','created_by_effect')) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+        v_pin := jsonb_populate_record(NULL::v24.pins, ins->'pins'->0);
+        IF v_pin.pin_id IS NULL
+           OR v_pin.consumer_type IS DISTINCT FROM 'run'
+           OR v_pin.consumer_episode_id IS NOT NULL
+           OR v_pin.consumer_run_id IS DISTINCT FROM v_child.run_id
+           OR v_pin.consumer_epoch IS DISTINCT FROM v_owner_episode.epoch
+           OR v_pin.key IS DISTINCT FROM 'run'
+           OR v_pin.released_at IS NOT NULL
+           OR v_pin.released_by_effect IS NOT NULL
+           OR ins->'pins'->0 IS DISTINCT FROM jsonb_build_object(
+                'pin_id',v_pin.pin_id,'consumer_type','run',
+                'consumer_run_id',v_child.run_id,
+                'consumer_epoch',v_owner_episode.epoch,'key','run',
+                'slot_id',v_activation.slot_id,
+                'provider_fiber_id',v_activation.provider_fiber_id,
+                'provider_episode_id',v_activation.provider_episode_id,
+                'descriptor_digest',v_activation.descriptor_digest,
+                'created_by_effect',p_effect_id) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      END IF;
+      -- D-S8-11: the request toolset digest must equal what settlement
+      -- recomputes from these pins; model_digests cannot see uninserted rows.
+      v_child_digests := jsonb_build_object(
+        'policy',(v24.model_digests(NULL))->>'policy',
+        'schema',(v24.model_digests(NULL))->>'schema',
+        'toolset',encode(sha256(convert_to((
+          SELECT coalesce(jsonb_agg(jsonb_build_object(
+                   'key',pn->>'key',
+                   'descriptor_digest',
+                   encode((pn->>'descriptor_digest')::bytea,'hex'))
+                 ORDER BY pn->>'key'),'[]'::jsonb)::text
+            FROM jsonb_array_elements(coalesce(ins->'pins','[]'::jsonb)) pn),
+          'UTF8')),'hex'));
+      IF jsonb_typeof(v_child_req) IS DISTINCT FROM 'object'
+         OR NOT (v_child_req ?& ARRAY[
+              'v','cause','run_id','epoch_no','generation','input','reserve',
+              'digests','spawn_key','parent_run_id'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_child_req) k
+                     WHERE k <> ALL (ARRAY[
+              'v','cause','run_id','epoch_no','generation','input','reserve',
+              'digests','spawn_key','parent_run_id']))
+         OR ins->'effects'->0 IS DISTINCT FROM jsonb_build_object(
+            'effect_id',v_child_effect.effect_id,
+            'parent_effect_id',v_child_effect.parent_effect_id,
+            'ordinal',v_child_effect.ordinal,
+            'requester_id',v_child_effect.requester_id,
+            'scope_id',v_child_effect.scope_id,
+            'run_id',v_child_effect.run_id,
+            'fiber_id',v_child_effect.fiber_id,
+            'episode_id',v_child_effect.episode_id,
+            'pin_id',v_child_effect.pin_id,
+            'epoch_no',v_child_effect.epoch_no,
+            'generation',v_child_effect.generation,
+            'kind',v_child_effect.kind,'status',v_child_effect.status,
+            'request',v_child_req,
+            'request_digest',v_child_effect.request_digest,
+            'replay_policy',v_child_effect.replay_policy)
+         OR v_child_effect.effect_id IS NULL
+         OR v_child_effect.effect_id IS DISTINCT FROM
+            md5(v_child.run_id::text||':model_call:0')::uuid
+         OR v_child_effect.parent_effect_id IS DISTINCT FROM p_effect_id
+         OR v_child_effect.ordinal IS DISTINCT FROM 0
+         OR v_child_effect.requester_id IS DISTINCT FROM p_principal
+         OR v_child_effect.scope_id IS DISTINCT FROM v_child.scope_id
+         OR v_child_effect.run_id IS DISTINCT FROM v_child.run_id
+         OR v_child_effect.fiber_id IS DISTINCT FROM v_child.owner_fiber_id
+         OR v_child_effect.episode_id IS DISTINCT FROM v_child.owner_episode_id
+         OR v_child_effect.pin_id IS NOT NULL
+         OR v_child_effect.epoch_no IS DISTINCT FROM 0
+         OR v_child_effect.generation IS DISTINCT FROM 0
+         OR v_child_effect.kind IS DISTINCT FROM 'model_call'
+         OR v_child_effect.status IS DISTINCT FROM 'ready'
+         OR v_child_effect.replay_policy IS DISTINCT FROM 'no_replay'
+         OR v_child_effect.request_digest IS DISTINCT FROM
+            sha256(convert_to(v24.canonical_json(v_child_req),'UTF8'))
+         OR v_child_req->>'v' IS DISTINCT FROM '1'
+         OR v_child_req->>'cause' IS DISTINCT FROM 'spawn'
+         OR v_child_req->>'run_id' IS DISTINCT FROM v_child.run_id::text
+         OR v_child_req->>'epoch_no' IS DISTINCT FROM '0'
+         OR v_child_req->>'generation' IS DISTINCT FROM '0'
+         OR jsonb_typeof(v_child_req->'input') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(v_child_req->'reserve') IS DISTINCT FROM 'object'
+         OR (SELECT count(*) FROM jsonb_object_keys(v_child_req->'reserve')) <> 1
+         OR NOT (v_child_req->'reserve' ? 'tokens')
+         OR jsonb_typeof(v_child_req->'reserve'->'tokens') IS DISTINCT FROM 'number'
+         OR (v_child_req->'reserve'->>'tokens') !~ '^[0-9]+$'
+         OR v_child_reserve IS NULL
+         OR (v_child.remaining_tokens IS NULL AND v_child_reserve <> 0)
+         OR (v_child.remaining_tokens IS NOT NULL AND (
+              v_child_grant < 1
+              OR v_child_reserve IS DISTINCT FROM v24.model_reserve(v_child_grant)))
+         OR (v_post_tokens IS NULL AND set_r->'remaining_tokens' <> 'null'::jsonb)
+         OR (v_post_tokens IS NOT NULL AND (
+              v_child_grant IS NULL OR v_child_grant > v_post_tokens
+              OR set_r->'remaining_tokens' = 'null'::jsonb
+              OR (set_r->>'remaining_tokens')::bigint IS DISTINCT FROM
+                 v_post_tokens - v_child_grant))
+         OR v_child_req->'digests' IS DISTINCT FROM v_child_digests
+         OR v_child_req->>'spawn_key' IS DISTINCT FROM v_child.spawn_key
+         OR v_child_req->>'parent_run_id' IS DISTINCT FROM r.run_id::text
+         OR EXISTS (SELECT 1 FROM v24.effects ex
+                     WHERE ex.effect_id = v_child_effect.effect_id
+                        OR (ex.parent_effect_id = p_effect_id
+                            AND ex.ordinal = v_child_effect.ordinal)) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      -- The spawn digest covers exactly the args canonical bytes.  Rebuild the
+      -- args from the child row + request input and require the stored digest.
+      v_child_args := jsonb_build_object(
+        'v',1,'spawn_key',v_child.spawn_key,'input',v_child_req->'input',
+        'scope_id',v_child.scope_id,
+        'budget',jsonb_build_object(
+          'steps',v_child.remaining_steps,
+          'tokens',v_child_grant,
+          'tool_calls',v_child.remaining_tool_calls,
+          'wall_ms',v_child.remaining_wall_ms));
+      -- The spawn digest covers the optional owner pair as well; omitting it
+      -- would make every owned child fail the reconstructed-args check.
+      IF v_child.owner_fiber_id IS NOT NULL THEN
+        v_child_args := v_child_args || jsonb_build_object(
+          'owner_fiber_id',v_child.owner_fiber_id,
+          'owner_episode_id',v_child.owner_episode_id);
+      END IF;
+      IF v_child.spawn_request_digest IS DISTINCT FROM
+         sha256(convert_to(v24.canonical_json(v_child_args),'UTF8')) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      v_child_id := v_child.run_id;
+      v_child_effect_id := v_child_effect.effect_id;
+      -- The fresh handle echo must describe exactly the validated rows; a
+      -- replay flag here is a lie (a replay never carries an insert).
+      IF jsonb_typeof(p_delta->'spawn') IS DISTINCT FROM 'object'
+         OR NOT (p_delta->'spawn' ?& ARRAY[
+              'run_id','spawn_key','child_effect_id','replayed'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_delta->'spawn') k
+                     WHERE k NOT IN ('run_id','spawn_key','child_effect_id',
+                                     'replayed'))
+         OR p_delta->'spawn'->'replayed' IS DISTINCT FROM 'false'::jsonb
+         OR p_delta->'spawn'->>'run_id' IS DISTINCT FROM v_child_id::text
+         OR p_delta->'spawn'->>'spawn_key' IS DISTINCT FROM v_child.spawn_key
+         OR p_delta->'spawn'->>'child_effect_id' IS DISTINCT FROM
+            v_child_effect_id::text THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
+        OR invalid_parameter_value OR datetime_field_overflow THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END;
+  END IF;
+
   -- Events: run-only, closed kind set, unique kind, object payload.
   v_events := coalesce(p_delta->'events','[]'::jsonb);
   IF jsonb_typeof(v_events) IS DISTINCT FROM 'array'
@@ -1727,13 +2532,54 @@ BEGIN
                                      'payload','payload_digest'))
          OR ev->>'entity_type' IS DISTINCT FROM 'run'
          OR ev->>'entity_id' IS NULL
-         OR (ev->>'entity_id')::uuid IS DISTINCT FROM e.run_id
          OR ev->>'event_kind' IS NULL
-         OR ev->>'event_kind' <> ALL (v_event_kinds)
          OR jsonb_typeof(ev->'payload') IS DISTINCT FROM 'object' THEN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
+      IF v_spawn THEN
+        -- Only the settled parent and the newly inserted child may own events;
+        -- run_spawned/run_started join the closed set only on this path.
+        IF (ev->>'entity_id')::uuid NOT IN (e.run_id,v_child_id)
+           OR ev->>'event_kind' <> ALL (
+                v_event_kinds || ARRAY['run_spawned','run_started']) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      ELSE
+        IF (ev->>'entity_id')::uuid IS DISTINCT FROM e.run_id
+           OR ev->>'event_kind' <> ALL (v_event_kinds) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      END IF;
     END LOOP;
+    IF v_spawn THEN
+      -- Exactly the two spawn events plus the ordinary settlement event, with
+      -- frozen payloads; arbitrary cross-run events remain rejected.
+      IF jsonb_array_length(v_events) <> 3
+         OR NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(v_events) x
+               WHERE x->>'event_kind' = 'run_spawned'
+                 AND (x->>'entity_id')::uuid = e.run_id
+                 AND x->'payload' IS NOT DISTINCT FROM jsonb_build_object(
+                       'child_run_id',v_child_id,
+                       'spawn_key',v_child.spawn_key,
+                       'child_effect_id',v_child_effect_id,
+                       'spawn_request_digest',
+                       encode(v_child.spawn_request_digest,'hex')))
+         OR NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(v_events) x
+               WHERE x->>'event_kind' = 'run_started'
+                 AND (x->>'entity_id')::uuid = v_child_id
+                 AND x->'payload' IS NOT DISTINCT FROM jsonb_build_object(
+                       'run_id',v_child_id,
+                       'parent_run_id',e.run_id,
+                       'spawn_key',v_child.spawn_key))
+         OR NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(v_events) x
+               WHERE x->>'event_kind' = 'model_call_settled'
+                 AND (x->>'entity_id')::uuid = e.run_id) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    END IF;
   EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value THEN
     RETURN v24.error_v1('invalid_outcome');
   END;
@@ -1743,6 +2589,11 @@ BEGIN
   v_succs := coalesce(p_delta->'successors','[]'::jsonb);
   IF jsonb_typeof(v_succs) IS DISTINCT FROM 'array'
      OR jsonb_array_length(v_succs) > 16 THEN
+    RETURN v24.error_v1('invalid_outcome');
+  END IF;
+  -- A spawn settlement publishes no successors: the child first model rides
+  -- inserts.effects, never successors[].
+  IF v_spawn AND jsonb_array_length(v_succs) > 0 THEN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
   -- Cancel-late settlements record facts/cost only: no successor may be
@@ -2021,7 +2872,34 @@ BEGIN
     RETURN v24.error_v1('invalid_outcome');
   END;
 
-  -- Frozen DML order: run -> effect -> events -> successors -> pins.
+  -- Frozen DML order: child run -> child run pin -> child first model ->
+  -- parent run -> parent effect -> events -> successors -> pin releases.  The
+  -- spawned child inserts precede the parent update because effects.run_id is a
+  -- non-deferred FK.
+  IF v_spawn THEN
+    INSERT INTO v24.runs SELECT * FROM jsonb_populate_record(
+      NULL::v24.runs,ins->'runs'->0);
+    -- Optional owner run pin after the child run (its consumer FK) and before
+    -- the child effect; the child first model leaves effects.pin_id NULL, so
+    -- the run pin is an independent pins row.
+    IF jsonb_array_length(coalesce(ins->'pins','[]'::jsonb)) = 1 THEN
+      INSERT INTO v24.pins(pin_id,consumer_type,consumer_episode_id,
+        consumer_run_id,consumer_epoch,key,slot_id,provider_fiber_id,
+        provider_episode_id,descriptor_digest,created_by_effect)
+      SELECT p.pin_id,p.consumer_type,p.consumer_episode_id,p.consumer_run_id,
+        p.consumer_epoch,p.key,p.slot_id,p.provider_fiber_id,
+        p.provider_episode_id,p.descriptor_digest,p.created_by_effect
+      FROM jsonb_populate_record(NULL::v24.pins,ins->'pins'->0) AS p;
+    END IF;
+    INSERT INTO v24.effects(effect_id,parent_effect_id,ordinal,requester_id,scope_id,
+      run_id,fiber_id,episode_id,pin_id,epoch_no,generation,kind,status,request,
+      request_digest,replay_policy)
+    SELECT effect_id,parent_effect_id,ordinal,requester_id,scope_id,run_id,
+      fiber_id,episode_id,pin_id,epoch_no,generation,kind,status,request,
+      request_digest,replay_policy
+    FROM jsonb_populate_record(NULL::v24.effects,ins->'effects'->0);
+  END IF;
+
   UPDATE v24.runs SET
     status = v_status,
     turn_no = v_turn,
@@ -2063,7 +2941,7 @@ BEGIN
      WHERE x.entity_type = ev->>'entity_type'
        AND x.entity_id = (ev->>'entity_id')::uuid;
     INSERT INTO v24.events(effect_id,seq,entity_type,entity_id,event_kind,payload,payload_digest)
-    VALUES (p_effect_id,v_seq,'run',e.run_id,ev->>'event_kind',
+    VALUES (p_effect_id,v_seq,'run',(ev->>'entity_id')::uuid,ev->>'event_kind',
       coalesce(ev->'payload','{}'::jsonb),
       coalesce((ev->>'payload_digest')::bytea,
                sha256(convert_to(v24.canonical_json(coalesce(ev->'payload','{}'::jsonb)),'UTF8'))));
@@ -2096,7 +2974,16 @@ BEGIN
     END IF;
   END LOOP;
 
-  RETURN jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
-    'emitted',v_emitted,'revision',v_revision,'claim',NULL);
+  v_response := jsonb_build_object('v',1,'disposition','committed',
+    'effect_id',p_effect_id,'emitted',v_emitted,'revision',v_revision,'claim',NULL);
+  IF v_spawn OR v_spawn_replay THEN
+    -- Optional member outside the frozen six-key envelope, only for a spawn
+    -- settlement.  A same-key replay reuses the stored child handle.
+    v_spawned := jsonb_build_array(jsonb_build_object(
+      'run_id',v_child_id,'spawn_key',v_child.spawn_key,
+      'child_effect_id',v_child_effect_id,'replayed',v_spawn_replay));
+    v_response := v_response || jsonb_build_object('spawned',v_spawned);
+  END IF;
+  RETURN v_response;
 END;
 $$;

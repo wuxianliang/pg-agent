@@ -26,7 +26,8 @@ BEGIN
     'already_terminal','owner_closing','install_not_ready','interaction_mismatch',
     'provider_unavailable','scope_closed','dependency_unresolved','provide_conflict',
     'install_identity_conflict','budget_exceeded','invalid_outcome','stale_claim',
-    'cleanup_cycle','retry_with_closure','blocked_unknown']) THEN
+    'cleanup_cycle','retry_with_closure','blocked_unknown',
+    'spawn_key_conflict']) THEN
     RAISE EXCEPTION 'invalid_args: error code is outside the v1 closed set'
       USING ERRCODE = '22023';
   END IF;
@@ -591,7 +592,7 @@ BEGIN
         RETURN v24.error_v1('invalid_args');
       END IF;
       v_cause := v_req->>'cause';
-      IF v_cause IS NULL OR v_cause NOT IN ('start','steer','respond','continuation') THEN
+      IF v_cause IS NULL OR v_cause NOT IN ('start','steer','respond','continuation','spawn') THEN
         RETURN v24.error_v1('invalid_args');
       END IF;
       v_req_keys := ARRAY['v','cause','run_id','epoch_no','generation','reserve','digests'] ||
@@ -600,6 +601,7 @@ BEGIN
           WHEN 'steer' THEN ARRAY['input','instruction']
           WHEN 'respond' THEN ARRAY['response','origin_effect_id']
           WHEN 'continuation' THEN ARRAY['input','batch_digest','state']
+          WHEN 'spawn' THEN ARRAY['input','spawn_key','parent_run_id']
         END;
       IF NOT (v_req ?& v_req_keys)
          OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_req) k
@@ -642,7 +644,7 @@ BEGIN
            OR (v_req->'digests'->>'toolset') !~ '^[0-9a-f]{64}$' THEN
           RETURN v24.error_v1('invalid_args');
         END IF;
-        IF v_cause IN ('start','steer','continuation')
+        IF v_cause IN ('start','steer','continuation','spawn')
            AND jsonb_typeof(v_req->'input') IS DISTINCT FROM 'object' THEN
           RETURN v24.error_v1('invalid_args');
         END IF;
@@ -675,10 +677,32 @@ BEGIN
       END;
       -- Cause must agree with the parent effect kind and the deterministic id.
       SELECT * INTO v_parent FROM v24.effects p WHERE p.effect_id=v_effect.parent_effect_id;
-      IF NOT FOUND OR v_parent.run_id IS DISTINCT FROM v_effect.run_id THEN
+      IF NOT FOUND
+         OR (v_cause <> 'spawn' AND v_parent.run_id IS DISTINCT FROM v_effect.run_id) THEN
         RETURN v24.error_v1('invalid_args');
       END IF;
-      IF v_cause = 'continuation' THEN
+      IF v_cause = 'spawn' THEN
+        -- S8 W1: the child first model's parent is the settling parent-run
+        -- model effect.  A spawn-shaped request can never be rewritten onto a
+        -- successor of the child itself.
+        IF v_parent.kind <> 'model_call'
+           OR jsonb_typeof(v_req->'spawn_key') IS DISTINCT FROM 'string'
+           OR (v_req->>'spawn_key') !~ '^[A-Za-z0-9._:-]{1,128}$'
+           OR jsonb_typeof(v_req->'parent_run_id') IS DISTINCT FROM 'string'
+           OR (v_req->>'parent_run_id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           OR v_parent.run_id IS DISTINCT FROM (v_req->>'parent_run_id')::uuid
+           OR v_effect.effect_id <>
+              md5(v_effect.run_id::text||':model_call:0')::uuid
+           OR NOT EXISTS (
+                SELECT 1 FROM v24.runs cr
+                 WHERE cr.run_id = v_effect.run_id
+                   AND cr.parent_run_id = v_parent.run_id
+                   AND cr.scope_id = v_effect.scope_id
+                   AND cr.spawn_key = v_req->>'spawn_key'
+                   AND cr.status = 'running') THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+      ELSIF v_cause = 'continuation' THEN
         IF v_parent.kind = 'model_call' THEN
           IF v_effect.effect_id <>
              md5(v_effect.parent_effect_id::text||':continuation')::uuid THEN
