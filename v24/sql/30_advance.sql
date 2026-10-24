@@ -185,7 +185,8 @@ BEGIN
        OR jsonb_typeof(v_body->'kind') IS DISTINCT FROM 'string'
        OR (v_body->>'kind') <> ALL (ARRAY[
          'command_start','command_cancel','command_steer','command_respond',
-         'command_install','command_fiber_control','command_dispose','command_scope_control'])
+         'command_install','command_fiber_control','command_dispose','command_scope_control',
+         'command_recover'])
        OR jsonb_typeof(v_body->'request_key') IS DISTINCT FROM 'string'
        OR length(v_body->>'request_key') NOT BETWEEN 1 AND 512
        OR jsonb_typeof(v_body->'canonical_bytes') IS DISTINCT FROM 'string'
@@ -499,6 +500,25 @@ BEGIN
         ('fibers','owner_fiber_id'), ('episodes','episode_id'),
         ('slots','slot_id'), ('pins','pin_id')) r(entity_type,key)
       WHERE v_class='command' AND c.entity_type='effects' AND c.entity_id=p_effect_id
+      UNION ALL
+      -- S6: the frozen recovery hint is a lock seed, never a lock instruction
+      -- supplied by the caller as SQL.  Only effect ids; the rest of the
+      -- closure expands from the effect rows.
+      SELECT 'effects'::text, cand.value::uuid
+        FROM jsonb_array_elements_text(
+               coalesce(v_body->'candidates','[]'::jsonb)) AS cand(value)
+       WHERE v_class = 'command'
+         AND v_body->>'kind' = 'command_recover'
+         AND c.entity_type = 'effects' AND c.entity_id = p_effect_id
+      UNION ALL
+      -- S6 W3: the unknown wall releases the candidate run's live pins in the
+      -- same delta.  Seed them from the candidate effect row, never from caller
+      -- input; the pin seed expands provider slot/episode closure normally.
+      SELECT 'pins', p.pin_id
+        FROM v24.effects e
+        JOIN v24.pins p ON p.consumer_run_id = e.run_id
+       WHERE v_class='command' AND v_body->>'kind'='command_recover'
+         AND c.entity_type='effects' AND e.effect_id=c.entity_id
     ) refs WHERE refs.entity_id IS NOT NULL
   ), grouped AS (
     SELECT entity_type, jsonb_agg(entity_id ORDER BY entity_id) AS ids

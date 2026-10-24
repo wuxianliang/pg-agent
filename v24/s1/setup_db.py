@@ -758,6 +758,7 @@ def _self_check() -> None:
         "46_cleanup.sql",
         "47_verbs.sql",
         "48_loop.sql",
+        "49_recovery.sql",
         "50_permissions.sql",
     )
     assert CANONICAL_ORDER == expected_canonical, CANONICAL_ORDER

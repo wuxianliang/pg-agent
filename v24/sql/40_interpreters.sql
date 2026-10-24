@@ -60,6 +60,9 @@ BEGIN
   IF p_outcome->'body'->>'kind' = 'command_dispose' THEN
     RETURN v24.interpret_dispose(p_effect_id, p_principal, p_outcome, p_closure);
   END IF;
+  IF p_outcome->'body'->>'kind' = 'command_recover' THEN
+    RETURN v24.interpret_recover(p_effect_id, p_principal, p_outcome, p_closure);
+  END IF;
   IF p_outcome->'body'->>'kind' <> 'command_scope_control' THEN
     RAISE EXCEPTION 'v24.interpret_command: no command handler registered (W5)'
       USING ERRCODE = '0A000';
@@ -545,6 +548,16 @@ BEGIN
                   WHERE x NOT IN ('installs','fibers','episodes','slots','pins')) THEN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
+  ELSIF kind = 'command_recover' THEN
+    -- S6 W2: recovery inserts no domain rows, updates only the four kinds of
+    -- already-locked closure rows and publishes no successors or settle list.
+    IF inserts <> '{}'::jsonb
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(updates) x
+                   WHERE x NOT IN ('effects','runs','pins','installs'))
+       OR coalesce(p_delta->'successors','[]'::jsonb) <> '[]'::jsonb
+       OR p_delta ? 'settle' THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
   ELSIF kind = 'command_start' THEN
     IF EXISTS (SELECT 1 FROM jsonb_object_keys(inserts) x WHERE x NOT IN ('runs','pins'))
        OR updates <> '{}'::jsonb OR p_delta ? 'settle' THEN
@@ -581,7 +594,9 @@ BEGIN
   IF (SELECT coalesce(sum(jsonb_array_length(value)),0) FROM jsonb_each(inserts)) >
        (CASE WHEN kind='command_start' THEN 17 ELSE 16 END)
      OR (SELECT coalesce(sum(jsonb_array_length(value)),0) FROM jsonb_each(updates)) >
-       (CASE WHEN kind IN ('command_cancel','command_steer') THEN 512 ELSE 16 END)
+       (CASE WHEN kind IN ('command_cancel','command_steer') THEN 512
+             WHEN kind = 'command_recover' THEN 64
+             ELSE 16 END)
      OR jsonb_array_length(coalesce(p_delta->'events','[]'::jsonb)) > 64
      OR jsonb_array_length(coalesce(p_delta->'successors','[]'::jsonb)) > 16 THEN
     RETURN v24.error_v1('invalid_outcome');
@@ -2189,6 +2204,146 @@ BEGIN
         disposed_at = CASE WHEN (r->'set') ? 'disposed_at'
               THEN (r->'set'->>'disposed_at')::timestamptz ELSE it.disposed_at END
       WHERE it.install_id = (r->'key'->>'install_id')::uuid;
+    END LOOP;
+  END IF;
+
+  IF kind = 'command_recover' THEN
+    -- S6 W2: every updated row was locked as part of advance's closure.  The
+    -- key is re-checked against p_closure, the column set is whitelisted, and
+    -- the effects guard is defensive: under G the claim cannot have changed,
+    -- so a miss is a serialization failure (40001), never a silent skip.
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'effects','[]'::jsonb)) LOOP
+      IF jsonb_typeof(r) IS DISTINCT FROM 'object'
+         OR NOT (r ?& ARRAY['key','set'])
+         OR jsonb_typeof(r->'key') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(r->'set') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(r->'key'->'effect_id') IS DISTINCT FROM 'string'
+         OR NOT coalesce((p_closure->'effects') ? (r->'key'->>'effect_id'), false)
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(r->'set') k
+                     WHERE k NOT IN ('status','claim_owner','lease_until',
+                                     'outcome','settled_at')) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      UPDATE v24.effects AS ef SET
+        status = CASE WHEN (r->'set') ? 'status'
+                      THEN (r->'set')->>'status' ELSE ef.status END,
+        claim_owner = CASE WHEN (r->'set') ? 'claim_owner'
+                      THEN (r->'set')->>'claim_owner' ELSE ef.claim_owner END,
+        lease_until = CASE WHEN (r->'set') ? 'lease_until'
+                      THEN ((r->'set')->>'lease_until')::timestamptz
+                      ELSE ef.lease_until END,
+        outcome = CASE WHEN (r->'set') ? 'outcome'
+                      THEN nullif((r->'set')->'outcome','null'::jsonb)
+                      ELSE ef.outcome END,
+        settled_at = CASE WHEN (r->'set') ? 'settled_at'
+                      THEN ((r->'set')->>'settled_at')::timestamptz
+                      ELSE ef.settled_at END
+      WHERE ef.effect_id = (r->'key'->>'effect_id')::uuid
+        AND ef.status = 'claimed' AND ef.lease_until <= now();
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'v24 recover: effect claim changed' USING ERRCODE='40001';
+      END IF;
+    END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'runs','[]'::jsonb)) LOOP
+      IF jsonb_typeof(r) IS DISTINCT FROM 'object'
+         OR NOT (r ?& ARRAY['key','set'])
+         OR jsonb_typeof(r->'key') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(r->'set') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(r->'key'->'run_id') IS DISTINCT FROM 'string'
+         OR NOT coalesce((p_closure->'runs') ? (r->'key'->>'run_id'), false)
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(r->'set') k
+                     WHERE k NOT IN ('status','turn_no','remaining_steps',
+                       'remaining_tokens','remaining_tool_calls','remaining_wall_ms',
+                       'interaction','pending_steer','close_intent','result',
+                       'revision','ended_at','updated_at')) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      UPDATE v24.runs AS rr SET
+        status = CASE WHEN (r->'set') ? 'status'
+                      THEN (r->'set')->>'status' ELSE rr.status END,
+        turn_no = CASE WHEN (r->'set') ? 'turn_no'
+                      THEN ((r->'set')->>'turn_no')::bigint ELSE rr.turn_no END,
+        remaining_steps = CASE WHEN (r->'set') ? 'remaining_steps'
+                      THEN ((r->'set')->>'remaining_steps')::integer
+                      ELSE rr.remaining_steps END,
+        remaining_tokens = CASE WHEN (r->'set') ? 'remaining_tokens'
+                      THEN ((r->'set')->>'remaining_tokens')::bigint
+                      ELSE rr.remaining_tokens END,
+        remaining_tool_calls = CASE WHEN (r->'set') ? 'remaining_tool_calls'
+                      THEN ((r->'set')->>'remaining_tool_calls')::integer
+                      ELSE rr.remaining_tool_calls END,
+        remaining_wall_ms = CASE WHEN (r->'set') ? 'remaining_wall_ms'
+                      THEN ((r->'set')->>'remaining_wall_ms')::bigint
+                      ELSE rr.remaining_wall_ms END,
+        interaction = CASE WHEN (r->'set') ? 'interaction'
+                      THEN nullif((r->'set')->'interaction','null'::jsonb)
+                      ELSE rr.interaction END,
+        pending_steer = CASE WHEN (r->'set') ? 'pending_steer'
+                      THEN nullif((r->'set')->'pending_steer','null'::jsonb)
+                      ELSE rr.pending_steer END,
+        close_intent = CASE WHEN (r->'set') ? 'close_intent'
+                      THEN nullif((r->'set')->'close_intent','null'::jsonb)
+                      ELSE rr.close_intent END,
+        result = CASE WHEN (r->'set') ? 'result'
+                      THEN nullif((r->'set')->'result','null'::jsonb)
+                      ELSE rr.result END,
+        revision = CASE WHEN (r->'set') ? 'revision'
+                      THEN ((r->'set')->>'revision')::bigint ELSE rr.revision END,
+        ended_at = CASE WHEN (r->'set') ? 'ended_at'
+                      THEN ((r->'set')->>'ended_at')::timestamptz
+                      ELSE rr.ended_at END,
+        updated_at = CASE WHEN (r->'set') ? 'updated_at'
+                      THEN ((r->'set')->>'updated_at')::timestamptz
+                      ELSE rr.updated_at END
+      WHERE rr.run_id = (r->'key'->>'run_id')::uuid;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'v24 recover: run changed' USING ERRCODE='40001';
+      END IF;
+    END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'pins','[]'::jsonb)) LOOP
+      IF jsonb_typeof(r) IS DISTINCT FROM 'object'
+         OR NOT (r ?& ARRAY['key','set'])
+         OR jsonb_typeof(r->'key') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(r->'set') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(r->'key'->'pin_id') IS DISTINCT FROM 'string'
+         OR NOT coalesce((p_closure->'pins') ? (r->'key'->>'pin_id'), false)
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(r->'set') k
+                     WHERE k NOT IN ('released_at','released_by_effect')) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      UPDATE v24.pins AS pn SET
+        released_at = CASE WHEN (r->'set') ? 'released_at'
+                      THEN ((r->'set')->>'released_at')::timestamptz
+                      ELSE pn.released_at END,
+        released_by_effect = CASE WHEN (r->'set') ? 'released_by_effect'
+                      THEN ((r->'set')->>'released_by_effect')::uuid
+                      ELSE pn.released_by_effect END
+      WHERE pn.pin_id = (r->'key'->>'pin_id')::uuid;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'v24 recover: pin changed' USING ERRCODE='40001';
+      END IF;
+    END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'installs','[]'::jsonb)) LOOP
+      IF jsonb_typeof(r) IS DISTINCT FROM 'object'
+         OR NOT (r ?& ARRAY['key','set'])
+         OR jsonb_typeof(r->'key') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(r->'set') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(r->'key'->'install_id') IS DISTINCT FROM 'string'
+         OR NOT coalesce((p_closure->'installs') ? (r->'key'->>'install_id'), false)
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(r->'set') k
+                     WHERE k NOT IN ('state','disposed_at')) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      UPDATE v24.installs AS it SET
+        state = CASE WHEN (r->'set') ? 'state'
+                     THEN (r->'set')->>'state' ELSE it.state END,
+        disposed_at = CASE WHEN (r->'set') ? 'disposed_at'
+                     THEN ((r->'set')->>'disposed_at')::timestamptz
+                     ELSE it.disposed_at END
+      WHERE it.install_id = (r->'key'->>'install_id')::uuid;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'v24 recover: install changed' USING ERRCODE='40001';
+      END IF;
     END LOOP;
   END IF;
 

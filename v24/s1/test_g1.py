@@ -117,7 +117,8 @@ def catalog(owner):
                          FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
                         WHERE n.nspname='v24'""")
         functions = {r[0]: r[1:] for r in cur.fetchall()}
-    read_definers = {"resolve", "run_owner", "run_projection", "poll", "wait_check"}
+    read_definers = {"resolve", "run_owner", "run_projection", "poll", "wait_check",
+                     "recoverable_effects"}
     assert {n for n, r in functions.items() if r[0]} == {"advance"} | read_definers
     assert functions["advance"][2] == ["search_path=pg_catalog, v24"]
     for name in read_definers:
@@ -141,7 +142,8 @@ def catalog(owner):
                 assert not functions[name][0]  # INVOKER; no application table privileges
         if "pg_advisory_xact_lock" in definition:
             assert name == "advance", name
-    for wrapper in ("scope_control", "install", "start", "cancel", "steer", "respond"):
+    for wrapper in ("scope_control", "install", "start", "cancel", "steer", "respond",
+                    "command_recover"):
         assert not functions[wrapper][0], wrapper
         body = functions[wrapper][3]
         assert "v24.advance(" in body, wrapper
@@ -797,7 +799,8 @@ def permissions(db, owner, connections):
             FROM pg_proc WHERE pronamespace='v24'::regnamespace
               AND has_function_privilege(session_user,oid,'EXECUTE')""")
         expected = pure | {"advance", "scope_control", "resolve", "poll", "wait_check",
-                           "fiber_control", "dispose", "start", "cancel", "steer", "respond"}
+                           "fiber_control", "dispose", "start", "cancel", "steer", "respond",
+                           "recoverable_effects", "command_recover"}
         if alias != "admin":
             expected.add("install")
         assert set(exposed) == expected, (alias, exposed)

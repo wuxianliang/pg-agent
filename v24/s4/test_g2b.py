@@ -50,7 +50,7 @@ WAKE_KEYS = frozenset("""ready reason""".split())
 
 COMMAND_KINDS = ("command_start", "command_cancel", "command_steer",
                  "command_respond", "command_install", "command_fiber_control",
-                 "command_dispose", "command_scope_control")
+                 "command_dispose", "command_scope_control", "command_recover")
 ERROR_CODES = """invalid_args unauthorized not_found_or_denied request_conflict
     effect_id_conflict receipt_conflict stale_generation registration_stale
     already_terminal owner_closing install_not_ready interaction_mismatch
@@ -378,7 +378,7 @@ def stage_guard(db, owner):
                           "inspect_resource"}, kinds
     print(f"[G2b-C] claimable_kinds() exactly {kinds}")
     non_members = COMMAND_KINDS + ("fiber_reconcile",)
-    assert len(COMMAND_KINDS) == 8, COMMAND_KINDS
+    assert len(COMMAND_KINDS) == 9, COMMAND_KINDS
     for kind in non_members:
         effect_id = uuid4()
         extra = {"fiber_id": live["fiber"]} if kind == "fiber_reconcile" else {}

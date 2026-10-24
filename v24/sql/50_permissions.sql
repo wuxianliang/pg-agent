@@ -33,6 +33,12 @@ GRANT EXECUTE ON FUNCTION v24.poll(uuid, bigint)
   TO v24_admin, v24_service, v24_operator;
 GRANT EXECUTE ON FUNCTION v24.wait_check(uuid, bigint, bigint, bigint)
   TO v24_admin, v24_service, v24_operator;
+-- S6 W1 read surface: expired-claim discovery only; writes nothing.
+GRANT EXECUTE ON FUNCTION v24.recoverable_effects(uuid, integer)
+  TO v24_admin, v24_service, v24_operator;
+-- S6 W2 recovery command entry point: one advance, INVOKER.
+GRANT EXECUTE ON FUNCTION v24.command_recover(uuid, text, integer)
+  TO v24_admin, v24_service, v24_operator;
 -- S3 W2 run creation entry point.
 GRANT EXECUTE ON FUNCTION v24.start(uuid, uuid, jsonb, jsonb, text)
   TO v24_admin, v24_service, v24_operator;
@@ -57,7 +63,7 @@ BEGIN
   IF (SELECT array_agg(p.proname::text ORDER BY p.proname)
         FROM pg_catalog.pg_proc p
         WHERE p.pronamespace = 'v24'::regnamespace AND p.prosecdef)
-     IS DISTINCT FROM ARRAY['advance', 'poll', 'resolve', 'run_owner', 'run_projection', 'wait_check']::text[] THEN
+     IS DISTINCT FROM ARRAY['advance', 'poll', 'recoverable_effects', 'resolve', 'run_owner', 'run_projection', 'wait_check']::text[] THEN
     RAISE EXCEPTION 'v24 SECURITY DEFINER allowlist drift';
   END IF;
   FOR f IN
@@ -83,7 +89,7 @@ BEGIN
     ) THEN
       RAISE EXCEPTION 'PUBLIC can execute v24 function: %', f.proname;
     END IF;
-    IF f.proname IN ('start', 'cancel', 'steer', 'respond') AND (
+    IF f.proname IN ('start', 'cancel', 'steer', 'respond', 'command_recover') AND (
        f.prosecdef
        OR f.proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, v24']::text[]
        OR NOT pg_catalog.has_function_privilege('v24_admin', f.oid, 'EXECUTE')

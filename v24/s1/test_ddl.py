@@ -266,13 +266,37 @@ def negatives(conn, s):
     sql_rejects(conn, "23514", "c_scopes_close_order",
                 "UPDATE v24.scopes SET close_requested_at=now(),closed_at=now()-interval '1s' "
                 "WHERE scope_id=%s", (s["root"],))
-    for kind in ("command_scope_control", "command_install"):
+    for kind in ("command_scope_control", "command_install", "command_recover"):
         rejects(conn, "23514", "c_effects_command_claim", lambda c, kind=kind: effect(
             c, uuid4(), kind=kind, attempt_no=1))
     for statement in ("UPDATE v24.events SET payload=payload", "DELETE FROM v24.events",
                       "TRUNCATE v24.events", "UPDATE v24.events SET seq=seq WHERE false",
                       "DELETE FROM v24.events WHERE false"):
         sql_rejects(conn, "23514", "c_events_append_only", statement)
+    # S6 W2 positive: a command_recover effect admits attempt_no=0, and the
+    # widened event entity set accepts 'effect' while still rejecting a bogus
+    # entity type.  Keep this in its own savepoint: a pending deferred event FK
+    # would make the TRUNCATE probe above fail with ObjectInUse first.
+    with conn.cursor() as cur:
+        cur.execute("SAVEPOINT w2_effect_entity")
+        recovery_effect = uuid4()
+        effect(cur, recovery_effect, kind="command_recover")
+        cur.execute("SELECT count(*) FROM v24.effects WHERE effect_id=%s",
+                    (recovery_effect,))
+        assert cur.fetchone() == (1,)
+        insert(cur, "events", effect_id=s["effect"], seq=1, entity_type="effect",
+               entity_id=recovery_effect, event_kind="effect_recovered_replay",
+               payload_digest=DIGEST)
+        cur.execute("SELECT count(*) FROM v24.events "
+                    "WHERE entity_type='effect' AND entity_id=%s",
+                    (recovery_effect,))
+        assert cur.fetchone() == (1,)
+        cur.execute("ROLLBACK TO SAVEPOINT w2_effect_entity")
+        cur.execute("RELEASE SAVEPOINT w2_effect_entity")
+    rejects(conn, "23514", "c_events_entity", lambda c: insert(
+        c, "events", effect_id=s["effect"], seq=1, entity_type="bogus",
+        entity_id=uuid4(), event_kind="effect_recovered_replay",
+        payload_digest=DIGEST))
     conn.rollback()
     print("[negative] partial uniqueness, composite FKs, XOR, paths, reserved-column CHECKs, command claim, append-only")
 

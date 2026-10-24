@@ -1,8 +1,8 @@
-# v24 偏差台账（S1–S5）
+# v24 偏差台账（S1–S6）
 
-> 收尾稿：2026-10-24。本文件是 S1/S2/S3/S4/S5 里程碑的收尾工件，记录各计划 §7 的实施偏差。**S5 W1–W4 已实现，W5 为收尾（本台账、矩阵、README 与本地提交）**；2026-10-24 本轮八个 gate 串行实跑全部退出 0：load、`s1/setup_db.py --self-check`、`s1/test_ddl.py`、`s1/test_g1.py`、`s2/test_g3a.py`、`s3/test_g2.py`、`s4/test_g2b.py`、`s5/test_g4.py`（命令与结果见矩阵 §0）。规则：**每条与设计稿不一致的实现都必须具名落账，不得静默改规格**；规格修改走「设计稿修订 + Oracle 复审」（pre-plan §1.2）。历史失败追加修正结果，不覆盖、不删去。
+> 收尾稿：2026-10-24。本文件是 S1/S2/S3/S4/S5/S6 里程碑的收尾工件，记录各计划 §7 的实施偏差。**S5 W1–W4 已实现，W5 为收尾**；**S6 W1–W4 已实现并结项，G5 父门完成（K1–K10 10/10）**。2026-10-24 本轮九个 gate 串行实跑全部退出 0：load、`s1/setup_db.py --self-check`、`s1/test_ddl.py`、`s1/test_g1.py`、`s2/test_g3a.py`、`s3/test_g2.py`、`s4/test_g2b.py`、`s5/test_g4.py`、`s6/test_g5.py`（命令与结果见矩阵 §0）。**Gate 计数口径（9+1）**：8 个既有 gate + 无参数全量 G5 = 9 条命令，全部退出 0（9/9）；历史 W1–W3 的 `test_g5.py --only` 是增量检查点（“+1”），不是第十条 gate，也不替代父门。规则：**每条与设计稿不一致的实现都必须具名落账，不得静默改规格**；规格修改走「设计稿修订 + Oracle 复审」（pre-plan §1.2）。历史失败追加修正结果，不覆盖、不删去。
 
-裁决来源：`docs/reviews/v24-three-doc-consistency-2026-10-23.md`（chat `untitled-chat-1EDE09`，14 项）、W5/W6 实施裁决（chat `untitled-chat-B38EF4`、`untitled-chat-F1CED0`）、S5 计划与逐 W 实施裁决（chat `untitled-chat-DFBC85`，2026-10-24：F1=A、F2=A、F2a=A、F2b=A、F3=A、F3a=A、F4=B′、F5=A、D-S5-1=A）。设计稿 652 行、pre-plan 354 行，R5 修订为行内改写，两份文件行号未位移，因此 `L###` 引用继续有效。R6 只追加设计稿附录 C（1–652 行不变），但 pre-plan 增加 S8/C16/O11–O13 等行，pre-plan 的旧 `L###` 引用须按 R5 版本核对；设计稿 1–652 的 `L###` 继续有效。R6（2026-10-24，chat `untitled-chat-028D07`）为设计稿规格修订（附录 C），尚无产品代码，见 §1.8。
+裁决来源：`docs/reviews/v24-three-doc-consistency-2026-10-23.md`（chat `untitled-chat-1EDE09`，14 项）、W5/W6 实施裁决（chat `untitled-chat-B38EF4`、`untitled-chat-F1CED0`）、S5 计划与逐 W 实施裁决（chat `untitled-chat-DFBC85`，2026-10-24：F1=A、F2=A、F2a=A、F2b=A、F3=A、F3a=A、F4=B′、F5=A、D-S5-1=A）、S6 计划与实施裁决（chat `028D07`，15 项 ACCEPT：CC-1/2/3、D-S6-1…12；S6 W1–W4 实施）。设计稿 652 行、pre-plan 354 行，R5 修订为行内改写，两份文件行号未位移，因此 `L###` 引用继续有效。R6 只追加设计稿附录 C（1–652 行不变），但 pre-plan 增加 S8/C16/O11–O13 等行，pre-plan 的旧 `L###` 引用须按 R5 版本核对；设计稿 1–652 的 `L###` 继续有效。R6（2026-10-24，chat `028D07`）为设计稿规格修订（附录 C，15 项 ACCEPT）；S6 W1–W4 已实施并由 G5 证明（见 §1.9–§1.11、§5）。
 
 ## 1. 规格分歧 D1–D14
 
@@ -137,16 +137,65 @@ Oracle 逐 W 终判与终判时记录的残余风险（run log Turn 10–13；�
 | D-S4-3 | S3 G2a-7/G2a-8 的终端循环期望 `already_terminal` | `blocked_unknown` 优先；其它 terminal 断言保留 | 新状态在 S3 不存在，故无旧断言被误伤；`blocked_unknown` 是 S4 的明确优先级 |
 | — | S3 把 `interaction_mismatch` 记为 W0 | S4 更正为 **W1**：领域零写 + 一条 failed `command_respond` effect 与其 request receipt | `G2b-I/consumed` 的 `assert_respond_mismatch_w1`；矩阵 §3.1 已改 |
 
-### 1.8 R6 规格修订（2026-10-24；设计稿，无产品代码）
+### 1.8 R6 规格修订（2026-10-24；D-R6-1/2 规格层，D-R6-3/4 已实施）
 
-以下四条是 **Oracle 批准的规格修订**，不是实现偏差；当前没有任何产品代码/测试改动。
+以下四条是 **Oracle 批准的规格修订**，不是实现偏差。D-R6-1/2 仍为规格层；**D-R6-3/4 已由 S6 W1–W4 实施，并由 G5 的 K1–K10 证明**。
 
 | # | 修订 | 设计稿位置 | 采用 | 状态 |
 |---|---|---|---|---|
-| D-R6-1 | O7 kill 点数不一致：§9 说「7 个 kill 点」，§8 列十行 | §9 G5 行、§8 | §8 十行为权威；§9 行内改为「10 个 kill 点（§8 十行；附录 C.1）」 | Oracle R6 Q1=A；spec revision approved, no product code yet |
-| D-R6-2 | spawn/child run 无阶段归属（原计划排到 S5/S6 之后） | §5.5；pre-plan §0/§2.3/§3 | 新增阶段 S8 + gate G7；顺序 S6 → S8 → S7；S7 仍最终验收 | Oracle R6 Q2=A；spec revision approved, no product code yet |
-| D-R6-3 | 过期 claim 无统一收敛入口、恢复读面 ACL 未定义 | 附录 C.3 | 新增 `command_recover(scope)`（INVOKER wrapper）+ `recoverable_effects(scope)`（只读 `STABLE` DEFINER 发现面，owner `v24_owner`、固定 `search_path`、零 DML）：G 下扫过期 claim，`replay_policy` 分流，≤16 一批、一个事务；所有写经 `advance`；协议角色零表权；无第二状态机 | Oracle R6 Q3=B / Q3a=A；spec revision approved, no product code yet |
-| D-R6-4 | G5 重启证据不足：同进程新连接不能证明崩溃恢复 | §9.1；附录 C.1 | 每个 kill 点独立 OS 子进程 + 持久 journal；父进程重启仅用 resolve + 未结算 effect 收敛 | Oracle R6 Q4=A；spec revision approved, no product code yet |
+| D-R6-1 | O7 kill 点数不一致：§9 说「7 个 kill 点」，§8 列十行 | §9 G5 行、§8 | §8 十行为权威；§9 行内改为「10 个 kill 点（§8 十行；附录 C.1）」 | Oracle R6 Q1=A；spec revision approved；S6 未改变该规格（G5 仍按 §8 十行） |
+| D-R6-2 | spawn/child run 无阶段归属（原计划排到 S5/S6 之后） | §5.5；pre-plan §0/§2.3/§3 | 新增阶段 S8 + gate G7；顺序 S6 → S8 → S7；S7 仍最终验收 | Oracle R6 Q2=A；spec revision approved；S8/G7 尚未实施 |
+| D-R6-3 | 过期 claim 无统一收敛入口、恢复读面 ACL 未定义 | 附录 C.3 | 新增 `command_recover(scope)`（INVOKER wrapper）+ `recoverable_effects(scope)`（只读 `STABLE` DEFINER 发现面，owner `v24_owner`、固定 `search_path`、零 DML）：G 下扫过期 claim，`replay_policy` 分流，≤16 一批、一个事务；所有写经 `advance`；协议角色零表权；无第二状态机 | Oracle R6 Q3=B / Q3a=A；**S6 W1–W4 已实施，G5 通过**（`49_recovery.sql`、`10_schema.sql`、`50_permissions.sql`；K1–K10） |
+| D-R6-4 | G5 重启证据不足：同进程新连接不能证明崩溃恢复 | §9.1；附录 C.1 | 每个 kill 点独立 OS 子进程 + 持久 journal；父进程重启仅用 resolve + 未结算 effect 收敛 | Oracle R6 Q4=A；**S6 W1–W4 已实施，G5 通过**（`v24/s6/*`；K1–K10 独立 OS 子进程 + JSONL/journal） |
+
+### 1.9 S6 裁决与偏差（D-S6-1…12、CC-1…3）
+
+S6 的 12 条 D-S6 与 3 条 CC 均为 Oracle `028D07` 的 15 项 ACCEPT；下表按**实际代码与 gate 证据**记录落位。性质列区分「裁决」（合同已批准，实现细化）与「合同变更」（kind/entity/response 形状变化）。
+
+| # | 设计/附录原文 → 不足 | 采用（代码位置） | 证据 | 性质 |
+|---|---|---|---|---|
+| **D-S6-1** | C.3 L711「确定序 `(claimed_at, effect_id)`」→ `effects` 没有 `claimed_at` 列（只有 `created_at/settled_at/lease_until`），照写会引用不存在的列 | 改用 `(lease_until, effect_id)`，不新增列；`49_recovery.sql` 的 `recoverable_effects` 按此 `ORDER BY` | `[G5-D2]` 同 lease 下 UUID 升序 `b2,c3,a1,d4`；`[G5-D6]` 读前后十表快照不变 | 裁决 |
+| **D-S6-2** | C.3 L710–712「先把每个 recovery 动作经 `advance` 提交」→ 字面是 N 次 `advance` = N 条 request/effect，无法满足「一次 sweep 一个 request/receipt」与 sweep 级 `has_more` 出处 | 一次 `advance` + `command_recover` kind；`interpret_recover` 在 G 下重发现并返回一个 delta（≤16 动作）。`30_advance.sql` allowlist/candidate closure；`49_recovery.sql` wrapper/interpreter；`40_interpreters.sql` dispatcher/footprint/applier | `[G5-K2]` 两个动作同一 delta；`[G5-K5] requests=1`；`[G5-W2] has_more=True->False` | 裁决 + 合同变更（D-S6-2/CC-1） |
+| **D-S6-3** | C.3 L713 只提 `replay_safe`/`no_replay`，未提 `manual` → manual 若进入扫描会占用 16 上界并让 `has_more` 恒 true；自动处理又违反 B.4 L572 | 发现面 `WHERE replay_policy <> 'manual'`；`manual_debt` 只读计数，不写、不占上界。`49_recovery.sql` 的 `recoverable_effects` 与 `interpret_recover` 第 6 步 | `[G5-D4]` manual 被排除、replay_safe 返回；`[G5-K3] manual=16/0 has_more=False` | 裁决 |
+| **D-S6-4** | C.3 L713「`replay_safe` 作为新的 ready attempt（新 attempt/fence）」→ recovery 自己 bump 会成为第二个 claim 写者，与 B.4 L560 冲突 | reset 只清 `claim_owner/lease_until`，保留 `attempt_no/fence`；下一次普通 claim 递增。`49_recovery.sql` 的 reset delta；`30_advance.sql` 既有 claim 路径 | `[G5-K2]` reset 后普通 claim `journal_attempt/fence=2/2`；`[G5-K3] reservation=1` | 裁决 |
+| **D-S6-5** | C.3 L710 `command_recover(p_scope, p_limit DEFAULT 16)` → 追加 `p_request_key` 后默认参数后跟必填参数，PostgreSQL 不可执行 | 冻结为 `(p_scope uuid, p_request_key text, p_limit integer DEFAULT 16)`；`49_recovery.sql` | `[G5-K2]`/`[G5-K5]` 真实调用；`[G5-W2]` 同 key 异 limit 得 `request_conflict` | 裁决（签名修正） |
+| **D-S6-6** | C.3 L710 只说「scope auth」，未定义谓词 → 无法写 gate，也无法防越权读 | `scopes.owner_principal = principal_id(session_user)` 或 `pg_has_role(session_user,'v24_admin','USAGE')`；发现面不匹配 0 行，命令不匹配 `not_found_or_denied` W0。`49_recovery.sql` | `[G5-D5]` service 对 admin scope 0 行；`[G5-W2] service=not_found_or_denied-w0` | 裁决 |
+| **D-S6-7** | B.4 L566「记录 host journal 引用并将 effect 标为 unknown」→ `receipt_conflict` 的 DB `detail` 恒 `{}`，既有 gate 精确断言，DB 不能凭空填 host 路径 | `detail` 保持 `{}`；journal 引用由 JSONL 的 `(effect_id,attempt,fence,reservation)` 记录并打印路径；`30_advance.sql` 终态分支不变 | `[G5-K3] late=receipt_conflict-w0`、journal `K3.jsonl` | 裁决 |
+| **D-S6-8** | C.3 L714「`has_more` 只是提示，不是 cursor/queue/job」→ 未定义计算口径，易落库或误算 | `has_more` = 同 scope 内非 manual、claimed、过期、且不在本次 applied 的 effect 存在；每次重算、不持久化。`49_recovery.sql` 第 6 步 | `[G5-W2] has_more=True->False`（limit=1 后新 key）；`[G5-K3]` manual 不使其恒真 | 裁决 |
+| **D-S6-9** | C.3 L710–714 未定义收敛后同 key 重放 → 候选进 digest 会使丢应答重试变 `request_conflict`；不进 digest 又需说明同 key 不同候选 | canonical bytes 只含 `{v,scope_id,limit}`；`candidates` 仅 body 元数据；同 key 异 scope/limit `request_conflict`；重复 sweep 用新 key。`49_recovery.sql` wrapper/interpreter；`40_interpreters.sql` request response | `[G5-K5]` canonical sha `24ee41a8a7689533dc541087667ce76631460048c260eaed04e8ffc519aee18c`、三次 response 均 `17d16f00fd32997b76938d630ba78fc55251f91e0a2f46be245262ca39de35b6`/523B、`byte_equal=true`；`[G5-W2] candidates_replay=True conflict_limit=request_conflict` | 裁决 + 合同变更（D-S6-9/CC-2） |
+| **D-S6-10** | C.3 L711「`LIMIT <= 16`」→ 未定义 `NULL`/0/负/>16 | wrapper 对 `NULL`/<1/>16 返回 `invalid_args` W0；发现面 `NULL`/<1→0 行、>16→16。`49_recovery.sql` | `[G5-D3]` `NULL/0/-7/17/16 -> 0/0/0/16/16` 行；`[G5-W2] limits=invalid_args-w0` | 裁决 |
+| **D-S6-11** | §3.1.9 L176 的 `entity_type` 未给闭集；`10_schema.sql:241` 实际闭集不含 `effect` → 逐 action 的 recovery 事件没有合法 entity_type | `c_events_entity` 增加 `effect`；逐 action 事件 `entity_type='effect'`、`entity_id=target effect_id`。`10_schema.sql`；`49_recovery.sql` 事件 | `[G5-K2]`/`[G5-K3]` 的 effect 事件；`test_ddl.py` 的 `effect` 正例与 `bogus` 负例 | 合同变更（D-S6-11/CC-1b） |
+| **D-S6-12** | C.3 未说明 closed scope 上调用 `command_recover` 的行为 → 实现可能误用 `scope_closed` 或拒绝清理债务 | 不新增 closed-scope 拒绝；无候选即 noop；不用 `scope_closed` 阻断恢复。`49_recovery.sql` 只校验存在性/owner，无 `closed_at` 分支 | `[G5-K9]` 覆盖 closing scope 的 close/恢复阶段；**未单独构造 closed-scope 非空候选**（边界见 `v24/s6/README.md` §7） | 裁决（最小行为） |
+| **CC-1** | C.3 L710–712 + §3.1.3/§A.1 + §3.1.9：无 `command_recover` kind、无 `effect` entity → 新命令与逐 action 出处无合法行 | 新增 `command_recover` kind + `events.entity_type='effect'`；接线 `10_schema.sql`、`30_advance.sql` allowlist/closure、`40_interpreters.sql` dispatcher/footprint/applier、`50_permissions.sql` wrapper 合同、`test_g1.py`/`test_ddl.py`/`test_g2.py`/`test_g2b.py` | `[G5-K4]`/`[G5-K5]` 的 command_recover 行与 effect 事件；G1-A/G2a-11/G2b-C/DDL 全绿（8 既有 gate） | 合同变更（CC-1，028D07） |
+| **CC-2** | C.3 未定 `candidates` 是否进 `canonical_bytes`/digest → 进则 commit 丢应答后的重试必 `request_conflict`，wrapper 自身无法 replay | `candidates` 不进 canonical bytes/digest；只作 `body` 元数据；解释器在 G 下重发现。`49_recovery.sql`；`30_advance.sql` 既有 canonical bytes 校验 | `[G5-K5]` 三次 response 字节相等、`requests=1`、`second_replay_zero_write=true`；`[G5-W2] candidates_replay=True` | 合同变更（CC-2，028D07） |
+| **CC-3** | 标准 envelope 无处返回 sweep 的 `applied/skipped/manual_debt/has_more` → Done when 5 无法直接断言 | response 增加 `recovery:{scope_id,limit,candidates,applied,skipped,manual_debt,has_more}`；`49_recovery.sql` 的 `v_response`；`40_interpreters.sql` request response | `[G5-K2]` applied/has_more；`[G5-K3]` applied/skipped/manual_debt；`[G5-K5]` recovery envelope 重放 | 合同变更（CC-3，028D07） |
+
+### 1.10 S6 声明式断言对齐（A-S6-1…9，不是放宽）
+
+S6 对既有 gate 的改动只增不减：ACL 闭集、command kind 数组和 DDL 正负例都随 CC-1 扩大；K3 的 cancel-late 子断言与打印口径不新增窗口。下表按实际 diff 记录。
+
+| # | 原断言（S1–S5） | 现断言（S6） | 冻结合同为何强制 | 不是削弱 |
+|---|---|---|---|---|
+| **A-S6-1** | `s1/test_g1.py` G1-A：`read_definers` 5 项（`resolve`/`run_owner`/`run_projection`/`poll`/`wait_check`）；`prosecdef=true` 恰为 `{advance}` ∪ 5 | 加 `recoverable_effects`，共 6 个只读 DEFINER；`50_permissions.sql` 的 DEFINER allowlist 数组同步加入 | C28 要求只读发现面能读 `effects`，而三个协议角色零表权，必须 DEFINER；G1-A 必须穷举每个 DEFINER | 新增的是 `STABLE`、零 DML、固定 `search_path`、无 advisory 的只读函数；`advance` 仍是唯一可写 DEFINER；PUBLIC 仍无 EXECUTE |
+| **A-S6-2** | `test_g1.py` 的 wrapper 元组 6 项：`scope_control`/`install`/`start`/`cancel`/`steer`/`respond` | 7 项，追加 `command_recover`；仍断言 INVOKER、含 `v24.advance(`、不含 `INSERT INTO`/`UPDATE v24.`/`DELETE FROM`/`pg_advisory_xact_lock` | C29/CC-1 规定 `command_recover` 是唯一恢复命令入口，恰好一次 `advance` | 新 wrapper 无表权、无直接写、无 advisory lock；旧 6 项断言原样保留 |
+| **A-S6-3** | `test_g1.py` 的 G1-P 逐角色 EXECUTE 期望集合不含两个新函数 | 期望集合加入 `recoverable_effects`/`command_recover`；三角色逐角色精确断言不变 | C28/C29 要求三个协议角色可调用发现面与恢复命令 | ACL 闭集增长而非放开：PUBLIC 无 EXECUTE、表 DML 仍全 `42501`、非成员函数仍不可调用 |
+| **A-S6-4** | `s3/test_g2.py` G2a-11：`command_kinds` 8 项、`len==8` | 9 项、`len==9`，追加 `command_recover`；仍逐项断言 claim 得 `invalid_args` + 十表零写 | CC-1 新增 command kind；`claimable_kinds()` 仍恰 5 项 | 循环仍穷举每个 command kind；新增项只扩大覆盖，未删除任何非成员 |
+| **A-S6-5** | `s4/test_g2b.py` 的 `COMMAND_KINDS` 8 项、`len==8`；`non_members=COMMAND_KINDS+("fiber_reconcile",)` | 9 项、`len==9`；`non_members` 同步扩到 10 项；`inspect_resource` 仍是第 5 个可 claim kind | 同步 kind 闭集；C18 的 claimable 5 项不因新 command kind 改变 | 每个非成员仍 `invalid_args` 十表零写；inspect 真实 claim→settle 正例仍在 G4-N |
+| **A-S6-6** | `s1/test_ddl.py` 的 command claim 循环只有 `command_scope_control`/`command_install`；无 `command_recover` 正例/`effect` entity 正例 | 循环加入 `command_recover`（`attempt_no=1` 仍被 `c_effects_command_claim` 拒绝）；新增 `command_recover` `attempt_no=0` 正例、`events.entity_type='effect'` 正例、`bogus` entity 负例；正例放在 savepoint 内，避免 deferred event FK 影响后续 TRUNCATE 探针 | CC-1/CC-1b 要求 kind 与 entity 闭集同时容纳新命令/出处 | 负例、正例都增加；`bogus` 仍被 `c_events_entity` 拒绝；无表/视图断言变化 |
+| **A-S6-7** | 计划未把 wrapper 的 `candidates` 冻结为纯 hint；`has_more` 无计算口径 | 解释器只处理 `body.candidates`；hint 之外新过期的行本次不处理，只让 `has_more=true` 留给下一个 key；无 cursor/queue/table。`[G5-W2]` 合同套件断言 `has_more=True->False` | D-S6-8/CC-2：候选集不进 digest，权威集合必须在 G 下重读；否则丢应答重试会 `request_conflict` | 没有放宽授权集合：G 下仍按 `(lease_until,effect_id)` 重读并对已结算/未过期行记 `skipped`；不持久化任何状态，下一 key 重新发现 |
+| **A-S6-8** | K3 原有 host_prepare 重投 + model_call unknown 证据；无 cancel-late 子断言 | K3 追加：cancel seal 列逐字节保留、只发 `model_call_unknown(late=true)`、pin 由正在结算的 effect 释放；`[G5-control]` 打印归一化对照；不新增/改名窗口 | D4/§B.5 的 cancel-late 语义要求 unknown 不洗白取消事实；控制对照证明 recovery-unknown 与正常 unknown 同形 | 原 K3 断言全部保留，只追加子断言；K 窗口仍为 K1–K10，未新增 K11 或改名 |
+| **A-S6-9** | W1–W3 每个窗口先打印 `[G5-Kn] journal=...`，再打印汇总行，导致同一 tag 出现两次；K3 控制行也用 `[G5-K3]` | 每个窗口恰打印一行 `[G5-Kn]`，journal 并入最终行；K3 控制行改 tag 为 `[G5-control]`；无参数全量 gate 复跑 | 收尾证据要求「`[G5-K1]`…`[G5-K10]` 各恰一次」，重复 tag 会让证据计数歧义 | 只改 print 与 tag，不改任何断言、窗口或失败条件；断言集与通过条件不变 |
+
+### 1.11 S6 W1–W3 实施披露（非新增规格）
+
+| 项 | 实际选择 | 状态/边界 |
+|---|---|---|
+| **(a) W1 guard 后移除** | W1 的 `50_permissions.sql` 块曾为尚不存在的 `command_recover` 加存在性 guard；W2 落地函数后删除 guard，改为直接 GRANT + DEFINER allowlist + wrapper 合同。**当前 SQL 没有 guard** | 历史实施顺序，不是当前合同；当前 `50_permissions.sql` 的 GRANT/allowlist 与 `test_g1.py` 的期望集合一致 |
+| **(b) G1-P EXECUTABLE 增项** | `recoverable_effects`/`command_recover` 加入三角色期望 EXECUTE 集合 | ACL 闭集增长，不是放宽：PUBLIC 仍无 EXECUTE，协议角色仍零表权；见 A-S6-3 |
+| **(c) W2 最小 no_replay 被 W3 取代** | W2 只把 effect 结算为 unknown；W3 新增 `unknown_wall_delta`，补齐 run/pin/预算/interaction/install 收敛与 `[G5-control]` 对照 | 旧断言保留并加强：K2 的 unknown 证据仍在，K3 追加控制对照；没有删除 W2 的 effect 级断言 |
+| **(d) W3 `has_more` hint + cancel-late 子断言** | `has_more` 只处理 wrapper hint 内的候选；cancel-late 只在 K3 内加子断言 | 见 A-S6-7/A-S6-8。有界：每次最多处理 hint 内 ≤16 行；安全：G 下按 `(lease_until,effect_id)` 重读，hint 外新过期的行只置 `has_more=true` 留给下一 key，不落 cursor/queue/table；cancel-late 只加 K3 子断言，不新增窗口 |
+
+
 
 ## 2. 实施披露（不是规格偏差）
 
@@ -191,7 +240,7 @@ Oracle 逐 W 终判与终判时记录的残余风险（run log Turn 10–13；�
 - **W3 close 校验同样 INLINED**：`command_scope_control` 的 close delta 校验/落库内联在 `validate_and_apply_delta`，没有 `validate_and_apply_scope_delta` 函数名；原因同上（G1-A allowlist）。语义仍按 §5.4 的七表白名单。
 - **30 的 child-install 闭包边未在 W1 扩展（W1 注记⑥）**：`dispose` 仍用既有 sibling 边；W3 只给 close 命令加了 owner-descendant 边。`dispose` 的 child 由 `dispose_stage` pass 1 的 `FOR UPDATE` 自行锁。这是 D-S5-8 的**部分落地**，锁序影响留 S7 评估（见 §1.5 D-S5-8）。
 - **未创建 `v24/s5/fake_cleanup_host.py`**：计划 §8.2/W5 列为 NEW，实际没有该文件。host_prepare/host_release 回执由 `settle_release()` 直接提交（claim + success body `{}`）；inspect 回执由 `inspect_receipt()` 从存储的 6 键 request 生成冻结 body 后提交；负例/边界用 seeded effect 或已 claim 的 effect。属夹具合并，先例是 S4 的 `FakeTool` 与 `FakeLLM` 同置 `fake_llm.py`、未单独建 `fake_tool.py`；矩阵 §2.5 与 `v24/s5/README.md` 也按「回执直接经 `advance` 提交、无独立 host 进程」记录。
-- **`test_g4.py` 打印 `[passed] v24 S5 W1-W4`**（计划 §7 草稿写的是 W1-W5）：W5 只做收尾，不新增断言；终判由控制器在八个 gate 全 0 后给出。G4-A…Q 17 个 tag 全部出现。
+- **`test_g4.py` 打印 `[passed] v24 S5 W1-W4`**（计划 §7 草稿写的是 W1-W5）：W5 只做收尾，不新增断言；终判由控制器在八个既有 gate 全 0 后给出。G4-A…Q 17 个 tag 全部出现。
 - **`50_permissions.sql` 在 W1–W4 均 0 diff**：没有新 DEFINER/GRANT；`cleanup_*`/`install_disposed_ok*`/`deactivate_stage` 全部 INVOKER，由 owner 连接或 DEFINER `advance` 调用。
 - **计划 §5.8 的三个标识符未落地**：`inspect_effect_id`、`validate_and_apply_inspect_delta`、`validate_and_apply_scope_delta` 均不存在（前两者内联，第三者被 `validate_and_apply_delta` 的 close 分支吸收）；反过来，实现新增了 §5.8 未列的 `cleanup_slots` 与 `cleanup_close_closure`。
 
@@ -229,19 +278,23 @@ Oracle 逐 W 终判与终判时记录的残余风险（run log Turn 10–13；�
 | S5 W2（**pre-gate 实施修正，非 gate 红**） | 无 gate 红。实现期修正：inspect claim 需精确 `ordinal=0`；direct-tombstone 的 16 行预算未计入同一 stage 的 install 行，曾可写出 17 行 | inspect id 公式固定 `:0`，claim 不校验 ordinal 会接受伪造的 ordinal≠0 effect；预算只算 fiber/slot 行时丢掉 install 的 +1 | claim 加 `effect.ordinal = 0` 精确校验；预算把 install 行 +1 计入（`v_direct`），`v_rows + ... > 16` 即 blocked；G4-N/G4-J② |
 | S5 W3（**合同对齐，非 gate 红**） | 无 gate 红。旧 G4 断言 `dispose_stage(...,'close')` 得 `invalid_args`；W3 把它改成 accepted positive | C26 的 close cascade 复用 `dispose_stage(mode='close')`；旧负例基于 W1 的 `command\|cascade` 闭集 | `test_g4.py` 的 close 探针改断言 `error` 不存在且 `installs` 非空；这是合同变更，不是放宽（§1.6/§2.2） |
 | S5 W4（**pre-gate 实施修正，非 gate 红**） | 无 gate 红。实现期修正：stage 预算合并时未在写第 17 行前拒绝；close cascade 对永久 barrier 的 `dispose_pending` install 会停在 barrier | `deactivate_stage` 返回行数与已累计行数需在 merge 前判；barrier 阶段只看到 pending install 时没有 phase 再进 cascade | `v_rows + stage_rows > 16` 即 blocked（不写第 17 行）；cascade 重入条件加 `dispose_pending` 且无 ready/claimed release/inspect；G4-Q/G4-F/G4-M-6 |
+| S6 W4 | `s6/test_g5.py --only K4` 退出 1：`NameError: name 'snapshot_diff' is not defined` | K4 使用了未从 `g5_support` 导入的 helper | 加入 `snapshot_diff` import；`--only K4` 与无参数全量 G5 转 0，断言未削弱 |
+| S6 W4（**打印口径，非 gate 红**） | W1–W3 每个窗口打印两行 `[G5-Kn]`（初始 journal 行 + 汇总行），K3 控制行也用 `[G5-K3]` | 收尾要求每个 `[G5-Kn]` 恰出现一次，重复 tag 使证据计数歧义 | 删除初始行、journal 并入最终行、K3 控制行改 `[G5-control]`；只改 print，不改断言；全量 gate 复跑（A-S6-9） |
 
 **S5 的诚实口径**：在记录的 S5 W1–W4 轮次中，八门在每轮**最终运行**均退出 0（controller L1），**没有可记录的 gate 红**，也没有 S4 W3/W4 那样的 Oracle BLOCK。上表四条是 **pre-gate 实施修正**（提交前由实现者发现并修，或 W3 的合同对齐），不是 gate 失败；「gate 红」与「pre-gate 实施修正」不得混为一谈。
 
-S1 四次是夹具缺陷；S2 六次是夹具/测试断言缺陷或局部 SQL 质量问题；S4 五次是评审发现/测试证据缺口与一次守卫修复（W4 BLOCK）；S5 W1–W4 无 gate 红，四条均为 pre-gate 实施修正或合同对齐（见上）。均非设计语义变更，修正后同一 gate 退出 0，未删断言、未降低断言强度。
+S1 四次是夹具缺陷；S2 六次是夹具/测试断言缺陷或局部 SQL 质量问题；S4 五次是评审发现/测试证据缺口与一次守卫修复（W4 BLOCK）；S5 W1–W4 无 gate 红，四条均为 pre-gate 实施修正或合同对齐（见上）；S6 W4 一次是 K4 helper 未导入（测试缺陷，修正后全量 G5 通过），另一次是只改 print 的 tag 去重。均非设计语义变更，修正后同一 gate 退出 0，未删断言、未降低断言强度。
 
 ## 5. 验收结果与仍未关闭的披露
 
-本轮八个 gate 依序退出 0/0/0/0/0/0/0/0（load、`s1/setup_db.py --self-check`、`s1/test_ddl.py`、`s1/test_g1.py`、`s2/test_g3a.py`、`s3/test_g2.py`、`s4/test_g2b.py`、`s5/test_g4.py`；矩阵 §0）。G2 父门**完成（G2a+G2b）**，G3 父门**完成（G3a+G3b）**，**G4 父门完成（G4-A…Q 17/17）**。`runs` 的 S3 start writer、revision 语义不变。错误码为 **23 个有生产者、0 个未产生**：`cleanup_cycle` 现有三个生产者——`v24/sql/46_cleanup.sql:852`（`dispose_stage` 根检查）、`46_cleanup.sql:879`（队列逐节点检查）、`v24/sql/40_interpreters.sql:2871`（admission 防御检查）；`blocked_unknown` 的 W0 墙与 W1 结算写类分列见矩阵 §3.1。
+本轮九个 gate 依序退出 0/0/0/0/0/0/0/0/0（load、`s1/setup_db.py --self-check`、`s1/test_ddl.py`、`s1/test_g1.py`、`s2/test_g3a.py`、`s3/test_g2.py`、`s4/test_g2b.py`、`s5/test_g4.py`、`s6/test_g5.py`；矩阵 §0）。**Gate 计数口径（9+1）**：8 个既有 gate + 无参数全量 G5 = 9 条命令，全部退出 0（9/9）；历史 W1–W3 的 `test_g5.py --only` 是增量检查点（“+1”），不是第十条 gate，也不替代父门。G2 父门**完成（G2a+G2b）**，G3 父门**完成（G3a+G3b）**，**G4 父门完成（G4-A…Q 17/17）**，**G5 父门完成（S6 W1–W4，K1–K10 10/10；末行 `[passed] v24 S6 W1-W4`）**。`runs` 的 S3 start writer、revision 语义不变。错误码为 **23 个有生产者、0 个未产生**：`cleanup_cycle` 现有三个生产者——`v24/sql/46_cleanup.sql:852`（`dispose_stage` 根检查）、`46_cleanup.sql:879`（队列逐节点检查）、`v24/sql/40_interpreters.sql:2871`（admission 防御检查）；`blocked_unknown` 的 W0 墙与 W1 结算写类分列见矩阵 §3.1。S6 不新增错误码。
 
-- **G4 已完成**：`s5/test_g4.py` 打印 `[passed] v24 S5 W1-W4`，G4-A…Q 全部出现；17 条具名断言无 skip/TODO。
+- **G4/G5 已完成**：`s5/test_g4.py` 打印 `[passed] v24 S5 W1-W4`，G4-A…Q 全部出现；`s6/test_g5.py` 无参数打印 `[G5-K1]`…`[G5-K10]` 各恰一次（K3 另有 `[G5-control]`），末行 `[passed] v24 S6 W1-W4`。
+- **G5 证据**：K1–K10 的 child/worker 都是独立 OS 进程，child/worker/parent 的 `pg_backend_pid()` 互异；K4 是 fixture-only `P0001` 注入 + `ROLLBACK`（trigger `k4_inject` 删除后 `0/0`、十表快照回滚前后相等），K5 是 commit 后丢应答 + 两次 fresh replay（三次 response `byte_equal`、`second_replay_zero_write=true`）；完整值见矩阵 §0.2。
+- **W4 范围**：代码只改 `v24/s6/{crash_worker.py,recover_worker.py,test_g5.py}`；**无产品 SQL 改动**，`v24/sql/48_loop.sql` 未动，`v24/sql/**` digest 在 gate 前后均为 `827e1c61515b9e6d5f4f7104d914bd4d53be483d171dc4c548bd8620d15900fd`；HEAD 仍 `45877b0`，未 commit/push。
 - **S5 已封闭的 S4 披露**：inspect 收敛（G4-H/I/J/K/N）、owner 级联/child-before-owner（G4-A/B 与 `[G4-W1]` cascade）、consumer-before-provider（G4-C）、贡献 DESC 与墓碑（G4-D/P/Q）、scope close phase 机与 close 后无新准入（G4-G/O）、失败/unknown 不写终态（G4-F/L/M）。
-- **S5 残差（S6/S7）**：崩溃/恢复/自动 reclaim 与 inspect 的外部真实性归 **S6**；三面并发矩阵与锁序/无饥饿证明归 **S7**。S5 只证串行 request-key 阶段（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进）；`cleanup_pending` 非严格递减、close 依赖新 key（§3），不得外推为「自动收口」。
-- **FakeLLM/FakeTool/FakeCleanupHost 不是 transport 证明**：纯进程内、无套接字；S5 甚至没有 FakeCleanupHost 文件（§2.2），回执直接经协议提交。真实 IO 不在 gate 内。
-- **仍未关闭的披露**：D-S5-8 的 dispose 闭包边未扩（锁序留 S7）；D-S5-10 无跨 scope child install 专用 fixture（代码路径成立，证据缺口）；A-S5-1…9 的逐条理由见 §1.6。
+- **S5/S6 边界**：S5 只证串行 request-key 阶段（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进）；S6 只证 FakeHost/journal 下的崩溃恢复合同（命令驱动、无 recovery 表/队列/lease/cursor、无第二 claim 路径），**不证**真实 provider/adapter 的 reservation 幂等、S7 三面并发或 S8 spawn。`cleanup_pending` 非严格递减、close 依赖新 key（§3），不得外推为「自动收口」；S6 的 `has_more` 只是提示，K2/K3 的 lease 过期是 seeded fixture，K5 为 host-only、预算不适用。
+- **FakeLLM/FakeTool/FakeCleanupHost/FakeCrashHost 不是 transport 证明**：纯进程内、无套接字；S5 没有 FakeCleanupHost 文件（§2.2），S6 的 `CrashHost` 只写 JSONL 与 `v24_fake.journal`；真实 IO 不在 gate 内。
+- **仍未关闭的披露**：D-S5-8 的 dispose 闭包边未扩（锁序留 S7）；D-S5-10 无跨 scope child install 专用 fixture（代码路径成立，证据缺口）；D-S6-12 无 closed-scope 非空候选专用 fixture；A-S5-1…9 的逐条理由见 §1.6，A-S6-1…9 见 §1.10。
 - **历史口径更新**：S4 的「22 个有生产者、1 个未产生」由本节更新为 23/0；S1–S4 的其它验收结论与边界（FakeLLM/FakeTool、真实 IO、S6/S7）继续有效。
-- **R6 规格修订已入账**（D-R6-1…4，§1.8）：设计稿附录 C 与 pre-plan S8/G7 已同步，但 S6/S8/S7 **尚无产品代码或 gate 证据**；G5/G6/G7 仍为未验证。
+- **R6 规格修订已入账**（D-R6-1…4，§1.8）：D-R6-1/2 仍为规格层（S6 未改变十窗口；S8/G7 未实施）；D-R6-3/4 已由 S6 W1–W4 实施并由 G5 证明。**G5 已完成；G6/G7 仍为未验证**（G7 归 S8、G6 归 S7）。

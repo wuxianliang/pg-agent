@@ -95,6 +95,7 @@ CREATE TABLE v24.effects (
   CONSTRAINT c_effects_kind CHECK (kind IN (
     'command_start','command_cancel','command_steer','command_respond',
     'command_install','command_fiber_control','command_dispose','command_scope_control',
+    'command_recover',
     'model_call','tool_call','host_prepare','host_release','inspect_resource','fiber_reconcile')),
   CONSTRAINT c_effects_replay CHECK (replay_policy IN ('no_replay','replay_safe','manual')),
   CONSTRAINT c_effects_parent_pair CHECK ((parent_effect_id IS NULL) = (ordinal IS NULL)),
@@ -238,7 +239,7 @@ CREATE TABLE v24.events (
   payload_digest bytea NOT NULL,
   created_at     timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT c_events_seq CHECK (seq >= 1),
-  CONSTRAINT c_events_entity CHECK (entity_type IN ('scope','run','fiber','episode','slot','install','pin','request')),
+  CONSTRAINT c_events_entity CHECK (entity_type IN ('scope','run','fiber','episode','slot','install','pin','request','effect')),
   CONSTRAINT u_events_cursor UNIQUE (entity_type, entity_id, seq),
   CONSTRAINT u_events_once   UNIQUE (effect_id, entity_type, entity_id, event_kind)
 );

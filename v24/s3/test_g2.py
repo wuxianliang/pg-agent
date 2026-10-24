@@ -610,8 +610,8 @@ def claim_guard(db, owner):
     # Every non-member kind stays W0 with a ten-table byte-equal snapshot.
     command_kinds = ("command_start", "command_cancel", "command_steer",
                      "command_respond", "command_install", "command_fiber_control",
-                     "command_dispose", "command_scope_control")
-    assert len(command_kinds) == 8, command_kinds
+                     "command_dispose", "command_scope_control", "command_recover")
+    assert len(command_kinds) == 9, command_kinds
     for kind in ("inspect_resource",) + command_kinds + ("fiber_reconcile",):
         effect_id = uuid4()
         extra = {"fiber_id": live["fiber"]} if kind == "fiber_reconcile" else {}

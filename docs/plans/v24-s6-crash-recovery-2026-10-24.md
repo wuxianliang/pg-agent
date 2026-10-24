@@ -1,7 +1,7 @@
 # v24 S6 崩溃恢复：Deep plan
 
-- 状态：**planned；Oracle-approved（chat 028D07）；未实现**。本文件只冻结 S6 合同；不修改 `v24/**` 产品代码或测试。R6.1 的设计稿/pre-plan 同步见设计稿 C.5 与本文件 §8。S6 的自有 gate 为 **G5**。
-- 工作树：`/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`，branch `v24`，HEAD `9701c2e`（R6 文档同步后的基线；S1–S5 已实现，G1–G4 已由 S5 收口记录为绿）。
+- 状态：**S6 已实施并结项**；Oracle-approved（chat 028D07，15 项 ACCEPT）；W1–W4 完成；无参数全量 G5 绿，8 个既有 gate 绿。本文件冻结 S6 合同并记录 W4 实测结果；R6.1 的设计稿/pre-plan 同步见设计稿 C.5 与本文件 §8。S6 的自有 gate 为 **G5**。
+- 工作树：`/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`，branch `v24`，HEAD `45877b0` 加未提交的 S6 W1–W4（S1–S5 已实现，G1–G4 已由 S5 收口记录为绿；S6 的单次里程碑提交由控制器执行，本轮不 commit/push）。
 - 上游权威：`docs/designs/v24-pg-agent-2026-10-22.md`（§8 L406–421 十行崩溃矩阵、§9 L429–441 G5、§9.1 L442–449 重启证据、§10.2 L464–473 显式债务、§B.3 L533–557、§B.4 L558–581、§B.5 L582–608、附录 C.1 L658–678、C.3 L708–718、C.4 L719–730、C.5 L732–754）；`docs/plans/v24-pre-plan-2026-10-23.md`（§3 S6 卡 L168–180、§4 C14 L226、§8 O11 L367、§7.2 L301–309、§7.3 L313–315）；`prompt-exports/loop-orchestrate-v24-s6-s7-runs.md`（R6 裁决与预算）。
 - 与 S5 的关系：S5 已冻结清理闭包与 `disposed`/`closed_at`/`resource_quiesced_at` 的写者；S6 只消费这些事实，不重开清理语义、不新增表、不新增错误码。
 - 阅读导引：先读 §2 的边界与 §3 的映射表，确认 S6 只做“崩溃后重启收敛”；§4 是本文的承重面（两个函数、一个 kind、一个解释器、精确 delta 与 ACL）；§5 是 G5 十窗口与负例；§6 是独立 OS 子进程 harness；§7–§9 是施工、风险/分歧与验收清单。任何与设计稿不一致处集中在 §8，且均给出可替换的精确文本，不在正文静默改规格。
@@ -13,7 +13,7 @@
 | 项 | 内容 |
 |---|---|
 | Goal | 用设计 §8 的十个崩溃窗口证明：进程在任意边界被 `SIGKILL`（K4 为 SQL 错误注入）后，重启只用 `resolve(scope,keys)` + 未结算 effect 扫描 + 唯一 `command_recover(scope)` 入口收敛；`replay_safe` 只重投、`no_replay` 只转 unknown、`manual` 只报告；恢复没有自己的表/队列/lease/cursor，没有第二 claim 路径，没有第二状态机。 |
-| Done when | 1. `v24/s6/test_g5.py` 的 **K1–K10 恰为十条**，每条是独立 OS 子进程在具名边界被 `SIGKILL`（K4 为 fixture-only SQL 错误注入），重启由**新的** `recover_worker.py` 进程完成，退出码 0；十条与 §8 十行一一对应，无跳过、无合并、无改名。2. 既有 8 个 gate 串行实跑全部退出 0：`v24/load.py`、`v24/s1/setup_db.py --self-check`、`v24/s1/test_ddl.py`、`v24/s1/test_g1.py`、`v24/s2/test_g3a.py`、`v24/s3/test_g2.py`、`v24/s4/test_g2b.py`、`v24/s5/test_g4.py`。3. `recoverable_effects` 是只读 `SECURITY DEFINER`、`STABLE`、零 DML、固定 `search_path`、固定返回列、按 `(lease_until,effect_id)` 定序、`LIMIT` 上限 16；`command_recover` 是 `SECURITY INVOKER` wrapper、无表权、恰好一次 `advance`。4. `command_recover` 一次请求/一条 receipt；同 key 同 bytes replay，同 key 异 bytes `request_conflict`；一次 sweep 至多 16 个动作、一个 delta、一个事务。5. `replay_safe` 回到 `ready` 且保留 attempt/fence；`no_replay` 结算 unknown 并完成 run/pin/预算/interaction 收敛；`manual` 不进入扫描、不消耗 16 上界。6. K4 的中间错误由 `v24_fake` 触发器注入并回滚，十表 diff 为空，产品 SQL 零改动。7. 矩阵/台账/`v24/s6/README.md` 更新；W4 一次里程碑提交（S6 只有一个里程碑）。 |
+| Done when | 1. `v24/s6/test_g5.py` 的 **K1–K10 恰为十条**，每条是独立 OS 子进程在具名边界被 `SIGKILL`（K4 为 fixture-only SQL 错误注入），重启由**新的** `recover_worker.py` 进程完成，退出码 0；十条与 §8 十行一一对应，无跳过、无合并、无改名。2. 既有 8 个 gate 串行实跑全部退出 0：`v24/load.py`、`v24/s1/setup_db.py --self-check`、`v24/s1/test_ddl.py`、`v24/s1/test_g1.py`、`v24/s2/test_g3a.py`、`v24/s3/test_g2.py`、`v24/s4/test_g2b.py`、`v24/s5/test_g4.py`。3. `recoverable_effects` 是只读 `SECURITY DEFINER`、`STABLE`、零 DML、固定 `search_path`、固定返回列、按 `(lease_until,effect_id)` 定序、`LIMIT` 上限 16；`command_recover` 是 `SECURITY INVOKER` wrapper、无表权、恰好一次 `advance`。4. `command_recover` 一次请求/一条 receipt；同 key 同 bytes replay，同 key 异 bytes `request_conflict`；一次 sweep 至多 16 个动作、一个 delta、一个事务。5. `replay_safe` 回到 `ready` 且保留 attempt/fence；`no_replay` 结算 unknown 并完成 run/pin/预算/interaction 收敛；`manual` 不进入扫描、不消耗 16 上界。6. K4 的中间错误由 `v24_fake` 触发器注入并回滚，十表 diff 为空，产品 SQL 零改动。7. 矩阵/台账/`v24/s6/README.md` 更新；W4 一次里程碑提交（S6 只有一个里程碑，由控制器执行）。 |
 | Key files | **NEW** `v24/sql/49_recovery.sql`（`recoverable_effects`、`interpret_recover`、`unknown_wall_delta`、`command_recover`）；`v24/sql/10_schema.sql`（kind CHECK + events entity CHECK）；`v24/sql/30_advance.sql`（command body kind allowlist、candidate closure seed）；`v24/sql/40_interpreters.sql`（dispatcher、`command_recover` footprint/applier）；`v24/sql/50_permissions.sql`（两个 GRANT、DEFINER allowlist、wrapper contract）；`v24/load.py` + `v24/s1/setup_db.py`（插入 49）；`v24/s1/test_g1.py`（G1-A 重述）；`v24/s3/test_g2.py` / `v24/s4/test_g2b.py`（command kind 数组 8→9）；**NEW** `v24/s6/{README.md,g5_support.py,crash_worker.py,recover_worker.py,fake_crash_host.py,test_g5.py}`；`docs/reviews/v24-conformance-matrix-2026-10-23.md`、`docs/reviews/v24-deviation-ledger-2026-10-23.md`。 |
 | Dependencies | S1：`advance` 单入口、`G` 与锁序、request/receipt/replay 优先级、`error_v1` 23 码、`c_effects_*` 约束（`10_schema.sql:94–108`）、`30_advance.sql:282–287` 的 token CAS。S2：install/fiber/episode/slot/pin 与 `resolve`。S3：run/generation/`run_pin_release_set`（`48_loop.sql:86–103`）。S4：`interpret_model_settlement`/`interpret_tool_settlement` 的 unknown wall（`48_loop.sql:543–576`、`1061–1098`）。S5：`dispose_pending`/`disposed`/`closed_at`/`resource_quiesced_at` 与 `install_disposed_ok`/`scope_closable`（`46_cleanup.sql`）。S6 不依赖 S8/S7。 |
 | Size | L：4 个 W；预计新增 SQL 约 380–450 行，harness 约 800–1000 行，测试改动约 100 行；一个新增 SQL 文件。 |
@@ -1025,6 +1025,8 @@ uv run python v24/s5/test_g4.py
 
 ### W1 只读发现面 + ACL + harness 骨架
 
+> 状态：完成（W1 检查点命令为 `uv run python v24/s6/test_g5.py --only K1`；W1–W3 为增量检查点，不单独 commit；最终由 W4 的 8 个既有 gate + 无参数全量 G5 共 9 条命令统一验证，全部退出 0）。
+
 | 项 | 内容 |
 |---|---|
 | Goal | `recoverable_effects` 成为唯一、只读、确定序、带 scope auth 的发现面；G1-A 的 DEFINER 闭集重述完成；harness 骨架（parent/child/worker/管道/kill）可跑通 K1；发现面的零写与边界（NULL/0/17、manual、排序、无第二 claim）有独立断言。 |
@@ -1039,6 +1041,8 @@ uv run python v24/s5/test_g4.py
 **W1 的发现面单测（写在 `test_g5.py --only K1` 或独立 `discovery_suite()`）**：seed 三条 claimed（过期 host_prepare、未过期 host_release、过期 manual）与一条 succeeded；断言只返回过期 host_prepare；再 seed 两条相同 `lease_until` 的不同 UUID，断言 UUID 升序；直接以 owner 调 `recoverable_effects(scope,NULL/0/17)` 断言 0/0/16 行且十表快照不变；以 service 调 admin scope 断言 0 行。
 
 ### W2 `command_recover` + `interpret_recover` + replay_safe 重投
+
+> 状态：完成（W2 检查点命令为 `uv run python v24/s6/test_g5.py --only K1,K2,K3,K8,K10`；W1–W3 为增量检查点；最终由 W4 的 9 条命令统一验证，全部退出 0）。
 
 | 项 | 内容 |
 |---|---|
@@ -1055,6 +1059,8 @@ uv run python v24/s5/test_g4.py
 
 ### W3 `no_replay` unknown + manual + cancel-late
 
+> 状态：完成（W3 检查点命令为 `uv run python v24/s6/test_g5.py --only K1,K2,K3,K6,K7,K8,K9,K10`；W1–W3 为增量检查点；最终由 W4 的 9 条命令统一验证，全部退出 0）。
+
 | 项 | 内容 |
 |---|---|
 | Goal | `no_replay` 的 model/tool 过期 claim 只转 unknown，并完成 run/pin/预算/interaction/close_intent/result/ended_at/revision 收敛；manual 只计数；cancel-late 保留 cancel seal；K3 的 no_replay 变体、K6、K7、K9 通过。 |
@@ -1070,18 +1076,43 @@ uv run python v24/s5/test_g4.py
 
 ### W4 K4/K5 + 全量 G5 + 收尾
 
+> 状态：完成（8 个既有 gate + 无参数全量 G5 = 9 条命令全部退出 0；G5 末行恰为 `[passed] v24 S6 W1-W4`；本轮不 commit/push，单次里程碑提交由控制器执行）。
+
 | 项 | 内容 |
 |---|---|
 | Goal | K4（SQL 错误注入）与 K5（commit 后应答丢失）完成；`test_g5.py` 无参数运行 K1–K10 全绿；矩阵/台账/README/load order 收尾；S6 一次里程碑提交。 |
-| Done when | ① K4 的 `v24_fake.raise_k4` trigger 注入、回滚、删 trigger、重交一次成功；② K5 的 commit+丢应答+两次 replay 逐字节相同；③ `test_g5.py` 无参数输出 `[G5-K1]`…`[G5-K10]` 与 `[passed] v24 S6 W1-W4`，退出 0；④ 9 个 gate 串行全 0；⑤ 矩阵 G5 行、台账 D-S6-*、`v24/s6/README.md` 更新；⑥ 按路径 `git add`，一次本地里程碑提交（不 push）。 |
+| Done when | ① K4 的 `v24_fake.raise_k4` trigger 注入、回滚、删 trigger、重交一次成功；② K5 的 commit+丢应答+两次 replay 逐字节相同；③ `test_g5.py` 无参数输出 `[G5-K1]`…`[G5-K10]` 与 `[passed] v24 S6 W1-W4`，退出 0；④ 9 个 gate 串行全 0；⑤ 矩阵 G5 行、台账 D-S6-*、`v24/s6/README.md` 更新；⑥ 按路径 `git add`，一次本地里程碑提交（不 push；由控制器执行，本轮未提交）。 |
 | Key files | `v24/s6/test_g5.py`、`v24/s6/README.md`、`docs/reviews/v24-conformance-matrix-2026-10-23.md`、`docs/reviews/v24-deviation-ledger-2026-10-23.md`、本计划 |
 | Gate mapping | §9 L439、§9.1 L446、C.1 L660–677、C.4 L721–730 |
 | Dependencies | W1–W3 |
 | Size | M |
 | 必须绿 | 9 个 gate（8 既有 + G5 全量） |
-| Commit point | **唯一一次** S6 里程碑提交：`v24: add crash recovery windows and bounded recovery command (G5)`（按路径 add，不 push） |
+| Commit point | **唯一一次** S6 里程碑提交：`v24: add crash recovery windows and bounded recovery command (G5)`（按路径 add，不 push；由控制器在本轮收尾后执行，本轮未提交） |
 
 **W4 的精确 gate 命令**：G8 的 8 条 + `uv run python v24/s6/test_g5.py`（无参数，全量 K1–K10）。
+
+### 7.5 W4 实测结果
+
+2026-10-24 在 worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 串行实跑以下 9 条命令，全部退出 0：
+
+| # | 命令 | 退出码 |
+|---:|---|---:|
+| 1 | `uv run python v24/load.py` | 0 |
+| 2 | `uv run python v24/s1/setup_db.py --self-check` | 0 |
+| 3 | `uv run python v24/s1/test_ddl.py` | 0 |
+| 4 | `uv run python v24/s1/test_g1.py` | 0 |
+| 5 | `uv run python v24/s2/test_g3a.py` | 0 |
+| 6 | `uv run python v24/s3/test_g2.py` | 0 |
+| 7 | `uv run python v24/s4/test_g2b.py` | 0 |
+| 8 | `uv run python v24/s5/test_g4.py` | 0 |
+| 9 | `uv run python v24/s6/test_g5.py`（无参数，全量 K1–K10） | 0 |
+
+- **Gate 计数口径（9+1）**：8 个既有 gate + 无参数全量 G5 = **9 条命令，全部退出 0（9/9）**；所谓“+1”是 W1–W3 的历史 `test_g5.py --only` 增量检查点，不构成第十条 gate，也不替代父门。
+- **G5 标签**：`[G5-K1]`…`[G5-K10]` 每个恰出现一次（K3 另有 `[G5-control]`）；末行 stdout 恰为 `[passed] v24 S6 W1-W4`。
+- **K4**：request `g5-k4-603088ebb2315489`、effect `6a258070-f3c9-500a-415f-2920d4a7795e`；child OS/backend `54950/54960`、worker `54962/54965`、parent backend `54873`；`sqlstate=P0001`、`tx=rollback->idle`；trigger `k4_inject` created `2026-10-24 19:47:55.625595+08` / dropped `2026-10-24 19:47:55.702859+08`；回滚前后 snapshot 均为 `5d3ef214ff41ea01bd23dbc5fd8e9f335a41222454d9db44399bfa7227d95c16`，重交后 `04e3ccbf37a25cdd072b4d99c1b93a30a3bbf28f80d6da3b347621206cd95e00`；`requests=0->1 effects=0->1`、`response=committed`；`sql_digest=827e1c61515b9e6d5f4f7104d914bd4d53be483d171dc4c548bd8620d15900fd`、`sql_unchanged=true`、`k4_objects_after=0/0`。
+- **K5**：request `g5-k5-ce334bfcbb53e3dd`、effect `1e837f17-c091-665a-5f54-9610da3119d1`、seed effect `8de300d9-c6e9-462d-97b9-5df300bcb478`；child `54972/54973`、replay-1 `54974/54979`、replay-2 `54983/54987`、parent backend `54873`；canonical bytes base64 `eyJ2IjogMSwgImxpbWl0IjogMTYsICJzY29wZV9pZCI6ICJkNTE4NDFiYy1iNjkwLTQzMTMtYjMwNy1hYjA0NjM0MzI2MjUifQ==`，decoded `{"v": 1, "limit": 16, "scope_id": "d51841bc-b690-4313-b307-ab0463432625"}`，sha `24ee41a8a7689533dc541087667ce76631460048c260eaed04e8ffc519aee18c`；first/replay-1/replay-2 response sha 均 `17d16f00fd32997b76938d630ba78fc55251f91e0a2f46be245262ca39de35b6`、各 `523` 字节、`byte_equal=true`；`requests=1 effects=1 sweep_events=1`、`sweep_action=reset_ready`、`successors=0`；snapshot before `834182d1420e59eade3a45c652c8d4ab4ea91c7a2e9fa93aaf49461f61b1ed3a`，post-kill/replay-1/replay-2 均 `d517cba67b3ebb5658d964d5fb33c446581e7bb3006f5cf41eb084ce90818b33`、`second_replay_zero_write=true`；**budget 明确不适用**（host-only fixture，无 run 行，`runs` 不变）。
+- **W4 改动范围**：代码只改 `v24/s6/{crash_worker.py,recover_worker.py,test_g5.py}`（另加收尾文档）；**无产品 SQL 改动**，`v24/sql/48_loop.sql` 未动，`v24/sql/**` digest 在 gate 前后相等（`827e1c61515b9e6d5f4f7104d914bd4d53be483d171dc4c548bd8620d15900fd`）；HEAD 仍 `45877b0`，未 commit/push。
+- **文档与提交**：本文件、矩阵 G5 行/§0.2、台账 §1.9–§1.11、`v24/s6/README.md` 已更新；**本轮不 `git add`/commit/push**，S6 的唯一里程碑提交由控制器执行。
 
 ---
 
@@ -1142,26 +1173,27 @@ uv run python v24/s5/test_g4.py
 
 ## 9. 计划级验收清单（逐行可核对）
 
-- [ ] **十窗口**：`test_g5.py` 恰有 K1–K10 十个函数/十条打印，逐条对应设计 §8 L410–419；无 K0/K11、无合并、无改名；K1–K3、K5–K10 都是独立 OS 子进程 + `SIGKILL`，K4 是 fixture-only SQL 错误注入。
+- [x] **十窗口**：`test_g5.py` 恰有 K1–K10 十个函数/十条打印，逐条对应设计 §8 L410–419；无 K0/K11、无合并、无改名；K1–K3、K5–K10 都是独立 OS 子进程 + `SIGKILL`，K4 是 fixture-only SQL 错误注入。
 - [x] **Oracle 15 项 ACCEPT（CC-1/2/3、D-S6-1…12）已落位计划与设计稿（chat 028D07）。**
-- [ ] **重启证据**：每个 K 的恢复由**新** `recover_worker.py` 进程执行；child/worker/parent 的 `pg_backend_pid()` 互不相同；无同进程新连接；无 `sleep` 排序；README 记录该口径。
-- [ ] **唯一发现面**：`recoverable_effects` 是 `SECURITY DEFINER`/`STABLE`/零 DML/固定 `search_path`/固定 7 列/`(lease_until,effect_id)`/上限 16/scope auth/排除 manual；其 `prosrc` 与注释不含 `insert|update|delete|pg_advisory*`。
-- [ ] **唯一命令**：`command_recover` 是 `SECURITY INVOKER`、无表权、恰好一次 `v24.advance(`、无 `INSERT INTO|UPDATE v24.|DELETE FROM|pg_advisory_xact_lock`；同 key 同 bytes replay，同 key 异 scope/limit `request_conflict`，同 key 异 candidates replay（CC-2）。
-- [ ] **一次 request/receipt**：一次 sweep 恰 1 条 `command_recover` effect + 1 条 request + sweep/action 事件；≤16 动作、一个 delta、一个事务；`successors=[]`、无 `settle`、无第二 effect。
-- [ ] **replay_safe**：只回 `ready`、清 `claim_owner/lease_until`、保留 attempt/fence；下一次普通 claim 递增；旧 token `stale_claim` W0；reservation 计数 1（不重复 IO）。
-- [ ] **no_replay**：只转 unknown；run `blocked_unknown`（或保留 cancel seal）；预算不退款；interaction/pending_steer 清空；model/tool 的 pin 处理分别正确；事件与正常 unknown 分支的控制对照通过。
-- [ ] **manual**：不进入候选、不写、不占 16 上界、`manual_debt` 正确、不让 `has_more` 永久 true。
-- [ ] **late receipt**：unknown 后 success → `receipt_conflict` W0，首次 receipt 不被覆盖；`detail` 保持 `{}`，host journal 引用由证据面记录（D-S6-7）。
-- [ ] **23 码**：`error_v1` 闭集不变；S6 只使用既有码（`invalid_args`/`unauthorized`/`not_found_or_denied`/`request_conflict`/`effect_id_conflict`/`receipt_conflict`/`stale_claim`/`invalid_outcome`/`retry_with_closure`/`blocked_unknown`），不新增码。
-- [ ] **十表**：无新表/列/索引/视图/队列/lease/cursor；DDL delta 只有 `c_effects_kind` 与 `c_events_entity` 两条 CHECK；loader 顺序 48→49→50 且三处（load.py 两清单、setup_db self-check）同步。
-- [ ] **唯一可写 DEFINER**：`advance` 仍是唯一；`recoverable_effects` 只读；`event/request/effect` 的写入仍经 `advance`/`validate_and_apply_delta`。
-- [ ] **G1-A 重述**：`read_definers` 加 `recoverable_effects`；wrapper 元组加 `command_recover` 且含 `v24.advance(`、无四个写词；`UPDATE v24.effects` allowlist 与 `pg_advisory_xact_lock` sole-producer 不变；`test_g1.py` 绿。
-- [ ] **G2a/G2b/DDL 重述**：command kind 8→9；`command_recover` claim 被拒（`invalid_args`）；`test_ddl` 的 command claim/事件 entity 正负例；均为扩大覆盖，不是放宽。
-- [ ] **K1–K10 证据**：每个 K 有 journal 路径、child/worker PID、十表前后 fingerprint、applied/skipped/has_more；K4 有 trigger 删除与十表 diff 为空；K5 有两次 replay 逐字节相同。
-- [ ] **负例**：N1–N14 全有断言与写类（W0/W1/WD）；unauthorized/limit/`request_conflict`/`stale_claim`/`receipt_conflict` 都是 W0；noop/重复 sweep 是 W1；应用型 sweep 是 WD。
-- [ ] **W1–W4**：每个 W 的 Done when 与 gate 命令可独立执行；W1–W3 不 commit；W4 一次里程碑提交（不 push）；9 个 gate 全 0。
-- [ ] **收尾工件**：`docs/reviews/v24-conformance-matrix-2026-10-23.md` 的 G5 行从“未验证”改为“完成”并链接本计划/`test_g5.py`；`docs/reviews/v24-deviation-ledger-2026-10-23.md` 记录 D-S6-1…12、CC-1…3、A-S6-*；`v24/s6/README.md` 记录窗口表、命令、债务与实测证据。
-- [ ] **文档纪律**：本文件是唯一新增；`git status --short` 只显示本文件（工作区其他未跟踪文件为既有线）；不编辑设计稿/pre-plan；不提交/推送；不跑 pytest/网络。
+- [x] **重启证据**：每个 K 的恢复由**新** `recover_worker.py` 进程执行；child/worker/parent 的 `pg_backend_pid()` 互不相同；无同进程新连接；无 `sleep` 排序；README 记录该口径。
+- [x] **唯一发现面**：`recoverable_effects` 是 `SECURITY DEFINER`/`STABLE`/零 DML/固定 `search_path`/固定 7 列/`(lease_until,effect_id)`/上限 16/scope auth/排除 manual；其 `prosrc` 与注释不含 `insert|update|delete|pg_advisory*`。
+- [x] **唯一命令**：`command_recover` 是 `SECURITY INVOKER`、无表权、恰好一次 `v24.advance(`、无 `INSERT INTO|UPDATE v24.|DELETE FROM|pg_advisory_xact_lock`；同 key 同 bytes replay，同 key 异 scope/limit `request_conflict`，同 key 异 candidates replay（CC-2）。
+- [x] **一次 request/receipt**：一次 sweep 恰 1 条 `command_recover` effect + 1 条 request + sweep/action 事件；≤16 动作、一个 delta、一个事务；`successors=[]`、无 `settle`、无第二 effect。
+- [x] **replay_safe**：只回 `ready`、清 `claim_owner/lease_until`、保留 attempt/fence；下一次普通 claim 递增；旧 token `stale_claim` W0；reservation 计数 1（不重复 IO）。
+- [x] **no_replay**：只转 unknown；run `blocked_unknown`（或保留 cancel seal）；预算不退款；interaction/pending_steer 清空；model/tool 的 pin 处理分别正确；事件与正常 unknown 分支的控制对照通过。
+- [x] **manual**：不进入候选、不写、不占 16 上界、`manual_debt` 正确、不让 `has_more` 永久 true。
+- [x] **late receipt**：unknown 后 success → `receipt_conflict` W0，首次 receipt 不被覆盖；`detail` 保持 `{}`，host journal 引用由证据面记录（D-S6-7）。
+- [x] **23 码**：`error_v1` 闭集不变；S6 只使用既有码（`invalid_args`/`unauthorized`/`not_found_or_denied`/`request_conflict`/`effect_id_conflict`/`receipt_conflict`/`stale_claim`/`invalid_outcome`/`retry_with_closure`/`blocked_unknown`），不新增码。
+- [x] **十表**：无新表/列/索引/视图/队列/lease/cursor；DDL delta 只有 `c_effects_kind` 与 `c_events_entity` 两条 CHECK；loader 顺序 48→49→50 且三处（load.py 两清单、setup_db self-check）同步。
+- [x] **唯一可写 DEFINER**：`advance` 仍是唯一；`recoverable_effects` 只读；`event/request/effect` 的写入仍经 `advance`/`validate_and_apply_delta`。
+- [x] **G1-A 重述**：`read_definers` 加 `recoverable_effects`；wrapper 元组加 `command_recover` 且含 `v24.advance(`、无四个写词；`UPDATE v24.effects` allowlist 与 `pg_advisory_xact_lock` sole-producer 不变；`test_g1.py` 绿。
+- [x] **G2a/G2b/DDL 重述**：command kind 8→9；`command_recover` claim 被拒（`invalid_args`）；`test_ddl` 的 command claim/事件 entity 正负例；均为扩大覆盖，不是放宽。
+- [x] **K1–K10 证据**：每个 K 有 journal 路径、child/worker PID、十表前后 fingerprint、applied/skipped/has_more；K4 有 trigger 删除与十表 diff 为空；K5 有两次 replay 逐字节相同；末行 `[passed] v24 S6 W1-W4`。
+- [x] **负例**：N1–N14 的写类/语义由 K1–K10、`[G5-W2]` 合同套件与发现面负例覆盖（W0/W1/WD）；unauthorized/limit/`request_conflict`/`stale_claim`/`receipt_conflict` 都是 W0；noop/重复 sweep 是 W1；应用型 sweep 是 WD。
+- [x] **W1–W4**：每个 W 的 Done when 与 gate 命令可独立执行；W1–W3 不 commit；W4 的 8 个既有 gate + 全量 G5 = 9 条命令全 0；提交按控制器指令顺延（见下一条）。
+- [ ] **里程碑提交**：按本轮指令不 `git add`/commit/push；S6 的唯一一次里程碑提交由控制器执行（尚未发生）。
+- [x] **收尾工件**：`docs/reviews/v24-conformance-matrix-2026-10-23.md` 的 G5 行从“未验证”改为“完成”并链接本计划/`test_g5.py`；`docs/reviews/v24-deviation-ledger-2026-10-23.md` 记录 D-S6-1…12、CC-1…3、A-S6-*；`v24/s6/README.md` 记录窗口表、命令、债务与实测证据。
+- [x] **文档纪律**：新增 `v24/s6/README.md`；本文件、矩阵、台账已更新；不编辑设计稿/pre-plan；不跑 pytest/网络；不 commit/push。
 
 ---
 
