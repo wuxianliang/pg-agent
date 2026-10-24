@@ -1,8 +1,8 @@
-# v24 偏差台账（S1–S4）
+# v24 偏差台账（S1–S5）
 
-> 收尾稿：2026-10-24。本文件是 S1/S2/S3/S4 里程碑的收尾工件，记录各计划 §7 的实施偏差。2026-10-24 本轮七个 gate 串行实跑全部退出 0（命令与结果见矩阵 §0）。规则：**每条与设计稿不一致的实现都必须具名落账，不得静默改规格**；规格修改走「设计稿修订 + Oracle 复审」（pre-plan §1.2）。历史失败追加修正结果，不覆盖、不删去。
+> 收尾稿：2026-10-24。本文件是 S1/S2/S3/S4/S5 里程碑的收尾工件，记录各计划 §7 的实施偏差。**S5 W1–W4 已实现，W5 为收尾（本台账、矩阵、README 与本地提交）**；2026-10-24 本轮八个 gate 串行实跑全部退出 0：load、`s1/setup_db.py --self-check`、`s1/test_ddl.py`、`s1/test_g1.py`、`s2/test_g3a.py`、`s3/test_g2.py`、`s4/test_g2b.py`、`s5/test_g4.py`（命令与结果见矩阵 §0）。规则：**每条与设计稿不一致的实现都必须具名落账，不得静默改规格**；规格修改走「设计稿修订 + Oracle 复审」（pre-plan §1.2）。历史失败追加修正结果，不覆盖、不删去。
 
-裁决来源：`docs/reviews/v24-three-doc-consistency-2026-10-23.md`（chat `untitled-chat-1EDE09`，14 项）、W5/W6 实施裁决（chat `untitled-chat-B38EF4`、`untitled-chat-F1CED0`）。设计稿 652 行、pre-plan 354 行，R5 修订为行内改写，两份文件行号未位移，因此 `L###` 引用继续有效。
+裁决来源：`docs/reviews/v24-three-doc-consistency-2026-10-23.md`（chat `untitled-chat-1EDE09`，14 项）、W5/W6 实施裁决（chat `untitled-chat-B38EF4`、`untitled-chat-F1CED0`）、S5 计划与逐 W 实施裁决（chat `untitled-chat-DFBC85`，2026-10-24：F1=A、F2=A、F2a=A、F2b=A、F3=A、F3a=A、F4=B′、F5=A、D-S5-1=A）。设计稿 652 行、pre-plan 354 行，R5 修订为行内改写，两份文件行号未位移，因此 `L###` 引用继续有效。
 
 ## 1. 规格分歧 D1–D14
 
@@ -69,7 +69,7 @@
 |---|---|---|---|---|
 | D-S4-1 | `model_call`/`tool_call` 的过期 lease claim 返回 W0 `stale_claim`，**不**做第二次 attempt；host 用 `class=unknown` 或 S6 inspect 解锁 | C18 / Oracle F2 | `30_advance.sql:712-713`；`G2b-T-7` 错 token 与过期 lease 同为零写；host kind 保持 S3 的 reclaim 语义 | 裁决（S6 边界） |
 | D-S4-2 | `invalid_outcome` 拆结构 W0 / 语义 C：结构类保持 claimed、无 outcome；语义类结算 `unknown` + 原始 receipt + pin 保留 | F2=D | `G2b-V-1`（两次结构 W0）、`G2b-V-3`（语义 unknown + 原始 success receipt）、`G2b-T-2/T-3/T-5` | 裁决（落地 F2） |
-| D-S4-3 | `blocked_unknown` run 的 steer/respond 返回 `blocked_unknown`（而非 `already_terminal`）；同 run 其它 business settlement 也 W0 墙 | C19/§5.7 | `G2b-N`（sibling/steer/respond 三面）、`G2b-T-10`；S3 G2a-7/G2a-8 的终端循环按 §1.5 对齐 | 裁决 + 声明式对齐 |
+| D-S4-3 | `blocked_unknown` run 的 steer/respond 返回 `blocked_unknown`（而非 `already_terminal`）；同 run 其它 business settlement 也 W0 墙 | C19/§5.7 | `G2b-N`（sibling/steer/respond 三面）、`G2b-T-10`；S3 G2a-7/G2a-8 的终端循环按 §1.7 对齐 | 裁决 + 声明式对齐 |
 | D-S4-4 | 预算按 F3=A 字面实现：admission 预扣 steps/tokens，结算退差，tool_calls 批量扣 | F3=A | `G2b-L` 守恒账（5000=40+4096+864 等）、`G2b-J` 三路 budget seal、`G2b-K` 17/16/5 边界 | 裁决（落地 F3） |
 | D-S4-5 | applier 对 settlement 采用「一致性 + 边界」校验，不逐字段重算；gate 逐列断言兜底 | 风险 R2 | `G2b-V`/`G2b-T` 的零写与重交；矩阵 §2.4 逐列 | 实施裁决（已知风险） |
 | D-S4-6 | spawn intent 在 S4 不半实现；无 spawn 解释器，未建模的 intent/结果键在 C19 结果键闭集或 `v_executable` 守卫处 W0 拒绝，不建 child run | §2.4 | `48_loop.sql` 无 spawn 分支；`G2b-T-8` 验证 unknown+successors 守卫；**未单独构造 spawn 正例**，按边界披露 | 边界（不是已测能力） |
@@ -80,7 +80,50 @@
 
 > D-S4-10 与 W2.1 的并发证据补齐都是**非偏差**：前者是防御性预检的可观测性说明，后者只补测试证据（两连接 + Barrier + `pg_blocking_pids`），不改产品语义。
 
-### 1.5 声明式 S1–S3 断言对齐（不是放宽）
+### 1.5 S5 裁决与偏差（D-S5-1…11）
+
+S5 的 11 条分歧在计划 §11 登记、在 W1–W4 落地。下表按**实际代码/测试**记录落位；凡计划文字与实现有出入的，以代码为准并在「性质」列标明（D-S5-6、D-S5-8 有备注）。Oracle 裁决：F1=A、F2=A、F2a=A、F2b=A、F3=A、F3a=A、F4=B′、F5=A、D-S5-1=A（`untitled-chat-DFBC85`，2026-10-24）。
+
+| # | 内容 | 依据（设计/计划/Oracle） | 落位/证据 | 性质 |
+|---|---|---|---|---|
+| D-S5-1 | close 不产生 command successor：drain 只写 `close_intent={kind:'close'}`，不改 run status/ended_at、不发 successor；run 的 terminal 由 `loop_sealable` 在自身结算时收口；close 由新 request_key 逐 phase 推进 | 设计 §3.1.1；计划 §11-1；Oracle F4=B′、D-S5-1=A | `40_interpreters.sql` 的 close drain 分支；G4-G（drain 后以 `parent_effect_id=close effect` 计 successor 为 0、status/ended_at 不变、`pending.runs=1`）；G4-M-1（closed 后新 key `already_terminal`） | 显式分歧（Oracle 裁 A） |
+| D-S5-2 | inspect 是**新 effect**，不复用原 host effect：id=`md5(owner_effect::text\|\|':inspect_resource:'\|\|install_id::text\|\|':0')`，request 带 `target`/`target_effect_id`/`target_reservation`/`target_request_digest`。**实际 request 恰 6 键、不携带 inspect 自身的 reservation**：计划 §12.2 所说的 `v24:inspect_resource:<inspect_id>` 只出现在 id 派生/命名空间，不是 request 字段；inspect 只靠 `target_reservation` 引用原 host effect | 设计 §6.7；计划 §11-2、C25；Oracle F2=A | `46_cleanup.sql` 的 `dispose_stage` inspect 分支 + `40_interpreters.sql` inspect claim/settlement；G4-H（request 逐键、target reservation/digest 逐字节相等、确定性 id）、G4-N（7 个 claim 负例 + 真实 claim→settle） | 实施裁决（同 reservation 命名空间，语义等价；自身 reservation 未落 request） |
+| D-S5-3 | 「一次 advance 只执行一个有限阶段」从 reconcile 扩展到 dispose/close：stage ≤16 行、≤16 successor、不递归；close 每个新 key 恰一个 phase（request→drain→retire→cascade→barrier→finalize） | 设计 §6.3；计划 §11-3；Oracle F3=A、F3a=A | `dispose_stage` 的 `v_rows>=16`/`v_ordinal>=16` blocked 与 `deactivate_stage` 的 16 行上界；G4-Q（单次 dispose 恰 1 successor、changed rows ≤16、pending 不降证明 stage 边界）、G4-G（每 key 恰 +1 条 `scope_close_phase`，phase 序单调） | 扩展解释（不改规格文字） |
+| D-S5-4 | 贡献按 `contribution_seq DESC` **一条一 advance** 释放，不是一批 DESC；consumer pins 先于其 slot 释放；episode 只在最后一条 slot 释放后 closed | 设计 §6.6；计划 §11-4、C27；Oracle F3=A | `deactivate_stage` 的 `cleanup_slots ... LIMIT 1`；G4-D（三次 off 依次 `[2]`→`[2,1]`→`[2,1,0]`，episode 第三次才 closed）、G4-P（`[1,0]`）、G4-C（provider 一次一条 release） | 字面实现 |
+| D-S5-5 | `dispose_stage` 是命令/close 内的有界 helper，不是独立 worker：INVOKER、无 GRANT、无后台进程/LISTEN；唯一入口是 `interpret_dispose` 与 close 的 cascade phase | 设计 §6.1；计划 §11-6；Oracle F1=A | `46_cleanup.sql:1-6` 头注；`40_interpreters.sql` 仅两处调用（`:315` close、`:3300` dispose）；G1-A（DEFINER 仍 6 个、advance 唯一可写）、G4-W1/G4-Q（单次调用有界） | 一致（澄清） |
+| D-S5-6 | owner 屏障的权威键是固定 `(owner_fiber_id, owner_episode_id)` 对（`cleanup_edges` 的 owner 边、`install_disposed_ok` 义务 4），不联 `current_episode_id`。**备注**：`deactivate_stage` 的 episode-close child 屏障是 fiber 级（该 fiber 的任意 owner 对 child），比 pair 更严，未放宽 | 设计 §3.1.8；计划 §11-7、C24；G4-A/G4-P | `cleanup_edges` owner 边、`install_disposed_ok` 义务 4；G4-A（A→R、B→A）、G4-P（child disposed 前 root 不发 release、不落墓碑）；`deactivate_stage` 的 `ci.owner_fiber_id=p_fiber_id` 屏障（W4 注记，fiber 级） | 实现对齐（pair + 一处更严的 fiber 级屏障） |
+| D-S5-7 | host effect 为 `unknown` 且 `resource_quiesced_at IS NULL` 时，dispose 必须先发/复用 inspect，绝不再发第二条 release；未证明静默前不得 `disposed`/`closed_at` | 设计 §6.7；计划 §11-8、C25；Oracle F2b=A | `dispose_stage` 的 `dispose_pending` unknown 分支；G4-I（release unknown→恰一条 inspect、release 计数仍 1；inspect 新 key 新 id）、G4-M-8（只发 inspect）、G4-F（unknown 时 close 恒 `closed_at NULL`） | 补规格未写分支 |
+| D-S5-8 | 30 的 `installs→child installs` 闭包边修正为 root install 展开其 fiber 的 child installs。**实际落地**：该边只对 close 命令加入；`dispose` 仍走既有 sibling 边（root 无 owner 对，不展开），child 由 `dispose_stage` 的 `FOR UPDATE` 在 helper 内自行锁 | 计划 W1 步骤⑤、§10.1 R9、§11 D-S5-8；W1 注记⑥ | `30_advance.sql` close 的 owner-descendant 边（`fibers f ... ci.owner_fiber_id=f.fiber_id`）；`dispose_stage` pass 1 的 `FOR UPDATE`；G4-W1/G4-P 证明 dispose 的 child 锁与 child-before-owner 序；**dispose 闭包边未扩**，锁序留 S7 评估 | 部分落地 + 显式披露（不是全量 D-S5-8） |
+| D-S5-9 | `cleanup_cycle` 的 admission 检查是**防御性**的：公共路径不能构造 owner/dependency 环（owner pair 由活 fiber 派生，公共 API 不能改 owner 列）；只有 seeded/外部修复图可达，命中仍 W1 failed receipt + 领域零写 | 计划 F5=A、§10.2、C24；D-S5-9 | `40_interpreters.sql:2869-2873`（owner 活性之后、任何行构造之前）；G4-E 以 seeded 环直接调 `v24.install`，得 `cleanup_cycle`、path 长 4、domain 零写、installs 计数不变；**不声称公共路径可达** | 边界披露（防御性，不是公共负例） |
+| D-S5-10 | 跨 scope 的 child install 通过 owner 边递归纳入 close 闭包（`cleanup_close_closure`），不收紧 admission；dependency 邻居不算 close 义务，由 live pin / host effect blocker 表达 | 设计 §2.4/§6.2（admission 不要求同 scope）；计划 C24、R10、D-S5-10 | `cleanup_close_closure` 的递归 owner CTE（无 scope 过滤）；`scope_closable` 的 pins/effects blocker；G4-G 覆盖 scope 父子；**无跨 scope child install 专用 fixture**（代码路径成立，证据缺口留 S7/后续） | 裁决（不收紧 admission）+ 证据缺口披露 |
+| D-S5-11 | `preparing\|prepare_unknown` 的 dispose **先 inspect、保持原态**，不写 `dispose_pending`：known→installed、absent→prepare_failed、unknown 保持；`ready\|claimed` host_prepare 只阻塞、不发 inspect | 设计 §6.7、C7 状态迁移；计划 C25/D-S5-11、A-S5-1/A-S5-9；Oracle F2a=A、F2b=A | `dispose_stage` prepare 分支；G4-H（prepare_unknown→inspect known→installed→release→disposed）、G4-J②（absent→prepare_failed→0 release 直接 disposed）、G4-K（两路 + seeded `dispose_pending` receipt_conflict） | 实施裁决（合同强制） |
+
+Oracle 逐 W 终判与终判时记录的残余风险（run log Turn 10–13；每轮八门最终运行均 0）：
+
+| 工项 | Oracle 终判 | 终判时的 residual risk |
+|---|---|---|
+| W1 | PASS | 30 的 child-install 闭包边未扩、prepare 仅 intent；W2 必须收敛 inspect |
+| W2 | PASS | inspect failure/unknown 不证明外部静默；收敛需要新 request_key；并发面归 S7 |
+| W3 | PASS | close 只有串行 request-key 证据；并发/崩溃不外推 |
+| W4 | PASS | `cleanup_pending` 非严格递减；close 依赖新 key；不得外推自动收口/并发无饥饿 |
+
+### 1.6 S5 声明式断言对齐（不是放宽）
+
+计划 §9 原列 A-S5-1…7；W2 为执行 C18/C25 的冻结形状又长出 **A-S5-8**（G2a-11 `claimable_kinds()` 4→5）与 **A-S5-9**（G3a-K preparing 子段），计划 §12.2 已补记。本表按实际九条全录（**superset：7 + 2**），每条给原断言、现断言、冻结合同的强制点与「不是削弱」理由。
+
+| # | 原断言（S1–S4） | 现断言（S5） | 冻结合同为何强制 | 不是削弱 |
+|---|---|---|---|---|
+| A-S5-1 | `s2/test_g3a.py` G3a-K：`prepare_unknown` 的 dispose 后 install 停在 `dispose_pending`、`emitted==[]`、host_release 计数 0 | install 保持 `prepare_unknown`；恰一条 ready `inspect_resource`（确定性 id、target=host_prepare、request 6 键与原 reservation/digest 全等）；host_release 0；G4-H/J/K 继续覆盖 known/absent/unknown 收敛 | C25 规定 dispose 对 `preparing\|prepare_unknown` 只发 inspect、不改状态；C7 只允许 `prepare_unknown→prepare_failed\|installed`（经 inspect），先写 `dispose_pending` 会使 known 后无法合法转 installed，故旧期望在 C25 下不可达 | 旧断言的「零 release」保留，另加「恰一 inspect」与 request 逐键/确定性 id/状态保持；真正的 `dispose_pending` receipt_conflict 改由 G4-K 以 seeded fixture 覆盖，未删断言、未降为零写 |
+| A-S5-2 | `s4/test_g2b.py` G2b-C 的 `non_members` 含 `inspect_resource`；G2b-T-1 也以 inspect 作「未打开 kind」代表 | G2b-C `non_members = COMMAND_KINDS + ("fiber_reconcile",)`；G2b-T-1 以 `fiber_reconcile` 为剩余非成员；inspect 的 claim→settle 正例移到 G4-N（6 键形状、target 匹配、ordinal=0、pin NULL） | C18/§5.7 分阶段打开 `claimable_kinds()`；W2 同一提交把 inspect 加入第 5 项并打开 claim+settlement，旧的「inspect 不可 claim」不再是合同 | 仍穷举全部剩余非成员（8 个 command kind + `fiber_reconcile`）且十表零写；inspect 的负例在 G4-N 更严（错键集/错 reservation/已 quiesced/终态/坏 digest/错 id），正例也有真实 claim→settle。覆盖从「一律不可 claim」变为「按冻结形状可 claim、其它形状 W0」 |
+| A-S5-3 | `s1/test_g1.py` G1-J2：close 只写 `close_requested_at`（fixture 无 install/run/fiber） | 原断言保留（该 scope 无义务，phase=request）；G4-G 增加有 run/install 的 close，断言 phase 事件序列、`closed_at` 只在 finalize、`child.closed_at < parent.closed_at` | C26 phase 机不改变「request 只写请求时间」；义务为空时无需推进 | 原断言原样保留，新增有义务 fixture，断言只增 |
+| A-S5-4 | `s2/test_g3a.py` G3a-F：B off 一次完成 release/close/current 清空（单 slot） | 单 slot 仍一次完成；多 slot 的逐条 DESC 由 G4-D 覆盖（3 条、三次 advance，episode 第三次才 closed） | C24/C27 的「一 advance 一条 contribution」只改变多 slot 的进度，不改变单 slot 终态 | 单 slot 断言未改；多 slot 新证据更严，未删除任何旧断言 |
+| A-S5-5 | `s1/test_g1.py` G1-A：DEFINER allowlist 6 个，advance 唯一可写 | 仍 6 个；S5 的 cleanup helper 全部 INVOKER、无 GRANT；`50_permissions.sql` 在 W1–W4 均 0 diff | 计划 §5.1/§5.8 要求 helper 保持 INVOKER，不新增 DEFINER | 断言未动；S5 没有新增可写函数，allowlist 只被复核、未被扩大 |
+| A-S5-6 | `s1/test_g1.py` 的 host_prepare claim 正例 | 不变；G4-N 重跑 claim→settle，并追加 inspect 的真实 claim→settle | C18 已允许 host_prepare；S5 不改变 host claim | 原样保留 + 回归重跑；新增 inspect 正例是追加，不是替换 |
+| A-S5-7 | `s4/test_g2b.py` G2b-U：`error_v1` 仍接受 23 码 | 不变；`cleanup_cycle` 从「无生产者」变为有生产者，但闭集仍 23 码、逐码接受 | 错误码闭集不因生产者增加而扩；S5 无新码（§5.7） | 23 码逐码接受断言原样保留；生产者增加不减少任何断言 |
+| A-S5-8 | `s3/test_g2.py` G2a-11：`claimable_kinds()` 恰 4 项（host_prepare/host_release/model_call/tool_call） | 恰 5 项、顺序固定（追加 `inspect_resource`）；request-less inspect 仍在非成员循环中得 `invalid_args` 十表零写；打印文案同步 | C18/§5.7 冻结 5 项顺序；W2 打开 inspect 的强制结果 | 请求形状循环未动，非成员穷举未减；数组从 4 到 5 是合同增长，不是把某项从负例里删掉——错形状的 inspect 仍是负例（G2a-11 seed 循环 + G4-N） |
+| A-S5-9 | `s2/test_g3a.py` G3a-K 的 preparing + ready host_prepare 子段：dispose 写 `dispose_pending`，随后 host_prepare 回执得 `receipt_conflict` | dispose 零后继、保持 `preparing`；host_prepare 回执正常结算为 `installed`（G3a-K）；真正的 `dispose_pending` receipt_conflict 由 G4-K 的 seeded fixture 覆盖（`domain_state` 前后相等、host_prepare 仍 `claimed`） | C25/D-S5-11 要求 preparing 保持原态，ready host_prepare 只阻塞；若先写 `dispose_pending`，回执会与 C7 迁移冲突（A-S5-1 的直接后果） | `receipt_conflict` 没有被删除，只移到合法的 seeded `dispose_pending` 场景（G4-K）；域零写断言更强，旧断言不是被「放宽」而是被合同判定为不可达 |
+
+### 1.7 声明式 S1–S3 断言对齐（不是放宽；S5 收尾时由 §1.5 顺延）
 
 | # | 原断言 | 现断言 | 理由 / 证据 |
 |---|---|---|---|
@@ -120,6 +163,27 @@
 | W5 | `steer_model_effect_id`/`steer_consumable`；两个 interpreter 消费 pending；applier 用同一 helper 重算；`30_advance` 接受消费型 steer 形状 | `a2c8d7d`；`G2b-P/Q/R/S` |
 | W6 | 测试-only：新增 `G2b-T-1…T-10` 十条具名零写负例；旧 `[G2b-T-1/2/3]` 标签改名为 `[G2b-V/*]`（断言未动）；收尾工件与计划状态 | 本 commit；`v24/s4/test_g2b.py` 263 insertions / 5 deletions |
 
+### 2.2 S5 实施披露（W1–W4）
+
+| 工项 | 实际文件增量（`git show --numstat`） | helper / 结构新增 | 实施选择与说明 |
+|---|---|---|---|
+| W1（`a89d936`，6 文件） | `46_cleanup.sql` **NEW** +552；`40_interpreters.sql` +75/−107；`load.py` +2；`s1/setup_db.py` +1；`s5/test_g4.py` **NEW** +619；计划 +964。`30`/`50`/S1–S4 test 0 diff | `cleanup_edges`/`cleanup_closure`/`cleanup_cycle`/`cleanup_graph`/`cleanup_pending`/`cleanup_slots` + `dispose_stage`（7 个 INVOKER，无 GRANT）；`interpret_dispose` 改为委托；`command_dispose` validator 扩到 install + owner 后代 / install-scoped release id / 0..n−1 ordinal / 后代事件，footprint 仍 `installs|fibers` 且无 insert | 合并 DAG 的 `depth` 用 longest-path-to-sink rank；pass 1 parent-first 写 intent、pass 2 反向 child-before-owner 判 release；stage error 用 `write:true` + failed command；cascade 在 `dispose_stage` 内自行锁 child |
+| W2（`d4dfe92`，9 文件） | `48_loop.sql` +4/−4；`30_advance.sql` +64；`40_interpreters.sql` +407/−18；`46_cleanup.sql` +212/−40；`s2/test_g3a.py` +47/−9；`s3/test_g2.py` +9/−6；`s4/test_g2b.py` +14/−9；`s5/test_g4.py` +692/−4；计划 +21/−2 | **无新函数名**；inspect 结算 **INLINED** 在既有 `validate_and_apply_install_delta`；`dispose_stage` 增 prepare-inspect / release-unknown / direct-tombstone 分支；`claimable_kinds()` 追加第 5 项 `inspect_resource` | inspect request 冻结为 6 键、`ordinal=0`、确定性 id；claim 闸门校验 target kind/status/quiesced/install/reservation/digest/id/parent/pin；`prepare_failed` 直墓碑为 G4-J② 的最小实现 |
+| W3（`1ae1b85`，5 文件） | `30_advance.sql` +64；`40_interpreters.sql` +705/−21；`46_cleanup.sql` +117/−3；`s5/test_g4.py` +348/−2；计划 +17/−1 | `cleanup_close_closure`、`scope_closable`；`dispose_stage` 接受 `mode='close'`；40 的 close phase 机（request→drain→retire→cascade→barrier→finalize）；30 的 close 闭包发现（child scopes/runs/installs、owner 后代、全 episodes、pins） | close 校验 **INLINED** 在 `validate_and_apply_delta`；`fiber_control(on)` 的 `scope_closed` 早退只写 `failure_seq/failure`；30 锁序未改；旧 `dispose_stage(...,'close')` 负例改正向 |
+| W4（`2272b71`，4 文件） | `46_cleanup.sql` +548/−40；`40_interpreters.sql` +319/−99；`s5/test_g4.py` +904/−16；计划 +11 | `install_disposed_ok`（install/effect/quiesced/assumed_fibers 四参）、`install_disposed_ok_except_release`（install/release/assumed_fibers 三参）、`deactivate_stage`；`dispose_stage` 增 release/close 纤维阶段 | 每阶段 ≤16 行（`v_rows + stage_rows > 16` 即 blocked）；close cascade 对 `dispose_pending` 且无 ready/claimed release/inspect 的 install 重入；release failure 新 key 新 id/reservation；close-only 阶段不并发 release |
+
+关键实施选择（与计划草稿/命名有出入的，按代码记录）：
+
+- **`cleanup_graph.depth` = longest-path-to-sink rank**：计划草稿的 seed depth 无法保证 scope-seeded 端点顺序；实现改为对闭包内简单路径取最长 rank（0 为 sink），`ORDER BY depth DESC, node_id` 保证每条边 u→v 满足 rank(u)>rank(v)。G4-A（B<A<R、A<P）与 G4-E（65-chain depth≤64）是证据。
+- **stage error 用 `write:true` + failed command**：`dispose_stage` 返回 `{error}` 时，`interpret_dispose` 以 `write:true` 只写 failed command effect + request receipt，丢弃整个 stage delta（`40_interpreters.sql:3301-3306`）；这采用 raw W1/G4-E 的写类，**不是** §5.2 草稿的 `write:false`。close cascade 同形（`:315-318`）。G4-E/G4-M-5 断言 domain 零写 + effect/request 各 +1。
+- **W2 inspect 结算 INLINED 在既有 install delta applier**：G1-A 把「可写 `v24.effects` 的函数」钉死为 allowlist，`test_g1.py` 又不在本轮允许修改路径；因此不复用计划 §5.5 的 `validate_and_apply_inspect_delta` 函数名，逻辑内联在 `validate_and_apply_install_delta`。**没有** `inspect_effect_id` 函数——id 公式直接写在 `dispose_stage` 的两处 inspect 分支里。
+- **W3 close 校验同样 INLINED**：`command_scope_control` 的 close delta 校验/落库内联在 `validate_and_apply_delta`，没有 `validate_and_apply_scope_delta` 函数名；原因同上（G1-A allowlist）。语义仍按 §5.4 的七表白名单。
+- **30 的 child-install 闭包边未在 W1 扩展（W1 注记⑥）**：`dispose` 仍用既有 sibling 边；W3 只给 close 命令加了 owner-descendant 边。`dispose` 的 child 由 `dispose_stage` pass 1 的 `FOR UPDATE` 自行锁。这是 D-S5-8 的**部分落地**，锁序影响留 S7 评估（见 §1.5 D-S5-8）。
+- **未创建 `v24/s5/fake_cleanup_host.py`**：计划 §8.2/W5 列为 NEW，实际没有该文件。host_prepare/host_release 回执由 `settle_release()` 直接提交（claim + success body `{}`）；inspect 回执由 `inspect_receipt()` 从存储的 6 键 request 生成冻结 body 后提交；负例/边界用 seeded effect 或已 claim 的 effect。属夹具合并，先例是 S4 的 `FakeTool` 与 `FakeLLM` 同置 `fake_llm.py`、未单独建 `fake_tool.py`；矩阵 §2.5 与 `v24/s5/README.md` 也按「回执直接经 `advance` 提交、无独立 host 进程」记录。
+- **`test_g4.py` 打印 `[passed] v24 S5 W1-W4`**（计划 §7 草稿写的是 W1-W5）：W5 只做收尾，不新增断言；终判由控制器在八个 gate 全 0 后给出。G4-A…Q 17 个 tag 全部出现。
+- **`50_permissions.sql` 在 W1–W4 均 0 diff**：没有新 DEFINER/GRANT；`cleanup_*`/`install_disposed_ok*`/`deactivate_stage` 全部 INVOKER，由 owner 连接或 DEFINER `advance` 调用。
+- **计划 §5.8 的三个标识符未落地**：`inspect_effect_id`、`validate_and_apply_inspect_delta`、`validate_and_apply_scope_delta` 均不存在（前两者内联，第三者被 `validate_and_apply_delta` 的 close 分支吸收）；反过来，实现新增了 §5.8 未列的 `cleanup_slots` 与 `cleanup_close_closure`。
+
 ## 3. 非偏差声明
 
 - **子门拆分不是规格偏差**：S1 内部按 W1–W6 串行拆分，是计划的工项划分，不改变设计稿的任何合同。原 W6（解释器）已由 Oracle 裁决（chat `untitled-chat-B38EF4`）解散，`scope_control` 归 W4、`install`/`host_prepare`/settlement 归 W5，ACL 顺延为 W6；这是**排期**调整，不是语义变更。
@@ -127,6 +191,9 @@
 - **W5 判据不回填 claim**：claim 的判据由 W3 gate 守住（Oracle 裁决 ①）；W5 只保留 S4–S6，不是覆盖率下降。
 - **G3 子门拆分不是规格偏差**：G3a 归 S2、G3b 归 S3，是 pre-plan §2.2 已冻结的施工口径；S2 当时只证 activation-pin 半部；S3 本轮 G3b-1…5 实跑通过后父门为「完成（G3a+G3b）」；claimed/unknown 完整 settlement release 已由 S4 的 G2b-R/S 补齐（terminal 同 advance 释放、unknown 保留自身 pin），不再悬空。
 - **S1 夹具/ACL 对齐不是放宽**：S2 把 canonical 列表从 6 文件扩到 7、`test_g1.py` 的 G1-A 允许 `validate_and_apply_delta` 含 `UPDATE v24.effects`、ACL 期望集合加入 `resolve`/`fiber_control`/`dispose`。三者都是「新函数集合」的必然对齐，断言只增不减；S3 W1 后 `T` 断言 advance 是唯一可写 DEFINER，另有封闭只读 DEFINER allowlist；`run_owner`/`run_projection` 内部且不授予协议角色 EXECUTE。
+- **S5 `cleanup_pending` 是「非增」不是「严格递减」**：实现与 G4-Q 实测序列为 `6→6→4→4→2→2→0`（`test_g4.py:2501` 的 `assert sequence == [6, 6, 4, 4, 2, 2, 0]`）。只有**被计数的** install / fiber / host-effect 义务清除时才严格下降；retire 与单条 release 阶段不计 slot/pin，因此可以持平。计划 §7 的该行仍写「严格递减」，但同表示例 `(1,1,0…)` 与 §7 末的 W5 注记都按非增读；Oracle `DFBC85` 接受了实现的非增语义。这是**披露**（计划措辞需按实现读），不是削弱断言——G4-Q 对每个阶段的 `pending <= previous` 与最终 0 都做了精确断言。
+- **「close-only」阶段的 release 顺延到下一个 key**：一个阶段若只 retire、只释放非末条贡献、或只 close（无 slot 释放），不发 `host_release`；release 由后续 dispose key 发出，保留 W1 的 G4-W1 时序。这不是无界停顿：下一个 request_key 是文档化的驱动器（C26/C27 与矩阵 §4 均写明「每次新 key 推进一个 phase」），`dispose_stage` 也会在下一 key 重新选 fiber。
+- **provider pin 屏障**：live consumer pin 阻止 provider dispose；provider **从不**释放不属于自己的 pin——只有 consumer 侧的 `deactivate_stage` 释放本 episode 持有的 consumer pins。G4-C 是证据：provider dispose 时 `emitted=[]`、slot `released_at NULL`、pin 未释放、host_release 0；consumer off 后 pin 才释放，provider 再 dispose 才发唯一 release。
 
 ## 4. 历史失败（追加，不覆盖）
 
@@ -147,17 +214,22 @@
 | S4 W3 | Oracle `DFBC85` 初判 **BLOCK** | 把 `interaction_mismatch` 误读为全库 W0 | 更正为 W1（领域零写 + 一条 failed `command_respond` + receipt）；PASS |
 | S4 W4 | Oracle `CC3E40` **BLOCK** | cancel-late tool unknown 覆盖 cancel seal | 加 cancel-late 守卫（保留 cancelled/close_intent/result、`late=true`、0 successor）；`G2b-O/tool-unknown`；PASS |
 | S4 W5 | 评审风险：pending_steer 消费 vs cancel 竞态未单独构造 | 未新增独立并发 fixture | 由 G2b-O 两序 + terminal guard 组合覆盖；不单独声称；PASS |
+| S5 W1（**pre-gate 实施修正，非 gate 红**） | 无 gate 红。实现期修正：`cleanup_graph` 的 draft seed-depth 不能保证 scope-seeded 端点的 child-before-owner；stage error 的草稿写类为 `write:false` | depth=0 起点在同一 scope 的 owner/dependency 端点混合时排序不唯一；`write:false` 会让 `cleanup_cycle` 没有 failed command receipt，与 G4-E/raw W1 的写类冲突 | `depth` 改为 longest-path-to-sink rank（每条边 u→v ⇒ rank(u)>rank(v)，`ORDER BY depth DESC`）；stage error 统一 `write:true` + failed command（`40_interpreters.sql:3301-3306`）；G4-A/G4-E 断言 |
+| S5 W2（**pre-gate 实施修正，非 gate 红**） | 无 gate 红。实现期修正：inspect claim 需精确 `ordinal=0`；direct-tombstone 的 16 行预算未计入同一 stage 的 install 行，曾可写出 17 行 | inspect id 公式固定 `:0`，claim 不校验 ordinal 会接受伪造的 ordinal≠0 effect；预算只算 fiber/slot 行时丢掉 install 的 +1 | claim 加 `effect.ordinal = 0` 精确校验；预算把 install 行 +1 计入（`v_direct`），`v_rows + ... > 16` 即 blocked；G4-N/G4-J② |
+| S5 W3（**合同对齐，非 gate 红**） | 无 gate 红。旧 G4 断言 `dispose_stage(...,'close')` 得 `invalid_args`；W3 把它改成 accepted positive | C26 的 close cascade 复用 `dispose_stage(mode='close')`；旧负例基于 W1 的 `command\|cascade` 闭集 | `test_g4.py` 的 close 探针改断言 `error` 不存在且 `installs` 非空；这是合同变更，不是放宽（§1.6/§2.2） |
+| S5 W4（**pre-gate 实施修正，非 gate 红**） | 无 gate 红。实现期修正：stage 预算合并时未在写第 17 行前拒绝；close cascade 对永久 barrier 的 `dispose_pending` install 会停在 barrier | `deactivate_stage` 返回行数与已累计行数需在 merge 前判；barrier 阶段只看到 pending install 时没有 phase 再进 cascade | `v_rows + stage_rows > 16` 即 blocked（不写第 17 行）；cascade 重入条件加 `dispose_pending` 且无 ready/claimed release/inspect；G4-Q/G4-F/G4-M-6 |
 
-S1 四次是夹具缺陷；S2 六次是夹具/测试断言缺陷或局部 SQL 质量问题；S4 五次是评审发现/测试证据缺口与一次守卫修复（W4 BLOCK）。均非设计语义变更，修正后同一 gate 退出 0，未删断言、未降低断言强度。
+**S5 的诚实口径**：在记录的 S5 W1–W4 轮次中，八门在每轮**最终运行**均退出 0（controller L1），**没有可记录的 gate 红**，也没有 S4 W3/W4 那样的 Oracle BLOCK。上表四条是 **pre-gate 实施修正**（提交前由实现者发现并修，或 W3 的合同对齐），不是 gate 失败；「gate 红」与「pre-gate 实施修正」不得混为一谈。
+
+S1 四次是夹具缺陷；S2 六次是夹具/测试断言缺陷或局部 SQL 质量问题；S4 五次是评审发现/测试证据缺口与一次守卫修复（W4 BLOCK）；S5 W1–W4 无 gate 红，四条均为 pre-gate 实施修正或合同对齐（见上）。均非设计语义变更，修正后同一 gate 退出 0，未删断言、未降低断言强度。
 
 ## 5. 验收结果与仍未关闭的披露
 
-本轮七个 gate 依序退出 0/0/0/0/0/0/0（矩阵 §0）；G2 父门为**完成（G2a+G2b）**，G3 父门为**完成（G3a+G3b）**。`runs` 已有 S3 start writer，revision 从 1 起并随可见状态变化递增。错误码为 **22 个有生产者、1 个未产生**：`blocked_unknown` 由 S4 新增；`cleanup_cycle` / S5 仍无生产者。`blocked_unknown` 的 W0 墙与 W1 结算写类分列见矩阵 §3.1。
+本轮八个 gate 依序退出 0/0/0/0/0/0/0/0（load、`s1/setup_db.py --self-check`、`s1/test_ddl.py`、`s1/test_g1.py`、`s2/test_g3a.py`、`s3/test_g2.py`、`s4/test_g2b.py`、`s5/test_g4.py`；矩阵 §0）。G2 父门**完成（G2a+G2b）**，G3 父门**完成（G3a+G3b）**，**G4 父门完成（G4-A…Q 17/17）**。`runs` 的 S3 start writer、revision 语义不变。错误码为 **23 个有生产者、0 个未产生**：`cleanup_cycle` 现有三个生产者——`v24/sql/46_cleanup.sql:852`（`dispose_stage` 根检查）、`46_cleanup.sql:879`（队列逐节点检查）、`v24/sql/40_interpreters.sql:2871`（admission 防御检查）；`blocked_unknown` 的 W0 墙与 W1 结算写类分列见矩阵 §3.1。
 
-- **G2b 已完成**：G2b-A…V 全绿，G2b-T-1…T-10 十条具名零写负例通过。
-- **G3b-2 完整 pin 排空已完成**：G2b-R/S 证明 terminal 同 advance 释放；unknown 只保留自身 pin。
-- **inspect 收敛未验证**：S4 仍不打开 `inspect_resource` claim；完整收敛归 S5。
-- **owner 级联/scope close/完整 dispose 闭包未验证**：S4 不扩展清理闭包；其余归 S5。
-- **FakeLLM/FakeTool/FakeHost 不是 transport 证明**：纯进程内、无套接字；真实 IO 不在 gate 内。
-- **完整 recovery / 并发矩阵**：覆盖两个 journal 窗口、G1-L、G3a-F、G3b-5、G2b-E/F/O；G3b-4 是顺序场景；完整 recovery 归 S6，三面并发矩阵归 S7。
-- **S4 不做自动 reclaim/inspect**：过期 lease 只 `stale_claim`，effect 可永久 claimed（D-S4-1/D-S4-7）。
+- **G4 已完成**：`s5/test_g4.py` 打印 `[passed] v24 S5 W1-W4`，G4-A…Q 全部出现；17 条具名断言无 skip/TODO。
+- **S5 已封闭的 S4 披露**：inspect 收敛（G4-H/I/J/K/N）、owner 级联/child-before-owner（G4-A/B 与 `[G4-W1]` cascade）、consumer-before-provider（G4-C）、贡献 DESC 与墓碑（G4-D/P/Q）、scope close phase 机与 close 后无新准入（G4-G/O）、失败/unknown 不写终态（G4-F/L/M）。
+- **S5 残差（S6/S7）**：崩溃/恢复/自动 reclaim 与 inspect 的外部真实性归 **S6**；三面并发矩阵与锁序/无饥饿证明归 **S7**。S5 只证串行 request-key 阶段（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进）；`cleanup_pending` 非严格递减、close 依赖新 key（§3），不得外推为「自动收口」。
+- **FakeLLM/FakeTool/FakeCleanupHost 不是 transport 证明**：纯进程内、无套接字；S5 甚至没有 FakeCleanupHost 文件（§2.2），回执直接经协议提交。真实 IO 不在 gate 内。
+- **仍未关闭的披露**：D-S5-8 的 dispose 闭包边未扩（锁序留 S7）；D-S5-10 无跨 scope child install 专用 fixture（代码路径成立，证据缺口）；A-S5-1…9 的逐条理由见 §1.6。
+- **历史口径更新**：S4 的「22 个有生产者、1 个未产生」由本节更新为 23/0；S1–S4 的其它验收结论与边界（FakeLLM/FakeTool、真实 IO、S6/S7）继续有效。
