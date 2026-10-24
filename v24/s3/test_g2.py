@@ -583,8 +583,10 @@ def claim_guard(db, owner):
     assert model["claim_owner"] is None and model["lease_until"] is None, model
     owner.rollback()
     kinds = one(owner, "SELECT v24.claimable_kinds()")
-    assert kinds == ["host_prepare", "host_release", "model_call", "tool_call"], kinds
-    assert set(kinds) == {"host_prepare", "host_release", "model_call", "tool_call"}, kinds
+    assert kinds == ["host_prepare", "host_release", "model_call", "tool_call",
+                     "inspect_resource"], kinds
+    assert set(kinds) == {"host_prepare", "host_release", "model_call", "tool_call",
+                          "inspect_resource"}, kinds
     owner.rollback()
 
     # S4 W1 positive: the real start model_call is claimable and the token is exact.
@@ -640,10 +642,11 @@ def claim_guard(db, owner):
     assert row["claim_owner"] == db.roles["service"] and row["lease_until"] is not None, row
     login.close()
     print("[G2a-11] claim allowlist = v24.claimable_kinds() "
-          "{host_prepare,host_release,model_call,tool_call}; real model claim exact token "
-          "and effect-only write; owner-seeded inspect_resource/all "
-          "command_*/fiber_reconcile reject invalid_args with ten-table byte-equal "
-          "snapshots and untouched attempt/fence/owner/lease; host_prepare still claims")
+          "{host_prepare,host_release,model_call,tool_call,inspect_resource}; real model "
+          "claim exact token and effect-only write; owner-seeded request-less "
+          "inspect_resource and all command_*/fiber_reconcile reject invalid_args with "
+          "ten-table byte-equal snapshots and untouched attempt/fence/owner/lease; "
+          "host_prepare still claims")
 
 
 def cancel(conn, run_id, generation, key):

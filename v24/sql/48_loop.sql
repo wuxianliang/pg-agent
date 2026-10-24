@@ -50,11 +50,11 @@ CREATE FUNCTION v24.continuation_effect_id(p_model uuid) RETURNS uuid
 LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, v24
 AS $$ SELECT md5(p_model::text||':continuation')::uuid $$;
 
--- C18 single source of truth.  W2 opens tool_call in the same commit that
--- enables tool settlement.
+-- C18 single source of truth.  S5 W2 opens inspect_resource in the same commit
+-- that registers its claim shape, settlement interpreter and applier branch.
 CREATE FUNCTION v24.claimable_kinds() RETURNS text[] LANGUAGE sql IMMUTABLE
-SET search_path = pg_catalog, v24
-AS $$ SELECT ARRAY['host_prepare','host_release','model_call','tool_call']::text[] $$;
+SECURITY INVOKER SET search_path = pg_catalog, v24
+AS $$ SELECT ARRAY['host_prepare','host_release','model_call','tool_call','inspect_resource']::text[] $$;
 
 -- C23 seal predicate.  p_close_intent / p_interaction / p_pending_steer are the
 -- values the current advance is ABOUT to persist (the interpreter cannot read

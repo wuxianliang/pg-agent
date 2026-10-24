@@ -866,17 +866,47 @@ def dispose_leaf(owner, admin, service):
     admin.commit()
     owner.rollback()
 
-    # prepare_unknown stops at dispose_pending: inspect convergence is S5.
+    # A-S5-1 (C25/D-S5-11): the prepare branch keeps the install in
+    # prepare_unknown (never dispose_pending, so inspect known/absent can still
+    # legally reach installed/prepare_failed) and emits exactly one inspect.
     creator = uuid4()
     seed_effect(owner, creator)
     unknown_i = seed_install(owner, scope_id=root, creator=creator, state="prepare_unknown")
     seed_fiber(owner, install_id=unknown_i, scope_id=root, creator=creator)
+    hp = uuid4()
+    seed_effect(owner, hp, kind="host_prepare", status="unknown",
+                outcome=Json({"v": 1, "class": "unknown",
+                              "claim": {"attempt": 1, "fence": 1, "owner": "seed"},
+                              "body": {}}),
+                settled_at=datetime.now(timezone.utc),
+                request_digest=b"\xab" * 32,
+                request=Json({"install_id": str(unknown_i),
+                              "reservation": "v24:host_prepare:" + str(hp)}))
     owner.commit()
     unk = one(admin, "SELECT v24.dispose(%s,%s)", (unknown_i, "w6-unknown"))
-    assert unk["disposition"] == "committed" and unk["emitted"] == [], unk
+    assert unk.get("disposition") == "committed", unk
+    assert len(unk["emitted"]) == 1, unk
     admin.commit()
     assert one(owner, "SELECT state FROM v24.installs WHERE install_id=%s",
-               (unknown_i,)) == "dispose_pending"
+               (unknown_i,)) == "prepare_unknown"
+    inspects = one(owner, """SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.effect_id),'[]')
+        FROM v24.effects e WHERE e.kind='inspect_resource'
+          AND e.request->>'install_id'=%s""", (str(unknown_i),))
+    assert len(inspects) == 1, inspects
+    inspect_effect = inspects[0]
+    assert inspect_effect["status"] == "ready", inspect_effect
+    assert inspect_effect["effect_id"] == unk["emitted"][0], (inspect_effect, unk)
+    assert inspect_effect["parent_effect_id"] == unk["effect_id"], inspect_effect
+    assert inspect_effect["effect_id"] == str(one(
+        owner, "SELECT md5(%s::text || ':inspect_resource:' || %s::text || ':0')::uuid",
+        (unk["effect_id"], unknown_i)))
+    assert inspect_effect["request"]["target"] == "host_prepare", inspect_effect
+    assert inspect_effect["request"]["target_effect_id"] == str(hp), inspect_effect
+    assert inspect_effect["request"]["target_reservation"] == (
+        "v24:host_prepare:" + str(hp)), inspect_effect
+    assert inspect_effect["request"]["target_request_digest"] == one(
+        owner, "SELECT encode(request_digest,'hex') FROM v24.effects WHERE effect_id=%s",
+        (hp,)), inspect_effect
     assert one(owner, "SELECT count(*) FROM v24.effects WHERE kind='host_release' "
                       "AND request->>'install_id'=%s", (str(unknown_i),)) == 0
     owner.rollback()
@@ -898,7 +928,10 @@ def dispose_leaf(owner, admin, service):
                (fail_rel,)) == "failed"
     owner.rollback()
 
-    # A preparing install cannot accept a host_prepare receipt after dispose.
+    # C25: a preparing install with a ready host_prepare blocks dispose without
+    # touching state and without writing dispose_pending, so the host receipt
+    # remains settleable (the old "receipt after dispose" pin no longer applies;
+    # G4-K covers a genuine dispose_pending conflict fixture).
     prep_i = seed_install(owner, scope_id=root, creator=creator, state="preparing")
     seed_fiber(owner, install_id=prep_i, scope_id=root, creator=creator)
     hp = uuid4()
@@ -909,14 +942,19 @@ def dispose_leaf(owner, admin, service):
     prep = one(admin, "SELECT v24.dispose(%s,%s)", (prep_i, "w6-prep-dispose"))
     assert prep["disposition"] == "committed" and prep["emitted"] == [], prep
     admin.commit()
+    assert one(owner, "SELECT state FROM v24.installs WHERE install_id=%s",
+               (prep_i,)) == "preparing"
+    assert one(owner, "SELECT count(*) FROM v24.effects WHERE kind='host_release' "
+                      "AND request->>'install_id'=%s", (str(prep_i),)) == 0
+    owner.rollback()
     hp_token = advance(service, hp, claim())["claim"]
     service.commit()
-    refused = advance(service, hp, {"v": 1, "class": "success",
-                                    "claim": hp_token, "body": {}})
-    assert refused == {"v": 1, "error": {"code": "receipt_conflict", "detail": {}}}, refused
-    service.rollback()
+    settled_prep = advance(service, hp, {"v": 1, "class": "success",
+                                         "claim": hp_token, "body": {}})
+    assert settled_prep.get("disposition") == "committed", settled_prep
+    service.commit()
     assert one(owner, "SELECT state FROM v24.installs WHERE install_id=%s",
-               (prep_i,)) == "dispose_pending"
+               (prep_i,)) == "installed"
     owner.rollback()
     print("[G3a-K] dispose: release successor, disposed, replay, already_terminal, "
           "blocked/unknown/failure boundaries")

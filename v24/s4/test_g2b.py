@@ -368,14 +368,16 @@ def real_claim_settle(db, owner):
 
 
 def stage_guard(db, owner):
-    """G2b-C: W2 allowlist is exactly host*+model+tool; exhaustive non-member rejection."""
+    """G2b-C: W2 allowlist is exactly host*+model+tool+inspect; non-members reject."""
     service = db.connect("service")
     root, live, creator = loop_fixture(owner, service, realm="g2b-c")
     kinds = read(owner, "SELECT v24.claimable_kinds()")
-    assert kinds == ["host_prepare", "host_release", "model_call", "tool_call"], kinds
-    assert set(kinds) == {"host_prepare", "host_release", "model_call", "tool_call"}, kinds
+    assert kinds == ["host_prepare", "host_release", "model_call", "tool_call",
+                     "inspect_resource"], kinds
+    assert set(kinds) == {"host_prepare", "host_release", "model_call", "tool_call",
+                          "inspect_resource"}, kinds
     print(f"[G2b-C] claimable_kinds() exactly {kinds}")
-    non_members = ("inspect_resource",) + COMMAND_KINDS + ("fiber_reconcile",)
+    non_members = COMMAND_KINDS + ("fiber_reconcile",)
     assert len(COMMAND_KINDS) == 8, COMMAND_KINDS
     for kind in non_members:
         effect_id = uuid4()
@@ -2632,14 +2634,17 @@ def zero_write_negatives(db, owner):
     service = db.connect("service")
     budget = {"steps": 7, "tool_calls": 3, "tokens": 5000, "wall_ms": 600000}
     try:
-        # T-1: an unopened kind cannot be claimed (inspect_resource opens in S5).
+        # T-1: a remaining non-member kind cannot be claimed.  inspect_resource
+        # opened in S5 W2 (G2b-C matches claimable_kinds); its real claim→settle
+        # positive lives in G4-N, not here.
         root, live, _ = loop_fixture(owner, service, realm="g2b-t1")
         effect_id = uuid4()
-        seed_effect(owner, effect_id, kind="inspect_resource", status="ready")
+        seed_effect(owner, effect_id, kind="fiber_reconcile", status="ready",
+                    fiber_id=live["fiber"])
         owner.commit()
-        assert_claim_rejected(owner, service, effect_id, "G2b-T-1 inspect_resource")
-        print("[G2b-T-1] inspect_resource claim: invalid_args, attempt/fence stay 0, "
-              "ten-table byte-equal")
+        assert_claim_rejected(owner, service, effect_id, "G2b-T-1 fiber_reconcile")
+        print("[G2b-T-1] remaining non-member fiber_reconcile claim: invalid_args, "
+              "attempt/fence stay 0, ten-table byte-equal")
 
         # T-2: a settlement receipt without body.kind is structural W0.
         root, live, _ = loop_fixture(owner, service, realm="g2b-t2")

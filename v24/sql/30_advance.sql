@@ -108,6 +108,8 @@ DECLARE
   v_model_parent v24.effects%ROWTYPE;
   v_req_keys text[];
   v_pin v24.pins%ROWTYPE;
+  v_install v24.installs%ROWTYPE;
+  v_target v24.effects%ROWTYPE;
   v_batch text;
 BEGIN
   -- 1 / A: all untrusted shapes are checked before authentication or locks.
@@ -704,6 +706,68 @@ BEGIN
       IF v_batch IS DISTINCT FROM v_req->>'batch_digest' THEN
         RETURN v24.error_v1('invalid_args');
       END IF;
+    ELSIF v_effect.kind = 'inspect_resource' THEN
+      -- S5 W2/C25: the frozen inspect request is checked before the host runs.
+      -- The six keys are exactly the controller's target_* shape; a request-less
+      -- or hand-written effect can never reach the inspect host.
+      v_req := v_effect.request;
+      IF jsonb_typeof(v_req) IS DISTINCT FROM 'object' THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      v_req_keys := ARRAY['v','install_id','target','target_effect_id',
+                          'target_reservation','target_request_digest'];
+      IF NOT (v_req ?& v_req_keys)
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_req) k
+                     WHERE k <> ALL(v_req_keys)) THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      IF v_effect.parent_effect_id IS NULL
+         OR v_effect.pin_id IS NOT NULL
+         OR v_effect.ordinal IS DISTINCT FROM 0
+         OR jsonb_typeof(v_req->'v') IS DISTINCT FROM 'number'
+         OR (v_req->>'v') IS DISTINCT FROM '1'
+         OR jsonb_typeof(v_req->'install_id') IS DISTINCT FROM 'string'
+         OR jsonb_typeof(v_req->'target') IS DISTINCT FROM 'string'
+         OR (v_req->>'target') NOT IN ('host_prepare','host_release')
+         OR jsonb_typeof(v_req->'target_effect_id') IS DISTINCT FROM 'string'
+         OR jsonb_typeof(v_req->'target_reservation') IS DISTINCT FROM 'string'
+         OR jsonb_typeof(v_req->'target_request_digest') IS DISTINCT FROM 'string'
+         OR (v_req->>'target_request_digest') !~ '^[0-9a-f]{64}$' THEN
+        RETURN v24.error_v1('invalid_args');
+      END IF;
+      BEGIN
+        SELECT * INTO v_install FROM v24.installs i
+         WHERE i.install_id = (v_req->>'install_id')::uuid;
+        IF NOT FOUND OR v_install.scope_id IS DISTINCT FROM v_effect.scope_id THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+        SELECT * INTO v_target FROM v24.effects t
+         WHERE t.effect_id = (v_req->>'target_effect_id')::uuid;
+        IF NOT FOUND
+           OR v_target.kind IS DISTINCT FROM v_req->>'target'
+           OR v_target.status IS DISTINCT FROM 'unknown'
+           OR v_target.resource_quiesced_at IS NOT NULL
+           OR (v_target.request->>'install_id') IS DISTINCT FROM v_req->>'install_id'
+           OR (v_target.request->>'reservation') IS DISTINCT FROM v_req->>'target_reservation'
+           OR (v_req->>'target_reservation') NOT LIKE
+                'v24:' || (v_req->>'target') || ':%'
+           OR encode(v_target.request_digest,'hex') IS DISTINCT FROM
+                v_req->>'target_request_digest' THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+        SELECT * INTO v_parent FROM v24.effects p
+         WHERE p.effect_id = v_effect.parent_effect_id;
+        IF NOT FOUND
+           OR v_parent.kind NOT IN ('command_dispose','command_scope_control',
+                                    'command_fiber_control')
+           OR v_effect.effect_id <> md5(v_effect.parent_effect_id::text
+                || ':inspect_resource:' || (v_req->>'install_id') || ':0')::uuid THEN
+          RETURN v24.error_v1('invalid_args');
+        END IF;
+      EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
+          OR invalid_parameter_value THEN
+        RETURN v24.error_v1('invalid_args');
+      END;
     END IF;
     -- D-S4-1: an expired business lease is not a second attempt. host kinds
     -- keep their S3 re-claim semantics.

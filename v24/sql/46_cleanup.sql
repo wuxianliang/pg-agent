@@ -1,4 +1,4 @@
--- S5 W1: cleanup graph, predicates and the bounded dispose stage.
+-- S5 W1/W2: cleanup graph, predicates and the bounded dispose/inspect stage.
 -- Every function here is SECURITY INVOKER with a pinned search_path and no
 -- EXECUTE grant: the protocol reaches dispose_stage only through advance's
 -- command_dispose interpreter, and the read helpers are exercised by the owner
@@ -281,23 +281,23 @@ AS $$
    ORDER BY s.contribution_seq DESC, s.slot_id;
 $$;
 
--- One bounded dispose stage.  Iterative array stack (no recursive function
--- calls), at most 16 installs+fibers update rows and 16 successors per stage.
+-- One bounded dispose/inspect stage.  Iterative array stack (no recursive
+-- function calls), at most 16 installs+fibers update rows and 16 successors per
+-- stage.
 --
--- W1 semantics:
---   * every reachable owner descendant is marked dispose_pending with
---     dispose_effect = by_effect; direct children use the immutable
---     (owner_fiber_id, owner_episode_id) pair;
---   * releases are evaluated children-before-owners, but only from committed
---     row state: a child that is still dispose_pending keeps its owner pending
---     with zero release;
---   * a leaf with no active fiber disposes its own fibers and emits exactly one
---     deterministic host_release; a leaf with an active fiber only writes
---     dispose_pending and waits for fiber_control(off);
---   * an existing ready|claimed host_release is reused, never duplicated;
---   * preparing/prepare_unknown keeps the S2 G3a-K behavior for W1: state is
---     moved to dispose_pending with no release and no inspect.  W2 replaces
---     this branch with inspect convergence - do not add inspect here.
+-- W2 semantics (C25/D-S5-11):
+--   * preparing|prepare_unknown never write dispose_pending and never emit a
+--     release.  A ready|claimed host_prepare blocks (the effect was not
+--     executed); an unknown host_prepare with no resource_quiesced_at emits or
+--     reuses exactly one inspect_resource successor targeting that effect;
+--   * dispose_pending with a host_release status='unknown' AND
+--     resource_quiesced_at IS NULL emits or reuses exactly one inspect for the
+--     release, never a second release;
+--   * prepare_failed is the one direct-tombstone state: after all obligations
+--     are clear it writes disposed+disposed_at and one install_disposed
+--     {released:false} without emitting any host_release;
+--   * every other leaf keeps W1 child-before-owner release semantics and reuses
+--     an existing ready|claimed host_release.
 --
 -- Cycle detection runs before the root traversal and again for every queued
 -- install; any hit aborts the whole stage with an error object, so the caller
@@ -314,25 +314,30 @@ DECLARE
   v_cur uuid;
   v_i v24.installs%ROWTYPE;
   v_f v24.fibers%ROWTYPE;
+  v_target v24.effects%ROWTYPE;
   v_children uuid[];
   v_cycle uuid[];
   v_rows int := 0;
   v_idx int;
   v_fiber_count int;
   v_existing uuid;
+  v_existing_inspect uuid;
   v_release uuid;
+  v_inspect uuid;
+  v_direct boolean;
   v_ordinal int := 0;
   v_installs jsonb := '[]'::jsonb;
   v_fibers jsonb := '[]'::jsonb;
   v_events jsonb := '[]'::jsonb;
   v_succ jsonb := '[]'::jsonb;
   v_releases jsonb := '[]'::jsonb;
+  v_inspects jsonb := '[]'::jsonb;
   v_blocked_reason text := NULL;
 BEGIN
   IF p_install_id IS NULL OR p_by_effect IS NULL
      OR p_mode IS NULL OR p_mode NOT IN ('command','cascade') THEN
-    -- `close` is accepted by the shared C27 helper only from W3; W1 rejects it
-    -- as invalid_args exactly like any other bad mode.
+    -- `close` is accepted by the shared C27 helper only from W3; W2 still
+    -- rejects it as invalid_args exactly like any other bad mode.
     RETURN jsonb_build_object('error', v24.error_v1('invalid_args'));
   END IF;
 
@@ -374,7 +379,37 @@ BEGIN
     IF v_rows >= 16 THEN
       RETURN jsonb_build_object('action','blocked','reason','budget',
         'installs',v_installs,'fibers',v_fibers,'events',v_events,
-        'successors',v_succ,'releases',v_releases);
+        'successors',v_succ,'releases',v_releases,'inspects',v_inspects);
+    END IF;
+
+    -- C25 prepare convergence: keep the state untouched (the inspect matrix
+    -- owns preparing|prepare_unknown -> installed|prepare_failed) and do not
+    -- cascade children until the target is known.
+    IF v_i.state IN ('preparing','prepare_unknown') THEN
+      v_order := v_order || v_cur;
+      CONTINUE;
+    END IF;
+
+    -- prepare_failed is the direct-tombstone state.  It also skips the pending
+    -- intent so a blocked retry keeps saying "never prepared" instead of
+    -- masquerading as an installed install awaiting release.
+    IF v_i.state = 'prepare_failed' THEN
+      v_order := v_order || v_cur;
+      v_children := ARRAY(
+        SELECT ci.install_id
+          FROM v24.fibers f
+          JOIN v24.installs ci ON ci.owner_fiber_id = f.fiber_id
+          JOIN v24.episodes e ON e.episode_id = ci.owner_episode_id
+                              AND e.fiber_id = f.fiber_id
+         WHERE f.install_id = v_cur
+           AND ci.state <> 'disposed'
+         ORDER BY ci.install_id);
+      IF cardinality(v_children) > 0 THEN
+        FOR v_idx IN REVERSE array_length(v_children, 1)..1 LOOP
+          v_stack := v_stack || v_children[v_idx];
+        END LOOP;
+      END IF;
+      CONTINUE;
     END IF;
 
     -- A new command key must re-stamp dispose_effect so the release identity
@@ -393,15 +428,6 @@ BEGIN
     END IF;
     v_order := v_order || v_cur;
 
-    -- W1 preserves the S2 G3a-K prepare boundary exactly: persist the pending
-    -- intent, but do not cascade children and do not release/inspect.  A
-    -- prepare-unknown target may later turn out to be installed, so touching
-    -- its subtree now would be premature.  W2 replaces this with inspect
-    -- convergence; do not add inspect here.
-    IF v_i.state IN ('preparing','prepare_unknown') THEN
-      CONTINUE;
-    END IF;
-
     v_children := ARRAY(
       SELECT ci.install_id
         FROM v24.fibers f
@@ -419,10 +445,10 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- Pass 2: release/terminal decision in reverse discovery order.  Because the
-  -- walk is parent-first, this is children-before-owners.  The decisions below
-  -- read committed rows; an install marked pending in this stage is not
-  -- disposed yet, so its owner always remains blocked.
+  -- Pass 2: release/inspect/terminal decision in reverse discovery order.
+  -- Because the walk is parent-first, this is children-before-owners.  The
+  -- decisions below read committed rows; an install marked pending in this
+  -- stage is not disposed yet, so its owner always remains blocked.
   IF cardinality(v_order) > 0 THEN
     FOR v_idx IN REVERSE array_length(v_order, 1)..1 LOOP
       v_cur := v_order[v_idx];
@@ -432,12 +458,140 @@ BEGIN
         CONTINUE;
       END IF;
 
-      -- W1 preserves the S2 G3a-K prepare boundary exactly.  W2 replaces this
-      -- with the inspect convergence matrix; do not emit inspect here.
+      -- C25 prepare branch: inspect the executed-but-unknown host_prepare.
+      -- A ready|claimed prepare has not run yet, so the only safe action is to
+      -- block; a missing target is likewise not inspectable.
       IF v_i.state IN ('preparing','prepare_unknown') THEN
-        v_blocked_reason := coalesce(v_blocked_reason, 'prepare');
+        SELECT * INTO v_target FROM v24.effects e
+         WHERE e.kind = 'host_prepare'
+           AND (e.request->>'install_id') = v_cur::text
+         ORDER BY e.created_at DESC, e.effect_id DESC
+         LIMIT 1;
+        IF NOT FOUND THEN
+          v_blocked_reason := coalesce(v_blocked_reason, 'prepare');
+          CONTINUE;
+        END IF;
+        IF v_target.status IN ('ready','claimed') THEN
+          v_blocked_reason := coalesce(v_blocked_reason, 'host_effect');
+          CONTINUE;
+        END IF;
+        IF v_target.status IS DISTINCT FROM 'unknown'
+           OR v_target.resource_quiesced_at IS NOT NULL THEN
+          v_blocked_reason := coalesce(v_blocked_reason, 'prepare');
+          CONTINUE;
+        END IF;
+        SELECT e.effect_id INTO v_existing_inspect
+          FROM v24.effects e
+         WHERE e.kind = 'inspect_resource'
+           AND e.status IN ('ready','claimed')
+           AND (e.request->>'install_id') = v_cur::text
+           AND (e.request->>'target_effect_id') = v_target.effect_id::text
+         ORDER BY e.created_at, e.effect_id
+         LIMIT 1;
+        IF EXISTS (SELECT 1 FROM v24.effects e
+                    WHERE (e.request->>'install_id') = v_cur::text
+                      AND e.status IN ('ready','claimed')
+                      AND e.effect_id IS DISTINCT FROM v_existing_inspect) THEN
+          v_blocked_reason := coalesce(v_blocked_reason, 'host_effect');
+          CONTINUE;
+        END IF;
+        IF v_existing_inspect IS NULL THEN
+          IF v_ordinal >= 16 THEN
+            RETURN jsonb_build_object('action','blocked','reason','budget',
+              'installs',v_installs,'fibers',v_fibers,'events',v_events,
+              'successors',v_succ,'releases',v_releases,'inspects',v_inspects);
+          END IF;
+          v_inspect := md5(p_by_effect::text || ':inspect_resource:'
+                           || v_cur::text || ':0')::uuid;
+          v_succ := v_succ || jsonb_build_array(jsonb_build_object(
+            'effect_id', v_inspect,
+            'ordinal', v_ordinal,
+            'kind', 'inspect_resource',
+            'request', jsonb_build_object(
+              'v', 1,
+              'install_id', v_cur,
+              'target', 'host_prepare',
+              'target_effect_id', v_target.effect_id,
+              'target_reservation', v_target.request->>'reservation',
+              'target_request_digest', encode(v_target.request_digest,'hex'))));
+          v_ordinal := v_ordinal + 1;
+          v_events := v_events || jsonb_build_array(jsonb_build_object(
+            'entity_type','install','entity_id',v_cur,
+            'event_kind','install_inspect_requested',
+            'payload', jsonb_build_object('install_id', v_cur,
+              'inspect_effect_id', v_inspect,
+              'target_effect_id', v_target.effect_id)));
+        ELSE
+          v_inspect := v_existing_inspect;
+        END IF;
+        v_inspects := v_inspects || jsonb_build_array(jsonb_build_object(
+          'install_id', v_cur, 'effect_id', v_inspect,
+          'reused', v_existing_inspect IS NOT NULL));
         CONTINUE;
       END IF;
+
+      -- C25 release-unknown recovery: never re-release, inspect instead.
+      IF v_i.state = 'dispose_pending' THEN
+        SELECT * INTO v_target FROM v24.effects e
+         WHERE e.kind = 'host_release'
+           AND e.status = 'unknown'
+           AND e.resource_quiesced_at IS NULL
+           AND (e.request->>'install_id') = v_cur::text
+         ORDER BY e.created_at DESC, e.effect_id DESC
+         LIMIT 1;
+        IF v_target.effect_id IS NOT NULL THEN
+          SELECT e.effect_id INTO v_existing_inspect
+            FROM v24.effects e
+           WHERE e.kind = 'inspect_resource'
+             AND e.status IN ('ready','claimed')
+             AND (e.request->>'install_id') = v_cur::text
+             AND (e.request->>'target_effect_id') = v_target.effect_id::text
+           ORDER BY e.created_at, e.effect_id
+           LIMIT 1;
+          IF EXISTS (SELECT 1 FROM v24.effects e
+                      WHERE (e.request->>'install_id') = v_cur::text
+                        AND e.status IN ('ready','claimed')
+                        AND e.effect_id IS DISTINCT FROM v_existing_inspect) THEN
+            v_blocked_reason := coalesce(v_blocked_reason, 'host_effect');
+            CONTINUE;
+          END IF;
+          IF v_existing_inspect IS NULL THEN
+            IF v_ordinal >= 16 THEN
+              RETURN jsonb_build_object('action','blocked','reason','budget',
+                'installs',v_installs,'fibers',v_fibers,'events',v_events,
+                'successors',v_succ,'releases',v_releases,'inspects',v_inspects);
+            END IF;
+            v_inspect := md5(p_by_effect::text || ':inspect_resource:'
+                             || v_cur::text || ':0')::uuid;
+            v_succ := v_succ || jsonb_build_array(jsonb_build_object(
+              'effect_id', v_inspect,
+              'ordinal', v_ordinal,
+              'kind', 'inspect_resource',
+              'request', jsonb_build_object(
+                'v', 1,
+                'install_id', v_cur,
+                'target', 'host_release',
+                'target_effect_id', v_target.effect_id,
+                'target_reservation', v_target.request->>'reservation',
+                'target_request_digest', encode(v_target.request_digest,'hex'))));
+            v_ordinal := v_ordinal + 1;
+            v_events := v_events || jsonb_build_array(jsonb_build_object(
+              'entity_type','install','entity_id',v_cur,
+              'event_kind','install_inspect_requested',
+              'payload', jsonb_build_object('install_id', v_cur,
+                'inspect_effect_id', v_inspect,
+                'target_effect_id', v_target.effect_id)));
+          ELSE
+            v_inspect := v_existing_inspect;
+          END IF;
+          v_inspects := v_inspects || jsonb_build_array(jsonb_build_object(
+            'install_id', v_cur, 'effect_id', v_inspect,
+            'reused', v_existing_inspect IS NOT NULL));
+          CONTINUE;
+        END IF;
+      END IF;
+
+      v_direct := v_i.state = 'prepare_failed';
 
       -- Obligation 1: every episode of every own fiber is closed and no fiber
       -- still points at a current episode.  Active work blocks the release.
@@ -491,14 +645,14 @@ BEGIN
         FROM v24.fibers f
        WHERE f.install_id = v_cur AND f.disposed_at IS NULL;
 
-      IF v_rows + v_fiber_count > 16 THEN
+      IF v_rows + v_fiber_count + (CASE WHEN v_direct THEN 1 ELSE 0 END) > 16 THEN
         RETURN jsonb_build_object('action','blocked','reason','budget',
           'installs',v_installs,'fibers',v_fibers,'events',v_events,
-          'successors',v_succ,'releases',v_releases);
+          'successors',v_succ,'releases',v_releases,'inspects',v_inspects);
       END IF;
 
       -- Own fibers are inactive and obligation-free: tombstone them with the
-      -- release in the same bounded stage (S2 leaf semantics).
+      -- release/direct-tombstone in the same bounded stage (S2 leaf semantics).
       FOR v_f IN SELECT * FROM v24.fibers f
                   WHERE f.install_id = v_cur AND f.disposed_at IS NULL
                   ORDER BY f.fiber_id LOOP
@@ -507,6 +661,22 @@ BEGIN
           'set', jsonb_build_object('disposed_at', now(), 'want_on', false)));
         v_rows := v_rows + 1;
       END LOOP;
+
+      -- C27 direct tombstone (G4-J2): a prepare that never succeeded leaves no
+      -- external artifact, so the install becomes disposed with zero releases.
+      IF v_direct AND v_existing IS NULL THEN
+        v_installs := v_installs || jsonb_build_array(jsonb_build_object(
+          'key', jsonb_build_object('install_id', v_cur),
+          'set', jsonb_build_object('state','disposed',
+                                    'dispose_effect',p_by_effect,
+                                    'disposed_at',now())));
+        v_rows := v_rows + 1;
+        v_events := v_events || jsonb_build_array(jsonb_build_object(
+          'entity_type','install','entity_id',v_cur,
+          'event_kind','install_disposed',
+          'payload', jsonb_build_object('state','disposed','released',false)));
+        CONTINUE;
+      END IF;
 
       IF v_existing IS NULL THEN
         v_release := md5(p_by_effect::text || ':host_release:'
@@ -538,6 +708,7 @@ BEGIN
   RETURN jsonb_build_object(
     'action', CASE
                 WHEN jsonb_array_length(v_releases) > 0 THEN 'release'
+                WHEN jsonb_array_length(v_inspects) > 0 THEN 'inspect'
                 WHEN jsonb_array_length(v_installs) > 0
                   OR jsonb_array_length(v_fibers) > 0 THEN 'progress'
                 ELSE 'blocked'
@@ -547,6 +718,7 @@ BEGIN
     'fibers', v_fibers,
     'events', v_events,
     'successors', v_succ,
-    'releases', v_releases);
+    'releases', v_releases,
+    'inspects', v_inspects);
 END;
 $$;

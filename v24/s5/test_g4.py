@@ -12,8 +12,11 @@ from __future__ import annotations
 import base64
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+
+from psycopg2.extras import Json
 
 S1 = Path(__file__).resolve().parent.parent / "s1"
 S2 = Path(__file__).resolve().parent.parent / "s2"
@@ -21,7 +24,12 @@ for _path in (S1, S2):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from setup_db import _assert_closed_catalog, server_helper_scope, setup_db  # noqa: E402
+from setup_db import (  # noqa: E402
+    EXPECTED_TABLES,
+    _assert_closed_catalog,
+    server_helper_scope,
+    setup_db,
+)
 from test_g3a import (  # noqa: E402
     advance,
     claim,
@@ -38,13 +46,13 @@ from test_g3a import (  # noqa: E402
 )
 
 
-def manifest_bytes(identity: str) -> bytes:
+def manifest_bytes(identity: str, provides=()) -> bytes:
     return json.dumps(
         {
             "identity": identity,
             "version": "1",
             "requires": [],
-            "provides": [],
+            "provides": list(provides),
             "adapter_digest": "\\x",
         }
     ).encode()
@@ -86,6 +94,175 @@ def seed_pin(owner, *, consumer_episode_id, provider_episode_id, slot_id,
              provider_episode_id, b"g4-pin", creator),
         )
     return pin_id
+
+
+def new_scope(admin, realm, key):
+    response = one(
+        admin,
+        "SELECT v24.scope_control('create_root',NULL,'{}',%s,%s)",
+        (realm, key),
+    )
+    assert response.get("disposition") == "committed", response
+    admin.commit()
+    return response["emitted"][0]
+
+
+def admit_install(admin, scope_id, identity, key, provides=(), owner_fiber=None):
+    effect_id, outcome = command(admin, key, "command_install", {
+        "scope_id": str(scope_id),
+        "owner_fiber_id": str(owner_fiber) if owner_fiber is not None else None,
+        "manifest_bytes": base64.b64encode(
+            manifest_bytes(identity, provides)).decode(),
+        "artifact_digest": "\\x"})
+    response = advance(admin, effect_id, outcome)
+    assert response.get("disposition") == "committed", response
+    admin.commit()
+    return response
+
+
+def fiber_of(owner, install_id):
+    value = one(owner,
+                "SELECT fiber_id FROM v24.fibers WHERE install_id=%s",
+                (install_id,))
+    owner.rollback()
+    return value
+
+
+def install_row(owner, install_id):
+    value = one(owner,
+                "SELECT to_jsonb(i) FROM v24.installs i WHERE i.install_id=%s",
+                (install_id,))
+    owner.rollback()
+    return value
+
+
+def effect_row(owner, effect_id):
+    value = one(owner,
+                "SELECT to_jsonb(e) FROM v24.effects e WHERE e.effect_id=%s",
+                (effect_id,))
+    owner.rollback()
+    return value
+
+
+def effect_of(owner, install_id, kind):
+    value = one(
+        owner,
+        """SELECT effect_id FROM v24.effects
+            WHERE kind=%s AND request->>'install_id'=%s
+            ORDER BY created_at, effect_id LIMIT 1""",
+        (kind, str(install_id)),
+    )
+    owner.rollback()
+    return value
+
+
+def claim_effect(service, effect_id):
+    response = advance(service, effect_id, claim())
+    service.commit()
+    assert response.get("disposition") == "committed", response
+    return response["claim"]
+
+
+def settle_effect(service, effect_id, token, cls, body):
+    response = advance(service, effect_id,
+                       {"v": 1, "class": cls, "claim": token, "body": body})
+    service.commit()
+    return response
+
+
+def dispose(admin, install_id, key):
+    response = one(admin, "SELECT v24.dispose(%s,%s)", (install_id, key))
+    admin.commit()
+    return response
+
+
+def count_kind(owner, install_id, kind):
+    value = one(owner, """SELECT count(*) FROM v24.effects
+        WHERE kind=%s AND request->>'install_id'=%s""",
+                (kind, str(install_id)))
+    owner.rollback()
+    return value
+
+
+def inspect_receipt(owner, effect_id, observed, cls="success"):
+    """Build the frozen inspect result body from the stored request."""
+    request = effect_row(owner, effect_id)["request"]
+    result = {"v": 1, "observed": observed}
+    if cls == "success":
+        result["target_effect_id"] = request["target_effect_id"]
+        result["target_reservation"] = request["target_reservation"]
+    elif cls == "failure":
+        result["reason"] = "inspect_failed"
+    return {"kind": "inspect_resource", "result": result}
+
+
+def assert_claim_invalid(owner, service, effect_id, label):
+    """W0 invalid_args plus a ten-table byte-equal snapshot."""
+    before = state(owner)
+    owner.rollback()
+    response = advance(service, effect_id, claim())
+    service.commit()
+    assert response == {"v": 1, "error": {"code": "invalid_args", "detail": {}}}, (
+        label, response)
+    after = state(owner)
+    owner.rollback()
+    assert after == before, (label, "inspect claim rejection wrote rows")
+    row = effect_row(owner, effect_id)
+    assert row["status"] == "ready", (label, row)
+    assert row["attempt_no"] == 0 and row["fence"] == 0, (label, row)
+    assert row["claim_owner"] is None and row["lease_until"] is None, (label, row)
+    print("[G4-N] %s: invalid_args, ten-table byte-equal, attempt/fence 0"
+          % (label[len("G4-N "):] if label.startswith("G4-N ") else label))
+
+
+def seed_inspect_probe(owner, scope_id, install_id, request, *, effect_id=None):
+    """Seeded inspect effect used only for claim-shape negatives."""
+    parent = uuid4()
+    seed_effect(
+        owner, parent, kind="command_dispose", status="succeeded",
+        scope_id=scope_id, request_key=None,
+        outcome=Json({"v": 1, "class": "command", "claim": None, "body": {}}),
+        settled_at=datetime.now(timezone.utc))
+    if effect_id is None:
+        effect_id = one(
+            owner,
+            "SELECT md5(%s::text || ':inspect_resource:' || %s::text || ':0')::uuid",
+            (parent, install_id))
+    seed_effect(
+        owner, effect_id, kind="inspect_resource", status="ready",
+        parent_effect_id=parent, ordinal=0, scope_id=scope_id,
+        request=Json(request), request_digest=b"\xcd" * 32)
+    owner.commit()
+    return effect_id
+
+
+def prepare_unknown_fixture(owner, admin, service, tag):
+    """Real flow: install provides -> host_prepare unknown -> prepare_unknown."""
+    scope_id = new_scope(admin, tag, tag + "-root")
+    admitted = admit_install(admin, scope_id, tag, tag + "-install",
+                             provides=[{"realm": tag, "key": "k"}])
+    install_id = admitted["emitted"][0]
+    assert install_row(owner, install_id)["state"] == "preparing"
+    hp = effect_of(owner, install_id, "host_prepare")
+    token = claim_effect(service, hp)
+    settled = settle_effect(service, hp, token, "unknown", {})
+    assert settled.get("disposition") == "committed", settled
+    assert install_row(owner, install_id)["state"] == "prepare_unknown"
+    return scope_id, install_id, hp
+
+
+def installed_fixture(owner, admin, service, tag):
+    """Real flow: install provides -> host_prepare success -> installed."""
+    scope_id = new_scope(admin, tag, tag + "-root")
+    admitted = admit_install(admin, scope_id, tag, tag + "-install",
+                             provides=[{"realm": tag, "key": "k"}])
+    install_id = admitted["emitted"][0]
+    hp = effect_of(owner, install_id, "host_prepare")
+    token = claim_effect(service, hp)
+    settled = settle_effect(service, hp, token, "success", {})
+    assert settled.get("disposition") == "committed", settled
+    assert install_row(owner, install_id)["state"] == "installed"
+    return scope_id, install_id, hp
 
 
 def g4_a(owner):
@@ -598,6 +775,512 @@ def g4_cascade(owner, admin, service):
           "blocks the owner, leaf semantics preserved, <=16 rows/successors")
 
 
+def g4_h(owner, admin, service):
+    """G4-H: prepare_unknown -> inspect known -> installed -> release -> disposed."""
+    scope_id, install_id, hp = prepare_unknown_fixture(owner, admin, service, "g4h")
+    target = effect_row(owner, hp)
+    assert target["status"] == "unknown", target
+    assert target["resource_quiesced_at"] is None, target
+
+    first = dispose(admin, install_id, "g4h-dispose-1")
+    assert first.get("disposition") == "committed", first
+    assert len(first["emitted"]) == 1, first
+    inspect_id = first["emitted"][0]
+    row = effect_row(owner, inspect_id)
+    digest = one(owner,
+                 "SELECT encode(request_digest,'hex') FROM v24.effects WHERE effect_id=%s",
+                 (hp,))
+    owner.rollback()
+    expected_request = {
+        "v": 1,
+        "install_id": str(install_id),
+        "target": "host_prepare",
+        "target_effect_id": str(hp),
+        "target_reservation": "v24:host_prepare:" + str(hp),
+        "target_request_digest": digest,
+    }
+    assert row["kind"] == "inspect_resource", row
+    assert row["status"] == "ready", row
+    assert row["parent_effect_id"] == first["effect_id"], row
+    assert row["request"] == expected_request, row
+    assert str(row["effect_id"]) == str(one(
+        owner, "SELECT md5(%s::text || ':inspect_resource:' || %s::text || ':0')::uuid",
+        (first["effect_id"], install_id)))
+    owner.rollback()
+    print("[G4-H] inspect_id=%s parent=%s target=%s request=%s" % (
+        inspect_id, first["effect_id"], hp,
+        json.dumps(row["request"], sort_keys=True)))
+    assert install_row(owner, install_id)["state"] == "prepare_unknown"
+    assert count_kind(owner, install_id, "host_release") == 0
+    assert count_kind(owner, install_id, "inspect_resource") == 1
+
+    # A second dispose key reuses the ready inspect instead of duplicating it.
+    reused = dispose(admin, install_id, "g4h-dispose-2")
+    assert reused.get("disposition") == "committed", reused
+    assert reused["emitted"] == [inspect_id], reused
+    assert count_kind(owner, install_id, "inspect_resource") == 1
+
+    before_claim = state(owner)
+    owner.rollback()
+    token = claim_effect(service, inspect_id)
+    after_claim = state(owner)
+    owner.rollback()
+    for table in EXPECTED_TABLES - {"effects"}:
+        assert after_claim[table] == before_claim[table], (table, "inspect claim wrote rows")
+    claimed = effect_row(owner, inspect_id)
+    assert claimed["status"] == "claimed", claimed
+    assert claimed["attempt_no"] == 1 and claimed["fence"] == 1, claimed
+    assert claimed["claim_owner"] is not None, claimed
+
+    target_before = effect_row(owner, hp)
+    install_before = install_row(owner, install_id)
+    settled = settle_effect(service, inspect_id, token, "success",
+                            inspect_receipt(owner, inspect_id, "known"))
+    assert settled.get("disposition") == "committed", settled
+    assert settled["emitted"] == [], settled
+    target_after = effect_row(owner, hp)
+    assert target_after["status"] == "unknown", target_after
+    assert target_after["resource_quiesced_at"] is not None, target_after
+    changed = {key for key in target_after
+               if target_after[key] != target_before[key]}
+    assert changed == {"resource_quiesced_at"}, changed
+    self_row = effect_row(owner, inspect_id)
+    assert self_row["status"] == "succeeded", self_row
+    assert self_row["resource_quiesced_at"] is None, self_row
+    install_after = install_row(owner, install_id)
+    assert install_after["state"] == "installed", install_after
+    assert install_after["disposed_at"] is None, install_after
+    changed_install = {key for key in install_after
+                       if install_after[key] != install_before[key]}
+    assert changed_install == {"state"}, changed_install
+
+    final = dispose(admin, install_id, "g4h-dispose-3")
+    assert final.get("disposition") == "committed", final
+    assert len(final["emitted"]) == 1, final
+    release_id = final["emitted"][0]
+    assert str(release_id) == str(one(
+        owner, "SELECT md5(%s::text || ':host_release:' || %s::text || ':0')::uuid",
+        (final["effect_id"], install_id)))
+    owner.rollback()
+    release = effect_row(owner, release_id)
+    assert release["kind"] == "host_release", release
+    assert release["request"] == {
+        "install_id": str(install_id),
+        "reservation": "v24:host_release:" + str(release_id)}, release
+    token = claim_effect(service, release_id)
+    settled = settle_effect(service, release_id, token, "success", {})
+    assert settled.get("disposition") == "committed", settled
+    disposed = install_row(owner, install_id)
+    assert disposed["state"] == "disposed", disposed
+    assert disposed["disposed_at"] is not None, disposed
+    assert count_kind(owner, install_id, "host_release") == 1
+    assert one(owner, """SELECT count(*) FROM v24.events
+        WHERE event_kind='install_disposed' AND entity_id=%s""",
+               (install_id,)) == 1
+    owner.rollback()
+    print("[G4-H] prepare_unknown -> one inspect (target=host_prepare, reservation/"
+          "digest byte-equal, deterministic id) reused on a second key -> claim "
+          "effect-only -> known installs and only target.resource_quiesced_at "
+          "changes (inspect self NULL) -> new dispose release -> disposed")
+
+
+def g4_i(owner, admin, service):
+    """G4-I: release unknown -> inspect unknown keeps pending; new key -> new id."""
+    scope_id, install_id, hp = installed_fixture(owner, admin, service, "g4i")
+    first = dispose(admin, install_id, "g4i-dispose-1")
+    assert first.get("disposition") == "committed", first
+    release_id = first["emitted"][0]
+    token = claim_effect(service, release_id)
+    settled = settle_effect(service, release_id, token, "unknown", {})
+    assert settled.get("disposition") == "committed", settled
+    release = effect_row(owner, release_id)
+    assert release["status"] == "unknown", release
+    assert release["resource_quiesced_at"] is None, release
+    pending = install_row(owner, install_id)
+    assert pending["state"] == "dispose_pending", pending
+    assert pending["disposed_at"] is None, pending
+
+    second = dispose(admin, install_id, "g4i-dispose-2")
+    assert second.get("disposition") == "committed", second
+    assert len(second["emitted"]) == 1, second
+    inspect_id = second["emitted"][0]
+    inspect = effect_row(owner, inspect_id)
+    assert inspect["kind"] == "inspect_resource", inspect
+    assert inspect["request"]["target"] == "host_release", inspect
+    assert inspect["request"]["target_effect_id"] == str(release_id), inspect
+    assert inspect["request"]["target_reservation"] == (
+        "v24:host_release:" + str(release_id)), inspect
+    assert count_kind(owner, install_id, "host_release") == 1
+    assert count_kind(owner, install_id, "inspect_resource") == 1
+    print("[G4-I] release=%s inspect1=%s request=%s" % (
+        release_id, inspect_id, json.dumps(inspect["request"], sort_keys=True)))
+
+    token = claim_effect(service, inspect_id)
+    unknown_receipt = inspect_receipt(owner, inspect_id, "unknown", cls="unknown")
+    unknown_outcome = {"v": 1, "class": "unknown", "claim": token,
+                       "body": unknown_receipt}
+    settled = settle_effect(service, inspect_id, token, "unknown", unknown_receipt)
+    assert settled.get("disposition") == "committed", settled
+    assert install_row(owner, install_id)["state"] == "dispose_pending"
+    assert install_row(owner, install_id)["disposed_at"] is None
+    assert count_kind(owner, install_id, "host_release") == 1
+    assert effect_row(owner, inspect_id)["resource_quiesced_at"] is None
+    assert effect_row(owner, release_id)["resource_quiesced_at"] is None
+    assert one(owner, """SELECT count(*) FROM v24.events
+        WHERE event_kind='install_disposed' AND entity_id=%s""",
+               (install_id,)) == 0
+    owner.rollback()
+
+    third = dispose(admin, install_id, "g4i-dispose-3")
+    assert third.get("disposition") == "committed", third
+    assert len(third["emitted"]) == 1, third
+    new_inspect = third["emitted"][0]
+    assert str(new_inspect) != str(inspect_id), (new_inspect, inspect_id)
+    assert str(new_inspect) == str(one(
+        owner, "SELECT md5(%s::text || ':inspect_resource:' || %s::text || ':0')::uuid",
+        (third["effect_id"], install_id)))
+    owner.rollback()
+    assert count_kind(owner, install_id, "inspect_resource") == 2
+    assert install_row(owner, install_id)["state"] == "dispose_pending"
+    print("[G4-I] inspect2=%s differs from inspect1=%s; install stays "
+          "dispose_pending with one host_release" % (new_inspect, inspect_id))
+
+    before_replay = state(owner)
+    owner.rollback()
+    replay = advance(service, inspect_id, unknown_outcome)
+    service.commit()
+    assert replay.get("disposition") == "replay", replay
+    after_replay = state(owner)
+    owner.rollback()
+    assert after_replay == before_replay, "inspect replay wrote rows"
+    print("[G4-I] release unknown -> exactly one inspect (never a second release) "
+          "-> inspect unknown keeps dispose_pending, no release/tombstone, target "
+          "and self quiesced NULL -> new key emits a different inspect id; same-key "
+          "replay is byte-equal with no effect/event")
+
+
+def g4_j(owner, admin, service):
+    """G4-J: inspect absent on release then a fresh release; prepare direct tombstone."""
+    # (1) release unknown -> inspect absent -> new release -> disposed.
+    scope_id, install_id, hp = installed_fixture(owner, admin, service, "g4j1")
+    first = dispose(admin, install_id, "g4j1-dispose-1")
+    release_one = first["emitted"][0]
+    token = claim_effect(service, release_one)
+    settle_effect(service, release_one, token, "unknown", {})
+    second = dispose(admin, install_id, "g4j1-dispose-2")
+    inspect_id = second["emitted"][0]
+    token = claim_effect(service, inspect_id)
+    settled = settle_effect(service, inspect_id, token, "success",
+                            inspect_receipt(owner, inspect_id, "absent"))
+    assert settled.get("disposition") == "committed", settled
+    pending = install_row(owner, install_id)
+    assert pending["state"] == "dispose_pending", pending
+    assert pending["disposed_at"] is None, pending
+    assert effect_row(owner, release_one)["resource_quiesced_at"] is not None
+    assert effect_row(owner, inspect_id)["resource_quiesced_at"] is None
+
+    third = dispose(admin, install_id, "g4j1-dispose-3")
+    assert third.get("disposition") == "committed", third
+    release_two = third["emitted"][0]
+    assert str(release_two) != str(release_one), (release_two, release_one)
+    assert str(release_two) == str(one(
+        owner, "SELECT md5(%s::text || ':host_release:' || %s::text || ':0')::uuid",
+        (third["effect_id"], install_id)))
+    owner.rollback()
+    assert effect_row(owner, release_two)["request"]["reservation"] == (
+        "v24:host_release:" + str(release_two))
+    assert count_kind(owner, install_id, "host_release") == 2
+    print("[G4-J] release1=%s release2=%s reservation2=%s" % (
+        release_one, release_two, "v24:host_release:" + str(release_two)))
+    token = claim_effect(service, release_two)
+    settled = settle_effect(service, release_two, token, "success", {})
+    assert settled.get("disposition") == "committed", settled
+    assert install_row(owner, install_id)["state"] == "disposed"
+    assert one(owner, """SELECT count(*) FROM v24.events
+        WHERE event_kind='install_disposed' AND entity_id=%s""",
+               (install_id,)) == 1
+    owner.rollback()
+
+    # (2) prepare_unknown -> inspect absent -> prepare_failed -> direct disposed.
+    scope_id, install_id, hp = prepare_unknown_fixture(owner, admin, service, "g4j2")
+    first = dispose(admin, install_id, "g4j2-dispose-1")
+    inspect_id = first["emitted"][0]
+    token = claim_effect(service, inspect_id)
+    settled = settle_effect(service, inspect_id, token, "success",
+                            inspect_receipt(owner, inspect_id, "absent"))
+    assert settled.get("disposition") == "committed", settled
+    assert install_row(owner, install_id)["state"] == "prepare_failed"
+    second = dispose(admin, install_id, "g4j2-dispose-2")
+    assert second.get("disposition") == "committed", second
+    assert second["emitted"] == [], second
+    assert count_kind(owner, install_id, "host_release") == 0
+    disposed = install_row(owner, install_id)
+    assert disposed["state"] == "disposed" and disposed["disposed_at"] is not None, disposed
+    assert one(owner, """SELECT count(*) FROM v24.events
+        WHERE event_kind='install_disposed' AND entity_id=%s""",
+               (install_id,)) == 1
+    event = one(owner, """SELECT payload FROM v24.events
+        WHERE event_kind='install_disposed' AND entity_id=%s""", (install_id,))
+    owner.rollback()
+    assert event["released"] is False and event["state"] == "disposed", event
+    assert one(owner, "SELECT disposed_at FROM v24.fibers WHERE install_id=%s",
+               (install_id,)) is not None
+    owner.rollback()
+    print("[G4-J] direct tombstone: host_release=0, disposed_at set, event=%s"
+          % json.dumps(event, sort_keys=True))
+    print("[G4-J] (1) release unknown -> inspect absent -> fresh release (new id/"
+          "reservation) -> disposed; (2) prepare_unknown -> inspect absent -> "
+          "prepare_failed -> dispose writes disposed directly with 0 host_release "
+          "and one install_disposed{released:false}")
+
+
+def g4_k(owner, admin, service):
+    """G4-K: both prepare_unknown paths and a genuine dispose_pending receipt conflict."""
+    # known path
+    scope_id, install_id, hp = prepare_unknown_fixture(owner, admin, service, "g4k1")
+    first = dispose(admin, install_id, "g4k1-dispose-1")
+    inspect_id = first["emitted"][0]
+    token = claim_effect(service, inspect_id)
+    settled = settle_effect(service, inspect_id, token, "success",
+                            inspect_receipt(owner, inspect_id, "known"))
+    assert settled.get("disposition") == "committed", settled
+    assert install_row(owner, install_id)["state"] == "installed"
+    second = dispose(admin, install_id, "g4k1-dispose-2")
+    release_id = second["emitted"][0]
+    token = claim_effect(service, release_id)
+    settled = settle_effect(service, release_id, token, "success", {})
+    assert settled.get("disposition") == "committed", settled
+    assert install_row(owner, install_id)["state"] == "disposed"
+
+    # absent path
+    scope_id, install_id, hp = prepare_unknown_fixture(owner, admin, service, "g4k2")
+    first = dispose(admin, install_id, "g4k2-dispose-1")
+    inspect_id = first["emitted"][0]
+    token = claim_effect(service, inspect_id)
+    settled = settle_effect(service, inspect_id, token, "success",
+                            inspect_receipt(owner, inspect_id, "absent"))
+    assert settled.get("disposition") == "committed", settled
+    assert install_row(owner, install_id)["state"] == "prepare_failed"
+    second = dispose(admin, install_id, "g4k2-dispose-2")
+    assert second["emitted"] == [], second
+    assert install_row(owner, install_id)["state"] == "disposed"
+    assert count_kind(owner, install_id, "host_release") == 0
+
+    # Genuine dispose_pending + host_prepare receipt -> receipt_conflict.
+    scope_id = new_scope(admin, "g4k3", "g4k3-root")
+    admitted = admit_install(admin, scope_id, "g4k3", "g4k3-install",
+                             provides=[{"realm": "g4k3", "key": "k"}])
+    install_id = admitted["emitted"][0]
+    hp = effect_of(owner, install_id, "host_prepare")
+    # Seeded fixture, non-public shape: force the pending state while the
+    # executed host_prepare receipt is still un-settled.
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.installs SET state='dispose_pending' "
+                    "WHERE install_id=%s", (install_id,))
+    owner.commit()
+    before = domain_state(owner)
+    owner.rollback()
+    token = claim_effect(service, hp)
+    refused = settle_effect(service, hp, token, "success", {})
+    assert refused == {"v": 1, "error": {"code": "receipt_conflict", "detail": {}}}, refused
+    after = domain_state(owner)
+    owner.rollback()
+    assert after == before, "receipt_conflict wrote domain rows"
+    assert install_row(owner, install_id)["state"] == "dispose_pending"
+    assert effect_row(owner, hp)["status"] == "claimed"
+    print("[G4-K] receipt_conflict: domain_state byte-equal, install stays "
+          "dispose_pending, host_prepare stays claimed")
+    print("[G4-K] prepare_unknown known -> installed -> release -> disposed; "
+          "absent -> prepare_failed -> direct disposed; dispose_pending + "
+          "host_prepare receipt -> receipt_conflict with zero domain writes")
+
+
+def g4_n(owner, admin, service):
+    """G4-N: S1-S4 regression surface plus the real inspect claim->settle positive."""
+    # host_prepare claim -> settle still works (installed_fixture uses the public flow).
+    scope_id, install_id, hp = installed_fixture(owner, admin, service, "g4n1")
+    assert effect_row(owner, hp)["status"] == "succeeded"
+    assert install_row(owner, install_id)["state"] == "installed"
+
+    # error_v1 still accepts exactly the closed 23-code set.
+    codes = """invalid_args unauthorized not_found_or_denied request_conflict
+        effect_id_conflict receipt_conflict stale_generation registration_stale
+        already_terminal owner_closing install_not_ready interaction_mismatch
+        provider_unavailable scope_closed dependency_unresolved provide_conflict
+        install_identity_conflict budget_exceeded invalid_outcome stale_claim
+        cleanup_cycle retry_with_closure blocked_unknown""".split()
+    assert len(codes) == 23, codes
+    for code in codes:
+        response = one(owner, "SELECT v24.error_v1(%s)", (code,))
+        owner.rollback()
+        assert response["error"]["code"] == code, (code, response)
+
+    # Leaf dispose replay and new-key already_terminal.
+    scope_id = new_scope(admin, "g4n2", "g4n2-root")
+    admitted = admit_install(admin, scope_id, "g4n2", "g4n2-install")
+    install_id = admitted["emitted"][0]
+    assert install_row(owner, install_id)["state"] == "installed"
+    first = dispose(admin, install_id, "g4n2-dispose")
+    release_id = first["emitted"][0]
+    token = claim_effect(service, release_id)
+    settled = settle_effect(service, release_id, token, "success", {})
+    assert settled.get("disposition") == "committed", settled
+    replay = dispose(admin, install_id, "g4n2-dispose")
+    assert replay == first, (replay, first)
+    late = dispose(admin, install_id, "g4n2-late")
+    assert late == {"v": 1, "error": {"code": "already_terminal", "detail": {}}}, late
+
+    # fiber_control on/off minimal E1 -> E2.
+    scope_id = new_scope(admin, "g4n3", "g4n3-root")
+    admitted = admit_install(admin, scope_id, "g4n3", "g4n3-install")
+    install_id = admitted["emitted"][0]
+    fiber = fiber_of(owner, install_id)
+    on = one(admin, "SELECT v24.fiber_control(%s,'on',0,%s)",
+             (fiber, "g4n3-on"))
+    assert on.get("disposition") == "committed", on
+    admin.commit()
+    episode = one(owner, "SELECT current_episode_id FROM v24.fibers WHERE fiber_id=%s",
+                  (fiber,))
+    owner.rollback()
+    assert episode is not None, episode
+    off = one(admin, "SELECT v24.fiber_control(%s,'off',1,%s)",
+              (fiber, "g4n3-off"))
+    assert off.get("disposition") == "committed", off
+    admin.commit()
+    after_off = one(owner, "SELECT to_jsonb(f) FROM v24.fibers f WHERE f.fiber_id=%s",
+                    (fiber,))
+    owner.rollback()
+    assert after_off["want_on"] is False and after_off["current_episode_id"] is None, after_off
+    assert one(owner, "SELECT state FROM v24.episodes WHERE episode_id=%s",
+               (episode,)) == "closed"
+    owner.rollback()
+
+    # start/pin projection remains intact.
+    scope_id = new_scope(admin, "g4n4", "g4n4-root")
+    provider = admit_install(admin, scope_id, "g4n4-prov", "g4n4-prov-install",
+                             provides=[{"realm": "g4n4", "key": "k"}])
+    provider_install = provider["emitted"][0]
+    provider_hp = effect_of(owner, provider_install, "host_prepare")
+    token = claim_effect(service, provider_hp)
+    settle_effect(service, provider_hp, token, "success", {})
+    provider_fiber = fiber_of(owner, provider_install)
+    on_provider = one(admin, "SELECT v24.fiber_control(%s,'on',0,%s)",
+                      (provider_fiber, "g4n4-prov-on"))
+    assert on_provider.get("disposition") == "committed", on_provider
+    admin.commit()
+    slot = one(owner, "SELECT slot_id FROM v24.slots WHERE fiber_id=%s AND released_at IS NULL",
+               (provider_fiber,))
+    owner.rollback()
+    consumer = admit_install(admin, scope_id, "g4n4-cons", "g4n4-cons-install")
+    consumer_install = consumer["emitted"][0]
+    consumer_fiber = fiber_of(owner, consumer_install)
+    on_consumer = one(admin, "SELECT v24.fiber_control(%s,'on',0,%s)",
+                      (consumer_fiber, "g4n4-cons-on"))
+    assert on_consumer.get("disposition") == "committed", on_consumer
+    admin.commit()
+    start_response = one(
+        admin, "SELECT v24.start(%s,%s,%s,%s,%s)",
+        (scope_id, consumer_fiber, Json({"requires": [{"key": "k"}]}),
+         Json({"steps": 5, "tool_calls": 2, "tokens": 5000, "wall_ms": 60000}),
+         "g4n4-start"))
+    admin.commit()
+    assert start_response.get("disposition") == "committed", start_response
+    run_id, model_id = start_response["emitted"]
+    poll = one(admin, "SELECT v24.poll(%s,0)", (run_id,))
+    admin.commit()
+    assert set(poll) == {"v", "revision", "changed", "run", "events"}, poll
+    assert poll["run"]["run_id"] == run_id, poll
+    assert poll["run"]["status"] == "running", poll
+    assert poll["run"]["owner_fiber_id"] == str(consumer_fiber), poll
+    assert poll["changed"] is True, poll
+    run_pin = one(owner, """SELECT jsonb_build_object('key',key,'slot_id',slot_id,
+        'released_at',released_at) FROM v24.pins
+        WHERE consumer_run_id=%s AND released_at IS NULL""", (run_id,))
+    owner.rollback()
+    assert run_pin["key"] == "k" and str(run_pin["slot_id"]) == str(slot), run_pin
+    assert run_pin["released_at"] is None, run_pin
+    model = effect_row(owner, model_id)
+    assert model["kind"] == "model_call" and model["status"] == "ready", model
+
+    # Inspect claim negatives (ten-table byte-equal) and a real claim->settle.
+    scope_id, install_id, hp = prepare_unknown_fixture(owner, admin, service, "g4n5")
+    first = dispose(admin, install_id, "g4n5-dispose")
+    inspect_id = first["emitted"][0]
+    request = effect_row(owner, inspect_id)["request"]
+
+    # already-quiesced target
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.effects SET resource_quiesced_at=now() WHERE effect_id=%s",
+                    (hp,))
+    owner.commit()
+    assert_claim_invalid(owner, service, inspect_id, "G4-N already-quiesced target")
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.effects SET resource_quiesced_at=NULL WHERE effect_id=%s",
+                    (hp,))
+    owner.commit()
+
+    # terminal target: save/restore the settled unknown receipt exactly.
+    original = effect_row(owner, hp)
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.effects SET status='succeeded', outcome=%s, settled_at=now() "
+                    "WHERE effect_id=%s", (Json({"seed": True}), hp))
+    owner.commit()
+    assert_claim_invalid(owner, service, inspect_id, "G4-N terminal target")
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.effects SET status=%s, outcome=%s, settled_at=%s "
+                    "WHERE effect_id=%s",
+                    (original["status"], Json(original["outcome"]),
+                     original["settled_at"], hp))
+    owner.commit()
+
+    bad_key_set = dict(request)
+    bad_key_set.pop("v")
+    probe = seed_inspect_probe(owner, scope_id, install_id, bad_key_set)
+    assert_claim_invalid(owner, service, probe, "G4-N wrong key set")
+
+    bad_reservation = dict(request)
+    bad_reservation["target_reservation"] = "v24:host_release:" + str(uuid4())
+    probe = seed_inspect_probe(owner, scope_id, install_id, bad_reservation)
+    assert_claim_invalid(owner, service, probe, "G4-N wrong reservation")
+
+    absent_reservation = dict(request)
+    absent_reservation.pop("target_reservation")
+    probe = seed_inspect_probe(owner, scope_id, install_id, absent_reservation)
+    assert_claim_invalid(owner, service, probe, "G4-N absent reservation")
+
+    bad_digest = dict(request)
+    bad_digest["target_request_digest"] = "0" * 64
+    probe = seed_inspect_probe(owner, scope_id, install_id, bad_digest)
+    assert_claim_invalid(owner, service, probe, "G4-N bad digest")
+
+    probe = seed_inspect_probe(owner, scope_id, install_id, request,
+                               effect_id=uuid4())
+    assert_claim_invalid(owner, service, probe, "G4-N wrong deterministic id")
+
+    before_claim = state(owner)
+    owner.rollback()
+    token = claim_effect(service, inspect_id)
+    after_claim = state(owner)
+    owner.rollback()
+    for table in EXPECTED_TABLES - {"effects"}:
+        assert after_claim[table] == before_claim[table], (
+            table, "inspect positive claim wrote rows")
+    claimed = effect_row(owner, inspect_id)
+    assert claimed["status"] == "claimed", claimed
+    assert claimed["attempt_no"] == 1 and claimed["fence"] == 1, claimed
+    settled = settle_effect(service, inspect_id, token, "success",
+                            inspect_receipt(owner, inspect_id, "known"))
+    assert settled.get("disposition") == "committed", settled
+    assert install_row(owner, install_id)["state"] == "installed"
+    assert effect_row(owner, hp)["resource_quiesced_at"] is not None
+    assert effect_row(owner, inspect_id)["resource_quiesced_at"] is None
+    print("[G4-N] host_prepare claim->settle, 23-code error_v1, leaf dispose replay/"
+          "terminal, fiber_control E1->E2, start/poll projection + run pin, and "
+          "inspect claim negatives (key set/reservation/target state/digest/id) all "
+          "invalid_args with byte-equal snapshots; real inspect claim->settle "
+          "converges with an effect-only claim write")
+
+
 def main():
     with server_helper_scope(), setup_db() as db:
         owner = db.connect()
@@ -610,8 +1293,13 @@ def main():
         g4_b(owner)
         g4_e(owner, admin, service)
         g4_cascade(owner, admin, service)
+        g4_h(owner, admin, service)
+        g4_i(owner, admin, service)
+        g4_j(owner, admin, service)
+        g4_k(owner, admin, service)
+        g4_n(owner, admin, service)
         _assert_closed_catalog(owner)
-    print("[passed] v24 S5 W1")
+    print("[passed] v24 S5 W1-W2")
     return 0
 
 

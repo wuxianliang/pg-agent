@@ -114,7 +114,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION v24.validate_and_apply_delta(p_effect_id uuid, p_principal uuid,
   p_outcome jsonb, p_delta jsonb, p_closure jsonb) RETURNS jsonb
-LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, v24 AS $$
 DECLARE
   body jsonb := p_outcome->'body';
   kind text := body->>'kind';
@@ -822,8 +822,10 @@ BEGIN
          OR (r->'key'->>'install_id') IS NULL
          OR NOT ((r->'key'->>'install_id')::uuid = ANY(v_dispose_scope))
          OR EXISTS (SELECT 1 FROM jsonb_object_keys(r->'set') k
-                    WHERE k NOT IN ('state','dispose_effect'))
-         OR (r->'set' ? 'state' AND r->'set'->>'state' IS DISTINCT FROM 'dispose_pending') THEN
+                    WHERE k NOT IN ('state','dispose_effect','disposed_at'))
+         OR (r->'set' ? 'state' AND r->'set'->>'state'
+             NOT IN ('dispose_pending','disposed'))
+         OR (r->'set' ? 'disposed_at' AND r->'set'->>'state' IS DISTINCT FROM 'disposed') THEN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
     END LOOP;
@@ -841,28 +843,69 @@ BEGIN
     FOR r IN SELECT value FROM jsonb_array_elements(coalesce(p_delta->'successors','[]'::jsonb)) LOOP
       IF jsonb_typeof(r) IS DISTINCT FROM 'object'
          OR NOT (r ?& ARRAY['effect_id','ordinal','kind','request'])
-         OR r->>'kind' IS DISTINCT FROM 'host_release'
+         OR r->>'kind' NOT IN ('host_release','inspect_resource')
          OR jsonb_typeof(r->'request') IS DISTINCT FROM 'object'
          OR (r->'request'->>'install_id') IS NULL
          OR NOT ((r->'request'->>'install_id')::uuid = ANY(v_dispose_scope))
          OR (r->>'effect_id') IS NULL
-         OR (r->>'effect_id')::uuid IS DISTINCT FROM
-            md5(p_effect_id::text || ':host_release:'
-                || (r->'request'->>'install_id') || ':0')::uuid
          OR jsonb_typeof(r->'ordinal') IS DISTINCT FROM 'number'
          OR (r->>'ordinal') !~ '^[0-9]{1,2}$'
-         OR (r->>'ordinal')::int NOT BETWEEN 0 AND 15
-         OR r->'request' IS DISTINCT FROM jsonb_build_object(
-              'install_id', (r->'request'->>'install_id')::uuid,
-              'reservation', 'v24:host_release:' || (r->>'effect_id')) THEN
+         OR (r->>'ordinal')::int NOT BETWEEN 0 AND 15 THEN
         RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      IF r->>'kind' = 'host_release' THEN
+        IF (r->>'effect_id')::uuid IS DISTINCT FROM
+             md5(p_effect_id::text || ':host_release:'
+                 || (r->'request'->>'install_id') || ':0')::uuid
+           OR r->'request' IS DISTINCT FROM jsonb_build_object(
+                'install_id', (r->'request'->>'install_id')::uuid,
+                'reservation', 'v24:host_release:' || (r->>'effect_id')) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      ELSE
+        -- S5 W2/C25 inspect successor: frozen six-key request, deterministic
+        -- identity derived from the command effect + install, and a target
+        -- host effect that is genuinely unknown and unquiesced.
+        IF NOT (r->'request' ?& ARRAY['v','install_id','target','target_effect_id',
+                                      'target_reservation','target_request_digest'])
+           OR EXISTS (SELECT 1 FROM jsonb_object_keys(r->'request') k
+                       WHERE k NOT IN ('v','install_id','target','target_effect_id',
+                                       'target_reservation','target_request_digest'))
+           OR (r->'request'->>'v') IS DISTINCT FROM '1'
+           OR (r->'request'->>'target') NOT IN ('host_prepare','host_release')
+           OR (r->>'effect_id')::uuid IS DISTINCT FROM
+                md5(p_effect_id::text || ':inspect_resource:'
+                    || (r->'request'->>'install_id') || ':0')::uuid
+           OR (r->'request'->>'target_request_digest') !~ '^[0-9a-f]{64}$'
+           OR (r->'request'->>'target_reservation') NOT LIKE
+                'v24:' || (r->'request'->>'target') || ':%'
+           OR r->'request' IS DISTINCT FROM jsonb_build_object(
+                'v', 1,
+                'install_id', (r->'request'->>'install_id')::uuid,
+                'target', r->'request'->>'target',
+                'target_effect_id', (r->'request'->>'target_effect_id')::uuid,
+                'target_reservation', r->'request'->>'target_reservation',
+                'target_request_digest', r->'request'->>'target_request_digest')
+           OR NOT EXISTS (
+                SELECT 1 FROM v24.effects t
+                 WHERE t.effect_id = (r->'request'->>'target_effect_id')::uuid
+                   AND t.kind = r->'request'->>'target'
+                   AND t.status = 'unknown'
+                   AND t.resource_quiesced_at IS NULL
+                   AND (t.request->>'install_id') = r->'request'->>'install_id'
+                   AND (t.request->>'reservation') = r->'request'->>'target_reservation'
+                   AND encode(t.request_digest,'hex') =
+                       r->'request'->>'target_request_digest') THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
       END IF;
     END LOOP;
     FOR r IN SELECT value FROM jsonb_array_elements(coalesce(p_delta->'events','[]'::jsonb)) LOOP
       IF (r->>'entity_type') IS DISTINCT FROM 'install'
          OR (r->>'entity_id') IS NULL
          OR NOT ((r->>'entity_id')::uuid = ANY(v_dispose_scope))
-         OR r->>'event_kind' NOT IN ('install_dispose_pending','install_release_requested') THEN
+         OR r->>'event_kind' NOT IN ('install_dispose_pending','install_release_requested',
+                                     'install_inspect_requested','install_disposed') THEN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
     END LOOP;
@@ -1228,7 +1271,9 @@ BEGIN
       UPDATE v24.installs AS it SET
         state = CASE WHEN (r->'set') ? 'state' THEN r->'set'->>'state' ELSE it.state END,
         dispose_effect = CASE WHEN (r->'set') ? 'dispose_effect'
-              THEN (r->'set'->>'dispose_effect')::uuid ELSE it.dispose_effect END
+              THEN (r->'set'->>'dispose_effect')::uuid ELSE it.dispose_effect END,
+        disposed_at = CASE WHEN (r->'set') ? 'disposed_at'
+              THEN (r->'set'->>'disposed_at')::timestamptz ELSE it.disposed_at END
       WHERE it.install_id = (r->'key'->>'install_id')::uuid;
     END LOOP;
     FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'fibers','[]'::jsonb)) LOOP
@@ -1241,9 +1286,10 @@ BEGIN
     END LOOP;
   END IF;
 
+  scope_id := coalesce(scope_id,(p_delta->'effect'->>'scope_id')::uuid);
   INSERT INTO v24.effects(effect_id,requester_id,request_key,scope_id,run_id,fiber_id,episode_id,kind,status,request,request_digest,replay_policy,outcome,settled_at)
   VALUES(p_effect_id,p_principal,body->>'request_key',
-    coalesce(scope_id,(p_delta->'effect'->>'scope_id')::uuid),
+    scope_id,
     (p_delta->'effect'->>'run_id')::uuid,
     (p_delta->'effect'->>'fiber_id')::uuid,
     (p_delta->'effect'->>'episode_id')::uuid,
@@ -2344,7 +2390,7 @@ $$;
 -- like install_identity_conflict); domain updates are discarded wholesale.
 CREATE OR REPLACE FUNCTION v24.interpret_dispose(p_effect_id uuid, p_principal uuid,
   p_outcome jsonb, p_closure jsonb) RETURNS jsonb
-LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, v24 AS $$
 DECLARE
   v_p jsonb := p_outcome->'body'->'payload';
   v_i v24.installs%ROWTYPE;
@@ -2374,9 +2420,14 @@ BEGIN
   END IF;
 
   -- Successors are emitted in the stage's deterministic children-first order;
-  -- reused ready|claimed releases appear with the same id and no new effect.
+  -- reused ready|claimed releases/inspects appear with the same id and no new
+  -- effect.
   FOR v_release IN SELECT value FROM jsonb_array_elements(
                       coalesce(v_stage->'releases','[]'::jsonb)) LOOP
+    v_emitted := v_emitted || jsonb_build_array(v_release->'effect_id');
+  END LOOP;
+  FOR v_release IN SELECT value FROM jsonb_array_elements(
+                      coalesce(v_stage->'inspects','[]'::jsonb)) LOOP
     v_emitted := v_emitted || jsonb_build_array(v_release->'effect_id');
   END LOOP;
 
@@ -2395,18 +2446,157 @@ $$;
 
 CREATE OR REPLACE FUNCTION v24.interpret_settlement(p_effect_id uuid, p_principal uuid,
   p_outcome jsonb, p_closure jsonb) RETURNS jsonb
-LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, v24 AS $$
 DECLARE
   e v24.effects%ROWTYPE;
   i v24.installs%ROWTYPE;
+  t v24.effects%ROWTYPE;
   target text;
   ev jsonb := '[]'::jsonb;
+  v_req jsonb;
+  v_result jsonb;
+  v_obs text;
+  v_status text;
+  v_install_set jsonb := '{}'::jsonb;
+  v_events jsonb := '[]'::jsonb;
 BEGIN
   SELECT * INTO e FROM v24.effects WHERE effect_id=p_effect_id;
   IF e.kind = 'model_call' THEN
     RETURN v24.interpret_model_settlement(p_effect_id,p_principal,p_outcome,p_closure);
   ELSIF e.kind = 'tool_call' THEN
     RETURN v24.interpret_tool_settlement(p_effect_id,p_principal,p_outcome,p_closure);
+  ELSIF e.kind = 'inspect_resource' THEN
+    -- Structural boundary (G1-J2): a request-less or malformed inspect effect
+    -- has no supported settlement path and must raise the W0 guard exactly like
+    -- any other unregistered settlement handler.
+    IF jsonb_typeof(e.request) IS DISTINCT FROM 'object'
+       OR NOT (e.request ?& ARRAY['v','install_id','target','target_effect_id',
+                                  'target_reservation','target_request_digest'])
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(e.request) k
+                   WHERE k NOT IN ('v','install_id','target','target_effect_id',
+                                   'target_reservation','target_request_digest'))
+       OR jsonb_typeof(e.request->'v') IS DISTINCT FROM 'number'
+       OR (e.request->>'v') IS DISTINCT FROM '1'
+       OR jsonb_typeof(e.request->'install_id') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(e.request->'target') IS DISTINCT FROM 'string'
+       OR (e.request->>'target') NOT IN ('host_prepare','host_release')
+       OR jsonb_typeof(e.request->'target_effect_id') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(e.request->'target_reservation') IS DISTINCT FROM 'string'
+       OR (e.request->>'target_reservation') NOT LIKE
+            'v24:' || (e.request->>'target') || ':%'
+       OR jsonb_typeof(e.request->'target_request_digest') IS DISTINCT FROM 'string'
+       OR (e.request->>'target_request_digest') !~ '^[0-9a-f]{64}$'
+       OR jsonb_typeof(p_outcome->'body') IS DISTINCT FROM 'object'
+       OR p_outcome->'body'->>'kind' IS DISTINCT FROM 'inspect_resource' THEN
+      RAISE EXCEPTION 'v24.interpret_settlement: unsupported inspect_resource settlement'
+        USING ERRCODE = '0A000';
+    END IF;
+    v_req := e.request;
+    v_result := p_outcome->'body'->'result';
+    IF jsonb_typeof(v_result) IS DISTINCT FROM 'object'
+       OR (v_result->>'v') IS DISTINCT FROM '1' THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    END IF;
+    IF p_outcome->>'class' = 'success' THEN
+      IF NOT (v_result ?& ARRAY['v','observed','target_effect_id','target_reservation'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_result) k
+                     WHERE k NOT IN ('v','observed','target_effect_id','target_reservation'))
+         OR (v_result->>'observed') NOT IN ('known','absent')
+         OR (v_result->>'target_effect_id') IS DISTINCT FROM v_req->>'target_effect_id'
+         OR (v_result->>'target_reservation') IS DISTINCT FROM v_req->>'target_reservation' THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+      v_obs := v_result->>'observed';
+    ELSIF p_outcome->>'class' = 'failure' THEN
+      IF NOT (v_result ?& ARRAY['v','observed'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_result) k
+                     WHERE k NOT IN ('v','observed','reason'))
+         OR (v_result ? 'reason' AND v_result->>'reason' IS DISTINCT FROM 'inspect_failed')
+         OR (v_result->>'observed') IS DISTINCT FROM 'unknown' THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+      v_obs := 'unknown';
+    ELSIF p_outcome->>'class' = 'unknown' THEN
+      IF NOT (v_result ?& ARRAY['v','observed'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_result) k
+                     WHERE k NOT IN ('v','observed'))
+         OR (v_result->>'observed') IS DISTINCT FROM 'unknown' THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+      v_obs := 'unknown';
+    ELSE
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    END IF;
+    BEGIN
+      SELECT * INTO i FROM v24.installs
+       WHERE install_id=(v_req->>'install_id')::uuid;
+      IF NOT FOUND OR i.scope_id IS DISTINCT FROM e.scope_id THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+      SELECT * INTO t FROM v24.effects
+       WHERE effect_id=(v_req->>'target_effect_id')::uuid;
+      IF NOT FOUND
+         OR t.kind IS DISTINCT FROM v_req->>'target'
+         OR t.status IS DISTINCT FROM 'unknown'
+         OR t.resource_quiesced_at IS NOT NULL
+         OR (t.request->>'install_id') IS DISTINCT FROM v_req->>'install_id'
+         OR (t.request->>'reservation') IS DISTINCT FROM v_req->>'target_reservation'
+         OR encode(t.request_digest,'hex') IS DISTINCT FROM v_req->>'target_request_digest' THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
+    EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
+        OR invalid_parameter_value THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    END;
+    v_status := CASE p_outcome->>'class' WHEN 'success' THEN 'succeeded'
+                WHEN 'failure' THEN 'failed' ELSE 'unknown' END;
+    -- C25 matrix: only the install transition belongs here.  Settlement emits
+    -- no successors; a later command key drives the next dispose stage.
+    IF v_req->>'target' = 'host_prepare' THEN
+      IF p_outcome->>'class' = 'success' AND v_obs = 'known' THEN
+        IF i.state NOT IN ('preparing','prepare_unknown') THEN
+          RETURN jsonb_build_object('write',false,'error',v24.error_v1('receipt_conflict'));
+        END IF;
+        v_install_set := jsonb_build_object('state','installed');
+      ELSIF p_outcome->>'class' = 'success' AND v_obs = 'absent' THEN
+        IF i.state NOT IN ('preparing','prepare_unknown') THEN
+          RETURN jsonb_build_object('write',false,'error',v24.error_v1('receipt_conflict'));
+        END IF;
+        v_install_set := jsonb_build_object('state','prepare_failed');
+      END IF;
+    ELSE
+      IF i.state IS DISTINCT FROM 'dispose_pending' THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('receipt_conflict'));
+      END IF;
+      IF p_outcome->>'class' = 'success' AND v_obs = 'known' THEN
+        v_install_set := jsonb_build_object('state','disposed',
+                                            'disposed_at',now());
+      END IF;
+    END IF;
+    v_events := jsonb_build_array(jsonb_build_object(
+      'entity_type','install','entity_id',i.install_id,
+      'event_kind','install_inspect_' || v_obs,
+      'payload',jsonb_build_object('install_id',i.install_id,
+        'target_effect_id',t.effect_id,'observed',v_obs)));
+    IF v_install_set ? 'disposed_at' THEN
+      v_events := v_events || jsonb_build_array(jsonb_build_object(
+        'entity_type','install','entity_id',i.install_id,
+        'event_kind','install_disposed',
+        'payload',jsonb_build_object('state','disposed')));
+    END IF;
+    RETURN jsonb_build_object('write',true,
+      'domain',jsonb_build_object('update',jsonb_build_object(
+        'installs',CASE WHEN v_install_set = '{}'::jsonb THEN '[]'::jsonb
+                        ELSE jsonb_build_array(jsonb_build_object(
+                          'key',jsonb_build_object('install_id',i.install_id),
+                          'set',v_install_set)) END,
+        'effects',CASE WHEN p_outcome->>'class' = 'success'
+                       THEN jsonb_build_array(jsonb_build_object(
+                         'key',jsonb_build_object('effect_id',t.effect_id),
+                         'set',jsonb_build_object('resource_quiesced_at',now())))
+                       ELSE '[]'::jsonb END)),
+      'effect',jsonb_build_object('status',v_status,'outcome',p_outcome),
+      'events',v_events, 'successors','[]'::jsonb);
   ELSIF e.kind = 'host_prepare' THEN
     SELECT * INTO i FROM v24.installs WHERE install_id=(e.request->>'install_id')::uuid;
     IF NOT FOUND OR i.state <> 'preparing' THEN
@@ -2448,7 +2638,7 @@ $$;
 -- effect, never inserts requests, and persists the exact incoming receipt for S2.
 CREATE FUNCTION v24.validate_and_apply_install_delta(p_effect_id uuid, p_principal uuid,
   p_outcome jsonb, p_delta jsonb, p_closure jsonb) RETURNS jsonb
-LANGUAGE plpgsql SET search_path = pg_catalog, v24 AS $$
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, v24 AS $$
 DECLARE
   settling boolean := p_outcome->>'class' IN ('success','failure','unknown');
   body jsonb := p_outcome->'body';
@@ -2467,9 +2657,208 @@ DECLARE
   sid uuid;
   raw bytea;
   seq bigint;
+  insp_req jsonb;
+  insp_result jsonb;
+  insp_target v24.effects%ROWTYPE;
+  insp_install v24.installs%ROWTYPE;
+  insp_obs text;
+  insp_status text;
+  insp_install_set jsonb := '{}'::jsonb;
+  insp_installs jsonb;
+  insp_effects jsonb;
+  insp_events jsonb;
   has_error boolean := p_delta->'error' IS NOT NULL AND p_delta->'error' <> 'null'::jsonb;
 BEGIN
   IF p_delta->>'write' = 'false' THEN RETURN p_delta->'error'; END IF;
+  -- S5 W2/C25 inspect settlement.  This branch deliberately lives inside the
+  -- allowlisted install applier: S1's catalog gate pins the functions permitted
+  -- to write v24.effects, and this commit may not edit that gate.  It applies
+  -- only the matrix transition plus the inspected effect's quiescence marker;
+  -- it emits no successors and leaves the inspect effect's own
+  -- resource_quiesced_at NULL (unlike the generic host receipt rule).
+  SELECT * INTO e FROM v24.effects WHERE effect_id=p_effect_id;
+  IF e.kind = 'inspect_resource' THEN
+    IF jsonb_typeof(p_delta) IS DISTINCT FROM 'object'
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_delta) k
+                   WHERE k NOT IN ('domain','effect','events','successors','error','write'))
+       OR p_delta ? 'error'
+       OR jsonb_typeof(coalesce(p_delta->'domain','{}'::jsonb)) IS DISTINCT FROM 'object'
+       OR coalesce(p_delta->'domain'->'insert','{}'::jsonb) <> '{}'::jsonb
+       OR jsonb_typeof(coalesce(p_delta->'domain'->'update','{}'::jsonb)) IS DISTINCT FROM 'object'
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(
+                    coalesce(p_delta->'domain'->'update','{}'::jsonb)) k
+                   WHERE k NOT IN ('installs','effects'))
+       OR jsonb_typeof(coalesce(p_delta->'events','[]'::jsonb)) IS DISTINCT FROM 'array'
+       OR jsonb_typeof(coalesce(p_delta->'successors','[]'::jsonb)) IS DISTINCT FROM 'array'
+       OR jsonb_array_length(coalesce(p_delta->'successors','[]'::jsonb)) <> 0
+       OR jsonb_array_length(coalesce(p_delta->'events','[]'::jsonb)) > 64
+       OR jsonb_typeof(p_outcome->'body') IS DISTINCT FROM 'object'
+       OR p_outcome->'body'->>'kind' IS DISTINCT FROM 'inspect_resource' THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    insp_req := e.request;
+    IF jsonb_typeof(insp_req) IS DISTINCT FROM 'object'
+       OR NOT (insp_req ?& ARRAY['v','install_id','target','target_effect_id',
+                                  'target_reservation','target_request_digest'])
+       OR EXISTS (SELECT 1 FROM jsonb_object_keys(insp_req) k
+                   WHERE k NOT IN ('v','install_id','target','target_effect_id',
+                                   'target_reservation','target_request_digest'))
+       OR (insp_req->>'v') IS DISTINCT FROM '1'
+       OR (insp_req->>'target') NOT IN ('host_prepare','host_release')
+       OR (insp_req->>'target_request_digest') !~ '^[0-9a-f]{64}$' THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    insp_result := p_outcome->'body'->'result';
+    IF jsonb_typeof(insp_result) IS DISTINCT FROM 'object'
+       OR (insp_result->>'v') IS DISTINCT FROM '1' THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    IF p_outcome->>'class' = 'success' THEN
+      IF NOT (insp_result ?& ARRAY['v','observed','target_effect_id','target_reservation'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(insp_result) k
+                     WHERE k NOT IN ('v','observed','target_effect_id','target_reservation'))
+         OR (insp_result->>'observed') NOT IN ('known','absent')
+         OR (insp_result->>'target_effect_id') IS DISTINCT FROM insp_req->>'target_effect_id'
+         OR (insp_result->>'target_reservation') IS DISTINCT FROM insp_req->>'target_reservation' THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      insp_obs := insp_result->>'observed';
+      insp_status := 'succeeded';
+    ELSIF p_outcome->>'class' = 'failure' THEN
+      IF NOT (insp_result ?& ARRAY['v','observed'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(insp_result) k
+                     WHERE k NOT IN ('v','observed','reason'))
+         OR (insp_result ? 'reason' AND insp_result->>'reason' IS DISTINCT FROM 'inspect_failed')
+         OR (insp_result->>'observed') IS DISTINCT FROM 'unknown' THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      insp_obs := 'unknown';
+      insp_status := 'failed';
+    ELSIF p_outcome->>'class' = 'unknown' THEN
+      IF NOT (insp_result ?& ARRAY['v','observed'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(insp_result) k
+                     WHERE k NOT IN ('v','observed'))
+         OR (insp_result->>'observed') IS DISTINCT FROM 'unknown' THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      insp_obs := 'unknown';
+      insp_status := 'unknown';
+    ELSE
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    BEGIN
+      SELECT * INTO insp_install FROM v24.installs
+       WHERE install_id=(insp_req->>'install_id')::uuid;
+      IF NOT FOUND OR insp_install.scope_id IS DISTINCT FROM e.scope_id THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      SELECT * INTO insp_target FROM v24.effects
+       WHERE effect_id=(insp_req->>'target_effect_id')::uuid;
+      IF NOT FOUND
+         OR insp_target.kind IS DISTINCT FROM insp_req->>'target'
+         OR insp_target.status IS DISTINCT FROM 'unknown'
+         OR insp_target.resource_quiesced_at IS NOT NULL
+         OR (insp_target.request->>'install_id') IS DISTINCT FROM insp_req->>'install_id'
+         OR (insp_target.request->>'reservation') IS DISTINCT FROM insp_req->>'target_reservation'
+         OR encode(insp_target.request_digest,'hex') IS DISTINCT FROM
+              insp_req->>'target_request_digest' THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
+        OR invalid_parameter_value THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END;
+    IF insp_req->>'target' = 'host_prepare' THEN
+      IF p_outcome->>'class' = 'success' AND insp_obs = 'known' THEN
+        IF insp_install.state NOT IN ('preparing','prepare_unknown') THEN
+          RETURN v24.error_v1('receipt_conflict');
+        END IF;
+        insp_install_set := jsonb_build_object('state','installed');
+      ELSIF p_outcome->>'class' = 'success' AND insp_obs = 'absent' THEN
+        IF insp_install.state NOT IN ('preparing','prepare_unknown') THEN
+          RETURN v24.error_v1('receipt_conflict');
+        END IF;
+        insp_install_set := jsonb_build_object('state','prepare_failed');
+      END IF;
+    ELSE
+      IF insp_install.state IS DISTINCT FROM 'dispose_pending' THEN
+        RETURN v24.error_v1('receipt_conflict');
+      END IF;
+      IF p_outcome->>'class' = 'success' AND insp_obs = 'known' THEN
+        insp_install_set := jsonb_build_object('state','disposed',
+                                               'disposed_at',now());
+      END IF;
+    END IF;
+    insp_installs := CASE WHEN insp_install_set = '{}'::jsonb THEN '[]'::jsonb
+                          ELSE jsonb_build_array(jsonb_build_object(
+                            'key',jsonb_build_object('install_id',insp_install.install_id),
+                            'set',insp_install_set)) END;
+    insp_effects := CASE WHEN p_outcome->>'class' = 'success'
+                         THEN jsonb_build_array(jsonb_build_object(
+                           'key',jsonb_build_object('effect_id',insp_target.effect_id),
+                           'set',jsonb_build_object('resource_quiesced_at',now())))
+                         ELSE '[]'::jsonb END;
+    insp_events := jsonb_build_array(jsonb_build_object(
+      'entity_type','install','entity_id',insp_install.install_id,
+      'event_kind','install_inspect_' || insp_obs,
+      'payload',jsonb_build_object('install_id',insp_install.install_id,
+        'target_effect_id',insp_target.effect_id,'observed',insp_obs)));
+    IF insp_install_set ? 'disposed_at' THEN
+      insp_events := insp_events || jsonb_build_array(jsonb_build_object(
+        'entity_type','install','entity_id',insp_install.install_id,
+        'event_kind','install_disposed',
+        'payload',jsonb_build_object('state','disposed')));
+    END IF;
+    IF upd->'installs' IS DISTINCT FROM insp_installs
+       OR upd->'effects' IS DISTINCT FROM insp_effects
+       OR p_delta->'events' IS DISTINCT FROM insp_events
+       OR p_delta->'effect' IS DISTINCT FROM jsonb_build_object(
+            'status',insp_status,'outcome',p_outcome)
+       OR NOT coalesce(p_closure->'effects' ? p_effect_id::text,false)
+       OR NOT coalesce(p_closure->'effects' ? insp_target.effect_id::text,false)
+       OR NOT coalesce(p_closure->'installs' ? insp_install.install_id::text,false) THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    IF insp_install_set ? 'state' THEN
+      UPDATE v24.installs AS it
+         SET state = insp_install_set->>'state',
+             disposed_at = CASE WHEN insp_install_set ? 'disposed_at'
+                                THEN now() ELSE it.disposed_at END
+       WHERE it.install_id = insp_install.install_id
+         AND it.state = insp_install.state;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'v24 inspect: install changed during settlement'
+          USING ERRCODE='40001';
+      END IF;
+    END IF;
+    IF p_outcome->>'class' = 'success' THEN
+      UPDATE v24.effects AS ef SET resource_quiesced_at = now()
+       WHERE ef.effect_id = insp_target.effect_id
+         AND ef.status = 'unknown' AND ef.resource_quiesced_at IS NULL;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'v24 inspect: target quiescence changed'
+          USING ERRCODE='40001';
+      END IF;
+    END IF;
+    UPDATE v24.effects AS ef SET status = insp_status, outcome = p_outcome,
+      settled_at = now(), claim_owner = NULL, lease_until = NULL,
+      resource_quiesced_at = NULL
+     WHERE ef.effect_id = p_effect_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'v24 inspect: effect changed during settlement'
+        USING ERRCODE='40001';
+    END IF;
+    FOR r IN SELECT value FROM jsonb_array_elements(insp_events) LOOP
+      SELECT coalesce(max(ev.seq),0)+1 INTO seq FROM v24.events ev
+       WHERE ev.entity_type='install' AND ev.entity_id=(r->>'entity_id')::uuid;
+      INSERT INTO v24.events(effect_id,seq,entity_type,entity_id,event_kind,
+        payload,payload_digest)
+      VALUES(p_effect_id,seq,'install',(r->>'entity_id')::uuid,r->>'event_kind',
+        r->'payload',sha256(convert_to((r->'payload')::text,'UTF8')));
+    END LOOP;
+    RETURN jsonb_build_object('v',1,'disposition','committed',
+      'effect_id',p_effect_id,'emitted','[]'::jsonb,'revision',0,'claim',NULL);
+  END IF;
   IF jsonb_typeof(p_delta) IS DISTINCT FROM 'object'
      OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_delta) k WHERE k NOT IN ('domain','effect','request','events','successors','error','write'))
      OR jsonb_typeof(ins) IS DISTINCT FROM 'object' OR jsonb_typeof(upd) IS DISTINCT FROM 'object'
