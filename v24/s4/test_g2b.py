@@ -3,6 +3,8 @@
 The gate drives the real protocol through LOGIN roles and only simulates the
 external model call in process.  A claim is always COMMITted and the worker
 connection is IDLE before FakeLLM.complete runs; settlement is a later advance.
+G2b-E/F additionally race two real service connections from two threads; the
+G advisory lock is observed with pg_blocking_pids() and pg_locks, never sleeps.
 No sockets, files, randomness, or sleeps are used.
 """
 from __future__ import annotations
@@ -11,9 +13,12 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import inspect
 import json
+import queue
 import re
 import socket
 import sys
+import threading
+import time
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -1047,43 +1052,262 @@ def tool_settlement_counters(db, owner):
           "creates one continuation, tool_call_failed + tool_batch_completed once")
 
 
+def concurrent_actions(participants, tag, timeout=10):
+    """Start one committing action per thread at a shared barrier.
+
+    ``participants`` is ``[(label, connection, action)]``.  Every action owns its
+    connection for the whole thread lifetime and is responsible for committing.
+    """
+    barrier = threading.Barrier(len(participants))
+    results, failures, threads = {}, {}, {}
+
+    def run(label, conn, action):
+        try:
+            barrier.wait(timeout=timeout)
+            results[label] = action(conn)
+        except BaseException as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            failures[label] = exc
+
+    for label, conn, action in participants:
+        thread = threading.Thread(target=run, args=(label, conn, action),
+                                  name=f"{tag}-{label}", daemon=True)
+        threads[label] = thread
+        thread.start()
+    try:
+        for thread in threads.values():
+            thread.join(timeout=timeout)
+        assert all(not thread.is_alive() for thread in threads.values()), \
+            f"{tag}: action thread did not finish"
+        if failures:
+            raise next(iter(failures.values()))
+        assert set(results) == set(threads), (tag, results)
+        return results
+    finally:
+        for thread in threads.values():
+            thread.join(timeout=5)
+        for _, conn, _ in participants:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+
+def serialized_race(db, participants, tag, deadline_seconds=10):
+    """Race one non-committing ``advance`` per thread; the first holds G open.
+
+    The first action to return keeps its transaction open while the other thread
+    waits on ``pg_advisory_xact_lock(24,1)``.  An independent autocommit observer
+    proves the wait with ``pg_blocking_pids()`` and an ungranted advisory
+    ``pg_locks`` row, then the holder is released and both transactions commit.
+    Returns ``(winner_label, winner_response, results, evidence)``.
+    """
+    assert len(participants) == 2, participants
+    observer = db.connect()
+    observer.autocommit = True
+    barrier = threading.Barrier(len(participants))
+    release = threading.Event()
+    returned = queue.Queue()
+    results, failures, threads = {}, {}, {}
+    pids = {label: conn.get_backend_pid() for label, conn, _ in participants}
+
+    def run(label, conn, action):
+        try:
+            barrier.wait(timeout=10)
+            response = action(conn)
+            returned.put((label, response))
+            if not release.wait(timeout=20):
+                raise AssertionError(f"{tag}: {label} was never released")
+            conn.commit()
+            results[label] = response
+        except BaseException as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            failures[label] = exc
+
+    for label, conn, action in participants:
+        thread = threading.Thread(target=run, args=(label, conn, action),
+                                  name=f"{tag}-{label}", daemon=True)
+        threads[label] = thread
+        thread.start()
+
+    try:
+        try:
+            winner_label, winner_response = returned.get(timeout=10)
+        except queue.Empty:
+            raise AssertionError(f"{tag}: no thread returned from advance") from None
+        loser_label = next(label for label, _, _ in participants if label != winner_label)
+        winner_pid, loser_pid = pids[winner_label], pids[loser_label]
+        deadline = time.monotonic() + deadline_seconds
+        while True:
+            with observer.cursor() as cur:
+                cur.execute(
+                    """SELECT pg_blocking_pids(%s)::text,
+                              %s = ANY(pg_blocking_pids(%s)),
+                              (SELECT count(*) FROM pg_locks
+                                WHERE pid=%s AND locktype='advisory' AND NOT granted)""",
+                    (loser_pid, winner_pid, loser_pid, loser_pid))
+                blockers, blocks_on_winner, ungranted = cur.fetchone()
+            if blocks_on_winner and ungranted >= 1:
+                break
+            assert threads[loser_label].is_alive(), (
+                f"{tag}: {loser_label} finished before blocking on {winner_label}")
+            assert time.monotonic() < deadline, (
+                f"{tag}: {loser_label} did not block on {winner_label} "
+                f"(blockers={blockers}, ungranted_advisory={ungranted})")
+        winner_state = one(observer, "SELECT state FROM pg_stat_activity WHERE pid=%s",
+                           (winner_pid,))
+        assert winner_state == "idle in transaction", (tag, winner_state)
+        print(f"[{tag}] G lock held open by {winner_label} pid={winner_pid} "
+              f"(pg_stat_activity.state='idle in transaction'); {loser_label} pid={loser_pid} "
+              f"blocked: pg_blocking_pids({loser_pid})={blockers}, "
+              f"pg_locks(pid={loser_pid}, locktype='advisory', granted=false)={ungranted}")
+        evidence = {"winner": winner_label, "loser": loser_label,
+                    "winner_pid": winner_pid, "blocked_pid": loser_pid,
+                    "blockers": blockers, "ungranted_advisory": ungranted}
+        release.set()
+        for thread in threads.values():
+            thread.join(timeout=10)
+            assert not thread.is_alive(), f"{tag}: thread still running after G release"
+        if failures:
+            raise next(iter(failures.values()))
+        assert set(results) == set(threads), (tag, results)
+        return winner_label, winner_response, results, evidence
+    finally:
+        release.set()
+        for thread in threads.values():
+            thread.join(timeout=10)
+        for _, conn, _ in participants:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        observer.close()
+
+
 def tool_batch_claims_and_guards(db, owner):
-    """G2b-E/G2b-G: independent claims, one closure, second-model guards."""
+    """G2b-E/G2b-G: two-connection same-tool claim race, closure, model guards."""
     service = db.connect("service")
-    second = db.connect("service")
+    # Every trial races a fresh, symmetric pair.  Odd trials map a/b to the
+    # first/second-created connection and even trials swap that mapping; each
+    # trial also swaps the thread start order.  Both threads always meet the
+    # same Barrier.  Real races are sampled (at least four, at most eight) until
+    # both G-acquisition orders are observed, without sleeps or event hand-offs.
+    pairs = []
     keys = ("e0", "e1")
     budget = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
-    run_id, model_id = start_tool_run(owner, service, "g2b-e", keys, budget)
-    ids, _, _ = settle_tool_batch(owner, service, run_id, model_id, keys)
+    winners, last = [], None
+    try:
+        trial = 0
+        while trial < 8 and (trial < 4 or len(set(winners)) < 2):
+            trial += 1
+            pair = (db.connect("service"), db.connect("service"))
+            pairs.append(pair)
+            first, second = pair
+            conns = ({"a": first, "b": second} if trial % 2
+                     else {"a": second, "b": first})
+            order = ("a", "b") if trial % 2 else ("b", "a")
+            run_id, model_id = start_tool_run(owner, service, f"g2b-e-{trial}", keys, budget)
+            ids, digest, _ = settle_tool_batch(owner, service, run_id, model_id, keys)
+            participants = [
+                (label, conns[label],
+                 lambda conn, tool_id=ids[0]: advance(conn, tool_id, claim()))
+                for label in order
+            ]
+            winner_label, winner_response, results, evidence = serialized_race(
+                db, participants, "G2b-E")
+            loser_label = evidence["loser"]
+            loser_response = results[loser_label]
 
-    token0 = claim_effect(service, ids[0])
-    token1 = claim_effect(service, ids[1])
-    assert token0["attempt"] == 1 and token1["attempt"] == 1, (token0, token1)
-    tool = effect_row(owner, ids[0])
-    assert tool["status"] == "claimed" and tool["attempt_no"] == 1, tool
-    deferred = advance(second, ids[0], claim())
-    second.commit()
-    assert deferred.get("disposition") == "deferred" and deferred["claim"] is None, deferred
-    tool = effect_row(owner, ids[0])
-    assert tool["status"] == "claimed" and tool["attempt_no"] == 1 and tool["fence"] == 1, tool
-    print("[G2b-E] both batch tools claim independently (attempt=1); a second "
-          "claimant on one tool is deferred and does not bump attempt/fence")
+            assert winner_response["disposition"] == "committed", winner_response
+            assert winner_response["claim"] is not None, winner_response
+            assert loser_response.get("disposition") == "deferred", loser_response
+            assert loser_response["claim"] is None, loser_response
+            assert loser_response["effect_id"] == ids[0], loser_response
+            assert loser_response["emitted"] == [], loser_response
+            tokens = [response["claim"] for response in results.values()
+                      if response.get("claim") is not None]
+            assert len(tokens) == 1, results
+            token = tokens[0]
+            assert token["attempt"] == 1 and token["fence"] == 1, token
+            assert token["owner"] == db.roles["service"], token
+            tool = effect_row(owner, ids[0])
+            assert tool["status"] == "claimed" and tool["attempt_no"] == 1, tool
+            assert tool["fence"] == 1 and tool["lease_until"] is not None, tool
+            assert tool["claim_owner"] == db.roles["service"], tool
+            assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                               "AND kind='tool_call' AND claim_owner IS NOT NULL",
+                        (run_id,)) == 1
+            assert read(owner, "SELECT count(DISTINCT claim_owner) FROM v24.effects "
+                               "WHERE run_id=%s AND kind='tool_call' AND claim_owner IS NOT NULL",
+                        (run_id,)) == 1
+            sibling = effect_row(owner, ids[1])
+            assert sibling["status"] == "ready" and sibling["claim_owner"] is None, sibling
+            assert service.get_transaction_status() == TRANSACTION_STATUS_IDLE
+            assert conns["a"].get_transaction_status() == TRANSACTION_STATUS_IDLE
+            assert conns["b"].get_transaction_status() == TRANSACTION_STATUS_IDLE
+            winners.append(winner_label)
+            print(f"[G2b-E] trial {trial}: Barrier(2) same-tool claim race (thread start "
+                  f"order={order}); winner={winner_label} token attempt=1/fence=1, "
+                  f"{loser_label} deferred with claim NULL; effect attempt_no=1 fence=1, "
+                  f"exactly one claim_owner={db.roles['service']}")
+            last = (run_id, model_id, ids, digest)
 
-    response, _ = settle_tool(service, ids[0], token0, "success",
-                              {"status": "ok", "output": {}, "usage": None})
-    assert_owner_envelope(response)
-    assert response["emitted"] == [], response
-    response, _ = settle_tool(service, ids[1], token1, "success",
-                              {"status": "ok", "output": {}, "usage": None})
-    assert_owner_envelope(response)
-    assert len(response["emitted"]) == 1, response
-    continuation = response["emitted"][0]
-    assert effect_row(owner, continuation)["parent_effect_id"] == ids[1]
-    models = read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
-                         "AND kind='model_call'", (run_id,))
-    assert models == 2, models
-    print("[G2b-E] first settlement with a live sibling -> 0 successors; closing "
-          "settlement -> exactly one continuation (parent=max-ordinal tool)")
+            winner_conn = conns[winner_label]
+            response, _ = settle_tool(winner_conn, ids[0], token, "success",
+                                      {"status": "ok", "output": {}, "usage": None})
+            assert_owner_envelope(response)
+            assert response["emitted"] == [], response
+            tool = effect_row(owner, ids[0])
+            assert tool["status"] == "succeeded", tool
+            assert tool["attempt_no"] == 1 and tool["fence"] == 1, tool
+            assert tool["claim_owner"] is None and tool["lease_until"] is None, tool
+            run = run_row(owner, run_id)
+            assert run["status"] == "running" and run["turn_no"] == 2, run
+
+            before = snapshot(owner)
+            fresh = advance(winner_conn, ids[0], claim())
+            winner_conn.commit()
+            assert fresh == {"v": 1, "error": {"code": "invalid_args", "detail": {}}}, fresh
+            assert snapshot(owner) == before, "post-settlement same-tool claim wrote rows"
+
+            sibling_token = claim_effect(service, ids[1])
+            assert sibling_token["attempt"] == 1 and sibling_token["fence"] == 1, sibling_token
+            closing, _ = settle_tool(service, ids[1], sibling_token, "success",
+                                     {"status": "ok", "output": {}, "usage": None})
+            assert_owner_envelope(closing)
+            assert len(closing["emitted"]) == 1, closing
+            continuation = closing["emitted"][0]
+            assert continuation == md5_uuid(f"{model_id}:continuation"), continuation
+            cont = effect_row(owner, continuation)
+            assert cont["parent_effect_id"] == ids[1], cont
+            assert cont["ordinal"] == 0 and cont["kind"] == "model_call", cont
+            assert cont["request"]["cause"] == "continuation", cont
+            assert cont["request"]["batch_digest"] == digest, cont
+            assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                               "AND effect_id=%s", (run_id, continuation)) == 1
+            models = read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                                 "AND kind='model_call'", (run_id,))
+            assert models == 2, models
+            print(f"[G2b-E] trial {trial}: winner settlement with live sibling -> 0 "
+                  f"successors; fresh same-tool claim -> invalid_args W0; closing "
+                  f"settlement -> exactly one continuation (parent=max-ordinal tool, "
+                  f"ordinal=0, batch_digest equal)")
+
+        observed = sorted(set(winners))
+        print(f"[G2b-E] {len(winners)} fresh fixtures: same-tool claim race is "
+              f"order-independent; winners={winners}, G-acquisition orders "
+              f"observed={observed}")
+        run_id, model_id, ids, digest = last
+    finally:
+        for pair in pairs:
+            for conn in pair:
+                conn.close()
 
     # A second ready model cannot exist by construction: u_effects_model_call
     # admits at most one ready|claimed model per run.  The observable guarantee
@@ -1116,34 +1340,91 @@ def tool_batch_claims_and_guards(db, owner):
 
 
 def tool_batch_settlement_order(db, owner):
-    """G2b-F: both orders give one continuation; parent is always the max-ordinal tool."""
+    """G2b-F: two-connection concurrent claims and settlements of one batch."""
     service = db.connect("service")
+    # Symmetric race-only connections: fixture SQL runs on `service`, and both
+    # racers get the same claim history before the settlement race, so neither
+    # side is warmed by setup.
+    conns = {"a": db.connect("service"), "b": db.connect("service")}
     keys = ("f0", "f1")
     budget = {"steps": 7, "tool_calls": 2, "tokens": 5000, "wall_ms": 600000}
-    for order in ((0, 1), (1, 0)):
-        realm = f"g2b-f-{order[0]}{order[1]}"
-        run_id, model_id = start_tool_run(owner, service, realm, keys, budget)
-        ids, digest, _ = settle_tool_batch(owner, service, run_id, model_id, keys)
-        tokens = [claim_effect(service, tool_id) for tool_id in ids]
-        continuation = None
-        for step, index in enumerate(order):
-            response, _ = settle_tool(service, ids[index], tokens[index], "success",
-                                      {"status": "ok", "output": {"i": index},
-                                       "usage": None})
-            assert_owner_envelope(response)
-            if step == 0:
-                assert response["emitted"] == [], (order, response)
-            else:
-                assert len(response["emitted"]) == 1, (order, response)
-                continuation = response["emitted"][0]
-        assert continuation == md5_uuid(f"{model_id}:continuation"), continuation
-        cont = effect_row(owner, continuation)
-        assert cont["parent_effect_id"] == ids[1], (order, cont)
-        assert cont["ordinal"] == 0 and cont["request"]["batch_digest"] == digest, (order, cont)
-        assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
-                           "AND effect_id=%s", (run_id, continuation)) == 1
-        print(f"[G2b-F] settlement order {order}: exactly one continuation "
-              f"parent=ordinal-1 tool (creator-independent), batch digest equal")
+    creators = []
+    try:
+        for trial, order in enumerate((("a", "b"), ("b", "a")), start=1):
+            realm = f"g2b-f-{trial}"
+            run_id, model_id = start_tool_run(owner, service, realm, keys, budget)
+            ids, digest, _ = settle_tool_batch(owner, service, run_id, model_id, keys)
+            tool_for = {"a": ids[0], "b": ids[1]}
+            claim_participants = [
+                (label, conns[label],
+                 lambda conn, label=label: claim_effect(conn, tool_for[label]))
+                for label in order
+            ]
+            claims = concurrent_actions(claim_participants, "G2b-F-claims")
+            assert set(claims) == set(conns), claims
+            for label in order:
+                assert claims[label]["attempt"] == 1, (trial, claims[label])
+                assert claims[label]["fence"] == 1, (trial, claims[label])
+                assert claims[label]["owner"] == db.roles["service"], claims[label]
+            assert ids[0] != ids[1]
+            rows = tool_rows(owner, run_id)
+            assert [row["status"] for row in rows] == ["claimed", "claimed"], rows
+            assert [row["claim_owner"] for row in rows] == [db.roles["service"]] * 2, rows
+            print(f"[G2b-F] trial {trial}: Barrier(2) claims of two distinct tools "
+                  f"(thread start order={order}); both committed, effect ids differ, "
+                  f"attempt=1/fence=1 each")
+
+            outcomes = {
+                "a": {"v": 1, "class": "success", "claim": claims["a"],
+                      "body": {"kind": "tool_call",
+                               "result": {"status": "ok", "output": {"i": 0},
+                                          "usage": None}}},
+                "b": {"v": 1, "class": "success", "claim": claims["b"],
+                      "body": {"kind": "tool_call",
+                               "result": {"status": "ok", "output": {"i": 1},
+                                          "usage": None}}},
+            }
+            settle_participants = [
+                (label, conns[label],
+                 lambda conn, label=label: advance(conn, tool_for[label], outcomes[label]))
+                for label in order
+            ]
+            winner_label, winner_response, results, evidence = serialized_race(
+                db, settle_participants, "G2b-F")
+            creator_label = evidence["loser"]
+            creator_response = results[creator_label]
+            assert_owner_envelope(winner_response)
+            assert winner_response["emitted"] == [], (trial, winner_response)
+            assert_owner_envelope(creator_response)
+            assert len(creator_response["emitted"]) == 1, (trial, creator_response)
+            continuation = creator_response["emitted"][0]
+            assert continuation == md5_uuid(f"{model_id}:continuation"), continuation
+            cont = effect_row(owner, continuation)
+            assert cont["parent_effect_id"] == ids[1], (trial, cont)
+            assert cont["ordinal"] == 0 and cont["kind"] == "model_call", (trial, cont)
+            assert cont["request"]["cause"] == "continuation", (trial, cont)
+            assert cont["request"]["batch_digest"] == digest, (trial, cont)
+            assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                               "AND effect_id=%s", (run_id, continuation)) == 1
+            assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                               "AND parent_effect_id=%s AND kind='model_call'",
+                        (run_id, ids[1])) == 1
+            models = read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                                 "AND kind='model_call'", (run_id,))
+            assert models == 2, (trial, models)
+            run = run_row(owner, run_id)
+            assert run["turn_no"] == 3, (trial, run)
+            creators.append(creator_label)
+            print(f"[G2b-F] trial {trial}: G winner={winner_label} held its transaction "
+                  f"open; creator/closure observer={creator_label}; first settlement 0 "
+                  f"successors, second exactly one continuation parent=ordinal-1 tool "
+                  f"(ids[1]), ordinal=0, batch_digest equal; exactly 2 model_call effects")
+    finally:
+        for conn in conns.values():
+            conn.close()
+
+    print(f"[G2b-F] {len(creators)} fresh fixtures: creators={creators}; "
+          f"continuation identity is independent of which connection settles first")
 
 
 def tool_call_budget(db, owner):
