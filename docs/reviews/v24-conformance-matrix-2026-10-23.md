@@ -1,6 +1,6 @@
-# v24 覆盖矩阵（S1–S8 已实现并全绿；G5/G7 已验证；G6 完成（S7 W1–W2，30 ID）；11/11；M-H/G8 扩展验证通过 23/23）
+# v24 覆盖矩阵（S1–S8 已实现并全绿；G5/G7 已验证；G6 完成（S7 W1–W2，30 ID）；11/11；M-H/G8 扩展验证通过 23/23；M-R/G9 扩展验证通过 11/11）
 
-> 收尾稿：2026-10-24。覆盖 S1–S8。断言口径以各 stage 计划和[设计稿](../designs/v24-pg-agent-2026-10-22.md)为准。以下记录 S6/S8 收尾轮十个 gate 的历史实际结果（10/10；S7 closeout 的 11/11 追加见 §0.4）；S4 完成后 G2b 全绿，`blocked_unknown` 成为真实生产者，G2 父门完成；**S5 已完成，G4-A…G4-Q 全绿，G4 父门完成（17/17）**。S5 只证串行 request-key 阶段（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进），**不证**并发面（S7，已由 S7/G6 补证）；**S6 已完成，G5 K1–K10 10/10，全量 G5 末行 `[passed] v24 S6 W1-W4`，G5 父门完成**；S6 只证 FakeHost/journal 下的崩溃恢复合同，**不证**真实 provider/adapter、S7 并发或 S8 spawn（S7 并发已由 G6 补证）。**S8 已完成，G7-A…G7-H + N1–N7 全绿，G7 父门完成**；S8 只证 FakeHost/进程内 fixture 下的 spawn/child-run 合同，**不证**真实 provider/adapter、G6/S7 三面并发（已由 S7/G6 补证）。其余边界见 §4。**当前范围：S1–S8 已实现并全绿；G5/G6/G7 已验证；G6 完成（S7 W1–W2，30 ID）；S7 closeout 11/11（10 既有 + G6），见 §0.4 与 §2.7。M-H 追加 host 只读面与 G8 扩展检查（23/23，见 §0.5）；历史 11/11 不变，G8 不计入 closeout 命令数。**
+> 收尾稿：2026-10-24。覆盖 S1–S8。断言口径以各 stage 计划和[设计稿](../designs/v24-pg-agent-2026-10-22.md)为准。以下记录 S6/S8 收尾轮十个 gate 的历史实际结果（10/10；S7 closeout 的 11/11 追加见 §0.4）；S4 完成后 G2b 全绿，`blocked_unknown` 成为真实生产者，G2 父门完成；**S5 已完成，G4-A…G4-Q 全绿，G4 父门完成（17/17）**。S5 只证串行 request-key 阶段（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进），**不证**并发面（S7，已由 S7/G6 补证）；**S6 已完成，G5 K1–K10 10/10，全量 G5 末行 `[passed] v24 S6 W1-W4`，G5 父门完成**；S6 只证 FakeHost/journal 下的崩溃恢复合同，**不证**真实 provider/adapter、S7 并发或 S8 spawn（S7 并发已由 G6 补证）。**S8 已完成，G7-A…G7-H + N1–N7 全绿，G7 父门完成**；S8 只证 FakeHost/进程内 fixture 下的 spawn/child-run 合同，**不证**真实 provider/adapter、G6/S7 三面并发（已由 S7/G6 补证）。其余边界见 §4。**当前范围：S1–S8 已实现并全绿；G5/G6/G7 已验证；G6 完成（S7 W1–W2，30 ID）；S7 closeout 11/11（10 既有 + G6），见 §0.4 与 §2.7。M-H 追加 host 只读面与 G8 扩展检查（23/23，见 §0.5）；M-R 追加 host worker/durable journal/DeepSeek adapter 与 G9 脚本化扩展检查（11/11，见 §0.6）；历史 11/11 不变，G8/G9 均不计入 closeout 命令数。**
 
 ## 0. 运行环境与最终证据
 
@@ -133,12 +133,12 @@ G7-G 的完整 before/after 表、恢复 action 与 `command_recover` 返回值�
 
 ### 0.5 M-H extension check（G8）— 2026-10-24
 
-> 裁决 5-B：G8 是 **extension check**，不改历史 11/11、不称 closeout gate。M-H 只实现 G8；G9/G10 属 M-R/M-P，当前状态为「未运行」，不得被 11/11 或 G8 解读为已证明。
+> 裁决 5-B：G8 是 **extension check**，不改历史 11/11、不称 closeout gate。M-H 只实现 G8；G9 由 M-R 实现并见 §0.6，G10 属 M-P 仍未运行；历史 11/11 或 G8 都不得被解读为已证明 G9/G10。
 
 | extension | 命令 | 状态 | 证据 |
 |---|---|---|---|
 | G8 | `uv run python v24/s9/test_g8.py` | **通过 23/23，exit 0** | 本文 §0.5；[`v24/s9/README.md`](../../v24/s9/README.md) |
-| G9 | `uv run python v24/s10/test_g9.py` | **未运行**（M-R 未开始） | 不得声称通过 |
+| G9 | `uv run python v24/s10/test_g9.py` | **通过 11/11，exit 0** | 本文 §0.6；[`v24/s10/README.md`](../../v24/s10/README.md) |
 | G10 | `uv run python v24/s11/test_g10.py` | **未运行**（M-P 未开始） | 不得声称通过 |
 
 M-H 的 23 个 ID 全部实跑：`G8-H1`…`H13`（13）、`G8-C1`/`C2`（2）、`G8-L1`…`L3`（3）、`G8-R1`（1）、`G8-D1a`/`D1b`（2）、`G8-D2`（1）、`G8-W1`（1）。末行：
@@ -159,6 +159,65 @@ M-H 的 23 个 ID 全部实跑：`G8-H1`…`H13`（13）、`G8-C1`/`C2`（2）�
 - 边界：W1 只证 SQL/session 前置（30s/5s/5s、READ COMMITTED、两连接 IDLE、在飞时不 sweep）；worker 循环属 M-R。无 starvation/fairness 证明（D-S7-2 原样保留）。
 
 M-H 落地范围：新增 `v24/sql/49_host_reads.sql`；修改 `50_permissions.sql`、`v24/load.py` 的两个元组、`v24/s1/setup_db.py` 的 `expected_canonical`、`v24/s1/test_g1.py` 的两处精确 ACL 断言；新增 `v24/s9/{test_g8.py,h_support.py,README.md}`。九个冻结内核 SQL（`10_schema`、`20_triggers`、`30_advance`、`40_interpreters`、`45_capability`、`46_cleanup`、`47_verbs`、`48_loop`、`49_recovery`）的 `git diff --exit-code` 为 0；当前 HEAD `d8155f4`（M-H 改动未提交时）。11 条已冻结 closeout 命令在改动后再次依序实跑，全部 exit 0（**11/11 不变**）。
+
+### 0.6 M-R extension check（G9）— 2026-10-24
+
+> G9 是 **extension check**，不是第 12 条 closeout gate，也不改写历史
+> 11/11。M-R 只实现 host worker、durable journal、DeepSeek adapter 与
+> opt-in smoke；G10/M-P 未运行。
+
+| extension | 命令 | 状态 | 证据 |
+|---|---|---|---|
+| G9 | `uv run python v24/s10/test_g9.py` | **通过 11/11，exit 0** | 本节；[`v24/s10/README.md`](../../v24/s10/README.md) |
+
+无参数实跑覆盖 11 个 ID：`G9-A`、`G9-B`、`G9-C`、`G9-D`、`G9-E`、
+`G9-F`、`G9-L`、`G9-J1`、`G9-J2`、`G9-J3`、`G9-R`。末行：
+
+```text
+[passed] v24 G9 M-R: 11 case(s): G9-A, G9-B, G9-C, G9-D, G9-E, G9-F, G9-L, G9-J1, G9-J2, G9-J3, G9-R
+```
+
+关键实测：
+
+- **传输**：全部响应来自脚本化 `ScriptTransport`；`socket.socket.connect`、
+  `socket.create_connection`、`urllib.request.urlopen` 与
+  `v15.provider.deepseek.build_opener` 在 fixture 前被 deny、在 `finally`
+  恢复；静态扫描拒绝 `v24/s10/*.py` 与 host worker/journal 的 socket/HTTP
+  import。G9 没有真实网络、没有 API key。
+- **映射**：`G9-A` 证明 descriptor key 先净化/截断，再拼 `_` 与 sha256
+  前 8 位；journal 的 `tool_map.by_provider`/`by_key` 可逆；第二轮请求回传
+  assistant `reasoning_content` 与 `tool_call_id`，且无 `tool_choice` /
+  `parallel_tool_calls`。`G9-C` 证明 provider 顺序是 tool effect 的
+  `ordinal`，worker 按 effect UUID 执行也不改变 continuation 中 tool
+  message 的顺序；batch barrier 只产生一个 continuation；重复 provider
+  call id 是 failure，不是 replay。
+- **分类**：`G9-D` 的 bad args、未知 tool、缺 id、>16、零调用均
+  `failure`（真实 usage，零 tool effect）；矛盾 finish/message、空
+  choices、非 JSON、不可信 usage 均 `unknown`。`G9-E` 的 `length` 为
+  `unknown` 且截断文本不成为 final；usage 超过 reserve 保留映射后的
+  success 与真实 usage，由内核转 semantic `unknown`。
+- **失败/恢复**：`G9-F` 的 preflight 无 key 为 failure 且零 HTTP、零
+  reserve 消耗；400 为 failure；3xx/408/429/5xx、timeout、连接中断均为
+  unknown 且仅一次尝试。`G9-J1` 在 `dispatch_finished` 后崩溃，重启只重交
+  journal 中同一 outcome、零 HTTP、无重复 model effect；其 `prepared`
+  子场景在无 `dispatch_started` 时重读 DB 资格并执行一次，不重复写
+  `effect_prepared`。`G9-J2` 先由
+  `command_recover` 转 unknown，旧 journal success 记为 conflict，不能
+  复活。`G9-J3` 在 `dispatch_started` 后崩溃，live lease 隔离、零 HTTP；
+  过期后一次 recovery sweep 转 unknown，仍零 HTTP。
+- **journal/会话**：`G9-L` 实测 `READ COMMITTED`、30s/5s/5s、两连接
+  `TRANSACTION_STATUS_IDLE`、`0 < timeout_s ≤ 239`、lease 61/180/299s、
+  短 lease 不发 HTTP；journal 目录 0700/文件 0600、第二写者被 POSIX lock
+  拒绝、未知 version 与内部 corruption 失败、截断尾被裁剪、secret 被拒。
+- **封闭面**：`G9-R` 的 catalog 仍是十表闭集，无 queue/claim/journal 表；
+  `run_until_idle(max_rounds=1)` 对两个 ready effect 只执行一个，剩余一个
+  明确不作为 fairness 承诺。
+
+边界：G9 不证明真实 provider 的延迟/可用性/费用/模型质量（opt-in smoke
+另计且非 gate）；不证明 starvation/fairness（D-S7-2 保持未关闭）；不证明
+跨主机 lease、多主机或 M-P plugin/registry。`v24/host/process_io.py` 只是
+后续 plugin host 的 scaffolding。
+
 
 ## 1. S1 具名断言 G1-A … G1-R
 
@@ -393,6 +452,7 @@ S8 收口后，`error_v1` 的 24 码闭集与生产者集合相同：**没有**�
 | owner 级联 / scope close / 完整 dispose 闭包 | **已验证（S5）**：G4-A（4 节点/3 边合并 DAG、child-before-owner 首现序）、G4-C（consumer 先于 provider）、G4-P（墓碑只在 child/贡献/episode 义务清零后）、G4-Q（有界阶段）；child 先于 owner 的 dispose 级联另由 `g4_cascade` 的 `[G4-W1]` 断言（首 stage 标记 3 个 install、installs+fibers 合计 ≤16、1 successor、root release 晚于 child `disposed_at`）。scope close 由 G4-G/G4-O 覆盖（phase 序、`child.closed_at < parent.closed_at`、close 后无新准入） |
 | **S5 证明边界** | **仅串行 request-key 阶段**：每个新 key 推进一个 bounded phase（≤16 行、≤16 successor），无 worker、无自动推进；G4 的命令/回执串行执行，release/inspect 回执直接提交，无外部 host 进程。S5 本身**不证**崩溃/恢复/reclaim，也**不证**并发面（S7）；崩溃/恢复已由 S6 的 G5 补证（见 §0.2），并发仍归 S7（已由 S7/G6 补证，见 §2.7） |
 | **S6 证明边界** | **仅 FakeHost/journal 下的崩溃恢复合同**：K1–K10 是单写者顺序窗口，恢复只经 `resolve` + `recoverable_effects` + `command_recover`，无 recovery 表/队列/lease/cursor、无第二 claim 路径。**不证**真实 provider/transport 的 reservation 幂等（真实 adapter 必须自行复用 reservation），**不证** S7 三面并发或 S8 spawn（S7 并发已由 G6 补证，见 §2.7）；K2/K3 的 lease 过期是 seeded fixture，K5 为 host-only 且预算不适用 |
+| **M-R 证明边界** | **仅脚本化 transport + 真实 PostgreSQL fixture**：G9-A…R 证明 host worker 的 claim/re-read/lease/journal/重启对账、DeepSeek wire 映射和 opt-in 入口；所有 provider 响应是脚本化的，**不证**真实网络/延迟/费用/模型质量，也**不证** starvation/fairness（D-S7-2 保持）、跨主机 lease、多主机或 M-P plugin/registry。真实套接字只出现在 `v24/host/smoke.py --real-provider-smoke`，它不是 gate；G9 运行期间 socket/opener 被 deny。 |
 | interaction 生产 | **已验证（S4）**：G2b-H 由 model outcome 真实生产 `runs.interaction` 与 `waiting`；S3 仅 seed 消费 |
 | spawn / child run | **已验证（S8/G7）**：G7-A…H + N1–N7 全绿（无参数 gate 退出 0，见 §0.3/§2.7）。同一 advance 原子创建 child run + spawn edge 三列 + 父 quota 扣减 + child 初始 quota + 可选 owner run pin + child 首 `model_call`；同 key 同 bytes replay 同 child、不二次扣 quota；同 key 异 bytes 得 `spawn_key_conflict` W0；child 是 run，不是 fiber/install。边界：FakeHost/进程内 fixture、**无真实 provider**；owner pin 受 `c_pins_xor` 约束（run pin `consumer_episode_id=NULL`，owner episode 记在 child run），激活 pin 恰一条 live，child 首 model 的 `toolset` 按预期 pin 计算；N2 并发败者先得 `receipt_conflict`（G 串行），24 码由随后携带败者 bytes 的新父 outcome 产生；同 effect 同 bytes 的 receipt replay 是冻结六键信封（无 `spawned`）；G7-G 的 child 首 model 走真实公共 claim 路径（`pin_id=NULL`、`attempt/fence=1/1`，service login owner），过期后经 `command_recover` 结算 unknown；owner run pin 是独立 `pins` 行（D-S8-12，无 seeded claim/claim 路径债务）；S8 **不证** G6/S7 三面并发（已由 S7/G6 补证） |
 | 完整崩溃恢复 / reclaim | **已验证（S6/G5）**：K1–K10 证明 `SIGKILL`（K4 为 SQL 错误注入）后由新 `recover_worker.py` 进程收敛；`replay_safe` 回 ready、`no_replay` 只转 unknown、`manual` 只计数；没有自动 reclaim worker/定时器，恢复入口是命令驱动的 `command_recover`。S4 的“过期 lease 不产生第二次 attempt”与 S5 的命令驱动 inspect 仍有效；S8 的 G7-G 复用该入口处理 child 首 model |
@@ -411,5 +471,5 @@ S8 收口后，`error_v1` 的 24 码闭集与生产者集合相同：**没有**�
 - 错误码：**24/0（24 个有生产者、0 个未产生）**。S5 把 `cleanup_cycle` 接入（`46_cleanup.sql:148` helper，`:852`/`:879` 与 `40_interpreters.sql:2871` 抛出；`G4-E`/`G4-M-5` 触发）；S8/R7 新增第 24 码 `spawn_key_conflict`（W0），由 `G7-C` 与 `G7-N2` 的随后新父 outcome 产生；`blocked_unknown` 由 S4 新增，`invalid_outcome` 从 install 预检扩展到 loop 结构路径。S6 不新增码，只使用既有码；S8 只新增 R7 的这一码。
 - S5 边界：inspect 收敛、owner 级联/scope close/完整 dispose 闭包已由 G4 验证；仅覆盖**串行 request-key 阶段**（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进）。S6 边界：崩溃/恢复合同已由 G5 在 FakeHost/journal 下验证（命令驱动，无 recovery 表/队列/lease/cursor），但**不证明真实 provider/adapter 的 reservation 幂等**；K2/K3 的 lease 过期是 seeded fixture，K5 为 host-only、预算不适用，`has_more` 只是提示。S8 边界：spawn/child-run 合同已由 G7 在 FakeHost/进程内 fixture 下验证，**不调真实 provider**；owner pin 的物理映射为 `consumer_episode_id=NULL`、激活 pin 恰一条 live、child 首 `toolset` 为预期 pin 摘要；N2 的并发败者是 `receipt_conflict`，`spawn_key_conflict` 由随后新父 outcome 产生；receipt replay 是冻结六键信封；G7-G 的 child 首 model 走真实公共 claim（`pin_id=NULL`、`attempt/fence=1/1`），owner run pin 是独立 `pins` 行，过期后由 `command_recover` 结算 unknown（D-S8-12，无 seeded claim 债务）。**S8 不证** G6/S7 三面并发（已由 S7/G6 补证）；完整并发矩阵归 S7 并已由 G6 补齐，真实 provider/网络仍不作证明。
 - S6 W4 范围（历史）：代码只改 `v24/s6/{crash_worker.py,recover_worker.py,test_g5.py}`；**无产品 SQL 改动**，`v24/sql/48_loop.sql` 未动，`v24/sql/**` digest 在 gate 前后均为 `827e1c61515b9e6d5f4f7104d914bd4d53be483d171dc4c548bd8620d15900fd`；HEAD 仍 `45877b0`，未 commit/push。S8 W1/W2 按计划不提交，W3 为单一里程碑提交；本收尾稿编辑时 HEAD 仍 `a13ba77` + 未提交 S8 W1–W3；W3 除 `v24/s8/test_g7.py` 与收尾文档外，还按 D-S8-12 修改 `v24/sql/48_loop.sql`（child 首 `model_call` 的 `pin_id=NULL`，applier 要求 child effect `pin_id IS NULL`），**无新对象/新错误码**（deviation ledger §1.14(i)）。
-- **M-H 结项（2026-10-24）**：host 只读面 9 个公开函数 + `host_scope_allowed` 已落地；DEFINER 17、GRANT 27、逐角色 EXECUTE 26/27/27；G8 **23/23** exit 0；闭包 `B=3`、`H_ok=509`、`H_bad=510`、`C=512/513`；H13 实测 64.00 MiB 页；D-S6-12 由 `G8-D1a` 关闭，D-S8-7 由 `G8-D2` 关闭；九个冻结内核 SQL 的 diff 为空；11 条既有 closeout 在改动后复跑 **11/11**。G8 是 extension check，不改变历史 closeout 计数；G9/G10 未运行。
-- 结项状态：G7（S8）已**完成**；G6（S7）已**完成（S7 W1–W2，30 ID）**，三面并发矩阵已由 S7 补齐，S7 closeout 为 **11/11（10 既有 + G6）**；M-H（G8）已**完成（23/23）**，但 M-R/M-P 的 G9/G10 尚未运行。本矩阵仍不宣称真实 provider/网络、跨主机 lease、starvation/公平性、G5 崩溃窗口重测或多主机证据；顺序 S6 → S8 → S7 → M-H，S7 的 11/11 保持冻结。
+- **M-H 结项（2026-10-24）**：host 只读面 9 个公开函数 + `host_scope_allowed` 已落地；DEFINER 17、GRANT 27、逐角色 EXECUTE 26/27/27；G8 **23/23** exit 0；闭包 `B=3`、`H_ok=509`、`H_bad=510`、`C=512/513`；H13 实测 64.00 MiB 页；D-S6-12 由 `G8-D1a` 关闭，D-S8-7 由 `G8-D2` 关闭；九个冻结内核 SQL 的 diff 为空；11 条既有 closeout 在改动后复跑 **11/11**。G8 是 extension check，不改变历史 closeout 计数；G9 已运行 11/11（§0.6），G10 属 M-P 未运行。
+- 结项状态：G7（S8）已**完成**；G6（S7）已**完成（S7 W1–W2，30 ID）**，三面并发矩阵已由 S7 补齐，S7 closeout 为 **11/11（10 既有 + G6）**；M-H（G8）已**完成（23/23）**；M-R（G9）已**完成（11/11）**，G10/M-P 未运行。本矩阵仍不宣称真实 provider/网络（仅 opt-in smoke）、跨主机 lease、starvation/公平性、G5 崩溃窗口重测或多主机证据；顺序 S6 → S8 → S7 → M-H → M-R，S7 的 11/11 保持冻结。

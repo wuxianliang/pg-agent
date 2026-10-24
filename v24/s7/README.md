@@ -253,9 +253,49 @@ This extension check does **not** change the historical S7 result: S7 remains
 11/11 and its conclusions stand. The G8 run is recorded as
 **passed / 23/23** for M-H.
 
+## M-R extension check (G9, not a closeout gate)
+
+M-R adds `v24/host/` and `v24/s10/`: a host worker with a durable JSONL journal,
+the v24 DeepSeek adapter, and an opt-in real-provider smoke. G9 is the
+**extension check**, not a twelfth closeout command. The no-argument run is:
+
+```bash
+uv run python v24/s10/test_g9.py
+```
+
+It selects **11/11** IDs (`G9-A`, `G9-B`, `G9-C`, `G9-D`, `G9-E`, `G9-F`,
+`G9-L`, `G9-J1`, `G9-J2`, `G9-J3`, `G9-R`) and exits 0 with:
+
+```text
+[passed] v24 G9 M-R: 11 case(s): G9-A, G9-B, G9-C, G9-D, G9-E, G9-F, G9-L, G9-J1, G9-J2, G9-J3, G9-R
+```
+
+Every provider response is scripted. The test denies
+`socket.socket.connect`, `socket.create_connection`, `urllib.request.urlopen`
+and `v15.provider.deepseek.build_opener` for the fixture and restores them in
+`finally`; there is no real socket and no API key. The cases cover the safe
+tool-name map, reasoning/tool-call history, mapping-table failure/unknown
+classes, over-reserve semantic unknown, HTTP/transport failure, session and
+journal settings, and all three restart windows (`dispatch_finished` resubmit,
+recovery-to-unknown conflict, `dispatch_started` isolate/expire).
+
+The separate opt-in entry is `python -m v24.host.smoke
+--real-provider-smoke`; no flag prints `not_requested` (0), no key prints
+`credentials_absent` (2) without constructing an adapter or opening the DB.
+It is not a gate. See [`v24/s10/README.md`](../s10/README.md) for evidence and
+boundaries.
+
+This extension check does **not** change the historical S7 result: S7 remains
+11/11. G9 is recorded as **passed / 11/11** for M-R. It does not prove real
+provider latency/availability/cost/model quality, starvation/fairness
+(`D-S7-2`), cross-host lease, multi-host, or M-P plugin/registry behavior.
+
 ## Mechanical guards
 
 - No `sleep` and no socket in `v24/s7/**`; ordering is held-G/barrier only.
+- G9's static scan covers `v24/s10/*.py` and the host worker/journal/db/
+  process_io modules; its runner denies and restores the socket/opener entry
+  points around the fixture.
 - The historical S7 guard was an empty `git diff --exit-code -- v24/sql
   v24/load.py`. After M-H that command is intentionally non-empty (new
   `49_host_reads.sql`, `50_permissions.sql`, loader registration). The frozen
