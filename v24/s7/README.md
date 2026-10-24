@@ -1,11 +1,11 @@
 # v24 S7 — G6 concurrency evidence (W1 matrix complete)
 
-Status: **W1 matrix complete**. All 16 matrix assertions (`G6-A1`, `B1`–`B3`,
-`C1`–`C3`, `D1`, `E1`, `F1`, `G1`–`G3`, `H1`–`H3`) and `G6-N1` are implemented
-and green. The W2 negatives/lock audits (`N2`–`N9`, `L1`–`L5`), the cell-2
-`G3b-5` closeout rerun and the no-argument full gate are **not implemented**;
-selecting them is a hard error, never a silent pass. G6 is therefore **not** a
-green gate yet and no closeout claim is made here.
+Status: **W1 matrix complete**. All 16 G6 matrix bodies (`G6-A1`, `G6-B1`–`B3`,
+`G6-C1`–`C3`, `D1`, `E1`, `F1`, `G6-G1`–`G3`, `H1`–`H3`) plus `G6-N1a`/`N1b`
+are implemented and green. G6 is still **not** a gate: W2 owns the negatives
+(`N2`–`N9`), the lock audits (`L1`–`L5`), the no-argument full run, the declared
+cell-2 `G3b-5` closeout rerun and the closeout artifacts. No G6/11-of-11 claim
+is made here.
 
 Plan: `docs/plans/v24-s7-concurrency-2026-10-24.md` §4–§5, §8.1. Evidence only:
 no SQL, no DDL, no loader change, no product change, no new error code.
@@ -43,9 +43,10 @@ commit after release, and the ten-table snapshot diff is asserted exactly.
 [G6-<ID>-zero] sha=<ten-table fingerprint> diff=zero-ten-tables assert=<read verb wrote nothing>
 ```
 
-Two-order cells print one result line per sub-order (`G6-N1a`, `G6-N1b`), exactly
-once each. `-lock`/`-zero` lines are extra evidence for the same tag and are not
-counted as separate assertions.
+Two-order cells print one bare result line for order 1 (`[G6-X]`) and one
+suffixed line for order 2 (`[G6-X-order2]`), exactly once each; `N1` is the one
+split-tag cell (`G6-N1a`/`N1b`). `-lock`/`-zero` lines are extra evidence for the
+same tag and are not counted as separate assertions.
 
 ## Harness (`g6_support.py`)
 
@@ -102,6 +103,24 @@ No cell is marked "covered" without a result line; cell 2 is the plan's declared
   way; seeding `false` makes the following `fiber_control(on)` a real
   transition (the same shape as `pin_barrier_fixture`) instead of an
   already-on no-op.
+- **The run pin must be real.** A dependency-free start creates no run pin and
+  would make off/dispose vacuously non-blocking. Every off/dispose cell starts
+  the run with a `dep`/`base` requirement so the first command owns a live run
+  pin; the self-provide shape binds that pin to the same fiber's episode/slot.
+- **Waiting interactions and T2 claims use the public path.** Respond cells are
+  built with real `start → claim → settle(interaction)`; the S4
+  `produce_waiting_interaction` helper starts a dependency-free run with no pin,
+  so it cannot exercise the retire barrier. T2 cells use a real `claim_effect`
+  and then `v24.advance` with the exact receipt.
+- **`model_call.pin_id` is always NULL.** Only a `tool_call` successor binds a
+  run pin. C2/E1 therefore use a claimed tool to retain the pin; the model/T2
+  cells use the pin the start command already created.
+- **H2/H3 "late" T2 is current-generation.** Off/dispose do not advance
+  `runs.driving_generation`, so a post-off/post-dispose T2 still matches the
+  frozen generation: it records the exact fact/cost and publishes exactly one
+  continuation on that same generation, creates no new pin and does not revive
+  the install. Genuinely old-generation late receipts are W2's `N5`/`N8`
+  (cancel/steer generations), not claimed here.
 - **Observers are separate connections.** After `SET ROLE v24_owner`,
   `pg_stat_activity.state` is invisible for other roles, so the reader-state
   probe uses a privileged autocommit observer. It only reads
@@ -110,9 +129,9 @@ No cell is marked "covered" without a result line; cell 2 is the plan's declared
   open until the writer commits, which is what makes "reader saw the old
   committed state" and "reader took no lock" simultaneously checkable.
 - **All writes go through public wrappers** (`v24.start`,
-  `v24.fiber_control`, `v24.dispose`, `v24.cancel`, `v24.advance`); domain rows
-  are read by the owner fixture connection and seeded only to build initial
-  state.
+  `v24.fiber_control`, `v24.dispose`, `v24.cancel`, `v24.steer`,
+  `v24.respond`, `v24.advance`); domain rows are read by the owner fixture
+  connection and seeded only to build initial state.
 
 ## Mechanical guards
 
@@ -127,4 +146,5 @@ No cell is marked "covered" without a result line; cell 2 is the plan's declared
 - No starvation/fairness claim (`D-S7-2`), no real provider/network, no
   cross-host lease, no G5 crash-window re-test.
 - `D-S7-1` (dispose closure locking) and `D-S7-3` (cross-scope child install)
-  remain unverified until `G6-N7` exists; they are not silently assumed.
+  remain open until W2's `N7`/closeout work; `D-S7-2` has no starvation/fairness
+  claim either. None of the three is silently assumed.
