@@ -167,12 +167,21 @@ BEGIN
         ELSIF EXISTS (
           SELECT 1 FROM v24.cleanup_close_closure(rid) c
             JOIN v24.installs i ON i.install_id=c.install_id
-           WHERE i.state IN ('installed','prepare_failed')
-              OR (i.state IN ('preparing','prepare_unknown')
-                  AND NOT EXISTS (SELECT 1 FROM v24.effects e
-                                   WHERE e.kind='inspect_resource'
+           WHERE i.state <> 'disposed'
+             -- W4: dispose_pending installs with pending fiber/cascade work must
+             -- re-enter cascade instead of parking forever in barrier.  An
+             -- already-emitted ready|claimed release/inspect still waits.
+             AND NOT EXISTS (SELECT 1 FROM v24.effects e
+                              WHERE e.kind IN ('host_release','inspect_resource')
+                                AND (e.request->>'install_id')=i.install_id::text
+                                AND e.status IN ('ready','claimed'))
+             AND (i.state IN ('installed','prepare_failed','dispose_pending')
+                  OR (i.state IN ('preparing','prepare_unknown')
+                      AND EXISTS (SELECT 1 FROM v24.effects e
+                                   WHERE e.kind='host_prepare'
                                      AND (e.request->>'install_id')=i.install_id::text
-                                     AND e.status IN ('ready','claimed')))) THEN
+                                     AND e.status='unknown'
+                                     AND e.resource_quiesced_at IS NULL)))) THEN
           v_phase := 'cascade';
         END IF;
       END IF;
@@ -481,6 +490,7 @@ DECLARE
   v_respond_pins jsonb;
   v_cancel_refund bigint;
   v_dispose_scope uuid[];
+  v_planned_fibers uuid[];
   v_action text := body->'payload'->>'action';
   v_target_scope uuid;
   v_close_closure uuid[];
@@ -528,9 +538,11 @@ BEGIN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
   ELSIF kind = 'command_dispose' THEN
+    -- W4 owns the fiber release/close stage: installs + fibers + episodes +
+    -- slots + pins.  No insert is allowed on this path.
     IF EXISTS (SELECT 1 FROM jsonb_object_keys(inserts) x)
        OR EXISTS (SELECT 1 FROM jsonb_object_keys(updates) x
-                  WHERE x NOT IN ('installs','fibers')) THEN
+                  WHERE x NOT IN ('installs','fibers','episodes','slots','pins')) THEN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
   ELSIF kind = 'command_start' THEN
@@ -1185,6 +1197,53 @@ BEGIN
                OR NOT ((r->>'entity_id')::uuid = ANY(v_close_closure)) THEN
               RETURN v24.error_v1('invalid_outcome');
             END IF;
+          ELSIF r->>'entity_type' = 'fiber' THEN
+            -- W4: install dispose tombstones fibers with one fiber_disposed.
+            IF r->>'event_kind' IS DISTINCT FROM 'fiber_disposed'
+               OR NOT EXISTS (SELECT 1 FROM v24.fibers f
+                               WHERE f.fiber_id = (r->>'entity_id')::uuid
+                                 AND f.install_id = ANY(v_close_closure)) THEN
+              RETURN v24.error_v1('invalid_outcome');
+            END IF;
+          ELSIF r->>'entity_type' = 'episode' THEN
+            -- W4: deactivate_stage retires/closes episodes through close.
+            IF r->>'event_kind' NOT IN ('episode_retire_started','episode_closed')
+               OR NOT EXISTS (SELECT 1 FROM v24.episodes e
+                               JOIN v24.fibers f ON f.fiber_id = e.fiber_id
+                               WHERE e.episode_id = (r->>'entity_id')::uuid
+                                 AND f.install_id = ANY(v_close_closure)) THEN
+              RETURN v24.error_v1('invalid_outcome');
+            END IF;
+          ELSIF r->>'entity_type' = 'slot' THEN
+            IF r->>'event_kind' NOT IN ('slot_withdrawn','slot_released')
+               OR NOT EXISTS (SELECT 1 FROM v24.slots s
+                               JOIN v24.fibers f ON f.fiber_id = s.fiber_id
+                               WHERE s.slot_id = (r->>'entity_id')::uuid
+                                 AND f.install_id = ANY(v_close_closure)) THEN
+              RETURN v24.error_v1('invalid_outcome');
+            END IF;
+          ELSIF r->>'entity_type' = 'pin' THEN
+            IF r->>'event_kind' IS DISTINCT FROM 'pin_released'
+               OR NOT EXISTS (
+                    SELECT 1 FROM v24.pins p
+                     WHERE p.pin_id = (r->>'entity_id')::uuid
+                       AND (p.consumer_episode_id IN (
+                              SELECT ep.episode_id
+                                FROM v24.fibers f
+                                JOIN v24.episodes ep ON ep.fiber_id = f.fiber_id
+                               WHERE f.install_id = ANY(v_close_closure))
+                            OR p.provider_episode_id IN (
+                              SELECT ep.episode_id
+                                FROM v24.fibers f
+                                JOIN v24.episodes ep ON ep.fiber_id = f.fiber_id
+                               WHERE f.install_id = ANY(v_close_closure))
+                            OR p.slot_id IN (
+                              SELECT s.slot_id FROM v24.slots s
+                               WHERE s.fiber_id IN (
+                                 SELECT f.fiber_id FROM v24.fibers f
+                                  WHERE f.install_id = ANY(v_close_closure))))) THEN
+              RETURN v24.error_v1('invalid_outcome');
+            END IF;
           ELSE
             RETURN v24.error_v1('invalid_outcome');
           END IF;
@@ -1341,6 +1400,28 @@ BEGIN
           END IF;
         END LOOP;
 
+        -- W4/G4-L: the cascade may reach a direct tombstone; recheck the six
+        -- C27 obligations before any DML, treating this delta's fiber
+        -- tombstones as written.  A direct tombstone may never carry a release
+        -- successor for the same install.
+        v_planned_fibers := ARRAY(
+          SELECT (fr->'key'->>'fiber_id')::uuid
+            FROM jsonb_array_elements(coalesce(updates->'fibers','[]'::jsonb)) fr
+           WHERE fr->'set' ? 'disposed_at');
+        FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'installs','[]'::jsonb)) LOOP
+          IF r->'set'->>'state' = 'disposed' THEN
+            IF NOT v24.install_disposed_ok((r->'key'->>'install_id')::uuid,
+                                           p_effect_id, NULL, v_planned_fibers)
+               OR EXISTS (SELECT 1 FROM jsonb_array_elements(
+                            coalesce(p_delta->'successors','[]'::jsonb)) s
+                           WHERE s->>'kind' = 'host_release'
+                             AND (s->'request'->>'install_id') =
+                                 (r->'key'->>'install_id')) THEN
+              RETURN v24.error_v1('invalid_outcome');
+            END IF;
+          END IF;
+        END LOOP;
+
         FOR r IN SELECT value FROM jsonb_array_elements(
                       coalesce(p_delta->'successors','[]'::jsonb)) LOOP
           IF jsonb_typeof(r) IS DISTINCT FROM 'object'
@@ -1421,10 +1502,85 @@ BEGIN
                          WHERE f.fiber_id = (r->'key'->>'fiber_id')::uuid
                            AND f.install_id = ANY(v_dispose_scope))
          OR EXISTS (SELECT 1 FROM jsonb_object_keys(r->'set') k
-                    WHERE k NOT IN ('disposed_at','want_on')) THEN
+                    WHERE k NOT IN ('disposed_at','want_on','current_episode_id')) THEN
         RETURN v24.error_v1('invalid_outcome');
       END IF;
     END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'episodes','[]'::jsonb)) LOOP
+      IF jsonb_typeof(r) IS DISTINCT FROM 'object' OR NOT (r ?& ARRAY['key','set'])
+         OR (r->'key'->>'episode_id') IS NULL
+         OR NOT EXISTS (SELECT 1 FROM v24.episodes e
+                         JOIN v24.fibers f ON f.fiber_id = e.fiber_id
+                        WHERE e.episode_id = (r->'key'->>'episode_id')::uuid
+                          AND f.install_id = ANY(v_dispose_scope))
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(r->'set') k
+                     WHERE k NOT IN ('state','retire_started_at','closed_at'))
+         OR ((r->'set') ? 'state'
+             AND r->'set'->>'state' NOT IN ('retiring','closed'))
+         OR ((r->'set') ? 'closed_at'
+             AND r->'set'->>'state' IS DISTINCT FROM 'closed') THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'slots','[]'::jsonb)) LOOP
+      IF jsonb_typeof(r) IS DISTINCT FROM 'object' OR NOT (r ?& ARRAY['key','set'])
+         OR (r->'key'->>'slot_id') IS NULL
+         OR NOT EXISTS (SELECT 1 FROM v24.slots s
+                         JOIN v24.fibers f ON f.fiber_id = s.fiber_id
+                        WHERE s.slot_id = (r->'key'->>'slot_id')::uuid
+                          AND f.install_id = ANY(v_dispose_scope))
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(r->'set') k
+                     WHERE k NOT IN ('withdrawn_at','released_at')) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'pins','[]'::jsonb)) LOOP
+      IF jsonb_typeof(r) IS DISTINCT FROM 'object' OR NOT (r ?& ARRAY['key','set'])
+         OR (r->'key'->>'pin_id') IS NULL
+         OR NOT EXISTS (
+              SELECT 1 FROM v24.pins p
+               WHERE p.pin_id = (r->'key'->>'pin_id')::uuid
+                 AND (p.consumer_episode_id IN (
+                        SELECT ep.episode_id FROM v24.fibers f
+                          JOIN v24.episodes ep ON ep.fiber_id = f.fiber_id
+                         WHERE f.install_id = ANY(v_dispose_scope))
+                      OR p.provider_episode_id IN (
+                        SELECT ep.episode_id FROM v24.fibers f
+                          JOIN v24.episodes ep ON ep.fiber_id = f.fiber_id
+                         WHERE f.install_id = ANY(v_dispose_scope))
+                      OR p.slot_id IN (
+                        SELECT s.slot_id FROM v24.slots s
+                         WHERE s.fiber_id IN (
+                           SELECT f.fiber_id FROM v24.fibers f
+                            WHERE f.install_id = ANY(v_dispose_scope)))))
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(r->'set') k
+                     WHERE k NOT IN ('released_at','released_by_effect')) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+    END LOOP;
+
+    -- W4/G4-L: no installs.state='disposed' write can land unless the six C27
+    -- obligations hold.  The delta is validated before DML, so the fibers this
+    -- same delta tombstones are supplied as assumed rows; p_effect_id is the
+    -- command effect, which does not exist yet during interpretation.
+    v_planned_fibers := ARRAY(
+      SELECT (fr->'key'->>'fiber_id')::uuid
+        FROM jsonb_array_elements(coalesce(updates->'fibers','[]'::jsonb)) fr
+       WHERE fr->'set' ? 'disposed_at');
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'installs','[]'::jsonb)) LOOP
+      IF r->'set'->>'state' = 'disposed' THEN
+        IF NOT v24.install_disposed_ok((r->'key'->>'install_id')::uuid,
+                                       p_effect_id, NULL, v_planned_fibers)
+           OR EXISTS (SELECT 1 FROM jsonb_array_elements(
+                        coalesce(p_delta->'successors','[]'::jsonb)) s
+                       WHERE s->>'kind' = 'host_release'
+                         AND (s->'request'->>'install_id') =
+                             (r->'key'->>'install_id')) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      END IF;
+    END LOOP;
+
     FOR r IN SELECT value FROM jsonb_array_elements(coalesce(p_delta->'successors','[]'::jsonb)) LOOP
       IF jsonb_typeof(r) IS DISTINCT FROM 'object'
          OR NOT (r ?& ARRAY['effect_id','ordinal','kind','request'])
@@ -1486,11 +1642,62 @@ BEGIN
       END IF;
     END LOOP;
     FOR r IN SELECT value FROM jsonb_array_elements(coalesce(p_delta->'events','[]'::jsonb)) LOOP
-      IF (r->>'entity_type') IS DISTINCT FROM 'install'
-         OR (r->>'entity_id') IS NULL
-         OR NOT ((r->>'entity_id')::uuid = ANY(v_dispose_scope))
-         OR r->>'event_kind' NOT IN ('install_dispose_pending','install_release_requested',
-                                     'install_inspect_requested','install_disposed') THEN
+      IF jsonb_typeof(r) IS DISTINCT FROM 'object'
+         OR (r->>'entity_id') IS NULL THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
+      IF r->>'entity_type' = 'install' THEN
+        IF NOT ((r->>'entity_id')::uuid = ANY(v_dispose_scope))
+           OR r->>'event_kind' NOT IN ('install_dispose_pending',
+                                       'install_release_requested',
+                                       'install_inspect_requested',
+                                       'install_disposed') THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      ELSIF r->>'entity_type' = 'fiber' THEN
+        IF r->>'event_kind' IS DISTINCT FROM 'fiber_disposed'
+           OR NOT EXISTS (SELECT 1 FROM v24.fibers f
+                           WHERE f.fiber_id = (r->>'entity_id')::uuid
+                             AND f.install_id = ANY(v_dispose_scope)) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      ELSIF r->>'entity_type' = 'episode' THEN
+        IF r->>'event_kind' NOT IN ('episode_retire_started','episode_closed')
+           OR NOT EXISTS (SELECT 1 FROM v24.episodes e
+                           JOIN v24.fibers f ON f.fiber_id = e.fiber_id
+                           WHERE e.episode_id = (r->>'entity_id')::uuid
+                             AND f.install_id = ANY(v_dispose_scope)) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      ELSIF r->>'entity_type' = 'slot' THEN
+        IF r->>'event_kind' NOT IN ('slot_withdrawn','slot_released')
+           OR NOT EXISTS (SELECT 1 FROM v24.slots s
+                           JOIN v24.fibers f ON f.fiber_id = s.fiber_id
+                           WHERE s.slot_id = (r->>'entity_id')::uuid
+                             AND f.install_id = ANY(v_dispose_scope)) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      ELSIF r->>'entity_type' = 'pin' THEN
+        IF r->>'event_kind' IS DISTINCT FROM 'pin_released'
+           OR NOT EXISTS (
+                SELECT 1 FROM v24.pins p
+                 WHERE p.pin_id = (r->>'entity_id')::uuid
+                   AND (p.consumer_episode_id IN (
+                          SELECT ep.episode_id FROM v24.fibers f
+                            JOIN v24.episodes ep ON ep.fiber_id = f.fiber_id
+                           WHERE f.install_id = ANY(v_dispose_scope))
+                        OR p.provider_episode_id IN (
+                          SELECT ep.episode_id FROM v24.fibers f
+                            JOIN v24.episodes ep ON ep.fiber_id = f.fiber_id
+                           WHERE f.install_id = ANY(v_dispose_scope))
+                        OR p.slot_id IN (
+                          SELECT s.slot_id FROM v24.slots s
+                           WHERE s.fiber_id IN (
+                             SELECT f.fiber_id FROM v24.fibers f
+                              WHERE f.install_id = ANY(v_dispose_scope))))) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
+      ELSE
         RETURN v24.error_v1('invalid_outcome');
       END IF;
     END LOOP;
@@ -1933,6 +2140,47 @@ BEGIN
     BEGIN scope_id := (body->'payload'->>'scope_id')::uuid; EXCEPTION WHEN invalid_text_representation THEN NULL; END;
   END IF;
   IF kind = 'command_dispose' THEN
+    -- W4: fiber/episode/slot/pin rows first, then the install state.  The
+    -- disposed recheck already ran during preflight, with this delta's planned
+    -- fiber tombstones supplied as assumed rows.
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'fibers','[]'::jsonb)) LOOP
+      UPDATE v24.fibers AS fx SET
+        disposed_at = CASE WHEN (r->'set') ? 'disposed_at'
+              THEN (r->'set'->>'disposed_at')::timestamptz ELSE fx.disposed_at END,
+        want_on = CASE WHEN (r->'set') ? 'want_on'
+              THEN (r->'set'->>'want_on')::boolean ELSE fx.want_on END,
+        current_episode_id = CASE WHEN (r->'set') ? 'current_episode_id'
+              THEN (r->'set'->>'current_episode_id')::uuid
+              ELSE fx.current_episode_id END
+      WHERE fx.fiber_id = (r->'key'->>'fiber_id')::uuid;
+    END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'episodes','[]'::jsonb)) LOOP
+      UPDATE v24.episodes AS ex SET
+        state = CASE WHEN (r->'set') ? 'state'
+              THEN r->'set'->>'state' ELSE ex.state END,
+        retire_started_at = CASE WHEN (r->'set') ? 'retire_started_at'
+              THEN (r->'set'->>'retire_started_at')::timestamptz
+              ELSE ex.retire_started_at END,
+        closed_at = CASE WHEN (r->'set') ? 'closed_at'
+              THEN (r->'set'->>'closed_at')::timestamptz ELSE ex.closed_at END
+      WHERE ex.episode_id = (r->'key'->>'episode_id')::uuid;
+    END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'slots','[]'::jsonb)) LOOP
+      UPDATE v24.slots AS sl SET
+        withdrawn_at = CASE WHEN (r->'set') ? 'withdrawn_at'
+              THEN (r->'set'->>'withdrawn_at')::timestamptz ELSE sl.withdrawn_at END,
+        released_at = CASE WHEN (r->'set') ? 'released_at'
+              THEN (r->'set'->>'released_at')::timestamptz ELSE sl.released_at END
+      WHERE sl.slot_id = (r->'key'->>'slot_id')::uuid;
+    END LOOP;
+    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'pins','[]'::jsonb)) LOOP
+      UPDATE v24.pins AS pn SET
+        released_at = CASE WHEN (r->'set') ? 'released_at'
+              THEN (r->'set'->>'released_at')::timestamptz ELSE pn.released_at END,
+        released_by_effect = CASE WHEN (r->'set') ? 'released_by_effect'
+              THEN (r->'set'->>'released_by_effect')::uuid ELSE pn.released_by_effect END
+      WHERE pn.pin_id = (r->'key'->>'pin_id')::uuid;
+    END LOOP;
     FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'installs','[]'::jsonb)) LOOP
       UPDATE v24.installs AS it SET
         state = CASE WHEN (r->'set') ? 'state' THEN r->'set'->>'state' ELSE it.state END,
@@ -1941,14 +2189,6 @@ BEGIN
         disposed_at = CASE WHEN (r->'set') ? 'disposed_at'
               THEN (r->'set'->>'disposed_at')::timestamptz ELSE it.disposed_at END
       WHERE it.install_id = (r->'key'->>'install_id')::uuid;
-    END LOOP;
-    FOR r IN SELECT value FROM jsonb_array_elements(coalesce(updates->'fibers','[]'::jsonb)) LOOP
-      UPDATE v24.fibers AS fx SET
-        disposed_at = CASE WHEN (r->'set') ? 'disposed_at'
-              THEN (r->'set'->>'disposed_at')::timestamptz ELSE fx.disposed_at END,
-        want_on = CASE WHEN (r->'set') ? 'want_on'
-              THEN (r->'set'->>'want_on')::boolean ELSE fx.want_on END
-      WHERE fx.fiber_id = (r->'key'->>'fiber_id')::uuid;
     END LOOP;
   END IF;
 
@@ -2697,6 +2937,7 @@ DECLARE
   v_rs record;
   v_slot_count int := 0;
   v_desc jsonb;
+  v_stage jsonb;
 BEGIN
   SELECT * INTO v_f FROM v24.fibers AS fx WHERE fx.fiber_id = (v_p->>'fiber_id')::uuid;
   IF NOT FOUND THEN
@@ -2928,8 +3169,11 @@ BEGIN
       END IF;
     END IF;
   ELSE
-    -- off: stage A retires + withdraws; stage B releases pins/slots, closes
-    -- the episode and clears the current pointer.  A barrier stops after A.
+    -- off: delegate the whole deactivation to the shared bounded stage.  One
+    -- contribution (maximum contribution_seq) is released per advance; the
+    -- episode closes only after the last release, once the provider-pin/
+    -- child-install/host-effect barrier is clear.  A barrier stop keeps the
+    -- retire rows and leaves a ready reconcile for the next advance.
     IF v_f.current_episode_id IS NULL THEN
       v_fiber_set := jsonb_build_object('want_on', false, 'control_seq', v_next_control,
         'failure_seq', NULL, 'failure', NULL);
@@ -2941,46 +3185,20 @@ BEGIN
       v_response := jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
         'emitted','[]'::jsonb,'revision',0,'claim',NULL);
     ELSE
-      SELECT * INTO v_ep FROM v24.episodes AS ep WHERE ep.episode_id = v_f.current_episode_id;
-      IF v_ep.state = 'active' THEN
-        v_ep_updates := v_ep_updates || jsonb_build_array(jsonb_build_object(
-          'key', jsonb_build_object('episode_id', v_ep.episode_id),
-          'set', jsonb_build_object('state','retiring','retire_started_at', now())));
-        v_events := v_events || jsonb_build_array(jsonb_build_object(
-          'entity_type','episode','entity_id',v_ep.episode_id,
-          'event_kind','episode_retire_started',
-          'payload', jsonb_build_object('episode_id',v_ep.episode_id)));
+      v_stage := v24.deactivate_stage(v_f.fiber_id, v_reco_id, 'control');
+      IF v_stage ? 'error' THEN
+        RETURN jsonb_build_object('write', false, 'error', v_stage->'error');
       END IF;
-      FOR v_rs IN SELECT sl.slot_id FROM v24.slots AS sl
-                   WHERE sl.episode_id = v_ep.episode_id
-                     AND sl.withdrawn_at IS NULL AND sl.released_at IS NULL LOOP
-        v_slot_updates := v_slot_updates || jsonb_build_array(jsonb_build_object(
-          'key', jsonb_build_object('slot_id', v_rs.slot_id),
-          'set', jsonb_build_object('withdrawn_at', now())));
-        v_events := v_events || jsonb_build_array(jsonb_build_object(
-          'entity_type','slot','entity_id',v_rs.slot_id,
-          'event_kind','slot_withdrawn',
-          'payload', jsonb_build_object('slot_id',v_rs.slot_id)));
-      END LOOP;
-
-      SELECT (EXISTS (
-                SELECT 1 FROM v24.pins AS p
-                 WHERE p.provider_episode_id = v_ep.episode_id AND p.released_at IS NULL)
-              OR EXISTS (
-                SELECT 1 FROM v24.installs AS ci
-                 WHERE ci.owner_fiber_id = v_f.fiber_id
-                   AND ci.owner_episode_id = v_ep.episode_id
-                   AND ci.state <> 'disposed')
-              OR EXISTS (
-                SELECT 1 FROM v24.effects AS he
-                 WHERE he.kind IN ('host_prepare','host_release')
-                   AND (he.request->>'install_id') = v_f.install_id::text
-                   AND he.status IN ('ready','claimed')))
-        INTO v_barrier;
-
-      IF v_barrier THEN
-        v_fiber_set := jsonb_build_object('want_on', false, 'control_seq', v_next_control,
-          'failure_seq', NULL, 'failure', NULL);
+      v_ep_updates := v_ep_updates || coalesce(v_stage->'episodes','[]'::jsonb);
+      v_slot_updates := v_slot_updates || coalesce(v_stage->'slots','[]'::jsonb);
+      v_pin_updates := v_pin_updates || coalesce(v_stage->'pins','[]'::jsonb);
+      v_events := v_events || coalesce(v_stage->'events','[]'::jsonb);
+      -- The helper owns the deactivation columns; the interpreter owns the
+      -- CAS intent (control_seq, failure clearing).
+      v_fiber_set := coalesce(v_stage->'fibers'->0->'set','{}'::jsonb)
+        || jsonb_build_object('want_on', false, 'control_seq', v_next_control,
+                              'failure_seq', NULL, 'failure', NULL);
+      IF coalesce((v_stage->>'blocked')::boolean, false) THEN
         IF v_reco.effect_id IS NULL THEN
           v_succ := jsonb_build_array(jsonb_build_object(
             'effect_id', v_reco_id, 'ordinal', 0, 'kind', 'fiber_reconcile',
@@ -2991,51 +3209,35 @@ BEGIN
         v_response := jsonb_build_object('v',1,'disposition','deferred','effect_id',p_effect_id,
           'emitted','[]'::jsonb,'revision',0,'claim',NULL);
       ELSE
-        FOR v_rs IN SELECT p.pin_id FROM v24.pins AS p
-                     WHERE p.consumer_episode_id = v_ep.episode_id
-                       AND p.released_at IS NULL LOOP
-          v_pin_updates := v_pin_updates || jsonb_build_array(jsonb_build_object(
-            'key', jsonb_build_object('pin_id', v_rs.pin_id),
-            'set', jsonb_build_object('released_at', now(),
-                                      'released_by_effect', v_reco_id)));
-          v_events := v_events || jsonb_build_array(jsonb_build_object(
-            'entity_type','pin','entity_id',v_rs.pin_id,
-            'event_kind','pin_released',
-            'payload', jsonb_build_object('pin_id',v_rs.pin_id)));
-        END LOOP;
-        FOR v_rs IN SELECT sl.slot_id FROM v24.slots AS sl
-                     WHERE sl.episode_id = v_ep.episode_id AND sl.released_at IS NULL LOOP
-          v_slot_updates := v_slot_updates || jsonb_build_array(jsonb_build_object(
-            'key', jsonb_build_object('slot_id', v_rs.slot_id),
-            'set', jsonb_build_object('released_at', now())));
-          v_events := v_events || jsonb_build_array(jsonb_build_object(
-            'entity_type','slot','entity_id',v_rs.slot_id,
-            'event_kind','slot_released',
-            'payload', jsonb_build_object('slot_id',v_rs.slot_id)));
-        END LOOP;
-        v_ep_updates := v_ep_updates || jsonb_build_array(jsonb_build_object(
-          'key', jsonb_build_object('episode_id', v_ep.episode_id),
-          'set', jsonb_build_object('state','closed','closed_at', now())));
-        v_events := v_events || jsonb_build_array(jsonb_build_object(
-          'entity_type','episode','entity_id',v_ep.episode_id,
-          'event_kind','episode_closed',
-          'payload', jsonb_build_object('episode_id',v_ep.episode_id)));
-        v_fiber_set := jsonb_build_object('want_on', false, 'control_seq', v_next_control,
-          'current_episode_id', NULL, 'failure_seq', NULL, 'failure', NULL);
         IF v_reco.effect_id IS NOT NULL THEN
           v_settle := jsonb_build_array(jsonb_build_object(
             'effect_id', v_reco.effect_id, 'status', 'succeeded',
-            'outcome', jsonb_build_object('v',1,'stage','deactivate','result','closed',
-              'episode_id', v_ep.episode_id)));
+            'outcome', jsonb_build_object('v',1,'stage','deactivate','result',
+              CASE WHEN v_stage->>'action' = 'close' THEN 'closed'
+                   WHEN v_stage->>'action' = 'idle' THEN 'inactive'
+                   ELSE 'released' END,
+              'episode_id',
+              CASE WHEN v_stage->'episodes'->0->'key'->>'episode_id' IS NULL
+                   THEN NULL::uuid
+                   ELSE (v_stage->'episodes'->0->'key'->>'episode_id')::uuid END)));
         ELSE
+          -- No prior reconcile existed: journal this completed stage as a
+          -- succeeded reconcile effect (the pins released above reference its
+          -- id through the deferred FK).
           v_succ := jsonb_build_array(jsonb_build_object(
             'effect_id', v_reco_id, 'ordinal', 0, 'kind', 'fiber_reconcile',
             'fiber_id', v_f.fiber_id,
             'request', jsonb_build_object('fiber_id', v_f.fiber_id,
               'control_seq', v_next_control, 'action', v_action, 'stage', 'deactivate'),
-            'status','succeeded',
-            'outcome', jsonb_build_object('v',1,'stage','deactivate','result','closed',
-              'episode_id', v_ep.episode_id)));
+            'status', 'succeeded',
+            'outcome', jsonb_build_object('v',1,'stage','deactivate','result',
+              CASE WHEN v_stage->>'action' = 'close' THEN 'closed'
+                   WHEN v_stage->>'action' = 'idle' THEN 'inactive'
+                   ELSE 'released' END,
+              'episode_id',
+              CASE WHEN v_stage->'episodes'->0->'key'->>'episode_id' IS NULL
+                   THEN NULL::uuid
+                   ELSE (v_stage->'episodes'->0->'key'->>'episode_id')::uuid END)));
         END IF;
         v_response := jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
           'emitted','[]'::jsonb,'revision',0,'claim',NULL);
@@ -3121,7 +3323,10 @@ BEGIN
     'effect', jsonb_build_object('scope_id', v_i.scope_id),
     'domain', jsonb_build_object('update', jsonb_build_object(
       'installs', coalesce(v_stage->'installs','[]'::jsonb),
-      'fibers', coalesce(v_stage->'fibers','[]'::jsonb))),
+      'fibers', coalesce(v_stage->'fibers','[]'::jsonb),
+      'episodes', coalesce(v_stage->'episodes','[]'::jsonb),
+      'slots', coalesce(v_stage->'slots','[]'::jsonb),
+      'pins', coalesce(v_stage->'pins','[]'::jsonb))),
     'request', jsonb_build_object('response', v_response),
     'events', coalesce(v_stage->'events','[]'::jsonb),
     'successors', coalesce(v_stage->'successors','[]'::jsonb));
@@ -3469,6 +3674,14 @@ BEGIN
         RETURN v24.error_v1('receipt_conflict');
       END IF;
       IF p_outcome->>'class' = 'success' AND insp_obs = 'known' THEN
+        -- W4/G4-L: inspect-known proves the host released but the tombstone
+        -- still requires the six C27 obligations.  The inspected target is
+        -- treated as quiesced (this settlement marks it); the inspect effect
+        -- itself is the settling effect and is excluded by p_effect_id.
+        IF NOT v24.install_disposed_ok(insp_install.install_id, p_effect_id,
+                                       insp_target.effect_id) THEN
+          RETURN v24.error_v1('invalid_outcome');
+        END IF;
         insp_install_set := jsonb_build_object('state','disposed',
                                                'disposed_at',now());
       END IF;
@@ -3580,6 +3793,13 @@ BEGIN
     ELSE
       IF i.state IS DISTINCT FROM 'dispose_pending' THEN RETURN v24.error_v1('receipt_conflict'); END IF;
       target := CASE p_outcome->>'class' WHEN 'success' THEN 'disposed' ELSE 'dispose_pending' END;
+      -- W4/G4-L: the tombstone is recomputed, never trusted from the
+      -- interpreter.  The release being settled is still claimed here and is
+      -- excluded by p_effect_id; a false predicate rolls back before DML.
+      IF p_outcome->>'class' = 'success'
+         AND NOT v24.install_disposed_ok(i.install_id, p_effect_id) THEN
+        RETURN v24.error_v1('invalid_outcome');
+      END IF;
     END IF;
     effect_status := CASE p_outcome->>'class' WHEN 'success' THEN 'succeeded' WHEN 'failure' THEN 'failed' ELSE 'unknown' END;
     IF has_error OR p_delta ? 'request' OR ins <> '{}'::jsonb

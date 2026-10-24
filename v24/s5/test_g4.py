@@ -1,11 +1,11 @@
-"""G4 (S5 W1): cleanup graph, owner cascade and cycle rejection.
+"""G4 (S5 W1-W4): cleanup graph, cascade, inspect convergence, dispose closure.
 
-Only W1 is implemented in this gate.  The fixtures for G4-A/B/E are seeded by
-direct owner-role DML (the same precedent as G2b-G) and are explicitly marked
-as seeded, non-public shapes.  G4-E's cycle and the 65-node chain are seeded
-defects used to exercise defensive reads; the public admission path can never
-construct them.  No socket is opened and no external IO runs inside a
-transaction.
+W1-W4 are implemented in this gate.  The fixtures for G4-A/B/E and the seeded
+parts of the later rows are built by direct owner-role DML (the same precedent
+as G2b-G) and are explicitly marked as seeded, non-public shapes.  G4-E's cycle
+and the 65-node chain are seeded defects used to exercise defensive reads; the
+public admission path can never construct them.  No socket is opened and no
+external IO runs inside a transaction.
 """
 from __future__ import annotations
 
@@ -46,12 +46,12 @@ from test_g3a import (  # noqa: E402
 )
 
 
-def manifest_bytes(identity: str, provides=()) -> bytes:
+def manifest_bytes(identity: str, provides=(), requires=()) -> bytes:
     return json.dumps(
         {
             "identity": identity,
             "version": "1",
-            "requires": [],
+            "requires": list(requires),
             "provides": list(provides),
             "adapter_digest": "\\x",
         }
@@ -107,12 +107,13 @@ def new_scope(admin, realm, key):
     return response["emitted"][0]
 
 
-def admit_install(admin, scope_id, identity, key, provides=(), owner_fiber=None):
+def admit_install(admin, scope_id, identity, key, provides=(), owner_fiber=None,
+                  requires=()):
     effect_id, outcome = command(admin, key, "command_install", {
         "scope_id": str(scope_id),
         "owner_fiber_id": str(owner_fiber) if owner_fiber is not None else None,
         "manifest_bytes": base64.b64encode(
-            manifest_bytes(identity, provides)).decode(),
+            manifest_bytes(identity, provides, requires)).decode(),
         "artifact_digest": "\\x"})
     response = advance(admin, effect_id, outcome)
     assert response.get("disposition") == "committed", response
@@ -196,7 +197,7 @@ def inspect_receipt(owner, effect_id, observed, cls="success"):
     return {"kind": "inspect_resource", "result": result}
 
 
-def assert_claim_invalid(owner, service, effect_id, label):
+def assert_claim_invalid(owner, service, effect_id, label, tag="G4-N"):
     """W0 invalid_args plus a ten-table byte-equal snapshot."""
     before = state(owner)
     owner.rollback()
@@ -211,8 +212,9 @@ def assert_claim_invalid(owner, service, effect_id, label):
     assert row["status"] == "ready", (label, row)
     assert row["attempt_no"] == 0 and row["fence"] == 0, (label, row)
     assert row["claim_owner"] is None and row["lease_until"] is None, (label, row)
-    print("[G4-N] %s: invalid_args, ten-table byte-equal, attempt/fence 0"
-          % (label[len("G4-N "):] if label.startswith("G4-N ") else label))
+    print("[%s] %s: invalid_args, ten-table byte-equal, attempt/fence 0"
+          % (tag, label[len(tag + " "):] if label.startswith(tag + " ")
+             else label))
 
 
 def seed_inspect_probe(owner, scope_id, install_id, request, *, effect_id=None):
@@ -322,6 +324,114 @@ def settle_release(service, effect_id):
     settled = settle_effect(service, effect_id, token, "success", {})
     assert settled.get("disposition") == "committed", settled
     return settled
+
+
+def scope_closable(owner, scope_id):
+    value = one(owner, "SELECT v24.scope_closable(%s)", (scope_id,))
+    owner.rollback()
+    return value
+
+
+def cleanup_pending(owner, scope_id):
+    value = one(owner, "SELECT v24.cleanup_pending(%s)", (scope_id,))
+    owner.rollback()
+    return value
+
+
+def write_counts(owner):
+    """(effects, requests, failed effects, events) for write-class assertions."""
+    counts = (
+        one(owner, "SELECT count(*) FROM v24.effects"),
+        one(owner, "SELECT count(*) FROM v24.requests"),
+        one(owner, "SELECT count(*) FROM v24.effects WHERE status='failed'"),
+        one(owner, "SELECT count(*) FROM v24.events"),
+    )
+    owner.rollback()
+    return counts
+
+
+def expect_w1(owner, action, code, label, *, detail=None, events_same=True):
+    """W1: only a failed command effect/request; the domain stays byte-equal."""
+    before_domain = domain_state(owner)
+    owner.rollback()
+    before = write_counts(owner)
+    response = action()
+    assert response.get("error", {}).get("code") == code, (label, response)
+    if detail is not None:
+        assert response["error"]["detail"] == detail, (label, response)
+    assert domain_state(owner) == before_domain, (label, "W1 wrote domain rows")
+    owner.rollback()
+    after = write_counts(owner)
+    assert after[0] == before[0] + 1, (label, before, after)
+    assert after[1] == before[1] + 1, (label, before, after)
+    assert after[2] == before[2] + 1, (label, before, after)
+    if events_same:
+        assert after[3] == before[3], (label, before, after)
+    print("[G4-M] %s: W1 %s, domain byte-equal, +1 failed effect/request, "
+          "events %s" % (label, code,
+                         "unchanged" if events_same else "changed"))
+    return response
+
+
+def expect_w0(owner, action, code, label):
+    """W0: rejected before any write; all ten tables stay byte-equal."""
+    before = state(owner)
+    owner.rollback()
+    response = action()
+    assert response == {"v": 1, "error": {"code": code, "detail": {}}}, (
+        label, response)
+    after = state(owner)
+    owner.rollback()
+    assert after == before, (label, "W0 wrote rows")
+    print("[G4-M] %s: W0 %s, ten-table byte-equal" % (label, code))
+    return response
+
+
+ROW_ID = {
+    "installs": "install_id", "fibers": "fiber_id", "episodes": "episode_id",
+    "slots": "slot_id", "pins": "pin_id", "scopes": "scope_id",
+    "runs": "run_id", "effects": "effect_id", "events": "seq",
+}
+
+
+def changed_rows(before, after, tables=("installs", "fibers", "episodes",
+                                        "slots", "pins")):
+    """Count inserted/updated/deleted rows across the named domain tables."""
+    changed = 0
+    for table in tables:
+        key = ROW_ID[table]
+        old = {row[key]: row for row in before[table]}
+        new = {row[key]: row for row in after[table]}
+        changed += sum(1 for name in set(old) | set(new)
+                       if old.get(name) != new.get(name))
+    return changed
+
+
+def released_slot_order(owner, fiber_id):
+    with owner.cursor() as cur:
+        cur.execute(
+            "SELECT contribution_seq, released_at FROM v24.slots "
+            "WHERE fiber_id=%s AND released_at IS NOT NULL "
+            "ORDER BY released_at, contribution_seq", (fiber_id,))
+        rows = cur.fetchall()
+    owner.rollback()
+    return rows
+
+
+def released_slot_count(owner, fiber_id):
+    value = one(owner, "SELECT count(*) FROM v24.slots "
+                       "WHERE fiber_id=%s AND released_at IS NOT NULL",
+                (fiber_id,))
+    owner.rollback()
+    return value
+
+
+def install_event_count(owner, install_id, event_kind):
+    value = one(owner, """SELECT count(*) FROM v24.events
+        WHERE entity_type='install' AND entity_id=%s AND event_kind=%s""",
+                (install_id, event_kind))
+    owner.rollback()
+    return value
 
 
 
@@ -1625,6 +1735,777 @@ def g4_o(owner, admin, service):
           "non-owner close keeps the W1 unauthorized receipt")
 
 
+def g4_c(owner, admin, service):
+    """G4-C: consumer-before-provider across a live dependency pin."""
+    tag = "g4c"
+    scope_id = new_scope(admin, tag, tag + "-root")
+    provider = admit_install(
+        admin, scope_id, tag + "-p", tag + "-p-install",
+        provides=[{"realm": tag, "key": "k"}])["emitted"][0]
+    hp = effect_of(owner, provider, "host_prepare")
+    settle_effect(service, hp, claim_effect(service, hp), "success", {})
+    provider_fiber = fiber_of(owner, provider)
+    on_provider = one(admin, "SELECT v24.fiber_control(%s,'on',0,%s)",
+                      (provider_fiber, tag + "-p-on"))
+    assert on_provider.get("disposition") == "committed", on_provider
+    admin.commit()
+
+    consumer = admit_install(
+        admin, scope_id, tag + "-a", tag + "-a-install",
+        requires=[{"key": "k"}])["emitted"][0]
+    consumer_fiber = fiber_of(owner, consumer)
+    on_consumer = one(admin, "SELECT v24.fiber_control(%s,'on',0,%s)",
+                      (consumer_fiber, tag + "-a-on"))
+    assert on_consumer.get("disposition") == "committed", on_consumer
+    admin.commit()
+    consumer_episode = on_consumer["emitted"][0]
+
+    provider_slot = one(
+        owner, "SELECT slot_id FROM v24.slots WHERE fiber_id=%s",
+        (provider_fiber,))
+    owner.rollback()
+    pin = one(owner, """SELECT pin_id FROM v24.pins
+        WHERE slot_id=%s AND released_at IS NULL""", (provider_slot,))
+    owner.rollback()
+    assert pin is not None, (provider_slot, consumer_episode)
+
+    # Provider dispose: the live consumer pin is a provider-side barrier, so P
+    # stays pending, withdraws (not releases) its slot and emits no release.
+    first = dispose(admin, provider, tag + "-p-dispose-1")
+    assert first.get("disposition") == "committed", first
+    assert first["emitted"] == [], first
+    provider_row = install_row(owner, provider)
+    assert provider_row["state"] == "dispose_pending", provider_row
+    assert provider_row["disposed_at"] is None, provider_row
+    slot_row = one(owner, "SELECT to_jsonb(s) FROM v24.slots s WHERE s.slot_id=%s",
+                   (provider_slot,))
+    owner.rollback()
+    assert slot_row["released_at"] is None, slot_row
+    pin_row = one(owner, "SELECT to_jsonb(p) FROM v24.pins p WHERE p.pin_id=%s",
+                  (pin,))
+    owner.rollback()
+    assert pin_row["released_at"] is None, pin_row
+    assert count_kind(owner, provider, "host_release") == 0
+    print("[G4-C] P dispose#1: P.state=%s disposed_at=%s slot.released_at=%s "
+          "pin.released_at=%s host_release=%d (consumer barrier)"
+          % (provider_row["state"], provider_row["disposed_at"],
+             slot_row["released_at"], pin_row["released_at"],
+             count_kind(owner, provider, "host_release")))
+
+    off = one(admin, "SELECT v24.fiber_control(%s,'off',1,%s)",
+              (consumer_fiber, tag + "-a-off"))
+    assert off.get("disposition") == "committed", off
+    admin.commit()
+    pin_after = one(owner, """SELECT jsonb_build_object(
+        'released_at', released_at, 'released_by_effect', released_by_effect)
+        FROM v24.pins WHERE pin_id=%s""", (pin,))
+    owner.rollback()
+    assert pin_after["released_at"] is not None, pin_after
+    assert pin_after["released_by_effect"] is not None, pin_after
+    assert one(owner, "SELECT state FROM v24.episodes WHERE episode_id=%s",
+               (consumer_episode,)) == "closed"
+    owner.rollback()
+
+    releases = []
+    stages = 0
+    for index in range(2, 9):
+        response = dispose(admin, provider, "%s-p-dispose-%d" % (tag, index))
+        assert response.get("disposition") == "committed", response
+        stages += 1
+        for effect_id in response["emitted"]:
+            row = effect_row(owner, effect_id)
+            assert row["kind"] == "host_release", row
+            assert row["request"]["install_id"] == str(provider), row
+            releases.append(effect_id)
+        if releases:
+            break
+    assert len(releases) == 1, releases
+    assert stages <= 7, stages
+    release_id = releases[0]
+    assert count_kind(owner, provider, "host_release") == 1
+    assert install_row(owner, provider)["state"] == "dispose_pending"
+    settle_release(service, release_id)
+
+    final = install_row(owner, provider)
+    assert final["state"] == "disposed", final
+    assert final["disposed_at"] is not None, final
+    slot_final = one(owner, "SELECT released_at FROM v24.slots WHERE slot_id=%s",
+                     (provider_slot,))
+    owner.rollback()
+    assert slot_final is not None, slot_final
+    assert count_kind(owner, provider, "host_release") == 1
+    print("[G4-C] after consumer off + P dispose#%d: release=%s exactly one "
+          "host_release, slot.released_at=%s, P.state=%s disposed_at=%s"
+          % (stages + 1, release_id, slot_final, final["state"],
+             final["disposed_at"]))
+
+
+def g4_d(owner, admin, service):
+    """G4-D: three contributions release strictly DESC, one per advance."""
+    tag = "g4d"
+    scope_id = new_scope(admin, tag, tag + "-root")
+    install_id = admit_install(
+        admin, scope_id, tag, tag + "-install",
+        provides=[{"realm": tag, "key": "k0"},
+                  {"realm": tag, "key": "k1"},
+                  {"realm": tag, "key": "k2"}])["emitted"][0]
+    hp = effect_of(owner, install_id, "host_prepare")
+    settle_effect(service, hp, claim_effect(service, hp), "success", {})
+    fiber = fiber_of(owner, install_id)
+    on = one(admin, "SELECT v24.fiber_control(%s,'on',0,%s)",
+             (fiber, tag + "-on"))
+    assert on.get("disposition") == "committed", on
+    admin.commit()
+    episode = on["emitted"][0]
+
+    initial = one(owner, """SELECT coalesce(jsonb_agg(jsonb_build_object(
+        'seq', contribution_seq, 'released', released_at IS NOT NULL,
+        'withdrawn', withdrawn_at IS NOT NULL) ORDER BY contribution_seq), '[]')
+        FROM v24.slots WHERE fiber_id=%s""", (fiber,))
+    owner.rollback()
+    assert [row["seq"] for row in initial] == [0, 1, 2], initial
+    assert not any(row["released"] or row["withdrawn"] for row in initial), initial
+
+    for index in (1, 2, 3):
+        base = released_slot_count(owner, fiber)
+        off = one(admin, "SELECT v24.fiber_control(%s,'off',%s,%s)",
+                  (fiber, index, "%s-off-%d" % (tag, index)))
+        assert off.get("disposition") == "committed", off
+        admin.commit()
+        after = released_slot_count(owner, fiber)
+        assert after == base + 1, (index, base, after)
+        order = released_slot_order(owner, fiber)
+        assert [seq for seq, _ts in order] == [2, 1, 0][:index], (index, order)
+        for left, right in zip(order, order[1:]):
+            assert left[1] < right[1], (index, order)
+        withdrawn = one(owner, """SELECT count(*) FROM v24.slots
+            WHERE fiber_id=%s AND withdrawn_at IS NULL""", (fiber,))
+        owner.rollback()
+        assert withdrawn == 0, (index, withdrawn)
+        episode_row = one(owner, """SELECT jsonb_build_object(
+            'state', state, 'closed_at', closed_at) FROM v24.episodes
+            WHERE episode_id=%s""", (episode,))
+        owner.rollback()
+        if index < 3:
+            assert episode_row["state"] == "retiring", (index, episode_row)
+            assert episode_row["closed_at"] is None, (index, episode_row)
+        else:
+            assert episode_row["state"] == "closed", (index, episode_row)
+            assert episode_row["closed_at"] is not None, (index, episode_row)
+        print("[G4-D] off#%d: released=%d order=%s episode=%s closed_at=%s"
+              % (index, after, [seq for seq, _ts in order],
+                 episode_row["state"], episode_row["closed_at"]))
+
+    assert released_slot_order(owner, fiber)[0][0] == 2
+    assert released_slot_count(owner, fiber) == 3
+    print("[G4-D] contribution_seq release order by released_at = [2, 1, 0]; "
+          "exactly one slot per advance; episode closed only after #3")
+
+
+def g4_f(owner, admin, service):
+    """G4-F: an unknown-unquiesced release blocks close until inspect absent."""
+    tag = "g4f"
+    scope_id = new_scope(admin, tag, tag + "-root")
+    install_id = admit_install(
+        admin, scope_id, tag, tag + "-install")["emitted"][0]
+    release_one = dispose(admin, install_id, tag + "-dispose-1")["emitted"][0]
+    token = claim_effect(service, release_one)
+    settled = settle_effect(service, release_one, token, "unknown", {})
+    assert settled.get("disposition") == "committed", settled
+    release = effect_row(owner, release_one)
+    assert release["status"] == "unknown", release
+    assert release["resource_quiesced_at"] is None, release
+    pending = install_row(owner, install_id)
+    assert pending["state"] == "dispose_pending", pending
+    assert pending["disposed_at"] is None, pending
+    closable = scope_closable(owner, scope_id)
+    assert closable["ok"] is False, closable
+    print("[G4-F] (a) release status=%s quiesced=%s install=%s disposed_at=%s "
+          "closable.ok=%s blockers=%s"
+          % (release["status"], release["resource_quiesced_at"],
+             pending["state"], pending["disposed_at"], closable["ok"],
+             json.dumps(closable["blockers"], sort_keys=True)))
+
+    observed = []
+    for index in range(1, 8):
+        close_scope(admin, scope_id, "%s-close-%d" % (tag, index))
+        row = scope_row(owner, scope_id)
+        assert row["closed_at"] is None, (index, row)
+        assert row["close_requested_at"] is not None, (index, row)
+        closable = scope_closable(owner, scope_id)
+        assert closable["ok"] is False, (index, closable)
+        observed.append((index, closable["blockers"]["effects"]))
+    print("[G4-F] repeated close: closed_at NULL, close_requested_at set, "
+          "closable.ok false for %d calls (effects blocker=%d)"
+          % (len(observed), observed[-1][1]))
+
+    inspect_id = one(owner, """SELECT effect_id FROM v24.effects
+        WHERE kind='inspect_resource' AND request->>'install_id'=%s
+          AND status='ready' ORDER BY created_at, effect_id LIMIT 1""",
+        (str(install_id),))
+    owner.rollback()
+    if inspect_id is None:
+        emitted = dispose(admin, install_id, tag + "-dispose-inspect")["emitted"]
+        assert len(emitted) == 1, emitted
+        inspect_id = emitted[0]
+    inspect = effect_row(owner, inspect_id)
+    assert inspect["kind"] == "inspect_resource", inspect
+    assert inspect["request"]["target"] == "host_release", inspect
+    assert inspect["request"]["target_effect_id"] == str(release_one), inspect
+    token = claim_effect(service, inspect_id)
+    settled = settle_effect(service, inspect_id, token, "success",
+                            inspect_receipt(owner, inspect_id, "absent"))
+    assert settled.get("disposition") == "committed", settled
+    squashed = effect_row(owner, release_one)
+    assert squashed["resource_quiesced_at"] is not None, squashed
+    assert effect_row(owner, inspect_id)["resource_quiesced_at"] is None
+    assert install_row(owner, install_id)["state"] == "dispose_pending"
+
+    second = dispose(admin, install_id, tag + "-dispose-2")
+    assert second.get("disposition") == "committed", second
+    assert len(second["emitted"]) == 1, second
+    release_two = second["emitted"][0]
+    assert str(release_two) != str(release_one), (release_two, release_one)
+    row_two = effect_row(owner, release_two)
+    assert row_two["kind"] == "host_release", row_two
+    assert row_two["request"]["reservation"] == (
+        "v24:host_release:" + str(release_two)), row_two
+    assert count_kind(owner, install_id, "host_release") == 2
+    settle_release(service, release_two)
+    disposed = install_row(owner, install_id)
+    assert disposed["state"] == "disposed", disposed
+    assert disposed["disposed_at"] is not None, disposed
+    print("[G4-F] (b) inspect=%s observed=absent target.quiesced=%s -> new "
+          "release=%s reservation=%s -> install=%s disposed_at=%s"
+          % (inspect_id, squashed["resource_quiesced_at"],
+             release_two, row_two["request"]["reservation"],
+             disposed["state"], disposed["disposed_at"]))
+
+    closed = False
+    for index in range(1, 10):
+        response = close_scope(admin, scope_id, "%s-final-%d" % (tag, index))
+        assert (response.get("emitted") or []) == [], response
+        row = scope_row(owner, scope_id)
+        if row["closed_at"] is not None:
+            closed = True
+            break
+    assert closed, "close never reached closed_at after the tombstone"
+    closable = scope_closable(owner, scope_id)
+    assert closable["ok"] is True, closable
+    print("[G4-F] (b) close reached closed_at=%s closable.ok=%s"
+          % (scope_row(owner, scope_id)["closed_at"], closable["ok"]))
+
+    tag2 = "g4f2"
+    scope_two = new_scope(admin, tag2, tag2 + "-root")
+    install_two = admit_install(
+        admin, scope_two, tag2, tag2 + "-install",
+        provides=[{"realm": tag2, "key": "k"}])["emitted"][0]
+    hp = effect_of(owner, install_two, "host_prepare")
+    token = claim_effect(service, hp)
+    failed = settle_effect(service, hp, token, "failure", {})
+    assert failed.get("disposition") == "committed", failed
+    failed_install = install_row(owner, install_two)
+    assert failed_install["state"] == "prepare_failed", failed_install
+    assert failed_install["disposed_at"] is None, failed_install
+    assert install_event_count(owner, install_two, "install_disposed") == 0
+    closable = scope_closable(owner, scope_two)
+    assert closable["ok"] is False, closable
+    assert scope_row(owner, scope_two)["closed_at"] is None
+    requested = close_scope(admin, scope_two, tag2 + "-close-1")
+    assert requested.get("disposition") == "committed", requested
+    assert scope_row(owner, scope_two)["closed_at"] is None
+    assert install_row(owner, install_two)["state"] == "prepare_failed"
+    print("[G4-F] (c) prepare failure: install=%s disposed_at=%s scope."
+          "closed_at=NULL closable.ok=%s"
+          % (failed_install["state"], failed_install["disposed_at"],
+             closable["ok"]))
+
+
+def g4_l(owner, admin, service):
+    """G4-L: idempotent retry, fresh release after failure, terminal receipt."""
+    tag = "g4l"
+    scope_id = new_scope(admin, tag, tag + "-root")
+    install_id = admit_install(
+        admin, scope_id, tag, tag + "-install")["emitted"][0]
+    first = dispose(admin, install_id, tag + "-dispose-1")
+    assert first.get("disposition") == "committed", first
+    assert len(first["emitted"]) == 1, first
+    release_one = first["emitted"][0]
+
+    before_state = state(owner)
+    owner.rollback()
+    before_counts = write_counts(owner)
+    replay = dispose(admin, install_id, tag + "-dispose-1")
+    assert replay == first, (replay, first)
+    assert state(owner) == before_state, "dispose replay wrote rows"
+    owner.rollback()
+    after_counts = write_counts(owner)
+    assert after_counts == before_counts, (before_counts, after_counts)
+    print("[G4-L] same dispose key replay: byte-identical response, effects=%d "
+          "requests=%d events=%d unchanged"
+          % (after_counts[0], after_counts[1], after_counts[3]))
+
+    token = claim_effect(service, release_one)
+    failed = settle_effect(service, release_one, token, "failure", {})
+    assert failed.get("disposition") == "committed", failed
+    failed_row = effect_row(owner, release_one)
+    assert failed_row["status"] == "failed", failed_row
+    assert failed_row["resource_quiesced_at"] is not None, failed_row
+    assert install_row(owner, install_id)["state"] == "dispose_pending"
+    assert count_kind(owner, install_id, "host_release") == 1
+
+    second = dispose(admin, install_id, tag + "-dispose-2")
+    assert second.get("disposition") == "committed", second
+    assert len(second["emitted"]) == 1, second
+    release_two = second["emitted"][0]
+    assert str(release_two) != str(release_one), (release_two, release_one)
+    row_two = effect_row(owner, release_two)
+    assert row_two["kind"] == "host_release", row_two
+    assert row_two["request"]["reservation"] == (
+        "v24:host_release:" + str(release_two)), row_two
+    assert row_two["request"]["reservation"] != (
+        failed_row["request"]["reservation"]), (row_two, failed_row)
+    assert count_kind(owner, install_id, "host_release") == 2
+    settle_release(service, release_two)
+    disposed = install_row(owner, install_id)
+    assert disposed["state"] == "disposed", disposed
+    assert install_event_count(owner, install_id, "install_disposed") == 1
+    print("[G4-L] after failure: release#1=%s status=failed quiesced=%s; new key "
+          "-> release#2=%s reservation=%s, host_release=%d -> %s"
+          % (release_one, failed_row["resource_quiesced_at"], release_two,
+             row_two["request"]["reservation"],
+             count_kind(owner, install_id, "host_release"), disposed["state"]))
+
+    before_domain = domain_state(owner)
+    owner.rollback()
+    before_late = write_counts(owner)
+    late = dispose(admin, install_id, tag + "-dispose-3")
+    assert late == {"v": 1, "error": {"code": "already_terminal",
+                                      "detail": {}}}, late
+    assert domain_state(owner) == before_domain
+    owner.rollback()
+    after_late = write_counts(owner)
+    assert after_late[0] == before_late[0] + 1, (before_late, after_late)
+    assert after_late[1] == before_late[1] + 1, (before_late, after_late)
+    assert after_late[2] == before_late[2] + 1, (before_late, after_late)
+    assert after_late[3] == before_late[3], (before_late, after_late)
+    assert count_kind(owner, install_id, "host_release") == 2
+    print("[G4-L] disposed + new key -> already_terminal W1 (+1 failed effect/"
+          "request), host_release stays 2")
+
+    tag2 = "g4l2"
+    scope_two = new_scope(admin, tag2, tag2 + "-root")
+    install_two = admit_install(
+        admin, scope_two, tag2, tag2 + "-install")["emitted"][0]
+    leave = dispose(admin, install_two, tag2 + "-dispose-1")
+    release_unknown = leave["emitted"][0]
+    token = claim_effect(service, release_unknown)
+    settle_effect(service, release_unknown, token, "unknown", {})
+    inspect_response = dispose(admin, install_two, tag2 + "-dispose-2")
+    assert inspect_response.get("disposition") == "committed", inspect_response
+    assert len(inspect_response["emitted"]) == 1, inspect_response
+    inspect_id = inspect_response["emitted"][0]
+    assert effect_row(owner, inspect_id)["kind"] == "inspect_resource"
+
+    before_state = state(owner)
+    owner.rollback()
+    before_counts = write_counts(owner)
+    replay_inspect = dispose(admin, install_two, tag2 + "-dispose-2")
+    assert replay_inspect == inspect_response, (replay_inspect, inspect_response)
+    assert state(owner) == before_state, "inspect-emitting dispose replay wrote rows"
+    owner.rollback()
+    assert write_counts(owner) == before_counts
+    assert count_kind(owner, install_two, "inspect_resource") == 1
+    print("[G4-L] same inspect-emitting dispose key replay: byte-identical "
+          "response, inspect_resource=1, no new effect/event")
+
+    token = claim_effect(service, inspect_id)
+    unknown_body = inspect_receipt(owner, inspect_id, "unknown", cls="unknown")
+    inspect_settled = settle_effect(service, inspect_id, token, "unknown",
+                                    unknown_body)
+    assert inspect_settled.get("disposition") == "committed", inspect_settled
+    replay_outcome = {"v": 1, "class": "unknown", "claim": token,
+                      "body": unknown_body}
+    before_state = state(owner)
+    owner.rollback()
+    replay_settled = advance(service, inspect_id, replay_outcome)
+    service.commit()
+    assert replay_settled.get("disposition") == "replay", replay_settled
+    assert replay_settled["effect_id"] == inspect_id, replay_settled
+    assert replay_settled["emitted"] == [], replay_settled
+    assert state(owner) == before_state, "inspect settlement replay wrote rows"
+    owner.rollback()
+    print("[G4-L] same inspect settlement replay: disposition=replay, "
+          "effect_id=%s, emitted=[], ten-table byte-equal" % (inspect_id,))
+
+
+def g4_m(owner, admin, service):
+    """G4-M: eight zero-write/write-class negatives (M-1..M-8)."""
+    def leaf(prefix):
+        scope = new_scope(admin, prefix, prefix + "-root")
+        install = admit_install(
+            admin, scope, prefix, prefix + "-install")["emitted"][0]
+        return scope, install
+
+    # M-1: new key close on an already closed scope -> W1 already_terminal.
+    tag1 = "g4m1"
+    scope_one = new_scope(admin, tag1, tag1 + "-root")
+    for index in range(1, 12):
+        close_scope(admin, scope_one, "%s-close-%d" % (tag1, index))
+        if scope_row(owner, scope_one)["closed_at"] is not None:
+            break
+    assert scope_row(owner, scope_one)["closed_at"] is not None
+    expect_w1(owner, lambda: close_scope(admin, scope_one, tag1 + "-late"),
+              "already_terminal", "M-1 close on already-closed scope")
+
+    # M-2: new key dispose on a disposed install -> W1 already_terminal.
+    tag2 = "g4m2"
+    scope_two, install_two = leaf(tag2)
+    release_two = dispose(admin, install_two, tag2 + "-dispose-1")["emitted"][0]
+    settle_release(service, release_two)
+    assert install_row(owner, install_two)["state"] == "disposed"
+    expect_w1(owner, lambda: dispose(admin, install_two, tag2 + "-dispose-2"),
+              "already_terminal", "M-2 dispose on disposed install")
+
+    # M-3: inspect claim whose target is not unknown/already quiesced -> W0.
+    tag3 = "g4m3"
+    scope_three, install_three, hp = prepare_unknown_fixture(
+        owner, admin, service, tag3)
+    inspect_id = dispose(admin, install_three, tag3 + "-dispose-1")["emitted"][0]
+    # Seeded fixture / non-public path: force the inspect target out of the
+    # inspectable state (quiesced, then not-unknown) for the claim gate.
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.effects SET resource_quiesced_at=now() "
+                    "WHERE effect_id=%s", (hp,))
+    owner.commit()
+    assert_claim_invalid(owner, service, inspect_id,
+                         "M-3 already-quiesced inspect target", tag="G4-M")
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.effects SET resource_quiesced_at=NULL "
+                    "WHERE effect_id=%s", (hp,))
+    owner.commit()
+    original = effect_row(owner, hp)
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.effects SET status='succeeded', outcome=%s, "
+                    "settled_at=now() WHERE effect_id=%s",
+                    (Json({"seed": True}), hp))
+    owner.commit()
+    assert_claim_invalid(owner, service, inspect_id,
+                         "M-3 non-unknown inspect target", tag="G4-M")
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.effects SET status=%s, outcome=%s, settled_at=%s "
+                    "WHERE effect_id=%s",
+                    (original["status"], Json(original["outcome"]),
+                     original["settled_at"], hp))
+    owner.commit()
+
+    # M-4: host_release success while the install is not dispose_pending -> W0
+    # receipt_conflict.  Seeded fixture / non-public path: rewrite the install
+    # state back so the settlement's precheck conflicts.
+    tag4 = "g4m4"
+    scope_four, install_four = leaf(tag4)
+    release_four = dispose(admin, install_four, tag4 + "-dispose-1")["emitted"][0]
+    token = claim_effect(service, release_four)
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.installs SET state='installed', "
+                    "dispose_effect=NULL, disposed_at=NULL WHERE install_id=%s",
+                    (install_four,))
+    owner.commit()
+    expect_w0(owner, lambda: settle_effect(
+        service, release_four, token, "success", {}), "receipt_conflict",
+        "M-4 release success while install is not dispose_pending")
+    assert effect_row(owner, release_four)["status"] == "claimed"
+
+    # M-5: seeded owner cycle on dispose -> W1 cleanup_cycle, domain zero-write.
+    # Seeded fixture / non-public path: direct owner-pair rewrite forms a cycle.
+    tag5 = "g4m5"
+    creator = uuid4()
+    seed_effect(owner, creator)
+    cycle_scope = uuid4()
+    seed_scope(owner, cycle_scope, creator)
+    cycle, _fibers, _episodes = seed_owner_cycle(
+        owner, creator=creator, scope_id=cycle_scope)
+    owner.commit()
+    response = expect_w1(
+        owner, lambda: dispose(admin, cycle[0], tag5 + "-dispose"),
+        "cleanup_cycle", "M-5 seeded owner cycle on dispose")
+    detail = response["error"]["detail"]
+    assert len(detail["path"]) == 4, detail
+    assert detail["path"][0] == detail["path"][-1] == str(cycle[0]), detail
+
+    # M-6: close with an unsettled install never writes closed_at.
+    tag6 = "g4m6"
+    scope_six, install_six = leaf(tag6)
+    release_six = dispose(admin, install_six, tag6 + "-dispose-1")["emitted"][0]
+    assert effect_row(owner, release_six)["status"] == "ready"
+    for index in range(1, 7):
+        close_scope(admin, scope_six, "%s-close-%d" % (tag6, index))
+        row = scope_row(owner, scope_six)
+        assert row["closed_at"] is None, (index, row)
+        assert row["close_requested_at"] is not None, (index, row)
+        assert scope_closable(owner, scope_six)["ok"] is False, index
+    assert install_row(owner, install_six)["state"] == "dispose_pending"
+    assert effect_row(owner, release_six)["status"] == "ready"
+    print("[G4-M] M-6 close with an unsettled ready release: closed_at stays "
+          "NULL, close_requested_at set, install=%s"
+          % install_row(owner, install_six)["state"])
+
+    # M-7: malformed inspect outcome -> W0 invalid_outcome, effect stays claimed.
+    tag7 = "g4m7"
+    scope_seven, install_seven, hp_seven = prepare_unknown_fixture(
+        owner, admin, service, tag7)
+    inspect_seven = dispose(
+        admin, install_seven, tag7 + "-dispose-1")["emitted"][0]
+    token = claim_effect(service, inspect_seven)
+    malformed = {"kind": "inspect_resource", "result": {"v": 1,
+                                                        "observed": "weird"}}
+    expect_w0(owner, lambda: settle_effect(
+        service, inspect_seven, token, "success", malformed), "invalid_outcome",
+        "M-7 malformed inspect outcome")
+    assert effect_row(owner, inspect_seven)["status"] == "claimed"
+
+    # M-8: dispose with an unknown-unquiesced release emits only inspect.
+    tag8 = "g4m8"
+    scope_eight, install_eight = leaf(tag8)
+    release_eight = dispose(
+        admin, install_eight, tag8 + "-dispose-1")["emitted"][0]
+    token = claim_effect(service, release_eight)
+    settle_effect(service, release_eight, token, "unknown", {})
+    again = dispose(admin, install_eight, tag8 + "-dispose-2")
+    assert again.get("disposition") == "committed", again
+    assert len(again["emitted"]) == 1, again
+    inspect_eight = effect_row(owner, again["emitted"][0])
+    assert inspect_eight["kind"] == "inspect_resource", inspect_eight
+    assert inspect_eight["request"]["target"] == "host_release", inspect_eight
+    assert inspect_eight["request"]["target_effect_id"] == str(release_eight), (
+        inspect_eight)
+    assert count_kind(owner, install_eight, "host_release") == 1
+    pending = install_row(owner, install_eight)
+    assert pending["state"] == "dispose_pending", pending
+    assert pending["disposed_at"] is None, pending
+    print("[G4-M] M-8 unknown release -> dispose emits only inspect_resource "
+          "target=%s, host_release stays 1, install=%s"
+          % (inspect_eight["request"]["target_effect_id"], pending["state"]))
+    print("[G4-M] M-1/M-2/M-5 W1 receipts (domain byte-equal + one failed "
+          "effect/request); M-3/M-4/M-7 W0 ten-table byte-equal; M-6 no "
+          "closed_at; M-8 inspect-only recovery")
+
+
+def g4_p(owner, admin, service):
+    """G4-P: the install tombstone lands only after every obligation clears."""
+    tag = "g4p"
+    scope_id = new_scope(admin, tag, tag + "-root")
+    root = admit_install(
+        admin, scope_id, tag + "-root", tag + "-root-install",
+        provides=[{"realm": tag, "key": "k0"},
+                  {"realm": tag, "key": "k1"}])["emitted"][0]
+    hp = effect_of(owner, root, "host_prepare")
+    settle_effect(service, hp, claim_effect(service, hp), "success", {})
+    root_fiber = fiber_of(owner, root)
+    on = one(admin, "SELECT v24.fiber_control(%s,'on',0,%s)",
+             (root_fiber, tag + "-root-on"))
+    assert on.get("disposition") == "committed", on
+    admin.commit()
+    episode = on["emitted"][0]
+    child = admit_install(
+        admin, scope_id, tag + "-child", tag + "-child-install",
+        owner_fiber=root_fiber)["emitted"][0]
+    assert install_row(owner, child)["state"] == "installed"
+
+    contributions = one(owner, """SELECT coalesce(jsonb_agg(jsonb_build_object(
+        'seq', contribution_seq, 'released', released_at IS NOT NULL)
+        ORDER BY contribution_seq), '[]') FROM v24.slots WHERE fiber_id=%s""",
+        (root_fiber,))
+    owner.rollback()
+    assert [row["seq"] for row in contributions] == [0, 1], contributions
+    assert not any(row["released"] for row in contributions), contributions
+
+    first = dispose(admin, root, tag + "-dispose-1")
+    assert first.get("disposition") == "committed", first
+    assert len(first["emitted"]) == 1, first
+    child_release = first["emitted"][0]
+    child_release_row = effect_row(owner, child_release)
+    assert child_release_row["kind"] == "host_release", child_release_row
+    assert child_release_row["request"]["install_id"] == str(child), (
+        child_release_row)
+    assert install_row(owner, root)["state"] == "dispose_pending"
+    assert install_row(owner, root)["disposed_at"] is None
+    settle_release(service, child_release)
+    child_row = install_row(owner, child)
+    assert child_row["state"] == "disposed", child_row
+    assert child_row["disposed_at"] is not None, child_row
+
+    root_release = None
+    stages = 0
+    for index in range(2, 9):
+        response = dispose(admin, root, "%s-dispose-%d" % (tag, index))
+        assert response.get("disposition") == "committed", response
+        stages += 1
+        if response["emitted"]:
+            assert len(response["emitted"]) == 1, response
+            candidate = effect_row(owner, response["emitted"][0])
+            assert candidate["kind"] == "host_release", candidate
+            assert candidate["request"]["install_id"] == str(root), candidate
+            root_release = response["emitted"][0]
+            break
+    assert root_release is not None, "root never emitted its release"
+
+    # Before settlement: the owner is still pending with no tombstone, while
+    # the child, contributions and episode are already complete.
+    before = install_row(owner, root)
+    assert before["state"] == "dispose_pending", before
+    assert before["disposed_at"] is None, before
+    fiber_before = one(owner, "SELECT to_jsonb(f) FROM v24.fibers f "
+                              "WHERE f.fiber_id=%s", (root_fiber,))
+    owner.rollback()
+    assert fiber_before["disposed_at"] is not None, fiber_before
+    order = released_slot_order(owner, root_fiber)
+    assert [seq for seq, _ts in order] == [1, 0], order
+    assert count_kind(owner, root, "host_release") == 1
+    episode_before = one(owner, """SELECT jsonb_build_object(
+        'state', state, 'closed_at', closed_at) FROM v24.episodes
+        WHERE episode_id=%s""", (episode,))
+    owner.rollback()
+    assert episode_before["state"] == "closed", episode_before
+    assert episode_before["closed_at"] is not None, episode_before
+    assert install_row(owner, child)["state"] == "disposed"
+    assert install_event_count(owner, root, "install_disposed") == 0
+    print("[G4-P] pre-settle: install=%s disposed_at=%s fiber.disposed_at=%s "
+          "slots(order)=%s episode=%s child=%s install_disposed=%d"
+          % (before["state"], before["disposed_at"], fiber_before["disposed_at"],
+             [seq for seq, _ts in order], episode_before["state"],
+             install_row(owner, child)["state"],
+             install_event_count(owner, root, "install_disposed")))
+
+    settle_release(service, root_release)
+    after = install_row(owner, root)
+    assert after["state"] == "disposed", after
+    assert after["disposed_at"] is not None, after
+    fiber_after = one(owner, "SELECT disposed_at FROM v24.fibers "
+                             "WHERE fiber_id=%s", (root_fiber,))
+    owner.rollback()
+    assert fiber_after is not None, fiber_after
+    assert [seq for seq, _ts in released_slot_order(owner, root_fiber)] == [1, 0]
+    episode_after = one(owner, """SELECT jsonb_build_object(
+        'state', state, 'closed_at', closed_at) FROM v24.episodes
+        WHERE episode_id=%s""", (episode,))
+    owner.rollback()
+    assert episode_after["state"] == "closed" and (
+        episode_after["closed_at"] is not None), episode_after
+    assert install_row(owner, child)["state"] == "disposed"
+    assert install_event_count(owner, root, "install_disposed") == 1
+    assert install_event_count(owner, child, "install_disposed") == 1
+    assert count_kind(owner, root, "host_release") == 1
+    assert count_kind(owner, child, "host_release") == 1
+    print("[G4-P] post-settle: install=%s disposed_at=%s fiber.disposed_at=%s "
+          "(fiber_disposed=%d) slots(order)=%s episode=%s child=%s "
+          "install_disposed(root=%d child=%d)"
+          % (after["state"], after["disposed_at"], fiber_after,
+             one(owner, "SELECT count(*) FROM v24.events WHERE event_kind="
+                        "'fiber_disposed' AND entity_id=%s",
+                 (root_fiber,)),
+             [seq for seq, _ts in released_slot_order(owner, root_fiber)],
+             episode_after["state"], install_row(owner, child)["state"],
+             install_event_count(owner, root, "install_disposed"),
+             install_event_count(owner, child, "install_disposed")))
+    owner.rollback()
+
+
+def g4_q(owner, admin, service):
+    """G4-Q: one bounded root stage; cleanup_pending non-increasing to zero."""
+    tag = "g4q"
+    creator = uuid4()
+    seed_effect(owner, creator)
+    scope_id = uuid4()
+    seed_scope(owner, scope_id, creator)
+    # Seeded fixture / non-public path: an installed 3-level owner chain A -> B
+    # -> C with closed episodes, so the dispose walk never leaves the install
+    # stage (its only job here is the owner cascade and budget).
+    levels, fibers, episodes = [], [], []
+    for _ in range(3):
+        install = seed_install(owner, scope_id=scope_id, creator=creator)
+        fiber = seed_fiber(owner, install_id=install, scope_id=scope_id,
+                           creator=creator)
+        episode = seed_episode(owner, fiber_id=fiber, creator=creator,
+                               state="closed",
+                               closed_at=datetime.now(timezone.utc))
+        levels.append(install)
+        fibers.append(fiber)
+        episodes.append(episode)
+    with owner.cursor() as cur:
+        cur.execute("UPDATE v24.installs SET owner_fiber_id=%s, "
+                    "owner_episode_id=%s WHERE install_id=%s",
+                    (fibers[0], episodes[0], levels[1]))
+        cur.execute("UPDATE v24.installs SET owner_fiber_id=%s, "
+                    "owner_episode_id=%s WHERE install_id=%s",
+                    (fibers[1], episodes[1], levels[2]))
+    owner.commit()
+
+    initial_pending = cleanup_pending(owner, scope_id)
+    assert initial_pending == 6, initial_pending
+    before = state(owner)
+    owner.rollback()
+    response = dispose(admin, levels[0], tag + "-dispose-1")
+    after = state(owner)
+    owner.rollback()
+    assert response.get("disposition") == "committed", response
+    assert len(response["emitted"]) <= 16, response
+    assert len(response["emitted"]) == 1, response
+    leaf_release = response["emitted"][0]
+    release_row = effect_row(owner, leaf_release)
+    assert release_row["kind"] == "host_release", release_row
+    assert release_row["request"]["install_id"] == str(levels[2]), release_row
+    rows_changed = changed_rows(before, after)
+    assert rows_changed <= 16, rows_changed
+    assert rows_changed > 0, rows_changed
+    for index, install in enumerate(levels):
+        row = install_row(owner, install)
+        assert row["state"] == "dispose_pending", (index, row)
+        assert row["disposed_at"] is None, (index, row)
+    pending = cleanup_pending(owner, scope_id)
+    assert pending == initial_pending, pending
+    assert count_kind(owner, levels[0], "host_release") == 0
+    assert count_kind(owner, levels[1], "host_release") == 0
+    assert count_kind(owner, levels[2], "host_release") == 1
+    sequence = [initial_pending, pending]
+    print("[G4-Q] single root dispose: emitted=%d rows_changed=%d pending=%d "
+          "(init %d) root=%s deep=%s; only leaf release=%s"
+          % (len(response["emitted"]), rows_changed, pending,
+             initial_pending, install_row(owner, levels[0])["state"],
+             install_row(owner, levels[2])["state"], leaf_release))
+
+    settle_release(service, leaf_release)
+    assert install_row(owner, levels[2])["state"] == "disposed"
+    pending = cleanup_pending(owner, scope_id)
+    assert pending == 4 and pending < sequence[-1], (pending, sequence)
+    sequence.append(pending)
+    for stage, expected_after in ((2, 2), (3, 0)):
+        response = dispose(admin, levels[0], "%s-dispose-%d" % (tag, stage))
+        assert response.get("disposition") == "committed", response
+        assert len(response["emitted"]) == 1, response
+        pending = cleanup_pending(owner, scope_id)
+        assert pending == expected_after + 2, (stage, pending)
+        assert pending <= sequence[-1], (stage, pending, sequence)
+        sequence.append(pending)
+        assert install_row(owner, levels[0])["state"] == "dispose_pending"
+        released = response["emitted"][0]
+        row = effect_row(owner, released)
+        assert row["kind"] == "host_release", row
+        settle_release(service, released)
+        pending = cleanup_pending(owner, scope_id)
+        assert pending == expected_after, (stage, pending)
+        assert pending < sequence[-1], (stage, pending, sequence)
+        sequence.append(pending)
+        print("[G4-Q] stage=%d successor=%s clears a counted install/effect: "
+              "pending=%d" % (stage, released, pending))
+    assert sequence == [6, 6, 4, 4, 2, 2, 0], sequence
+    assert cleanup_pending(owner, scope_id) == 0
+    assert all(install_row(owner, install)["state"] == "disposed"
+               for install in levels)
+    print("[G4-Q] cleanup_pending sequence=%s (non-increasing; strict drops "
+          "only when a counted obligation clears; final 0)" % (sequence,))
+
+
 def main():
     with server_helper_scope(), setup_db() as db:
         owner = db.connect()
@@ -1635,17 +2516,24 @@ def main():
         service = db.connect("service")
         g4_a(owner)
         g4_b(owner)
+        g4_c(owner, admin, service)
+        g4_d(owner, admin, service)
         g4_e(owner, admin, service)
         g4_cascade(owner, admin, service)
+        g4_f(owner, admin, service)
         g4_g(owner, admin, service)
         g4_h(owner, admin, service)
         g4_i(owner, admin, service)
         g4_j(owner, admin, service)
         g4_k(owner, admin, service)
+        g4_l(owner, admin, service)
+        g4_m(owner, admin, service)
         g4_n(owner, admin, service)
         g4_o(owner, admin, service)
+        g4_p(owner, admin, service)
+        g4_q(owner, admin, service)
         _assert_closed_catalog(owner)
-    print("[passed] v24 S5 W1-W3")
+    print("[passed] v24 S5 W1-W4")
     return 0
 
 
