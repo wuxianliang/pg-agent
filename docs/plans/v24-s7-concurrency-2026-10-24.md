@@ -1,7 +1,7 @@
 # v24 S7 三面并发矩阵：Deep plan
 
-- 状态：**S7 计划稿；G6 未实现、未运行、未验证**。本文件只冻结施工形状，不宣称 S7/G6 已实现或已绿；G6 的绿必须由未来 `v24/s7/test_g6.py` 的实跑输出产生。
-- 工作树：`/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`；branch `v24`；HEAD `90b233e`。S1–S6、S8 已实现；既有 10 个 gate 命令绿（见 §8），G6 是唯一未验收 gate。
+- 状态：**S7 已实施并结项；W1/W2 完成；30/30；11/11**。本文件不宣称已提交/已推送。
+- 工作树：`/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`；branch `v24`；起始 HEAD `90b233e`，结项时 HEAD `19764eb`；W1/W2 commits `c5fe8e3`/`ddabdcd`/`19764eb`；单一里程碑提交未发生，属控制器。S1–S6、S8 已实现；既有 10 个 gate 命令绿，加 G6 为 11/11（见 §8）。
 - 上游权威：设计稿 §7 L377–405、§9 L429–449、§B.1 L491–518、§B.2 L519–532、附录 C.6 L756–784；pre-plan S7 卡 L194–207、§6.2 L268–272、§7.2 L301–309、§7.3 L313–315。
 - 阅读顺序：§2 边界 → §3 映射 → §4 harness 形状（承重） → §5 18 格 + 9 负例 + 5 锁序 → §6/§7 风险与裁决。任何与设计稿不一致处集中在 §6.5/§7，不静默改规格。
 - **计数口径（强制）**：设计 §7 表是 **6 个行类型 × 3 个生命周期列 = 18 格**；§9 G6 的“9 条”是 **9 条强制负例**，不是 9 个 §7 行。本计划不新增 §7 行、不改 §9 负例；若有人认为“9 行”另有所指，见 §7 O-S7-1，停手请求设计修订。
@@ -18,7 +18,7 @@
 | Dependencies | S1：`advance` 单入口、G=`pg_advisory_xact_lock(24,1)`、B.1 锁向量、request/receipt、ACL。S2：install/fiber/episode/slot/pin 与 activation/run pin。S3：run/generation/interaction/`fiber_control`。S4：model/tool claim/settle、batch barrier、pending_steer、cancel×T2。S5：dispose/close 闭包、owner 级联、`scope_closable`。S6：`command_recover` 与恢复共享合同（本计划只消费，不重测崩溃）。S8/C16：spawn 同事务、`spawn_key_conflict`、owner pair。**G6 不得先于 G7 收口**；S7 不依赖新的产品合同。 |
 | Size | M：2 个 W；预计 `g6_support.py` 250–350 行、`test_g6.py` 650–850 行；**0 行产品 SQL**、0 个新 SQL 文件、0 个新错误码。 |
 
-**本文件是 plan only**：不创建 `v24/s7/**` 的任何代码文件，不运行 G6，不 commit/push；本轮唯一新增文件就是本计划。
+**本文件是计划与结项记录**：实施代码位于 `v24/s7/**`（W1/W2）；本文件不宣称已提交/已推送。
 
 ---
 
@@ -163,7 +163,7 @@ G 的精确身份（`classid=24,objid=1,objsubid=2`）与 advisory wait 已由 *
 [G6-<ID>-lock] wait_graph=<pid->{blockers}> cycle=false advisory_only=true winner=<first|G>
 ```
 
-示例（未来实跑时才允许出现真实 pid/哈希）：
+示例（实跑时允许出现真实 pid/哈希）：
 
 ```text
 [G6-N1a] holder=service:41231 waiter=admin:41237 blocking_pids={41231} ungranted_advisory=1 order=start->dispose diff=runs:+0/~1,pins:+1/~0,effects:+1/~0 assert=start pin blocks dispose; dispose pending, not disposed
@@ -279,6 +279,8 @@ uv run python v24/s7/test_g6.py --only g6_a1,g6_n1,g6_b1
 | **N8** | **T2/cancel** | `ordered_advance_race` 两序；只重跑 G2b-O 的关键交点 | T2 先：receipt/成本/后继保留，cancel 随后取消 ready successor；cancel 先：late T2 只记 fact/cost，零 successor，pin 保留至静默。断言“零第二个 successor、receipt 不被覆盖” | T2 committed / cancel committed；反向 T2 committed 无 successor |
 | **N9** | **spawn intent same key different input** | `serialized_race` 两连接同 key 异 canonical bytes；随后新父 outcome 携带败者 bytes | 恰一个 child；败者 `receipt_conflict`（G 串行），不写 quota；新父 outcome 得第 24 码 `spawn_key_conflict` W0，十表逐字节相等，model effect 仍 claimed；child/effect 计数 1，父 grant 只扣一次 | 赢家 committed；败者 W0；24 码 W0 |
 
+> **N6b 语义澄清（以实跑为准）**：上表简写“inspect absent + release → disposed”对应的真实产品路径是 `prepare_failed → direct tombstone（0 次 host_release）→ closed`，与既有 **G4-J2** 一致；“disposed”指该 direct tombstone，不是先走 host_release；这是文档澄清，不削弱“不得提前 closed”的断言。
+
 ### 5.4 §B.2 死锁/锁序负例（L1…L5）
 
 > `cleanup_cycle` 的 DAG 环本身由 G4-E/G4-M-5 覆盖，G6 不重测；这里只测并发锁序的 deadlock-free、无 `pg_blocking_pids` 环、winner=G。
@@ -368,18 +370,22 @@ uv run python v24/s7/test_g6.py --only g6_a1,g6_n1,g6_b1
 
 ### 8.1 W1：harness + 18 格中尚未覆盖的部分
 
+**状态：W1 完成（2026-10-24）**。18 格全部有落位、无空格；`--only` 仅作增量检查点，不是 gate、不计入 11/11；W1 checkpoint commits `c5fe8e3`（matrix）/`ddabdcd`（evidence notes）。
+
 - **新建**：`v24/s7/g6_support.py`、`v24/s7/test_g6.py`、`v24/s7/README.md`（README 可先骨架）。
 - **实现**：`G6-A1`、`G6-N1`、`G6-B1/B2/B3`、`G6-C1/C2/C3`、`G6-D1`、`G6-E1`、`G6-F1`、`G6-G1/G2/G3`、`G6-H1/H2/H3`；即 18 格矩阵中所有标“新”的格。格 2（start×retire）不写 body，仅由 closeout 重跑 `G3b-5` 覆盖。
 - **夹具**：按 §4.5 复用；每个断言 fresh fixture；先前置不变量，再两序，再最终 diff。
 - **增量检查**：`uv run python v24/s7/test_g6.py --only g6_a1,g6_n1,g6_b1,g6_c2,g6_h2` 等，exit 0；**不是 gate**，不计入 11/11。
-- **W1 Done when**：18 格全部有落位；新断言在 `--only` 下通过；既有 10 个 gate 仍 exit 0；`v24/sql/**` 与 `v24/load.py` diff 为空；无 `sleep`、无 socket。
-- **W1 不提交**；不更新 matrix/ledger 的“完成”状态，只可写“W1 checkpoint”。
+- **W1 Done when（已达成）**：18 格全部有落位；新断言在 `--only` 下通过；既有 10 个 gate 仍 exit 0；`v24/sql/**` 与 `v24/load.py` diff 为空；无 `sleep`、无 socket。
+- **W1 checkpoint 已提交**（`c5fe8e3`、`ddabdcd`）；单一里程碑提交仍未发生，属控制器；matrix/ledger 的“完成”状态在 W2 收尾统一更新。
 
 ### 8.2 W2：全量 G6 + 9 负例 + 5 锁序 + 收尾
 
+**状态：W2 完成（2026-10-24）**。无参数全量 G6 30/30 ID；closeout 11/11 exit 0；收尾工件已更新；`v24/sql/**` 与 `v24/load.py` diff 为空；单一里程碑提交仍未发生，属控制器。
+
 - **实现**：`G6-N2…N9`、`G6-L1…L5`；把 `G6-N1` 纳入全量；补格 2 的“仅重跑”说明。
-- **全量 gate**：`uv run python v24/s7/test_g6.py` exit 0；`G6-A…H`、`N1…N9`、`L1…L5` 每个结果 tag 恰一次；末行 `[passed] v24 S7 W1-W2 ...`。
-- **既有 10 命令逐条重跑**（仓库根；顺序不强制，全部 exit 0）：
+- **全量 gate（已实跑）**：`uv run python v24/s7/test_g6.py` exit 0；`G6-A…H`、`N1…N9`、`L1…L5` 每个结果 tag 恰一次；末行 `[passed] v24 S7 W1-W2 ...`；合计 **30/30 ID**（16 矩阵 + 9 负例 + 5 锁序）。
+- **既有 10 命令逐条重跑（已实跑，仓库根；顺序不强制，全部 exit 0）**：
 
 | # | 命令 | 归属 |
 |---:|---|---|
@@ -394,20 +400,20 @@ uv run python v24/s7/test_g6.py --only g6_a1,g6_n1,g6_b1
 | 9 | `uv run python v24/s6/test_g5.py` | G5 |
 | 10 | `uv run python v24/s8/test_g7.py` | G7 |
 
-  加上第 11 条 `uv run python v24/s7/test_g6.py`，closeout 为 **11/11 exit 0**。既有 10 条的命令、顺序、断言、编号一律不改；G6 不替代任何一条。
-- **收尾工件**：`v24/s7/README.md`（对象/入口/命令/证据索引/债务）；`docs/reviews/v24-conformance-matrix-2026-10-23.md`（G6 从“未验证”改为“完成”，并写 18 格/9 负例/5 锁序的边界）；`docs/reviews/v24-deviation-ledger-2026-10-23.md`（D-S7-1/2/3 与 O-S7-* 的落位）；本计划结项段（只写“计划完成”，不写“已提交/已推送”）。
-- **loader 不变**：无新 SQL 文件、无 `SQL_LOAD_ORDER` 变更；`git diff --exit-code -- v24/load.py v24/sql` 为空。
-- **单一里程碑提交**：留给控制器；提交信息建议 `v24: add S7 concurrency matrix (G6)`；按路径 `git add`，禁止 `git add -A`；不 force-push、不碰 `main`。
+  加上第 11 条 `uv run python v24/s7/test_g6.py`，closeout 为 **11/11 exit 0（已实跑）**。既有 10 条的命令、顺序、断言、编号一律不改；G6 不替代任何一条。
+- **收尾工件（已更新）**：`v24/s7/README.md`（对象/入口/命令/证据索引/债务）；`docs/reviews/v24-conformance-matrix-2026-10-23.md`（G6 从“未验证”改为“完成”，并写 18 格/9 负例/5 锁序的边界）；`docs/reviews/v24-deviation-ledger-2026-10-23.md`（D-S7-1/2/3 与 O-S7-* 的落位）；本计划结项段（只写“计划完成”，不写“已提交/已推送”）。
+- **loader 不变（已核对）**：无新 SQL 文件、无 `SQL_LOAD_ORDER` 变更；`git diff --exit-code -- v24/load.py v24/sql` 为空。
+- **单一里程碑提交（未发生）**：留给控制器；提交信息建议 `v24: add S7 concurrency matrix (G6)`；按路径 `git add`，禁止 `git add -A`；不 force-push、不碰 `main`。
 - **W2 不宣称**：不声称真实 provider/网络、跨主机、无饥饿、G5 崩溃窗口；这些边界写入 README。
 
 ### 8.3 计划级验收清单
 
-- [ ] 18 格矩阵每格有“既有证据 + S7 动作”，无空格。
-- [ ] 9 条负例 N1–N9 全部有双连接/两序证据；能两序的两序。
-- [ ] 5 条锁序 L1–L5 全部有 `pg_blocking_pids()`、wait graph 无环、winner=G。
-- [ ] 每个 G6 tag 结果行恰一次；末行 `[passed]`。
-- [ ] 11/11 gate 命令 exit 0（10 既有 + G6）。
-- [ ] `v24/sql/**`、`v24/load.py` diff 为空；无新表/列/函数/错误码。
-- [ ] `v24/s7/README.md`、conformance matrix、deviation ledger 更新。
-- [ ] D-S7-1/2/3 与 O-S7-* 有明确落位；未验证项显式标“未验证”。
+- [x] 18 格矩阵每格有“既有证据 + S7 动作”，无空格。
+- [x] 9 条负例 N1–N9 全部有双连接/两序证据；能两序的两序。
+- [x] 5 条锁序 L1–L5 全部有 `pg_blocking_pids()`、wait graph 无环、winner=G。
+- [x] 每个 G6 tag 结果行恰一次；末行 `[passed]`。
+- [x] 11/11 gate 命令 exit 0（10 既有 + G6）。
+- [x] `v24/sql/**`、`v24/load.py` diff 为空；无新表/列/函数/错误码。
+- [x] `v24/s7/README.md`、conformance matrix、deviation ledger 更新。
+- [x] D-S7-1/2/3 与 O-S7-* 有明确落位；未验证项显式标“未验证”。
 - [ ] 单一里程碑提交留给控制器；本文件不宣称已提交/已推送。
