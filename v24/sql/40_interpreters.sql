@@ -1384,7 +1384,11 @@ BEGIN
      AND NOT pg_has_role(session_user,'v24_admin','USAGE') THEN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('unauthorized'));
   END IF;
-  IF current_run.status IN ('completed','failed','cancelled','blocked_unknown') THEN
+  -- D-S4-3: blocked_unknown is a W0 wall with its own code, never
+  -- already_terminal.  completed/failed/cancelled keep their S3 W1 receipt.
+  IF current_run.status = 'blocked_unknown' THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('blocked_unknown'));
+  ELSIF current_run.status IN ('completed','failed','cancelled') THEN
     RETURN jsonb_build_object('write',true,'error',v24.error_v1('already_terminal'));
   END IF;
   IF expected_generation IS DISTINCT FROM current_run.driving_generation THEN
@@ -1527,7 +1531,11 @@ BEGIN
      AND NOT pg_has_role(session_user,'v24_admin','USAGE') THEN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('unauthorized'));
   END IF;
-  IF current_run.status IN ('completed','failed','cancelled','blocked_unknown') THEN
+  -- D-S4-3: a blocked_unknown run answers with its own W0 code before the
+  -- interaction/CAS checks; completed/failed/cancelled keep already_terminal.
+  IF current_run.status = 'blocked_unknown' THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('blocked_unknown'));
+  ELSIF current_run.status IN ('completed','failed','cancelled') THEN
     RETURN jsonb_build_object('write',true,'error',v24.error_v1('already_terminal'));
   END IF;
   IF current_run.status IS DISTINCT FROM 'waiting' OR current_run.interaction IS NULL

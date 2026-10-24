@@ -1,9 +1,10 @@
--- S4 W1/W2: native agent loop helpers, model/tool settlement interpreters and
--- the loop applier.  Every function here is INVOKER, carries an explicit
+-- S4 W1/W2/W3: native agent loop helpers, model/tool settlement interpreters
+-- and the loop applier.  Every function here is INVOKER, carries an explicit
 -- search_path and is revoked from every protocol role by 50_permissions.sql.
 -- `advance` remains the only privileged terminal writer.  W2 adds the model
 -- tool-call branch, tool settlement, the batch barrier and tool claim opening;
--- interaction production and pending_steer consumption are later Ws.
+-- W3 adds model interaction production (runs.interaction, waiting) and the
+-- respond-side blocked_unknown precedence.  pending_steer consumption is W5.
 
 -- Numeric policy lives in exactly one place so gates can assert the contract.
 CREATE FUNCTION v24.loop_policy() RETURNS jsonb LANGUAGE sql IMMUTABLE
@@ -135,6 +136,7 @@ DECLARE
   v_close jsonb;
   v_result jsonb;
   v_interaction jsonb := NULL;
+  v_ix jsonb := NULL;
   v_pending jsonb;
   v_ended timestamptz;
   v_events jsonb := '[]'::jsonb;
@@ -204,9 +206,33 @@ BEGIN
         END IF;
       END LOOP;
     END IF;
-    IF v_res ? 'interaction' AND v_res->'interaction' <> 'null'::jsonb THEN
-      -- W1 opens no interaction production; W3 owns this branch.
-      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    v_ix := v_res->'interaction';
+    IF v_ix IS NOT NULL AND v_ix <> 'null'::jsonb THEN
+      -- C19.1: the host supplies exactly the two digests and the payload.  The
+      -- digests are frozen as lowercase hex; S3's seeded bytea-style form is
+      -- also accepted and preserved byte-for-byte (respond only reads the two
+      -- ids, so the representation is audit data, not control data).
+      IF jsonb_typeof(v_ix) IS DISTINCT FROM 'object'
+         OR NOT (v_ix ?& ARRAY['schema_digest','prompt_digest','payload'])
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(v_ix) k
+                     WHERE k NOT IN ('schema_digest','prompt_digest','payload'))
+         OR jsonb_typeof(v_ix->'schema_digest') IS DISTINCT FROM 'string'
+         OR jsonb_typeof(v_ix->'prompt_digest') IS DISTINCT FROM 'string'
+         OR NOT (
+              (length(v_ix->>'schema_digest') = 64
+               AND (v_ix->>'schema_digest') ~ '^[0-9a-f]{64}$')
+              OR (length(v_ix->>'schema_digest') = 66
+                  AND left(v_ix->>'schema_digest',2) = chr(92)||'x'
+                  AND right(v_ix->>'schema_digest',64) ~ '^[0-9a-f]{64}$'))
+         OR NOT (
+              (length(v_ix->>'prompt_digest') = 64
+               AND (v_ix->>'prompt_digest') ~ '^[0-9a-f]{64}$')
+              OR (length(v_ix->>'prompt_digest') = 66
+                  AND left(v_ix->>'prompt_digest',2) = chr(92)||'x'
+                  AND right(v_ix->>'prompt_digest',64) ~ '^[0-9a-f]{64}$'))
+         OR jsonb_typeof(v_ix->'payload') IS DISTINCT FROM 'object' THEN
+        RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+      END IF;
     END IF;
     IF v_res ? 'final' AND v_res->'final' <> 'null'::jsonb THEN
       IF jsonb_typeof(v_res->'final') IS DISTINCT FROM 'object' THEN
@@ -246,6 +272,10 @@ BEGIN
   END IF;
   v_n_tools := CASE WHEN jsonb_typeof(v_res->'tool_calls') = 'array'
                     THEN jsonb_array_length(v_res->'tool_calls') ELSE 0 END;
+  -- C19: an interaction is never published together with a tool batch.
+  IF v_n_tools > 0 AND v_ix IS NOT NULL AND v_ix <> 'null'::jsonb THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+  END IF;
 
   -- C17 request envelope: key closure, deterministic identity, allocation and
   -- digests.  A claim-time gate performed the same check; settlement repeats it
@@ -509,6 +539,30 @@ BEGIN
             'event_kind','model_call_settled','payload',jsonb_build_object(
               'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',false)));
       END IF;
+    ELSIF v_ix IS NOT NULL AND v_ix <> 'null'::jsonb THEN
+      -- C19.1: one interaction per model outcome.  The ids are the source model
+      -- effect id, generation is the run's driving generation, and the two host
+      -- digests plus payload are copied byte-for-byte.  A waiting run has no
+      -- pending steer and no successor; the respond command produces the next
+      -- model effect under its own generation CAS.
+      v_interaction := jsonb_build_object(
+        'interaction_id', p_effect_id,
+        'origin_effect_id', p_effect_id,
+        'generation', r.driving_generation,
+        'schema_digest', v_ix->'schema_digest',
+        'prompt_digest', v_ix->'prompt_digest',
+        'created_at', now());
+      v_status := 'waiting';
+      v_close := NULL; v_result := NULL;
+      v_pending := NULL; v_ended := NULL;
+      v_events := jsonb_build_array(
+        jsonb_build_object('entity_type','run','entity_id',e.run_id,
+          'event_kind','model_call_settled','payload',jsonb_build_object(
+            'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',false)),
+        jsonb_build_object('entity_type','run','entity_id',e.run_id,
+          'event_kind','interaction_created','payload',jsonb_build_object(
+            'run_id',e.run_id,'effect_id',p_effect_id,
+            'interaction_id',p_effect_id,'generation',r.driving_generation)));
     ELSIF v_n_tools > 0 THEN
       -- C20/F3=A: a structurally valid batch reserves one tool_call per item.
       IF v_n_tools > r.remaining_tool_calls THEN

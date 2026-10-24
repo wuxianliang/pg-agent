@@ -1062,11 +1062,18 @@ def steer_contract(db, owner):
 
     principal = one(service, "SELECT v24.principal_id(session_user)")
     service.commit()
-    for status in ("completed", "failed", "cancelled", "blocked_unknown"):
+    for status in ("completed", "failed", "cancelled"):
         terminal = seed_run(owner, principal, status=status, ended_at=datetime.now(timezone.utc))
         # Terminal precedes stale CAS; authorization precedes terminal disclosure.
         assert_steer_failure(owner, service, terminal, 99, "already_terminal", w1=True)
         assert_steer_failure(owner, operator, terminal, 99, "unauthorized")
+    # Declared S4 W3 alignment (D-S4-3): blocked_unknown is no longer an
+    # already_terminal alias.  It is a W0 wall with its own code, so it writes
+    # neither the command effect nor a receipt; auth precedence is unchanged.
+    blocked = seed_run(owner, principal, status="blocked_unknown",
+                       ended_at=datetime.now(timezone.utc))
+    assert_steer_failure(owner, service, blocked, 99, "blocked_unknown")
+    assert_steer_failure(owner, operator, blocked, 99, "unauthorized")
     # Admin bypasses ownership; no previous model call uses the empty-input fallback.
     admin_run = seed_run(owner, principal)
     assert_steer_success(owner, admin, admin_run, 1)
@@ -1249,10 +1256,16 @@ def respond_contract(db, owner):
     running = seed_run(owner, principal)
     assert_respond_failure(owner, service, running, uuid4(), 1, "interaction_mismatch", w1=True)
     assert_respond_failure(owner, service, uuid4(), uuid4(), 1, "invalid_args")
-    for status in ("completed", "failed", "cancelled", "blocked_unknown"):
+    for status in ("completed", "failed", "cancelled"):
         terminal = seed_run(owner, principal, status=status, ended_at=datetime.now(timezone.utc))
         assert_respond_failure(owner, service, terminal, uuid4(), 99, "already_terminal", w1=True)
         assert_respond_failure(owner, operator, terminal, uuid4(), 99, "unauthorized")
+    # Declared S4 W3 alignment (D-S4-3): blocked_unknown returns its own W0 code
+    # before the interaction/CAS checks and writes neither effect nor receipt.
+    blocked = seed_run(owner, principal, status="blocked_unknown",
+                       ended_at=datetime.now(timezone.utc))
+    assert_respond_failure(owner, service, blocked, uuid4(), 99, "blocked_unknown")
+    assert_respond_failure(owner, operator, blocked, uuid4(), 99, "unauthorized")
     waiting, interaction = respond_fixture(owner, service)
     for rid, iid, answer, generation, key in (
             (None, interaction["interaction_id"], {}, 4, "valid"),

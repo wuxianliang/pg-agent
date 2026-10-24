@@ -1,4 +1,5 @@
-"""G2b W1-W2 subset: loop spine (model/tool), claim/settle, batch barrier, reserve.
+"""G2b W1-W3 subset: loop spine (model/tool), claim/settle, batch barrier, reserve,
+interaction production and the real respond chain.
 
 The gate drives the real protocol through LOGIN roles and only simulates the
 external model call in process.  A claim is always COMMITted and the worker
@@ -1481,6 +1482,204 @@ def tool_call_budget(db, owner):
           "effects, run completed/budget_exhausted, tool_calls budget unchanged")
 
 
+# ---------------------------------------------------------------------------
+# S4 W3: interaction production (G2b-H) and the real respond chain (G2b-I).
+
+def advance_text(conn, effect_id, outcome):
+    return one(conn, "SELECT v24.advance(%s,%s)::text", (effect_id, Json(outcome)))
+
+
+def event_kinds(owner, effect_id):
+    return read(owner, """SELECT coalesce(jsonb_agg(event_kind ORDER BY seq),'[]'::jsonb)
+        FROM v24.events WHERE effect_id=%s""", (effect_id,))
+
+
+def events_of_kind(owner, run_id, kind):
+    return read(owner, """SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.seq),'[]'::jsonb)
+        FROM v24.events e WHERE e.entity_id=%s AND e.event_kind=%s""", (run_id, kind))
+
+
+def produce_waiting_interaction(owner, service, realm, *, schema_digest, prompt_digest,
+                                payload, usage_tokens=40):
+    """Drive start -> claim -> model success carrying interaction, no fake state."""
+    root, live, _ = loop_fixture(owner, service, realm=realm)
+    budget = {"steps": 7, "tool_calls": 3, "tokens": 5000, "wall_ms": 600000}
+    response, _ = start(service, root, live["fiber"], {}, budget, f"{realm}-{uuid4()}")
+    service.commit()
+    assert_owner_envelope(response)
+    run_id, model_id = response["emitted"]
+    token = claim_effect(service, model_id)
+    result = {"text": "need input",
+              "interaction": {"schema_digest": schema_digest,
+                              "prompt_digest": prompt_digest,
+                              "payload": payload},
+              "usage": {"tokens": usage_tokens, "wall_ms": 7}}
+    settled, receipt = settle(service, model_id, token, "success", result)
+    assert_owner_envelope(settled)
+    return run_id, model_id, settled, receipt
+
+
+def assert_respond_mismatch_w1(owner, before, response, key, label):
+    """interaction_mismatch is W1: zero domain rows, exactly one command receipt."""
+    assert response == {"v": 1, "error": {"code": "interaction_mismatch",
+                                         "detail": {}}}, (label, response)
+    after = snapshot(owner)
+    for table in EXPECTED_TABLES - {"effects", "requests"}:
+        assert after[table] == before[table], (label, table, "domain write")
+    new_effects = [row for row in after["effects"] if row not in before["effects"]]
+    new_requests = [row for row in after["requests"] if row not in before["requests"]]
+    assert len(new_effects) == 1 and new_effects[0]["request_key"] == key, (label, new_effects)
+    assert new_effects[0]["kind"] == "command_respond", (label, new_effects[0])
+    assert new_effects[0]["status"] == "failed", (label, new_effects[0])
+    assert len(new_requests) == 1, (label, new_requests)
+    assert new_requests[0]["effect_id"] == new_effects[0]["effect_id"], (label, new_requests)
+    assert new_requests[0]["response"] == response, (label, new_requests[0])
+    print(f"[G2b-I/{label}] interaction_mismatch: ten-table domain byte-equal; W1 "
+          f"command+receipt only")
+
+
+def interaction_production(db, owner):
+    """G2b-H: model success with interaction -> waiting, exact six fields, 0 successors."""
+    service = db.connect("service")
+    schema_digest = "1" * 64
+    prompt_digest = "2" * 64
+    payload = {"question": "colour?", "options": ["red", "blue"]}
+    run_id, model_id, settled, receipt = produce_waiting_interaction(
+        owner, service, "g2b-h", schema_digest=schema_digest,
+        prompt_digest=prompt_digest, payload=payload)
+    assert settled["emitted"] == [], settled
+    run = run_row(owner, run_id)
+    model = effect_row(owner, model_id)
+    interaction = run["interaction"]
+    assert set(interaction) == {"interaction_id", "origin_effect_id", "generation",
+                                "schema_digest", "prompt_digest", "created_at"}, interaction
+    assert interaction["interaction_id"] == model_id, interaction
+    assert interaction["origin_effect_id"] == model_id, interaction
+    assert interaction["generation"] == 1, interaction
+    assert interaction["schema_digest"] == schema_digest, interaction
+    assert interaction["prompt_digest"] == prompt_digest, interaction
+    assert interaction["created_at"] is not None, interaction
+    assert run["status"] == "waiting", run
+    assert run["pending_steer"] is None, run
+    assert run["close_intent"] is None and run["result"] is None, run
+    assert run["ended_at"] is None, run
+    assert run["turn_no"] == 1 and run["revision"] == 2, run
+    assert run["remaining_steps"] == 6 and run["remaining_tool_calls"] == 3, run
+    assert run["remaining_tokens"] == 4960, run
+    assert model["status"] == "succeeded" and model["outcome"] == receipt, model
+    assert model["resource_quiesced_at"] is not None, model
+    assert model["claim_owner"] is None and model["lease_until"] is None, model
+    assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                       "AND kind IN ('model_call','tool_call')", (run_id,)) == 1
+    assert read(owner, "SELECT count(*) FROM v24.requests WHERE effect_id=%s",
+                (model_id,)) == 0
+    kinds = event_kinds(owner, model_id)
+    assert kinds == ["model_call_settled", "interaction_created"], kinds
+    created = events_of_kind(owner, run_id, "interaction_created")
+    assert len(created) == 1, created
+    assert created[0]["payload"] == {"run_id": run_id, "effect_id": model_id,
+                                     "interaction_id": model_id, "generation": 1}, created[0]
+    print("[G2b-H] model interaction: run waiting pending_steer=NULL; interaction "
+          "exactly {interaction_id,origin_effect_id,generation,schema_digest,"
+          "prompt_digest,created_at}; ids=source model; generation=1; 0 successors; "
+          "1 interaction_created; turn_no=1 steps=6 tokens=904+4096-40=4960")
+
+    before = snapshot(owner)
+    first_raw = advance_text(service, model_id, receipt)
+    service.commit()
+    first = json.loads(first_raw)
+    assert first["disposition"] == "replay" and first["emitted"] == [], first
+    second_raw = advance_text(service, model_id, receipt)
+    service.commit()
+    assert second_raw == first_raw, "interaction replay bytes changed"
+    assert snapshot(owner) == before, "interaction replay wrote rows"
+    print("[G2b-H] replay: same receipt twice -> byte-equal replay responses and "
+          "ten-table byte-equal snapshot; still one interaction_created")
+
+
+def interaction_respond_chain(db, owner):
+    """G2b-I: respond consumes the W3 interaction and admits one respond model."""
+    service = db.connect("service")
+    schema_digest = "3" * 64
+    prompt_digest = "4" * 64
+    payload = {"question": "ready?", "options": ["yes", "no"]}
+    run_id, model_id, settled, _ = produce_waiting_interaction(
+        owner, service, "g2b-i", schema_digest=schema_digest,
+        prompt_digest=prompt_digest, payload=payload)
+    assert settled["emitted"] == [], settled
+    waiting = run_row(owner, run_id)
+    interaction = waiting["interaction"]
+    old_model = effect_row(owner, model_id)
+
+    # Wrong interaction id plus a stale generation: interaction precedes CAS.
+    before = snapshot(owner)
+    wrong_key = f"g2b-i-wrong-{uuid4()}"
+    wrong, _ = respond(service, run_id, uuid4(), {"answer": "no"},
+                       waiting["driving_generation"] + 1, wrong_key)
+    service.commit()
+    assert_respond_mismatch_w1(owner, before, wrong, wrong_key, "wrong-id")
+
+    answer = {"answer": "yes", "structured": {"n": 7}, "nested": [True, None]}
+    before = snapshot(owner)
+    response, _ = respond(service, run_id, interaction["interaction_id"], answer,
+                          waiting["driving_generation"], f"g2b-i-{uuid4()}")
+    service.commit()
+    assert_owner_envelope(response)
+    assert len(response["emitted"]) == 1, response
+    new_model_id = response["emitted"][0]
+    command_id = response["effect_id"]
+    assert new_model_id == md5_uuid(f"{command_id}:model_call:0"), response
+    run = run_row(owner, run_id)
+    reserve = read(owner, "SELECT v24.model_reserve(%s)", (waiting["remaining_tokens"],))
+    assert run["status"] == "running" and run["interaction"] is None, run
+    assert run["driving_generation"] == waiting["driving_generation"] + 1, run
+    assert run["revision"] == waiting["revision"] + 1, run
+    assert run["turn_no"] == waiting["turn_no"], run
+    assert run["remaining_steps"] == waiting["remaining_steps"] - 1, run
+    assert run["remaining_tokens"] == waiting["remaining_tokens"] - reserve, run
+    assert run["remaining_tokens"] == 864 and reserve == 4096, run
+    models = model_rows(owner, run_id)
+    assert len(models) == 2, models
+    assert row_of(models, "effect_id", model_id) == old_model, "old model effect changed"
+    new_model = row_of(models, "effect_id", new_model_id)
+    digests = read(owner, "SELECT v24.model_digests(%s)", (run_id,))
+    assert new_model["status"] == "ready" and new_model["ordinal"] == 0, new_model
+    assert new_model["parent_effect_id"] == command_id, new_model
+    assert new_model["generation"] == waiting["driving_generation"] + 1, new_model
+    assert new_model["epoch_no"] == waiting["epoch_no"] and new_model["pin_id"] is None, new_model
+    assert new_model["request"] == {
+        "run_id": run_id, "epoch_no": waiting["epoch_no"],
+        "generation": waiting["driving_generation"] + 1,
+        "response": answer, "origin_effect_id": model_id,
+        "v": 1, "cause": "respond",
+        "reserve": {"tokens": reserve}, "digests": digests}, new_model["request"]
+    assert read(owner, "SELECT count(*) FROM v24.effects WHERE run_id=%s "
+                       "AND kind='model_call' AND status='ready'", (run_id,)) == 1
+    after = snapshot(owner)
+    new_events = [row for row in after["events"] if row not in before["events"]]
+    assert len(new_events) == 1, new_events
+    assert new_events[0]["event_kind"] == "interaction_responded", new_events[0]
+    assert new_events[0]["payload"] == {
+        "run_id": run_id, "interaction_id": interaction["interaction_id"],
+        "generation": waiting["driving_generation"] + 1}, new_events[0]
+    new_effects = [row for row in after["effects"] if row not in before["effects"]]
+    assert len(new_effects) == 2, new_effects
+    assert len([row for row in new_effects if row["kind"] == "model_call"]) == 1, new_effects
+    assert len([row for row in new_effects if row["kind"] == "command_respond"]) == 1, new_effects
+    print("[G2b-I] respond: interaction cleared, status running, generation+1 "
+          "(1->2), revision+1, steps 6->5, tokens 4960-4096=864; exactly one ready "
+          "cause=respond model with response/origin/digests; one interaction_responded; "
+          "old model effect byte-unchanged")
+
+    # A distinct key after consumption sees the interaction mismatch before CAS.
+    before = snapshot(owner)
+    second_key = f"g2b-i-second-{uuid4()}"
+    second, _ = respond(service, run_id, interaction["interaction_id"], answer,
+                        waiting["driving_generation"], second_key)
+    service.commit()
+    assert_respond_mismatch_w1(owner, before, second, second_key, "consumed")
+
+
 def tool_unknown_wall(db, owner):
     """G2b-N: tool unknown keeps its receipt, blocks the run, retains its pin."""
     service = db.connect("service")
@@ -1533,6 +1732,28 @@ def tool_unknown_wall(db, owner):
     print("[G2b-N] a sibling settlement on the blocked_unknown run is W0 "
           "blocked_unknown with a byte-equal snapshot")
 
+    # D-S4-3: steer/respond on the blocked_unknown run are W0 walls too: the
+    # code replaces already_terminal and writes neither command nor receipt.
+    before = snapshot(owner)
+    steer_refused, _ = steer(service, run_id, run["driving_generation"], "no more",
+                             f"g2b-n-steer-{uuid4()}")
+    service.commit()
+    assert steer_refused == {"v": 1, "error": {"code": "blocked_unknown",
+                                               "detail": {}}}, steer_refused
+    assert snapshot(owner) == before, "blocked_unknown steer wrote rows"
+    print("[G2b-N] steer on the blocked_unknown run is W0 blocked_unknown with a "
+          "ten-table byte-equal snapshot (no command effect, no receipt)")
+
+    before = snapshot(owner)
+    respond_refused, _ = respond(service, run_id, uuid4(), {"answer": "no"},
+                                 run["driving_generation"], f"g2b-n-respond-{uuid4()}")
+    service.commit()
+    assert respond_refused == {"v": 1, "error": {"code": "blocked_unknown",
+                                                 "detail": {}}}, respond_refused
+    assert snapshot(owner) == before, "blocked_unknown respond wrote rows"
+    print("[G2b-N] respond on the blocked_unknown run is W0 blocked_unknown with a "
+          "ten-table byte-equal snapshot (no command effect, no receipt)")
+
 
 def main():
     install_no_network()
@@ -1554,11 +1775,13 @@ def main():
             tool_batch_claims_and_guards(db, owner)
             tool_batch_settlement_order(db, owner)
             tool_call_budget(db, owner)
+            interaction_production(db, owner)
+            interaction_respond_chain(db, owner)
             tool_unknown_wall(db, owner)
             _assert_closed_catalog(owner)
     finally:
         restore_no_network()
-    print("[passed] v24 S4 W1-W2")
+    print("[passed] v24 S4 W1-W3")
     return 0
 
 
