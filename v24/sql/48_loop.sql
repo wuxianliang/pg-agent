@@ -125,6 +125,7 @@ DECLARE
   v_wall bigint;
   v_tokens bigint;
   v_late boolean := false;
+  v_cancel_late boolean := false;
   v_sealed boolean := false;
   v_semantic boolean := false;
   v_admit boolean := false;
@@ -164,9 +165,15 @@ BEGIN
   END IF;
   IF r.status = 'blocked_unknown' THEN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('blocked_unknown'));
-  ELSIF r.status IN ('completed','failed','cancelled') THEN
+  ELSIF r.status IN ('completed','failed') THEN
+    RETURN jsonb_build_object('write',false,'error',v24.error_v1('already_terminal'));
+  ELSIF r.status = 'cancelled'
+        AND NOT (e.status = 'claimed' AND e.cancel_requested) THEN
+    -- Only the claim cancel already revoked may still report its fact/cost
+    -- (C19/G2b-O).  Anything else on a cancelled run stays terminal.
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('already_terminal'));
   END IF;
+  v_cancel_late := r.status = 'cancelled';
 
   -- C19.0 structural class, first: receipt and result shape, never any DML.
   IF (p_outcome->>'v') IS DISTINCT FROM '1'
@@ -394,9 +401,17 @@ BEGIN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
   END;
 
-  -- F1: independently recompute the three digests and require byte equality.
+  -- F1: independently recompute the three digests.  A cancelled run is the one
+  -- exception: cancel may already have released pins, so the pin-derived
+  -- toolset digest is no longer comparable; policy/schema are version constants
+  -- and are still required to match byte for byte.
   v_digests := v24.model_digests(e.run_id);
-  IF e.request->'digests' IS DISTINCT FROM v_digests THEN
+  IF v_cancel_late THEN
+    IF (e.request->'digests'->>'policy') IS DISTINCT FROM (v_digests->>'policy')
+       OR (e.request->'digests'->>'schema') IS DISTINCT FROM (v_digests->>'schema') THEN
+      RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
+    END IF;
+  ELSIF e.request->'digests' IS DISTINCT FROM v_digests THEN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('invalid_outcome'));
   END IF;
 
@@ -404,8 +419,10 @@ BEGIN
 
   -- C19.0 semantic class: the host executed, but the receipt proves the result
   -- cannot be trusted.  Never an error return; settle as unknown with the
-  -- original receipt preserved as the first outcome.
-  IF v_res ? 'tool_calls' AND v_res->'tool_calls' <> 'null'::jsonb THEN
+  -- original receipt preserved as the first outcome.  A cancel-late settlement
+  -- skips the pin-membership arm: cancel itself may have released the pins the
+  -- host legitimately used, and the late delta publishes no successor anyway.
+  IF NOT v_cancel_late AND v_res ? 'tool_calls' AND v_res->'tool_calls' <> 'null'::jsonb THEN
     FOR v_item IN SELECT value FROM jsonb_array_elements(v_res->'tool_calls') LOOP
       IF NOT EXISTS (SELECT 1 FROM v24.pins p
                       WHERE p.consumer_run_id = e.run_id AND p.released_at IS NULL
@@ -437,7 +454,38 @@ BEGIN
   v_late := e.generation IS DISTINCT FROM r.driving_generation
             OR e.epoch_no IS DISTINCT FROM r.epoch_no;
 
-  IF v_class = 'unknown' THEN
+  IF v_cancel_late THEN
+    -- G2b-O order 2: cancel won the race.  The original token still reports the
+    -- external fact and pays its cost, but it cannot rewrite the cancel seal or
+    -- publish any successor.  unknown stays unknown on the effect without
+    -- re-sealing a cancelled run as blocked_unknown (cancel is authoritative).
+    v_status := r.status;
+    v_close := r.close_intent;
+    v_result := r.result;
+    v_interaction := r.interaction;
+    v_pending := r.pending_steer;
+    v_ended := r.ended_at;
+    v_effect_status := CASE WHEN v_class = 'unknown' OR v_semantic THEN 'unknown'
+                            WHEN v_class = 'failure' THEN 'failed'
+                            ELSE 'succeeded' END;
+    v_quiesced := NOT (v_class = 'unknown' OR v_semantic);
+    IF v_quiesced THEN
+      v_pins := v24.run_pin_release_set(e.run_id,p_effect_id,r.status,p_effect_id);
+    ELSE
+      v_pins := v24.run_pin_release_set(e.run_id,NULL,r.status,p_effect_id);
+    END IF;
+    v_events := jsonb_build_array(jsonb_build_object(
+      'entity_type','run','entity_id',e.run_id,
+      'event_kind',CASE WHEN v_class = 'unknown' OR v_semantic
+                        THEN 'model_call_unknown'
+                        WHEN v_class = 'failure' THEN 'model_call_failed'
+                        ELSE 'model_call_settled' END,
+      'payload',jsonb_build_object(
+        'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,'late',true,
+        'reason',CASE WHEN v_semantic THEN 'semantic_violation'
+                      WHEN v_class = 'unknown' THEN 'outcome_unknown'
+                      ELSE NULL END)));
+  ELSIF v_class = 'unknown' THEN
     v_status := 'blocked_unknown';
     v_effect_status := 'unknown';
     v_quiesced := false;
@@ -530,6 +578,10 @@ BEGIN
             'event_kind','run_completed','payload',jsonb_build_object(
               'run_id',e.run_id,'close_reason','final','turn_no',v_turn)));
       ELSE
+        -- G2b-M: a ready/claimed business effect blocks the seal.  Only the
+        -- minimal close intent is frozen; the batch-closing settlement reads
+        -- final_text from this model's stored first outcome.
+        v_close := jsonb_build_object('kind','final');
         v_status := r.status;
         v_result := r.result;
         v_interaction := r.interaction; v_pending := r.pending_steer;
@@ -783,7 +835,9 @@ DECLARE
   v_tool_calls int;
   v_late boolean := false;
   v_sibling boolean := false;
+  v_cancel_late boolean := false;
   v_sealed boolean := false;
+  v_seal_kind text;
   v_admit boolean := false;
   v_model uuid;
   v_max_ord int;
@@ -797,6 +851,7 @@ DECLARE
   v_pins jsonb := '[]'::jsonb;
   v_budget jsonb;
   v_fact_event text;
+  v_final_text text;
 BEGIN
   SELECT * INTO e FROM v24.effects WHERE effect_id = p_effect_id;
   IF NOT FOUND OR e.kind <> 'tool_call' THEN
@@ -810,6 +865,10 @@ BEGIN
   IF r.status = 'blocked_unknown' THEN
     RETURN jsonb_build_object('write',false,'error',v24.error_v1('blocked_unknown'));
   END IF;
+  -- Oracle CC3E40: a claim that cancel already revoked may still report its
+  -- alternative fact (including unknown) without rewriting the cancel seal.
+  v_cancel_late := r.status = 'cancelled' AND e.status = 'claimed'
+                   AND e.cancel_requested;
 
   -- C19.0 structural class: receipt, result closure and class/status pairing,
   -- all before any DML.  The tool result schema is exactly
@@ -863,24 +922,43 @@ BEGIN
   v_tool_calls := r.remaining_tool_calls;
 
   IF v_class = 'unknown' THEN
-    -- C19 unknown wall: keep the original receipt, never quiesce this pin.
-    v_status := 'blocked_unknown';
-    v_effect_status := 'unknown';
-    v_quiesced := false;
-    v_close := jsonb_build_object('kind','unknown','reason','outcome_unknown',
-                                  'effect_id',p_effect_id);
-    v_run_result := jsonb_build_object('v',1,'close_reason','unknown','turn_no',v_turn);
-    v_interaction := NULL; v_pending := NULL; v_ended := now();
-    -- Keep the settling unknown effect as a pin blocker (resource not quiesced).
-    v_pins := v24.run_pin_release_set(e.run_id,NULL,'blocked_unknown',p_effect_id);
-    v_events := jsonb_build_array(
-      jsonb_build_object('entity_type','run','entity_id',e.run_id,
-        'event_kind','tool_call_unknown','payload',jsonb_build_object(
-          'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,
-          'reason','outcome_unknown')),
-      jsonb_build_object('entity_type','run','entity_id',e.run_id,
-        'event_kind','run_blocked_unknown','payload',jsonb_build_object(
-          'run_id',e.run_id,'reason','outcome_unknown','effect_id',p_effect_id)));
+    IF v_cancel_late THEN
+      -- Oracle CC3E40: preserve the cancel seal byte-for-byte and publish only
+      -- the settlement fact.  The settling unknown effect still blocks its own
+      -- pin (resource not quiesced); no run_blocked_unknown / batch event.
+      v_status := r.status;
+      v_close := r.close_intent;
+      v_run_result := r.result;
+      v_interaction := r.interaction; v_pending := r.pending_steer;
+      v_ended := r.ended_at;
+      v_effect_status := 'unknown';
+      v_quiesced := false;
+      v_pins := v24.run_pin_release_set(e.run_id,NULL,r.status,p_effect_id);
+      v_events := jsonb_build_array(
+        jsonb_build_object('entity_type','run','entity_id',e.run_id,
+          'event_kind','tool_call_unknown','payload',jsonb_build_object(
+            'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,
+            'late',true,'reason','outcome_unknown')));
+    ELSE
+      -- C19 unknown wall: keep the original receipt, never quiesce this pin.
+      v_status := 'blocked_unknown';
+      v_effect_status := 'unknown';
+      v_quiesced := false;
+      v_close := jsonb_build_object('kind','unknown','reason','outcome_unknown',
+                                    'effect_id',p_effect_id);
+      v_run_result := jsonb_build_object('v',1,'close_reason','unknown','turn_no',v_turn);
+      v_interaction := NULL; v_pending := NULL; v_ended := now();
+      -- Keep the settling unknown effect as a pin blocker (resource not quiesced).
+      v_pins := v24.run_pin_release_set(e.run_id,NULL,'blocked_unknown',p_effect_id);
+      v_events := jsonb_build_array(
+        jsonb_build_object('entity_type','run','entity_id',e.run_id,
+          'event_kind','tool_call_unknown','payload',jsonb_build_object(
+            'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn,
+            'reason','outcome_unknown')),
+        jsonb_build_object('entity_type','run','entity_id',e.run_id,
+          'event_kind','run_blocked_unknown','payload',jsonb_build_object(
+            'run_id',e.run_id,'reason','outcome_unknown','effect_id',p_effect_id)));
+    END IF;
   ELSE
     v_effect_status := CASE WHEN v_class = 'failure' THEN 'failed' ELSE 'succeeded' END;
     v_quiesced := true;
@@ -924,6 +1002,45 @@ BEGIN
       END IF;
       -- C20 step 3: a terminal run or an old generation observes only facts.
       IF NOT v_late THEN
+        -- G2b-M: the model already froze a final close_intent but could not seal
+        -- because this batch was still live.  The closing settlement materialises
+        -- that frozen result instead of admitting a continuation, even when
+        -- steps/tokens would still allow one.
+        IF coalesce(r.close_intent->>'kind','') = 'final' THEN
+          v_close := r.close_intent;
+          v_sealed := v24.loop_sealable(e.run_id,p_effect_id,v_close,NULL,r.pending_steer);
+          IF v_sealed THEN
+            -- The frozen final text is the final-settling model's FIRST outcome
+            -- receipt, which this terminal writer never rewrites.
+            SELECT e2.outcome->'body'->'result'->'final'->>'text'
+              INTO v_final_text
+              FROM v24.effects e2
+             WHERE e2.run_id = e.run_id AND e2.kind = 'model_call'
+               AND e2.status = 'succeeded'
+               AND e2.outcome->'body'->'result' ? 'final'
+               AND e2.outcome->'body'->'result'->'final' <> 'null'::jsonb
+             ORDER BY e2.settled_at DESC NULLS LAST, e2.effect_id DESC
+             LIMIT 1;
+            SELECT e2.request->'budget' INTO v_budget FROM v24.effects e2
+             WHERE e2.run_id = e.run_id AND e2.kind = 'model_call' AND e2.request ? 'budget'
+             ORDER BY e2.created_at, e2.effect_id LIMIT 1;
+            IF v_budget IS NULL OR jsonb_typeof(v_budget) IS DISTINCT FROM 'object' THEN
+              v_budget := jsonb_build_object('steps',v_steps,'tokens',coalesce(v_tokens,0),
+                'tool_calls',v_tool_calls,'wall_ms',v_wall);
+            END IF;
+            v_seal_kind := 'final';
+            v_status := 'completed';
+            v_run_result := jsonb_build_object('v',1,'close_reason','final',
+              'final_text',v_final_text,'turn_no',v_turn,'budget',v_budget);
+            v_interaction := NULL; v_pending := NULL; v_ended := now();
+            v_pins := v24.run_pin_release_set(e.run_id,p_effect_id,v_status,p_effect_id);
+          ELSE
+            v_status := r.status;
+            v_run_result := r.result;
+            v_interaction := r.interaction; v_pending := r.pending_steer;
+            v_ended := r.ended_at;
+          END IF;
+        ELSE
         -- C20 step 4: never race the partial unique model_call index.
         IF EXISTS (SELECT 1 FROM v24.effects x
                     WHERE x.run_id = e.run_id AND x.kind = 'model_call'
@@ -983,12 +1100,14 @@ BEGIN
               v_budget := jsonb_build_object('steps',v_steps,'tokens',coalesce(v_tokens,0),
                 'tool_calls',v_tool_calls,'wall_ms',v_wall);
             END IF;
+            v_seal_kind := 'budget';
             v_status := 'completed';
             v_run_result := jsonb_build_object('v',1,'close_reason','budget_exhausted',
               'final_text',NULL,'turn_no',v_turn,'budget',v_budget);
             v_interaction := NULL; v_pending := NULL; v_ended := now();
             v_pins := v24.run_pin_release_set(e.run_id,p_effect_id,v_status,p_effect_id);
           END IF;
+        END IF;
         END IF;
       END IF;
     END IF;
@@ -1003,13 +1122,19 @@ BEGIN
           'event_kind','tool_batch_completed','payload',jsonb_build_object(
             'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn)));
       IF v_sealed THEN
+        IF v_seal_kind = 'budget' THEN
+          v_events := v_events || jsonb_build_array(
+            jsonb_build_object('entity_type','run','entity_id',e.run_id,
+              'event_kind','budget_exhausted','payload',jsonb_build_object(
+                'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn)));
+        END IF;
         v_events := v_events || jsonb_build_array(
           jsonb_build_object('entity_type','run','entity_id',e.run_id,
-            'event_kind','budget_exhausted','payload',jsonb_build_object(
-              'run_id',e.run_id,'effect_id',p_effect_id,'turn_no',v_turn)),
-          jsonb_build_object('entity_type','run','entity_id',e.run_id,
             'event_kind','run_completed','payload',jsonb_build_object(
-              'run_id',e.run_id,'close_reason','budget_exhausted','turn_no',v_turn)));
+              'run_id',e.run_id,
+              'close_reason',CASE WHEN v_seal_kind = 'final'
+                                  THEN 'final' ELSE 'budget_exhausted' END,
+              'turn_no',v_turn)));
       END IF;
     END IF;
   END IF;
@@ -1060,6 +1185,7 @@ DECLARE
   v_status text;
   v_turn bigint;
   v_revision bigint;
+  v_cancel_late boolean := false;
   v_expected_pins jsonb;
   v_succ_req jsonb;
   v_new_id uuid;
@@ -1128,13 +1254,20 @@ BEGIN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
   SELECT * INTO r FROM v24.runs WHERE run_id = e.run_id;
-  -- A tool may settle late on a sealed run (cancel leaves claimed tools alive);
-  -- the model interpreter never emits a delta for a terminal run.
+  -- A tool may settle late on a sealed run (cancel leaves claimed tools alive).
+  -- A model may do so only when cancel revoked its claim: that narrow case writes
+  -- fact/cost while preserving the cancel seal (G2b-O order 2); every other
+  -- terminal model delta, including completed/failed/blocked_unknown rewrites,
+  -- stays invalid.
   IF NOT FOUND
      OR (r.status IN ('completed','failed','cancelled','blocked_unknown')
-         AND e.kind <> 'tool_call') THEN
+         AND NOT (e.kind = 'tool_call'
+                  OR (r.status = 'cancelled' AND e.kind = 'model_call'
+                      AND e.status = 'claimed' AND e.cancel_requested))) THEN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
+  v_cancel_late := r.status = 'cancelled' AND e.kind IN ('model_call','tool_call')
+                   AND e.status = 'claimed' AND e.cancel_requested;
 
   -- Effect receipt matches the incoming class exactly.
   IF jsonb_typeof(p_delta->'effect') IS DISTINCT FROM 'object' THEN
@@ -1204,6 +1337,11 @@ BEGIN
     v_status := set_r->>'status';
     IF v_status IS NULL OR v_status NOT IN
          ('running','waiting','completed','failed','blocked_unknown','cancelled') THEN
+      RETURN v24.error_v1('invalid_outcome');
+    END IF;
+    -- A cancel-late settlement (model or tool) may only preserve the cancel
+    -- seal: the completed/failed/blocked_unknown terminal writers stay refused.
+    IF v_cancel_late AND v_status IS DISTINCT FROM 'cancelled' THEN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
     IF jsonb_typeof(set_r->'turn_no') IS DISTINCT FROM 'number'
@@ -1308,11 +1446,15 @@ BEGIN
     END IF;
     -- Effect status and run state must agree.  A tool failure never fails the
     -- run; a late tool settlement preserves whatever terminal state it found.
-    IF v_effect_status = 'unknown' AND v_status <> 'blocked_unknown' THEN
+    -- A cancel-late settlement preserves the cancelled seal for every class, so
+    -- its fact status is exempt from the run-state coupling below.
+    IF v_effect_status = 'unknown' AND v_status <> 'blocked_unknown'
+       AND NOT v_cancel_late THEN
       RETURN v24.error_v1('invalid_outcome');
     END IF;
     IF v_effect_status = 'failed' THEN
-      IF e.kind = 'model_call' AND v_status <> 'failed' THEN
+      IF e.kind = 'model_call' AND v_status <> 'failed'
+         AND NOT v_cancel_late THEN
         RETURN v24.error_v1('invalid_outcome');
       ELSIF e.kind = 'tool_call'
             AND v_status NOT IN ('running','waiting','completed','failed','cancelled') THEN
@@ -1320,7 +1462,9 @@ BEGIN
       END IF;
     END IF;
     IF v_effect_status = 'succeeded' THEN
-      IF e.kind = 'model_call' AND v_status NOT IN ('running','waiting','completed') THEN
+      IF e.kind = 'model_call'
+         AND v_status NOT IN ('running','waiting','completed')
+         AND NOT v_cancel_late THEN
         RETURN v24.error_v1('invalid_outcome');
       ELSIF e.kind = 'tool_call'
             AND v_status NOT IN ('running','waiting','completed','failed','cancelled') THEN
@@ -1381,6 +1525,11 @@ BEGIN
   v_succs := coalesce(p_delta->'successors','[]'::jsonb);
   IF jsonb_typeof(v_succs) IS DISTINCT FROM 'array'
      OR jsonb_array_length(v_succs) > 16 THEN
+    RETURN v24.error_v1('invalid_outcome');
+  END IF;
+  -- Cancel-late settlements record facts/cost only: no successor may be
+  -- published under the old token (G2b-O order 2).
+  IF v_cancel_late AND jsonb_array_length(v_succs) > 0 THEN
     RETURN v24.error_v1('invalid_outcome');
   END IF;
   BEGIN
