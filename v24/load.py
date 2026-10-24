@@ -17,6 +17,7 @@ CANONICAL_ORDER = (
     "47_verbs.sql",
     "48_loop.sql",
     "49_recovery.sql",
+    "49_host_reads.sql",
     "50_permissions.sql",
 )
 # W4 activates the command interpreter and delta applier.
@@ -31,6 +32,7 @@ SQL_LOAD_ORDER = (
     "47_verbs.sql",
     "48_loop.sql",
     "49_recovery.sql",
+    "49_host_reads.sql",
     "50_permissions.sql",
 )
 

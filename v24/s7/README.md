@@ -231,11 +231,40 @@ measured before G6 existed. S7 appends full G6 as the eleventh command; G6 does
 not replace any of the ten, and their commands, order, assertions and numbering
 are unchanged.
 
+## M-H extension check (G8, not a closeout gate)
+
+M-H adds the host read surface and an **extension check**, not a twelfth
+closeout command. The 11 commands above, their order and the **11/11** count
+are unchanged. The separate check is:
+
+```bash
+uv run python v24/s9/test_g8.py
+```
+
+No-argument run selects all **23/23** G8 IDs and exits 0 (2026-10-24). It
+covers the 9 public host readers, the hidden `host_scope_allowed` helper, the
+ACL counts (admin 26 / service 27 / operator 27 EXECUTE; 17 DEFINERs; 27
+`GRANT EXECUTE` statements), held-G snapshot reads, pagination, the 64-item
+64.00 MiB page, closure slope (`B=3`; `H_ok=509`, `H_bad=510`, `C=512/513`),
+lease and recovery edges, D-S6-12 (`G8-D1a`) and D-S8-7 (`G8-D2`). See
+[`v24/s9/README.md`](../s9/README.md) for the exact evidence and boundaries.
+
+This extension check does **not** change the historical S7 result: S7 remains
+11/11 and its conclusions stand. The G8 run is recorded as
+**passed / 23/23** for M-H.
+
 ## Mechanical guards
 
 - No `sleep` and no socket in `v24/s7/**`; ordering is held-G/barrier only.
-- `git diff --exit-code -- v24/sql v24/load.py` stays empty; the 24-code error
-  set, loader order and DDL are untouched.
+- The historical S7 guard was an empty `git diff --exit-code -- v24/sql
+  v24/load.py`. After M-H that command is intentionally non-empty (new
+  `49_host_reads.sql`, `50_permissions.sql`, loader registration). The frozen
+  nine kernel files still produce an empty diff:
+  `git diff --exit-code -- v24/sql/10_schema.sql v24/sql/20_triggers.sql
+  v24/sql/30_advance.sql v24/sql/40_interpreters.sql v24/sql/45_capability.sql
+  v24/sql/46_cleanup.sql v24/sql/47_verbs.sql v24/sql/48_loop.sql
+  v24/sql/49_recovery.sql`; the 24-code error set and ten-table DDL are
+  untouched.
 - Every gate run is sequential: the fixture DROPs/CREATEs one database.
 
 ## Debt / not claimed

@@ -118,7 +118,10 @@ def catalog(owner):
                         WHERE n.nspname='v24'""")
         functions = {r[0]: r[1:] for r in cur.fetchall()}
     read_definers = {"resolve", "run_owner", "run_projection", "poll", "wait_check",
-                     "recoverable_effects"}
+                     "recoverable_effects", "host_scope_allowed", "host_scopes",
+                     "host_runs", "host_effects", "host_run_effects", "host_effect",
+                     "host_scope_installs", "host_install_fibers", "host_run_pins",
+                     "host_request"}
     assert {n for n, r in functions.items() if r[0]} == {"advance"} | read_definers
     assert functions["advance"][2] == ["search_path=pg_catalog, v24"]
     for name in read_definers:
@@ -800,7 +803,10 @@ def permissions(db, owner, connections):
               AND has_function_privilege(session_user,oid,'EXECUTE')""")
         expected = pure | {"advance", "scope_control", "resolve", "poll", "wait_check",
                            "fiber_control", "dispose", "start", "cancel", "steer", "respond",
-                           "recoverable_effects", "command_recover"}
+                           "recoverable_effects", "command_recover",
+                           "host_scopes", "host_runs", "host_effects",
+                           "host_run_effects", "host_effect", "host_scope_installs",
+                           "host_install_fibers", "host_run_pins", "host_request"}
         if alias != "admin":
             expected.add("install")
         assert set(exposed) == expected, (alias, exposed)

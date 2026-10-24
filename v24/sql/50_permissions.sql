@@ -54,6 +54,25 @@ GRANT EXECUTE ON FUNCTION v24.fiber_control(uuid, text, bigint, text)
 -- W6 dispose entry point.
 GRANT EXECUTE ON FUNCTION v24.dispose(uuid, text)
   TO v24_admin, v24_service, v24_operator;
+-- M-H host discovery surface: nine public reads, one unexposed helper.
+GRANT EXECUTE ON FUNCTION v24.host_scopes(uuid, uuid, integer)
+  TO v24_admin, v24_service, v24_operator;
+GRANT EXECUTE ON FUNCTION v24.host_runs(uuid, timestamptz, uuid, integer)
+  TO v24_admin, v24_service, v24_operator;
+GRANT EXECUTE ON FUNCTION v24.host_effects(uuid, timestamptz, uuid, integer)
+  TO v24_admin, v24_service, v24_operator;
+GRANT EXECUTE ON FUNCTION v24.host_run_effects(uuid, timestamptz, uuid, integer)
+  TO v24_admin, v24_service, v24_operator;
+GRANT EXECUTE ON FUNCTION v24.host_effect(uuid)
+  TO v24_admin, v24_service, v24_operator;
+GRANT EXECUTE ON FUNCTION v24.host_scope_installs(uuid, uuid, integer)
+  TO v24_admin, v24_service, v24_operator;
+GRANT EXECUTE ON FUNCTION v24.host_install_fibers(uuid, uuid, integer)
+  TO v24_admin, v24_service, v24_operator;
+GRANT EXECUTE ON FUNCTION v24.host_run_pins(uuid, uuid, integer)
+  TO v24_admin, v24_service, v24_operator;
+GRANT EXECUTE ON FUNCTION v24.host_request(text)
+  TO v24_admin, v24_service, v24_operator;
 
 -- Fail closed if a later function drifts from the owner/path/PUBLIC contract.
 DO $acl$
@@ -63,7 +82,11 @@ BEGIN
   IF (SELECT array_agg(p.proname::text ORDER BY p.proname)
         FROM pg_catalog.pg_proc p
         WHERE p.pronamespace = 'v24'::regnamespace AND p.prosecdef)
-     IS DISTINCT FROM ARRAY['advance', 'poll', 'recoverable_effects', 'resolve', 'run_owner', 'run_projection', 'wait_check']::text[] THEN
+     IS DISTINCT FROM ARRAY['advance', 'host_effect', 'host_effects',
+       'host_install_fibers', 'host_request', 'host_run_effects',
+       'host_run_pins', 'host_runs', 'host_scope_allowed',
+       'host_scope_installs', 'host_scopes', 'poll', 'recoverable_effects',
+       'resolve', 'run_owner', 'run_projection', 'wait_check']::text[] THEN
     RAISE EXCEPTION 'v24 SECURITY DEFINER allowlist drift';
   END IF;
   FOR f IN

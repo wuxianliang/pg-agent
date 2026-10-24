@@ -1,6 +1,6 @@
-# v24 偏差台账（S1–S8）
+# v24 偏差台账（S1–S8 + M-H）
 
-> 收尾稿：2026-10-24。本文件是 S1/S2/S3/S4/S5/S6/S7/S8 里程碑的收尾工件，记录各计划 §7 的实施偏差。**S5 W1–W4 已实现，W5 为收尾**；**S6 W1–W4 已实现并结项，G5 父门完成（K1–K10 10/10）**；**S8 W1–W3 已实现，W3 收尾并在 closeout 前修复 D-S8-12，G7 父门完成（G7-A…H + N1–N7）**；**S7 W1–W2 已实现并结项，G6 完成（30/30），11/11**。2026-10-24 S6/S8 收尾轮十个 gate 串行实跑全部退出 0：load、`s1/setup_db.py --self-check`、`s1/test_ddl.py`、`s1/test_g1.py`、`s2/test_g3a.py`、`s3/test_g2.py`、`s4/test_g2b.py`、`s5/test_g4.py`、`s6/test_g5.py`、`s8/test_g7.py`（命令与结果见矩阵 §0）。**Gate 计数口径（9+1=10）**：9 个既有 gate + 无参数全量 G7 = 10 条命令，全部退出 0（10/10）；历史 S6 W1–W3 与 S8 W1/W2 的 `--only` 是增量检查点，不计入十条命令，也不替代父门。S7 收尾轮在既有 10 条 gate 之外追加无参数全量 `v24/s7/test_g6.py`，共 **11/11**（10 条既有 + G6）；历史 10/10 为 S6/S8 收尾口径，保留不变。规则：**每条与设计稿不一致的实现都必须具名落账，不得静默改规格**；规格修改走「设计稿修订 + Oracle 复审」（pre-plan §1.2）。历史失败追加修正结果，不覆盖、不删去。
+> 收尾稿：2026-10-24。本文件是 S1/S2/S3/S4/S5/S6/S7/S8 里程碑的收尾工件，记录各计划 §7 的实施偏差。**S5 W1–W4 已实现，W5 为收尾**；**S6 W1–W4 已实现并结项，G5 父门完成（K1–K10 10/10）**；**S8 W1–W3 已实现，W3 收尾并在 closeout 前修复 D-S8-12，G7 父门完成（G7-A…H + N1–N7）**；**S7 W1–W2 已实现并结项，G6 完成（30/30），11/11**；**M-H 已实现，G8 完成（23/23），历史 11/11 不变**（见 §1.16）。2026-10-24 S6/S8 收尾轮十个 gate 串行实跑全部退出 0：load、`s1/setup_db.py --self-check`、`s1/test_ddl.py`、`s1/test_g1.py`、`s2/test_g3a.py`、`s3/test_g2.py`、`s4/test_g2b.py`、`s5/test_g4.py`、`s6/test_g5.py`、`s8/test_g7.py`（命令与结果见矩阵 §0）。**Gate 计数口径（9+1=10）**：9 个既有 gate + 无参数全量 G7 = 10 条命令，全部退出 0（10/10）；历史 S6 W1–W3 与 S8 W1/W2 的 `--only` 是增量检查点，不计入十条命令，也不替代父门。S7 收尾轮在既有 10 条 gate 之外追加无参数全量 `v24/s7/test_g6.py`，共 **11/11**（10 条既有 + G6）；历史 10/10 为 S6/S8 收尾口径，保留不变。规则：**每条与设计稿不一致的实现都必须具名落账，不得静默改规格**；规格修改走「设计稿修订 + Oracle 复审」（pre-plan §1.2）。历史失败追加修正结果，不覆盖、不删去。
 
 裁决来源：`docs/reviews/v24-three-doc-consistency-2026-10-23.md`（chat `untitled-chat-1EDE09`，14 项）、W5/W6 实施裁决（chat `untitled-chat-B38EF4`、`untitled-chat-F1CED0`）、S5 计划与逐 W 实施裁决（chat `untitled-chat-DFBC85`，2026-10-24：F1=A、F2=A、F2a=A、F2b=A、F3=A、F3a=A、F4=B′、F5=A、D-S5-1=A）、S6 计划与实施裁决（chat `028D07`，15 项 ACCEPT：CC-1/2/3、D-S6-1…12；S6 W1–W4 实施）。设计稿 652 行、pre-plan 354 行，R5 修订为行内改写，两份文件行号未位移，因此 `L###` 引用继续有效。R6 只追加设计稿附录 C（1–652 行不变），但 pre-plan 增加 S8/C16/O11–O13 等行，pre-plan 的旧 `L###` 引用须按 R5 版本核对；设计稿 1–652 的 `L###` 继续有效。R6（2026-10-24，chat `028D07`）为设计稿规格修订（附录 C，15 项 ACCEPT）；S6 W1–W4 已实施并由 G5 证明（见 §1.9–§1.11、§5）。S8 的 R7（同一 chat 的 Q1–Q7 全 A）见设计稿附录 C.6；D-S8-11 于 W2 由 Oracle 批准（2026-10-24）；D-S8-12 为 W3 评审发现并在收尾前修复的产品缺陷；S8 W1–W3 已实施并由 G7 证明（见 §1.12–§1.14、§5）。
 
@@ -302,6 +302,29 @@ H2 的 `requests` 期望由 3 改为 2，最终为 `(2,0,0)`。这是**测试期
 
 Fake-only；无真实 provider/网络；无跨主机 lease；无 starvation/fairness；无 G5 崩溃窗口重测；无多主机。S7 是 **evidence-only**，不替代 S1–S8 的既有证据，也不证明真实 transport/adapter。
 
+### 1.16 M-H 落地（2026-10-24；G8 23/23）
+
+**基线（M-H-1）**：worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`，branch `v24`，HEAD `d8155f4`（`v24: add concurrency matrix (G6)`），`v24/` 除 M-H 改动外无未提交项。九个冻结内核 SQL（`10_schema`、`20_triggers`、`30_advance`、`40_interpreters`、`45_capability`、`46_cleanup`、`47_verbs`、`48_loop`、`49_recovery`）按文件顺序拼接的 SHA256 为 `407dc75ae79524f890db894a135ad716766f4ad35fb6a38ad5a274a8a7284420`；本轮 `git diff --exit-code` 对这九个文件为 0。
+
+**advance 取 G 前读 `v24.fibers` 的披露（计划 M-H-1 要求）**：`30_advance.sql:208-213` 在 `PERFORM pg_advisory_xact_lock(24,1)`（`:247`）之前，对 `command_install` 且 `owner_fiber_id` 非 NULL 的请求做一次 `NOT EXISTS (SELECT 1 FROM v24.fibers …)`。这是**只读存在性检查**，用于把不存在的 owner fiber 在 W0 阶段返回 `invalid_args`，不参与闭包、锁序或可写状态决策；`fibers` 从不删除，因此该读不会因并发删除而失效。它确实发生在 G 之前，按计划登记为披露，不视为第二写口或锁序变更。
+
+**实现与计划对齐**：新增 `v24/sql/49_host_reads.sql`（9 个公开 `host_*` + 未 GRANT 的 `host_scope_allowed`），全部 `STABLE SECURITY DEFINER`、`SET search_path = pg_catalog, v24`、不取 G、不写表、不调用 `advance`、无动态 SQL、公开投影无 `SELECT *`；`host_scope_allowed` 只做 owner 或 `v24_admin` 的 USAGE 判断。`50_permissions.sql` 的 DEFINER 白名单按 `proname` 排序（17 个），GRANT 语句 27 条，逐角色 EXECUTE 为 **admin 26 / service 27 / operator 27**；`host_scope_allowed` 无 GRANT。`v24/load.py` 的两个元组与 `v24/s1/setup_db.py` 的 `expected_canonical` 把 `49_host_reads.sql` 放在 `49_recovery.sql` 之后、`50_permissions.sql` 之前；`v24/s1/test_g1.py` 的两处精确集合同步扩展。
+
+**G8 实测**：无参数 `uv run python v24/s9/test_g8.py` 实跑 **23/23 ID，exit 0**，末行 `[passed] v24 G8 host reads / closure / lease / recovery: 23 case(s)`。闭包 probe 选计划选项 (a)：fixture-only PL/pgSQL `v24_fake.closure_probe` 内嵌从 `30_advance.sql` 完整提取的递归 CTE，冻结 SHA256 `e9b15387dd41fd1621ec2aaec964e70c900cea8a0468b03242fd8b46528efba5`；实测 `B=3`，`H=0,1,2,4,8,16,32` → `C=3,4,5,7,11,19,35`，每个相邻区间 C 增量等于 H 增量；`H_ok=509` → `C=512` 普通 claim committed，`H_bad=510` → `C=513` `retry_with_closure`（无 token、十表逐字节不变、重试仍拒）。H13 用 64 个各带 ~1 MiB `model_call.input` 的项实测整页 **67,107,712 bytes（64.00 MiB）**，未下调 64、未脱敏；真实 lease=1 claim/settle 通过。H11 持 G + 未提交变更下九个读完成且只见已提交 snapshot，写调用仍受 G 串行。
+
+**债务关闭与未关闭**：
+
+| # | 状态 | 证据 / 口径 |
+|---|---|---|
+| D-S6-12 | **关闭** | `G8-D1a`：已关闭 scope + 真实过期、已 claim、非 manual 的候选，`command_recover` 精确 applied=1 `settle_unknown`/`install_not_preparing`，scope/install/fiber/run 未复活；不是 noop fixture |
+| D-S8-7 | **关闭** | `G8-D2`：双 spawn、spawn+普通 tool、spawn+`final`、spawn+`interaction` 均 `invalid_outcome` + 十表零写 + 原 claim 不变；随后同 key 合法 spawn committed |
+| D-S7-2 | **仍未关闭** | G8 不写 starvation/fairness 用例；无活性/公平性证明 |
+| G9/G10 | **未运行** | 属 M-R/M-P；不得用 G8 或 11/11 代替 |
+
+**边界与不 overclaim**：`G8-H12` 在开放 keyset 扫描中把一行移到自己 cursor 之后，确定性地观察到同一行 **2 次**（`duplicates=1`），再按 `effect_id` 去重得到完整 8 行集合；这只证 worker 必须按 id 去重，不声称任意并发状态改变都会产生重复。公共路径 `unknown→inspect` 分支在 M-H **未生成**，实际返回 `[]`；没有用 owner 插入补成公共路径证据。公共路径 32 次 `fiber_control(on/off)` 的 counts 为 effects 4/18/34/66、reconcile 1/8/16/32、episodes 1/4/8/16、pins 0；逐命令闭包 6…38（非单调，因探针指向不同形状的 latest effect）。`G8-W1` 只证 M-H 可用的 SQL/session 前置（READ COMMITTED、30s/5s/5s、两连接 IDLE、在飞时不 sweep）；worker 循环/真实 provider 属 M-R，不在本里程碑。所有 G8 fixture 无网络；socket 仅被 monkeypatch 后 deny/restore。
+
+**历史 closeout 不变**：M-H 改动后 11 条冻结命令再次依序实跑，全部 exit 0（**11/11**）；G8 是 extension check，不计入第 12 条，也不改写历史 10/10 或 11/11。
+
 ## 2. 实施披露（不是规格偏差）
 
 以下条目改动的是 DDL 细节或测试夹具，不改变设计语义；列在此处是为了让复核者能对着代码找到它们。
@@ -403,6 +426,7 @@ S6/S8 收尾轮十个 gate 依序退出 0/0/0/0/0/0/0/0/0/0（load、`s1/setup_d
 - **S5 已封闭的 S4 披露**：inspect 收敛（G4-H/I/J/K/N）、owner 级联/child-before-owner（G4-A/B 与 `[G4-W1]` cascade）、consumer-before-provider（G4-C）、贡献 DESC 与墓碑（G4-D/P/Q）、scope close phase 机与 close 后无新准入（G4-G/O）、失败/unknown 不写终态（G4-F/L/M）。
 - **S5/S6/S8 边界（历史；G6/S7 已由 §1.15 补证）**：S5 只证串行 request-key 阶段（每个新 key 一个 bounded phase、≤16 行/successor、无 worker/自动推进）；S6 只证 FakeHost/journal 下的崩溃恢复合同（命令驱动、无 recovery 表/队列/lease/cursor、无第二 claim 路径），**不证**真实 provider/adapter 的 reservation 幂等、S7 三面并发或 S8 spawn（S7 三面并发已由 G6 补证）；S8 只证 FakeHost/进程内 fixture 下的 spawn/child-run 合同，**不证**真实 provider/adapter 或 G6/S7 三面并发（G6/S7 已由 S7 W1–W2 补证）。`cleanup_pending` 非严格递减、close 依赖新 key（§3），不得外推为「自动收口」；S6 的 `has_more` 只是提示，K2/K3 的 lease 过期是 seeded fixture，K5 为 host-only、预算不适用；G7-G 的 claim 走真实公共 claim 路径（D-S8-12），不是 seeded fixture。
 - **FakeLLM/FakeTool/FakeCleanupHost/FakeCrashHost/FakeHost 不是 transport 证明**：纯进程内、无套接字；S5 没有 FakeCleanupHost 文件（§2.2），S6 的 `CrashHost` 只写 JSONL 与 `v24_fake.journal`；S8 的 G7 同样无 socket/HTTP，`v24_fake.journal` 新增 0 行；真实 IO 不在 gate 内。
-- **仍未关闭的披露**：D-S6-12 无 closed-scope 非空候选专用 fixture；D-S8-7 无专门多 spawn/混用 fixture；**D-S7-2 仍为显式债务（无 starvation/fairness 证明）**；A-S5-1…9 的逐条理由见 §1.6，A-S6-1…9 见 §1.10，A-S8-1…6 见 §1.13；G7-G 的 owner-pinned child 首 model 公共 claim 已由 D-S8-12 修复，不再列为未关闭债务。D-S5-8 与 D-S5-10 的旧披露已由 S7 评估关闭：N7 + L1/L2 未发现 lock-order/deadlock bug（D-S7-1 未触发），N7 以真实跨 scope child install 补足证据（D-S7-3 未触发）；见 §1.5、§1.15。
+- **仍未关闭的披露**：**D-S7-2 仍为显式债务（无 starvation/fairness 证明）**；A-S5-1…9 的逐条理由见 §1.6，A-S6-1…9 见 §1.10，A-S8-1…6 见 §1.13；G7-G 的 owner-pinned child 首 model 公共 claim 已由 D-S8-12 修复，不再列为未关闭债务。**D-S6-12 已由 `G8-D1a` 关闭，D-S8-7 已由 `G8-D2` 关闭（见 §1.16）**；D-S5-8 与 D-S5-10 的旧披露已由 S7 评估关闭：N7 + L1/L2 未发现 lock-order/deadlock bug（D-S7-1 未触发），N7 以真实跨 scope child install 补足证据（D-S7-3 未触发）；见 §1.5、§1.15。
+- **M-H 验收（2026-10-24）**：G8 **23/23** exit 0；`B=3`、`H_ok=509`、`H_bad=510`、`C=512/513`；H13 64.00 MiB；ACL 17 DEFINER / 27 GRANT / 26-27-27；九个冻结内核 SQL diff 为空；11 条既有 closeout 复跑 **11/11**。G9/G10 未运行，属 M-R/M-P；G8 不改变历史 closeout 计数，也不提供 starvation/fairness 或 host worker 证据（§1.16）。
 - **历史口径更新**：S4 的「22 个有生产者、1 个未产生」由本节更新为 23/0；S8 再更新为 **24/0**；S1–S4 的其它验收结论与边界（FakeLLM/FakeTool、真实 IO、S6/S7）继续有效。
 - **R6/R7 规格修订已入账**（D-R6-1…4，§1.8；D-S8-1…12，§1.12）：D-R6-1 仍为规格层（S6 未改变十窗口）；D-R6-2 已由 S8/G7 实施；D-R6-3/4 已由 S6 W1–W4 实施并由 G5 证明；D-S8-12 为 W3 评审修复的产品缺陷（非规格修订）。**G5、G6 与 G7 已完成**（G6 由 S7 W1–W2 证明：30/30 ID、11/11），S7 已结项，S1–S8 全部收口。
