@@ -127,10 +127,19 @@ are evidence only; no owner-inserted row is presented as public-path evidence.
 - No `sleep`; held-G ordering uses threads, a `queue.Queue`, and
   `pg_blocking_pids`/`pg_locks` polling.
 
+## Post-closeout M-F1 (2026-10-25)
+
+The v24 source tree passed the full 31-command M-F1 verification batch, including
+G11 full plus G11-A…L, the frozen regression suite, G8/G9/G10, Node, and
+multilingual smoke. Exact timestamps, exit codes, and log hashes are in
+[`docs/reviews/v24-d-s7-2-fairness-execution-2026-10-25.md`](../../docs/reviews/v24-d-s7-2-fairness-execution-2026-10-25.md).
+G8 remains an extension check; the historical closeout count is unchanged.
+
 ## Boundaries
 
-- **No starvation/fairness proof.** D-S7-2 remains open exactly as in S7; this
-  README makes no liveness claim.
+- **No open-arrival or wall-clock fairness proof.** M-F1 records a bounded
+  host-only FC sub-contract and Fake-only evidence in S12; D-S7-2 remains open
+  for the broader production claims.
 - **No host worker.** `G8-W1` proves the SQL/session preconditions available at
   M-H (timeouts, IDLE-before-IO, no sweep while in flight). The actual worker
   loop, journal and real-provider behavior are M-R.

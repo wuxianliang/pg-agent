@@ -579,3 +579,7 @@ M-S 不改变九个冻结 SQL、host worker/journal/transport 格式或 closeout
 ## Post-closeout M-F（2026-10-25）
 
 四项后续范围已分别登记，均不在本轮实现：第二批 Go/Swift/DuckDB、D-S7-2 公平性、跨主机租约、provider 延迟/质量。当前源 `74b3c30` 的 G10 Python、Node 与同 run multilingual 检查均 exit 0；最终发布候选仍须重跑 Node 与 multilingual 两条命令。
+
+## Post-closeout M-F1（2026-10-25）
+
+M-F1 在 v24 未提交执行树上完成并通过 31/31 命令：G11 全量、G11-A…L 单 case、loader/DB/既有 gate、G8、G9、G10、Node、smoke 负控与 multilingual smoke。新增 S12 证明的是有限 opportunity-dense host-only FC 子合同及其 Fake-only 对抗证据；不改历史 closeout 11/11、G8 23/23、G9 11/11 或 G10 8/8 计数。完整命令、时间、source/tree 摘要和日志 SHA-256 见 [`v24-d-s7-2-fairness-execution-2026-10-25.md`](v24-d-s7-2-fairness-execution-2026-10-25.md)。D-S7-2 广义债务仍开启：开放到达、墙钟等待/debt 有界、跨崩溃/多主机和真实 provider 公平性未由本批次证明。

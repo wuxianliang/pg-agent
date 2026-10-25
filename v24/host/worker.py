@@ -17,14 +17,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from dataclasses import dataclass
-from uuid import uuid4
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
 from v15.provider.errors import ProviderRejected, ProviderUncertain
 
-from .db import HostDBError, is_error
+from .db import HostContractError, HostDBError, is_error
 from .deepseek import AdapterFailure, DeepSeekAdapter
-from .journal import HostJournal, canonical_json, request_digest
+from .journal import HostJournal, JournalCorrupt, canonical_json, request_digest
 
 HOST_KINDS = ("host_prepare", "host_release", "inspect_resource")
 MODEL_KINDS = ("model_call",)
@@ -47,6 +49,17 @@ class RoundStats:
     skipped: int = 0
     idle: bool = True
     last_reply: dict | None = None
+    scope_visits: int = 0
+    new_opportunities: int = 0
+    claim_conflicts: int = 0
+    prepared_attempts: int = 0
+    orphan_blocked: int = 0
+    recovery_commands: int = 0
+    recovery_applied: int = 0
+    recovery_has_more: bool = False
+    manual_debt_ids: set[str] = field(default_factory=set)
+    pending_work: bool = False
+    stop_reason: str | None = None
 
     def merge(self, other: "RoundStats") -> None:
         self.claimed += other.claimed
@@ -83,6 +96,12 @@ class HostWorker:
         self.crash_after = crash_after
         self.recover_key_prefix = recover_key_prefix
         self.recover_seq = 0
+        self._next_scope_after = None
+        self._fair_cursors = {}
+        self._host_streak = {}
+        self._resume_cursor = {}
+        self._fair_scope_journal_ids = {}
+        self._fair_active = False
 
     # -- public loop -----------------------------------------------------
     def run_until_idle(self, scope, max_rounds: int = 16) -> RoundStats:
@@ -98,6 +117,536 @@ class HostWorker:
                 return total
         total.idle = False
         return total
+
+    # -- fair multi-scope loop ------------------------------------------
+    def run_scopes_until_idle(self, scope_ids: Iterable[str] | None = None,
+                              max_rounds: int = 16) -> RoundStats:
+        """Visit a fixed authorized roster in RR order, with separate recovery.
+
+        Opportunities count discovery-originated claim attempts, not completed
+        IO. State is process-local; restarting does not restore fairness debt.
+        """
+        if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) or max_rounds < 1:
+            raise ValueError("max_rounds must be a positive integer")
+        if self._fair_active:
+            raise HostContractError("fair worker is already running")
+        self._fair_active = True
+        try:
+            return self._run_scopes(scope_ids, max_rounds)
+        finally:
+            self._fair_active = False
+
+    def _run_scopes(self, scope_ids, max_rounds):
+        self.db.assert_all_idle()
+        roster = self._fair_roster(scope_ids)
+        self._fair_scope_journal_ids = {}
+        self._fair_ownership(roster)
+        for mapping in (self._fair_cursors, self._host_streak, self._resume_cursor):
+            for key in list(mapping):
+                scope = key[0] if isinstance(key, tuple) else key
+                if scope not in roster:
+                    del mapping[key]
+        total = RoundStats()
+        if not roster:
+            total.stop_reason = "idle"
+            return total
+        attempted = set()  # Every physical claim, including prepared-ready.
+        visited, residual, debt, more = set(), {}, {}, {}
+        pass_progress = False
+        index = roster.index(self._next_scope(roster))
+        for _ in range(max_rounds):
+            scope = roster[index]
+            index = (index + 1) % len(roster)
+            self._next_scope_after = scope
+            one, progressed = self._fair_visit(scope, attempted)
+            total.merge(one)  # Preserve the legacy merge/progress contract.
+            for name in ("new_opportunities", "claim_conflicts", "prepared_attempts",
+                         "orphan_blocked", "recovery_commands", "recovery_applied"):
+                setattr(total, name, getattr(total, name) + getattr(one, name))
+            total.scope_visits += 1
+            total.rounds = total.scope_visits
+            residual[scope] = one.pending_work
+            debt[scope] = one.manual_debt_ids
+            more[scope] = one.recovery_has_more
+            total.manual_debt_ids = set().union(*debt.values())
+            total.recovery_has_more = any(more.values())
+            visited.add(scope)
+            pass_progress |= progressed
+            if len(visited) == len(roster):
+                total.pending_work = any(residual.values()) or bool(self._fair_journal_ids())
+                if not total.pending_work:
+                    total.idle = True
+                    total.stop_reason = "idle"
+                    return total
+                if not pass_progress:
+                    total.idle = False
+                    total.stop_reason = "blocked_no_progress"
+                    return total
+                # A new pass starts at this invocation's actual RR origin.
+                visited.clear()
+                pass_progress = False
+        total.idle = False
+        total.pending_work = True  # A truncated pass cannot establish idleness.
+        total.stop_reason = "budget_exhausted"
+        return total
+
+    @staticmethod
+    def _uuid_text(value):
+        if not isinstance(value, (str, UUID)):
+            raise ValueError("invalid UUID")
+        try:
+            return str(UUID(str(value)))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError("invalid UUID") from exc
+
+    @staticmethod
+    def _fair_envelope(response, name):
+        if not isinstance(response, dict) or type(response.get("v")) is not int or response["v"] != 1:
+            raise HostContractError(f"{name} malformed envelope")
+        if "error" in response:
+            if not is_error(response) or not isinstance(response["error"].get("code"), str):
+                raise HostContractError(f"{name} malformed error")
+            raise HostDBError(response)
+
+    @classmethod
+    def _fair_page(cls, response, name):
+        cls._fair_envelope(response, name)
+        if (set(response) != {"v", "items", "limit", "has_more", "next_cursor"}
+                or not isinstance(response.get("items"), list)
+                or len(response["items"]) > 64
+                or type(response.get("has_more")) is not bool
+                or type(response.get("limit")) is not int or response["limit"] != 64
+                or (not response["has_more"] and response.get("next_cursor") is not None)):
+            raise HostContractError(f"{name} malformed page")
+        return response["items"]
+
+    def _fair_roster(self, scope_ids):
+        if scope_ids is not None:
+            if isinstance(scope_ids, (str, bytes, bytearray)):
+                raise ValueError("scope_ids must be an iterable of UUIDs")
+            try:
+                return sorted({self._uuid_text(x) for x in scope_ids}, key=UUID)
+            except TypeError as exc:
+                raise ValueError("scope_ids must be iterable") from exc
+        result, after = [], None
+        while True:
+            response = self.db.host_scopes(None, after, 64)
+            page = self._fair_page(response, "host_scopes")
+            previous = after
+            for item in page:
+                try:
+                    value = self._uuid_text(item["scope_id"])
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise HostContractError("host_scopes malformed item") from exc
+                if previous is not None and UUID(value) <= UUID(previous):
+                    raise HostContractError("host_scopes did not advance")
+                result.append(value)
+                previous = value
+            if not response["has_more"]:
+                return result
+            cursor = response.get("next_cursor")
+            if not page or not isinstance(cursor, dict) or cursor != {"scope_id": previous}:
+                raise HostContractError("host_scopes invalid cursor")
+            after = previous
+
+    def _fair_journal_ids(self):
+        ids = set(self.journal.prepared_without_dispatch())
+        ids.update(self.journal.pending_settlements())
+        ids.update(self.journal.unfinished_dispatches())
+        return ids - {r["effect_id"] for r in self.journal.records
+                      if r["event_type"] == "settlement_committed"}
+
+    def _fair_effect(self, effect_id):
+        response = self.db.host_effect(effect_id)
+        self._fair_envelope(response, "host_effect")
+        effect = response.get("effect")
+        self._fair_validate_effect(effect, effect_id)
+        return effect
+
+    def _fair_validate_effect(self, effect, effect_id=None, scope=None):
+        if (not isinstance(effect, dict)
+                or effect.get("status") not in ("ready", "claimed", "succeeded", "failed", "unknown", "cancelled")
+                or effect.get("kind") not in EXTERNAL_KINDS
+                or not isinstance(effect.get("request"), dict)
+                or effect.get("replay_policy") not in ("replay_safe", "no_replay", "manual")):
+            raise HostContractError("malformed external effect")
+        try:
+            actual_id = self._uuid_text(effect.get("effect_id"))
+            actual_scope = self._uuid_text(effect.get("scope_id"))
+        except ValueError as exc:
+            raise HostContractError("malformed effect identity") from exc
+        if effect_id is not None and actual_id != str(effect_id):
+            raise HostContractError("effect identity mismatch")
+        if scope is not None and actual_scope != scope:
+            raise HostContractError("effect scope mismatch")
+        if effect["status"] == "claimed":
+            self._fair_token(self._effect_token(effect))
+            lease = effect.get("lease_until")
+            try:
+                parsed = datetime.fromisoformat(lease) if isinstance(lease, str) else lease
+                if not isinstance(parsed, datetime) or parsed.tzinfo is None:
+                    raise ValueError("lease timestamp")
+            except ValueError as exc:
+                raise HostContractError("invalid claimed lease") from exc
+
+    @staticmethod
+    def _effect_token(effect):
+        return {"attempt": effect.get("attempt_no"), "fence": effect.get("fence"),
+                "owner": effect.get("claim_owner")}
+
+    @staticmethod
+    def _fair_token(token):
+        if (not isinstance(token, dict) or set(token) != {"attempt", "fence", "owner"}
+                or type(token.get("attempt")) is not int or token["attempt"] < 1
+                or type(token.get("fence")) is not int or token["fence"] < 1
+                or token["fence"] > token["attempt"]
+                or not isinstance(token.get("owner"), str) or not token["owner"]):
+            raise HostContractError("invalid claim token")
+        return token
+
+    def _fair_ownership(self, roster):
+        # Validate the WHOLE startup set before appending even a conflict marker.
+        effects = []
+        for effect_id in sorted(self._fair_journal_ids()):
+            try:
+                effect = self._fair_effect(effect_id)
+            except (HostDBError, HostContractError) as exc:
+                raise HostContractError("journal ownership lookup failed") from exc
+            if str(effect["scope_id"]) not in roster:
+                raise HostContractError("journal effect outside roster")
+            self._fair_scope_journal_ids.setdefault(str(effect["scope_id"]), set()).add(str(effect_id))
+            effects.append(effect)
+        for effect in effects:
+            self._fair_close_orphan(effect)
+
+    def _fair_close_orphan(self, effect):
+        effect_id = str(effect["effect_id"])
+        if (effect["status"] not in ("succeeded", "failed", "unknown", "cancelled")
+                or self.journal.has("dispatch_finished", effect_id)
+                or self.journal.has("settlement_committed", effect_id)
+                or not self.journal.has("dispatch_started", effect_id)):
+            return False
+        started = self.journal.last("dispatch_started", effect_id)
+        if started is None:
+            raise JournalCorrupt("unfinished dispatch lacks started record")
+        token = started.get("claim")
+        if token is None:
+            token = {}
+        elif not isinstance(token, dict):
+            raise JournalCorrupt("invalid original dispatch claim")
+        if token:
+            try:
+                self._fair_token(token)
+            except HostContractError as exc:
+                raise JournalCorrupt("invalid original dispatch claim") from exc
+        self._record_settlement(
+            effect_id, started["request_digest"], started.get("run_id"), token,
+            {"conflict": True, "reason": "database_terminal_no_outcome",
+             "database_status": effect["status"]})
+        return True
+
+    def _next_scope(self, roster):
+        for scope in roster:
+            if self._next_scope_after is None or UUID(scope) > UUID(self._next_scope_after):
+                return scope
+        return roster[0]
+
+    @staticmethod
+    def _fair_key(item):
+        try:
+            created = item["created_at"]
+            created = datetime.fromisoformat(created) if isinstance(created, str) else created
+            if not isinstance(created, datetime) or created.tzinfo is None:
+                raise ValueError("created_at")
+            return created.astimezone(timezone.utc), UUID(str(item["effect_id"]))
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HostContractError("invalid effect ordering key") from exc
+
+    def _fair_pick(self, scope, klass, candidates):
+        key = self._fair_cursors.get((scope, klass))
+        ordered = sorted(candidates, key=self._fair_key)
+        chosen = next((x for x in ordered if key is None or self._fair_key(x) > key), ordered[0])
+        self._fair_cursors[(scope, klass)] = self._fair_key(chosen)
+        return chosen
+
+    def _fair_scan(self, scope):
+        items, cursor = [], None
+        while True:
+            response = self.db.host_effects(scope, *(cursor or (None, None)), 64)
+            page = self._fair_page(response, "host_effects")
+            previous = None if cursor is None else self._fair_key(
+                {"created_at": cursor[0], "effect_id": cursor[1]})
+            for effect in page:
+                self._fair_validate_effect(effect, scope=scope)
+                if effect["status"] not in ("ready", "claimed"):
+                    raise HostContractError("terminal effect in discovery")
+                key = self._fair_key(effect)
+                if previous is not None and key <= previous:
+                    raise HostContractError("host_effects did not advance")
+                previous = key
+                items.append(effect)
+            if not response["has_more"]:
+                return items
+            nxt = response.get("next_cursor")
+            if not page or not isinstance(nxt, dict) or set(nxt) != {"created_at", "effect_id"}:
+                raise HostContractError("host_effects invalid cursor")
+            if self._fair_key(nxt) != previous:
+                raise HostContractError("host_effects cursor mismatch")
+            cursor = nxt["created_at"], nxt["effect_id"]
+
+    def _fair_reconcile(self, scope):
+        count, progressed = 0, False
+        for effect_id in list(self.journal.pending_settlements()):
+            effect = self._fair_effect(effect_id)
+            if str(effect["scope_id"]) != scope:
+                continue
+            finish = self.journal.last("dispatch_finished", effect_id)
+            if finish is None or not isinstance(finish["payload"].get("outcome"), dict):
+                raise JournalCorrupt("missing durable outcome")
+            outcome = finish["payload"]["outcome"]
+            stored = finish.get("claim") or {}
+            if effect["status"] == "claimed" and self._effect_token(effect) == stored:
+                self._fair_token(stored)
+                response = self.db.settle(effect_id, outcome["class"], stored,
+                                          outcome["body"]["kind"], outcome["body"]["result"])
+                if self._fair_settle_response(response, effect_id):
+                    self._record_settlement(effect_id, finish["request_digest"],
+                        finish.get("run_id"), stored,
+                        {"outcome": outcome, "response": response, "reconciled": True})
+                    count += 1
+                    progressed = True
+            else:
+                self._record_settlement(effect_id, finish["request_digest"],
+                    finish.get("run_id"), stored,
+                    {"conflict": effect.get("outcome") != outcome,
+                     "reason": "database_terminal" if effect["status"] != "claimed"
+                     else "claim_token_changed", "outcome": outcome})
+                progressed = True  # Local debt cleared, not a successful settle.
+        return count, progressed
+
+    def _fair_orphan(self, scope):
+        live = expired = progressed = False
+        for effect_id in list(self.journal.unfinished_dispatches()):
+            if self.journal.has("settlement_committed", effect_id):
+                continue
+            effect = self._fair_effect(effect_id)
+            if str(effect["scope_id"]) != scope:
+                continue
+            progressed |= self._fair_close_orphan(effect)
+            if effect["status"] == "claimed":
+                if self.db.remaining_lease_ms(effect["lease_until"]) > 0:
+                    live = True
+                elif effect["replay_policy"] != "manual":
+                    expired = True
+        return live, expired, progressed
+
+    def _fair_execute(self, effect, token):
+        self.db.assert_all_idle()
+        digest = request_digest(effect["request"])
+        effect_id = str(effect["effect_id"])
+        kind = effect["kind"]
+        self._fair_scope_journal_ids.setdefault(str(effect["scope_id"]), set()).add(effect_id)
+        if kind == "model_call":
+            return self._execute_model(effect_id, effect, token, digest)
+        if kind == "tool_call":
+            return self._execute_tool(effect_id, effect, token, digest)
+        return self._execute_resource(effect_id, effect, token, digest)
+
+    def _fair_claim(self, item, attempted):
+        effect_id = str(item["effect_id"])
+        if effect_id in attempted:
+            raise HostContractError("duplicate physical claim in fair invocation")
+        attempted.add(effect_id)  # Before RPC, including malformed/lost replies.
+        response = self.db.claim(effect_id, self._lease_for(item))
+        if is_error(response) and response["error"].get("code") in ("invalid_args", "stale_claim"):
+            self._fair_envelope({"v": response.get("v")}, "claim")
+            current = self._fair_effect(effect_id)
+            terminal = current["status"] in ("succeeded", "failed", "unknown", "cancelled")
+            stale_business = (current["status"] == "claimed"
+                and current["kind"] in ("model_call", "tool_call")
+                and self.db.remaining_lease_ms(current["lease_until"]) <= 0)
+            changed = any(current.get(k) != item.get(k) for k in
+                          ("status", "attempt_no", "fence", "claim_owner"))
+            if terminal or (response["error"]["code"] == "stale_claim" and (stale_business or changed)):
+                return None
+            raise HostDBError(response)
+        self._fair_envelope(response, "claim")
+        if str(response.get("effect_id")) != effect_id:
+            raise HostContractError("claim identity mismatch")
+        if response.get("disposition") == "deferred":
+            if response.get("claim") not in (None, {}):
+                raise HostContractError("deferred with token")
+            return None
+        if response.get("disposition") != "committed":
+            raise HostContractError("unknown claim disposition")
+        token = self._fair_token(response.get("claim"))
+        effect = self._fair_effect(effect_id)
+        if effect["status"] != "claimed" or self._effect_token(effect) != token:
+            return None
+        outcome = self._fair_execute(effect, token)
+        outcome["claimed"] = True
+        return outcome
+
+    def _fair_prepared(self, scope, attempted):
+        ids = [effect_id for effect_id in self.journal.prepared_without_dispatch()
+               if not self.journal.has("dispatch_finished", effect_id)]
+        candidates = []
+        for effect_id in ids:
+            record = self.journal.records_for(effect_id)[0]
+            candidates.append(((record["seq"], effect_id), effect_id))
+        candidates.sort()
+        anchor = self._resume_cursor.get(scope)
+        candidates = ([x for x in candidates if anchor is None or x[0] > anchor]
+                      + [x for x in candidates if anchor is not None and x[0] <= anchor])
+        progressed = False
+        for key, effect_id in candidates:
+            effect = self._fair_effect(effect_id)
+            if str(effect["scope_id"]) != scope:
+                continue
+            self._resume_cursor[scope] = key
+            prepared = self.journal.last("effect_prepared", effect_id)
+            if effect["status"] in ("succeeded", "failed", "unknown", "cancelled"):
+                self._record_settlement(effect_id, prepared["request_digest"],
+                    prepared.get("run_id"), prepared.get("claim") or {},
+                    {"conflict": True, "reason": "database_terminal_no_dispatch"})
+                progressed = True
+                continue
+            if prepared["request_digest"] != request_digest(effect["request"]):
+                raise JournalCorrupt("prepared request digest mismatch")
+            if effect["status"] == "ready":
+                if effect_id in attempted:
+                    continue
+                return True, self._fair_claim(effect, attempted), progressed
+            token = self._effect_token(effect)
+            if prepared.get("claim") != token:
+                continue
+            required = int(self.adapter.timeout_s * 1000) + 5000 if (
+                effect["kind"] == "model_call" and self.adapter is not None) else 0
+            if self.db.remaining_lease_ms(effect["lease_until"]) <= required:
+                continue
+            outcome = self._fair_execute(effect, token)
+            outcome["claimed"] = False
+            return True, outcome, progressed
+        return False, None, progressed
+
+    def _fair_recover(self, scope):
+        self.recover_seq += 1
+        key = f"{self.recover_key_prefix}:fair:{scope}:{self.recover_seq}:{uuid4().hex[:8]}"
+        response = self.db.recover(scope, key, 16)
+        self._fair_envelope(response, "command_recover")
+        recovery = response.get("recovery")
+        if (response.get("disposition") not in ("committed", "replay")
+                or not isinstance(recovery, dict)
+                or str(recovery.get("scope_id")) != scope
+                or not isinstance(recovery.get("applied"), list)
+                or not isinstance(recovery.get("skipped"), list)
+                or len(recovery["applied"]) > 16
+                or type(recovery.get("manual_debt")) is not int
+                or recovery["manual_debt"] < 0
+                or type(recovery.get("has_more")) is not bool):
+            raise HostContractError("malformed recovery response")
+        seen = set()
+        for item in recovery["applied"]:
+            if (not isinstance(item, dict) or item.get("kind") not in EXTERNAL_KINDS
+                    or item.get("action") not in ("reset_ready", "settle_unknown")):
+                raise HostContractError("malformed applied recovery row")
+            try:
+                effect_id = self._uuid_text(item.get("effect_id"))
+            except ValueError as exc:
+                raise HostContractError("malformed recovery effect identity") from exc
+            if effect_id in seen:
+                raise HostContractError("duplicate recovery effect identity")
+            seen.add(effect_id)
+        return recovery
+
+    def _fair_settle_response(self, response, effect_id=None):
+        if is_error(response) and response["error"].get("code") in ("receipt_conflict", "stale_claim"):
+            self._fair_envelope({"v": response.get("v")}, "settle")
+            return False
+        self._fair_envelope(response, "settle")
+        if (response.get("disposition") not in ("committed", "replay")
+                or (effect_id is not None and str(response.get("effect_id")) != str(effect_id))
+                or (effect_id is not None and (not isinstance(response.get("emitted"), list)
+                    or type(response.get("revision")) is not int))):
+            raise HostContractError("malformed settlement response")
+        return True
+
+    def _fair_visit(self, scope, attempted):
+        stats = RoundStats(scope_visits=1)
+        self.db.assert_all_idle()
+        stats.reconciled, progressed = self._fair_reconcile(scope)
+        live, expired, closed = self._fair_orphan(scope)
+        progressed |= closed
+        if live:
+            stats.orphan_blocked = 1
+            stats.skipped = 1
+            stats.pending_work = True
+            return stats, progressed
+        resumed, outcome, closed = self._fair_prepared(scope, attempted)
+        progressed |= closed
+        if resumed:
+            stats.prepared_attempts = 1
+            self._fair_count(stats, outcome)
+            progressed |= outcome is not None and bool(outcome.get("dispatched", outcome.get("executed")) or outcome.get("settled"))
+        live, expired2, closed = self._fair_orphan(scope)
+        progressed |= closed
+        if live:
+            stats.orphan_blocked = 1
+            stats.pending_work = True
+            return stats, progressed
+        before = self._fair_scan(scope)
+        expired |= expired2 or any(x["status"] == "claimed" and x["replay_policy"] != "manual"
+                                 and self.db.remaining_lease_ms(x["lease_until"]) <= 0 for x in before)
+        if expired:
+            recovery = self._fair_recover(scope)
+            stats.recovery_commands = 1
+            stats.recovered = 1  # Legacy field remains the command count.
+            stats.recovery_applied = len(recovery["applied"])
+            stats.recovery_has_more = recovery["has_more"]
+            progressed |= bool(recovery["applied"])
+        live, _, closed = self._fair_orphan(scope)
+        progressed |= closed
+        if live:
+            stats.orphan_blocked = 1
+            stats.pending_work = True
+            return stats, progressed
+        discovered = self._fair_scan(scope)
+        stats.manual_debt_ids = {str(x["effect_id"]) for x in discovered
+            if x["status"] == "claimed" and x["replay_policy"] == "manual"
+            and self.db.remaining_lease_ms(x["lease_until"]) <= 0}
+        ready = [x for x in discovered if x["status"] == "ready" and str(x["effect_id"]) not in attempted]
+        host = [x for x in ready if x["kind"] in HOST_KINDS]
+        business = [x for x in ready if x["kind"] not in HOST_KINDS]
+        streak = self._host_streak.get(scope, 0)
+        klass = "business" if business and (not host or streak == 3) else "host"
+        candidates = business if klass == "business" else host
+        if candidates:
+            effect = self._fair_pick(scope, klass, candidates)
+            self._host_streak[scope] = 0 if klass == "business" else min(3, streak + 1)
+            stats.new_opportunities = 1
+            outcome = self._fair_claim(effect, attempted)
+            self._fair_count(stats, outcome)
+            progressed |= outcome is not None and bool(outcome.get("dispatched", outcome.get("executed")) or outcome.get("settled"))
+        # Discovery precedes execution. Conservatively retain its observed work
+        # until the following pass; do not add an unbudgeted third full scan.
+        local_ids = self._fair_journal_ids()
+        # Membership is known from this visit's journal reads or execution.
+        # Do not charge B's durable debt to an otherwise empty A observation.
+        local_ids &= self._fair_scope_journal_ids.get(scope, set())
+        stats.pending_work = bool(discovered) or stats.recovery_has_more or bool(local_ids)
+        return stats, progressed
+
+    @staticmethod
+    def _fair_count(stats, outcome):
+        if outcome is None:
+            stats.claim_conflicts += 1
+            stats.skipped += 1
+            return
+        stats.claimed += int(bool(outcome.get("claimed")))
+        stats.executed += int(bool(outcome.get("executed")))
+        stats.settled += int(bool(outcome.get("settled")))
+        if outcome.get("reply") is not None:
+            stats.last_reply = outcome["reply"]
 
     def run_once(self, scope) -> RoundStats:
         stats = RoundStats()
@@ -507,6 +1056,8 @@ class HostWorker:
                 class_name, result = _call_tool_handler(self.tool_handler, effect)
                 reason = None
             except Exception:
+                if self._fair_active:
+                    raise
                 class_name, result, reason = "unknown", {
                     "status": "error", "output": {"code": "tool_executor_error"},
                     "usage": {"wall_ms": 0}}, "tool_executor_error"
@@ -551,6 +1102,8 @@ class HostWorker:
                 class_name, result = _call_tool_handler(self.resource_handler, effect)
                 reason = None
             except Exception:
+                if self._fair_active:
+                    raise
                 class_name, result, reason = "unknown", {"v": 1, "observed": "unknown"}, \
                     "resource_executor_error"
         else:
@@ -599,13 +1152,38 @@ class HostWorker:
                 response = self.db.host_run_pins(run_id, None, 64)
             else:
                 response = self.db.host_run_pins(run_id, cursor["pin_id"], 64)
+            if self._fair_active:
+                page = self._fair_page(response, "host_run_pins")
+                previous = None if cursor is None else UUID(cursor["pin_id"])
+                for pin in page:
+                    try:
+                        key = UUID(self._uuid_text(pin["pin_id"]))
+                    except (TypeError, KeyError, ValueError) as exc:
+                        raise HostContractError("host_run_pins malformed identity") from exc
+                    if previous is not None and key <= previous:
+                        raise HostContractError("host_run_pins unordered page")
+                    previous = key
+                if response["has_more"] and (not page or response.get("next_cursor") != {
+                        "pin_id": str(previous)}):
+                    raise HostContractError("host_run_pins cursor mismatch")
             if is_error(response):
                 return None
             pins.extend(pin for pin in response.get("items", [])
                         if pin.get("released_at") is None)
             if not response.get("has_more"):
                 return pins
-            cursor = response["next_cursor"]
+            nxt = response["next_cursor"]
+            if self._fair_active:
+                if not isinstance(nxt, dict) or set(nxt) != {"pin_id"}:
+                    raise HostContractError("host_run_pins cursor")
+                try:
+                    next_id = self._uuid_text(nxt["pin_id"])
+                    previous = None if cursor is None else self._uuid_text(cursor["pin_id"])
+                except ValueError as exc:
+                    raise HostContractError("host_run_pins cursor") from exc
+                if previous is not None and UUID(next_id) <= UUID(previous):
+                    raise HostContractError("host_run_pins cursor did not advance")
+            cursor = nxt
             if not isinstance(cursor, dict):
                 return None
 
@@ -665,7 +1243,7 @@ class HostWorker:
                 run_id=run_id, claim=token)
         settled = self._settle(effect_id, run_id, token, digest, kind,
                                "failure", result, outcome)
-        return {"executed": True, "settled": settled, "reply": None}
+        return {"executed": True, "dispatched": False, "settled": settled, "reply": None}
 
     def _no_http_unknown(self, effect_id, run_id, token, digest, kind, reason,
                          *, request=None, journaled: bool = False) -> dict:
@@ -683,12 +1261,20 @@ class HostWorker:
                 run_id=run_id, claim=token)
         settled = self._settle(effect_id, run_id, token, digest, kind,
                                "unknown", result, outcome)
-        return {"executed": True, "settled": settled, "reply": None}
+        return {"executed": True, "dispatched": False, "settled": settled, "reply": None}
 
     def _settle(self, effect_id, run_id, token, digest, kind, class_name,
                 result, outcome) -> bool:
+        if self._fair_active and not self.journal.has("dispatch_finished", effect_id):
+            # A local preflight outcome also needs durable reconciliation if
+            # settlement races. This records local completion, not dispatched IO.
+            self.journal.append("dispatch_finished", effect_id, digest,
+                {"kind": kind, "outcome": outcome, "no_io": True},
+                run_id=run_id, claim=token)
         response = self.db.settle(effect_id, class_name, token, kind, result)
         self.db.assert_all_idle()
+        if self._fair_active and not self._fair_settle_response(response, effect_id):
+            return False
         if is_error(response):
             # Keep dispatch_finished pending: the next round/restart resubmits
             # the same outcome with the same token; do not pretend it committed.
