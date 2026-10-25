@@ -832,3 +832,7 @@ M-P 已完成：merge `d13391d27f9c7363906282af4cea4160c5aa97a8` 正常创建并
 M-A 仅补齐本计划与 [发布记录](../reviews/v24-release-2026-10-25.md)：提交前检查 merge → audit 差异只包含这两个文档，执行树与冻结 SQL 不变。按路径独立提交并立即正常推送 main；随后 fetch 核验 merge/audit 祖先关系及远端 audit SHA，实际结果在交付消息中报告，文档不预填自身提交 SHA。
 
 本轮发布状态为 **发布完成**。v99 Phase 0 已继承自 main，后续 W1–W4 未完成；真实 provider 未调用，M-E 为 `not_run/not_authorized/not_executed`；D-S7-2 继续开启，第二批语言、跨主机租约、provider 性能与质量仍移交后续独立计划。
+
+## 执行记录 — M-A（2026-10-25）
+
+M-F1 发布 merge 已完成并推送：merge `f3c48a1fc11567e6f7e6bd422eb97fac3c3a29a9`，parent 1 `fc6f3222b329bea13adfb2baae03d38202142409`，parent 2 `57e2c1e0fff693447f406f8202472eb73db0b285`，merge tree `f2b09951a889e6152a823e05cc426fa41bdce815`。`git fetch origin` 后确认 `origin/main` 等于 merge SHA，且 v24 源提交为远端祖先。随后按路径追加本记录与 release review，创建并推送唯一 M-A 审计提交；该提交不改变执行树。
