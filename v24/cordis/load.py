@@ -9,7 +9,7 @@ CANONICAL_ORDER = (
     '17_effects.sql', '18_events.sql', '19_requests.sql', '20_relations.sql',
     '30_triggers.sql', '40_advance.sql', '50_permissions.sql',
 )
-SQL_LOAD_ORDER = CANONICAL_ORDER[:1]
+SQL_LOAD_ORDER = CANONICAL_ORDER[:13]
 
 
 def validate_manifest(root=None, order=None):

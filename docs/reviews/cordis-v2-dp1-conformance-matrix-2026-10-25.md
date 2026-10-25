@@ -48,4 +48,17 @@ Manifest order is exactly the following twelve rows. Full v24 loader/SQL/s1–s1
 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | PG 18.4, one-transaction load, exact owner/catalog and database/role OID cleanup |
 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | CDP1-E1/E2/E3, empty/current prefix, DSN/environment rejection, caller transaction, core functions |
 
-W2/CDP1-D and W3/CDP1-K: not implemented or run. Existing v24 s9 gate reported 23 passing named cases.
+W3/CDP1-K: not implemented or run. Existing v24 s9 gate reported 23 passing named cases.
+
+## W2 actual results
+
+All four commands ran again after the final W2 correction and exited 0: `v24/cordis/load.py`, `v24/cordis/dp1/setup_db.py --self-check`, `v24/cordis/dp1/test_environment.py`, `v24/cordis/dp1/test_ddl.py` (each invoked with `uv run python`).
+
+| Assertion | Producer / evidence | Result |
+|---|---|---|
+| CDP1-D1 | Exact ten table column sets, owner, deferred event/request FK, statement append-only catalog; 10–17/20/30 = 325 lines | Passed |
+| CDP1-D2 | Cross-episode FK in installs/fibers/contributions/pins/runs/effects; run nonnull; current cross/closed/closing negatives; committed close/new-current and historical owner positives; pin XOR/epoch/active indexes; service/listener/spawn uniqueness | Passed |
+| CDP1-D3 | Six statuses × outcome/settled/owner/lease truth table; attempt/fence, parent pair, ordinal 0–15 and partial inflight uniqueness | Passed |
+| CDP1-D4 | Immutable declaration/input/identity, monotonic counters/tombstones, scope cycles, events UPDATE/DELETE/TRUNCATE; real COMMIT failures for dangling effect FK | Passed |
+
+88 negative savepoint probes assert SQLSTATE and ten-table snapshot equality before and after caller COMMIT. Two additional real COMMIT failures assert SQLSTATE 23503 and rollback equality. W2 does not claim lifecycle state-machine behavior or W3 error-code/ACL coverage.

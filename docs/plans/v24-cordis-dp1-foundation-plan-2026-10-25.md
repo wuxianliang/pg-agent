@@ -1,6 +1,6 @@
 # v24 Cordis v2 DP1：基础内核与验收计划
 
-状态：实施中；P0 与 W1 已实跑通过，W2–W4 待实施。唯一产品规格为 [`cordis-plugin-system-2026-10-25.md`](/Users/wxl/Projects/pg-agent/.claude/worktrees/v99/docs/designs/cordis-plugin-system-2026-10-25.md)。
+状态：实施中；P0、W1、W2 已实跑通过，W3–W4 待实施。唯一产品规格为 [`cordis-plugin-system-2026-10-25.md`](/Users/wxl/Projects/pg-agent/.claude/worktrees/v99/docs/designs/cordis-plugin-system-2026-10-25.md)。
 
 ## 1. Summary
 
