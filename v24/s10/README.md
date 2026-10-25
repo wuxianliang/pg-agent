@@ -52,6 +52,13 @@ The adapter uses the official root `https://api.deepseek.com`, model
 reuses `StdlibTransport`, errors and pricing from `v15` without modifying
 `v15/**`.
 
+Post-closeout D3 (2026-10-25): v24 fixes `MODEL="deepseek-flash"`; it
+has no runtime allowlist and does not consume the v15 allowlist. This round
+adds no `--model`, constructor model parameter or model environment override.
+A v4-pro integration would require a separate configuration, validation and
+pricing contract. External model/deprecation/pricing facts in the earlier plan
+retain their 2026-10-24 research date; they were not rechecked here.
+
 ## Optional real-provider smoke
 
 ```bash
@@ -76,3 +83,8 @@ journal on failure. It is not a gate.
 - No cross-host lease, multi-host or M-P plugin/registry claim.
 - `v24/host/process_io.py` is scaffolding for a future plugin host; G9 only
   checks its bounds indirectly through the package static scan.
+
+
+## Post-closeout M-M（2026-10-25）
+
+D3：v24 固定 `deepseek-flash`；无运行时 allowlist，不消费 v15 allowlist。本轮不新增模型参数、环境 override 或 CLI，不修改 adapter 与 v15。closeout 11/11、G9 11/11 均 exit 0；逐命令时间/source/result 见正式后续计划。外部型号与计价事实没有重新查询。

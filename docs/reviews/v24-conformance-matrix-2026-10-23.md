@@ -547,3 +547,8 @@ S8 收口后，`error_v1` 的 24 码闭集与生产者集合相同：**没有**�
 ## Post-closeout M-H / P0（2026-10-25）
 
 P0 重新运行 closeout 11/11、G8 23/23、G9 11/11、G10 8/8，全部 exit 0；M-H 再跑 closeout 11/11 与 G8 23/23，全部 exit 0。逐命令时间、源码身份、结果行与九 SQL SHA-256 见正式后续计划的执行记录。历史记录保留，G8/G9/G10 仍为 extension checks。H13 67,107,712 B 仅为夹具序列化尺寸，不是响应/内存上限；分页仍为 64 项。
+
+
+## Post-closeout M-M（2026-10-25）
+
+D3：v24 固定 `deepseek-flash`；无运行时 allowlist，不消费 v15 allowlist。本轮不新增模型参数、环境 override 或 CLI，不修改 adapter 与 v15。closeout 11/11、G9 11/11 均 exit 0；逐命令时间/source/result 见正式后续计划。外部型号与计价事实没有重新查询。

@@ -516,3 +516,8 @@ S6/S8 收尾轮十个 gate 依序退出 0/0/0/0/0/0/0/0/0/0（load、`s1/setup_d
 ## Post-closeout M-H（2026-10-25）
 
 **D-PF-1（持续容量披露）**：七个分页函数默认且最多 64 项。H13 的 67,107,712 B 是特定 ASCII 夹具紧凑 JSON 字符/UTF-8 字节数，不是 PostgreSQL wire size、压缩率或进程 RSS，也不是响应字节/内存上限。effects.request 无已定义全局字节限额，advance 的 1 MiB outcome body 校验不约束 request；worker 可累积整轮结果，页项数不限制整轮内存。保持 64 的裁决已完成，容量治理仍未证明。M-H closeout 11/11、G8 23/23 exit 0；P0 三组 extension 全绿，记录见正式后续计划。D-S7-2 保持开启。
+
+
+## Post-closeout M-M（2026-10-25）
+
+D3：v24 固定 `deepseek-flash`；无运行时 allowlist，不消费 v15 allowlist。本轮不新增模型参数、环境 override 或 CLI，不修改 adapter 与 v15。closeout 11/11、G9 11/11 均 exit 0；逐命令时间/source/result 见正式后续计划。外部型号与计价事实没有重新查询。

@@ -209,7 +209,7 @@ v24 **没有运行时 allowlist**。引入 v4-pro 需要新增模型配置、验
 
 **Done-when**：上述记录完整；基线失败已归因。未解决的确定性失败阻断后续交付。
 
-**Key files**：本计划、已有验证工件、实际 worktree `AGENTS.md`。  
+**Key files**：本计划、已有验证工件、实际 worktree `AGENTS.md`。
 **Deps**：无。**Size**：S。
 
 ### M-H — H13 处置与证据措辞
@@ -228,7 +228,7 @@ v24 **没有运行时 allowlist**。引入 v4-pro 需要新增模型配置、验
 
 **Done-when**：11 条 closeout 与 G8 全量 exit 0；代码行为不变；当前文档中不存在未决页上限或 64 MiB 硬上界声明。
 
-**Key files**：`v24/s9/test_g8.py`、s9 README、前计划、matrix、ledger、本计划。  
+**Key files**：`v24/s9/test_g8.py`、s9 README、前计划、matrix、ledger、本计划。
 **Deps**：P0。**Size**：S。
 
 ### M-M — 固定模型选择合同
@@ -245,7 +245,7 @@ v24 **没有运行时 allowlist**。引入 v4-pro 需要新增模型配置、验
 
 **Done-when**：11 条 closeout 与 G9 全量 exit 0；`deepseek.py`、`v15/**` 无 diff；文档不存在本轮参数化的待选分支。
 
-**Key files**：s10 README、前计划、matrix、ledger、本计划。  
+**Key files**：s10 README、前计划、matrix、ledger、本计划。
 **Deps**：P0。**Size**：S。
 
 ### M-S — 修复 smoke 终态核验并补离线回归
@@ -302,7 +302,7 @@ v24 **没有运行时 allowlist**。引入 v4-pro 需要新增模型配置、验
 
 **Done-when**：11 条 closeout 与 G9 全量 exit 0；新测试确实覆盖旧缺陷；SQL、worker、journal 格式与 transport 不变。ledger 记录 `D-PF-2`：smoke 结果发现缺陷及修复证据，保留旧 G9 通过记录及其原证明边界。Smoke 的最终顺序为：核验 completion 与摘要 → 泄漏检查 → 关闭 journal/数据库资源 → 成功删除私有目录并验证路径不存在 → 打印成功摘要并返回 0。任一核验、关闭或清理失败都返回 1；删除开始前失败保留完整 journal，递归删除部分完成后失败则尽力保留剩余证据并准确说明可用路径，不能先打印成功。Oracle-adjudicated 2026-10-25：采用此分界（保守范围假设），因为递归文件删除不可回滚；若以后要求部分删除后仍保留完整 journal，须另行设计副本生命周期。
 
-**Key files**：`v24/host/smoke.py`、`v24/s10/test_g9.py`、s10 README、matrix、ledger、本计划。  
+**Key files**：`v24/host/smoke.py`、`v24/s10/test_g9.py`、s10 README、matrix、ledger、本计划。
 **Deps**：P0。**Size**：M。
 
 ### M-E — 真实 provider 证据登记
@@ -351,7 +351,7 @@ v24 **没有运行时 allowlist**。引入 v4-pro 需要新增模型配置、验
 
 **Done-when**：11 条 closeout 与 G9 通过；三处证据一致。里程碑可以以“证据登记完成、live 未验证”结束，不把可选项改写为通过。
 
-**Key files**：s10 README、matrix、ledger、本计划。  
+**Key files**：s10 README、matrix、ledger、本计划。
 **Deps**：M-S。**Size**：S。
 
 ### M-F — 登记独立后续计划
@@ -369,7 +369,7 @@ v24 **没有运行时 allowlist**。引入 v4-pro 需要新增模型配置、验
 
 **Done-when**：ledger、s10/s11 README 与本计划一致；11 条 closeout、G9 和 G10 全量 exit 0。Node 与 multilingual 两条 opt-in 命令在 M-P 的发布候选上必须 exit 0。
 
-**Key files**：s10/s11 README、ledger、本计划。  
+**Key files**：s10/s11 README、ledger、本计划。
 **Deps**：P0。**Size**：S。
 
 ### M-P — 发布到 main
@@ -397,7 +397,7 @@ M-P 创建发布候选前必须重新 `git fetch origin`，以最新 `origin/mai
 
 **Done-when**：双亲 merge 已推送；发布的执行树与验证树一致；所有必需检查 exit 0。真实 provider 仍可为明确的未验证或已归因失败状态。
 
-**Key files**：隔离发布 worktree、发布记录、matrix、ledger、s9/s10/s11 README、本计划。  
+**Key files**：隔离发布 worktree、发布记录、matrix、ledger、s9/s10/s11 README、本计划。
 **Deps**：前述收尾里程碑；明确发布授权。**Size**：M。
 
 ### M-A — 发布记录最终化
@@ -415,7 +415,7 @@ M-P 创建发布候选前必须重新 `git fetch origin`，以最新 `origin/mai
 
 **Done-when**：发布记录已推送；记录中的 merge 与 parents 顺序精确相符；merge 与 audit commit 均在 fetch 后的 `origin/main` 历史中；执行树未变化。
 
-**Key files**：`docs/reviews/v24-release-2026-10-25.md`、本计划。  
+**Key files**：`docs/reviews/v24-release-2026-10-25.md`、本计划。
 **Deps**：M-P。**Size**：S。
 
 ## File-by-file impact
@@ -737,3 +737,25 @@ worktree AGENTS.md 已包含第三个真实入口，用户提供约定亦如此�
 | `uv run python v24/s8/test_g7.py` | 2026-10-25T10:34:16.695987+08:00 | 0 | `[passed] v24 S8 W1-W3 G7-A…H + N1-N7: g7_a,g7_b,g7_c,g7_d,g7_e,g7_f,g7_g,g7_h,n1,n2,n3,n4,n5,n6,n7` |
 | `uv run python v24/s7/test_g6.py` | 2026-10-25T10:34:19.020490+08:00 | 0 | `[passed] v24 S7 W1-W2 G6-A…H + N1-N9 + L1-L5: g6_a1,g6_b1,g6_b2,g6_b3,g6_c1,g6_c2,g6_c3,g6_d1,g6_e1,g6_f1,g6_g1,g6_g2,g6_g3,g6_h1,g6_h2,g6_h3,g6_n1,g6_n2,g6_n3,g6_n4,g6_n5,g6_n6,g6_n7,g6_n8,g6_n9,g6_l1,g6_l2,g6_l3,g6_l4,g6_l5` |
 | `uv run python v24/s9/test_g8.py` | 2026-10-25T10:34:25.196009+08:00 | 0 | `[passed] v24 G8 host reads / closure / lease / recovery: 23 case(s)` |
+
+
+## 执行记录 — M-M（2026-10-25）
+
+D3 已落实为文档合同：固定 deepseek-flash；v24 无 runtime allowlist，不消费 v15 allowlist；不加模型参数、环境 override 或 CLI。外部事实保留 2026-10-24 核查日期。本次顺带清理复制计划中的 Markdown 行尾空格，未改主检出原件。deepseek.py、v15/** diff 为空。closeout 11/11、G9 11/11 均 exit 0。
+
+基于 source HEAD `01890298bc380d28903243e52cb61474ddfe2bc1` 的未提交本里程碑树；其后只追加证据文档。
+
+| 命令 | 开始时间（Asia/Shanghai +08:00） | exit | 结果行 |
+|---|---|---|---|
+| `uv run python v24/load.py` | 2026-10-25T10:36:15.016202+08:00 | 0 | `[passed] v24 loader self-check` |
+| `uv run python v24/s1/setup_db.py --self-check` | 2026-10-25T10:36:15.556942+08:00 | 0 | `[passed] v24/s1 setup self-check` |
+| `uv run python v24/s1/test_ddl.py` | 2026-10-25T10:36:17.243026+08:00 | 0 | `[passed] v24 W2 G1-O owner DDL probes (no advance/ACL/lifecycle claim)` |
+| `uv run python v24/s1/test_g1.py` | 2026-10-25T10:36:18.887811+08:00 | 0 | `[passed] v24 G1 kernel, commands, claim, locks, host_prepare settlement and ACL` |
+| `uv run python v24/s2/test_g3a.py` | 2026-10-25T10:36:21.361664+08:00 | 0 | `[passed] v24 S2 W1-W6: resolve, infra, admission, activation, deactivation, dispose` |
+| `uv run python v24/s3/test_g2.py` | 2026-10-25T10:36:23.152703+08:00 | 0 | `[passed] v24 S3 W1-W7: read surface + start + poll/wait_check + cancel + steer + respond (G2a-0/1/2/3/4/5/6/7/8/10/11; G3b-1..5; claimed/unknown settlement release reserved S4)` |
+| `uv run python v24/s4/test_g2b.py` | 2026-10-25T10:36:28.373543+08:00 | 0 | `[passed] v24 S4 W1-W6` |
+| `uv run python v24/s5/test_g4.py` | 2026-10-25T10:36:32.311538+08:00 | 0 | `[passed] v24 S5 W1-W4` |
+| `uv run python v24/s6/test_g5.py` | 2026-10-25T10:36:35.953402+08:00 | 0 | `[passed] v24 S6 W1-W4` |
+| `uv run python v24/s8/test_g7.py` | 2026-10-25T10:36:40.285082+08:00 | 0 | `[passed] v24 S8 W1-W3 G7-A…H + N1-N7: g7_a,g7_b,g7_c,g7_d,g7_e,g7_f,g7_g,g7_h,n1,n2,n3,n4,n5,n6,n7` |
+| `uv run python v24/s7/test_g6.py` | 2026-10-25T10:36:42.915408+08:00 | 0 | `[passed] v24 S7 W1-W2 G6-A…H + N1-N9 + L1-L5: g6_a1,g6_b1,g6_b2,g6_b3,g6_c1,g6_c2,g6_c3,g6_d1,g6_e1,g6_f1,g6_g1,g6_g2,g6_g3,g6_h1,g6_h2,g6_h3,g6_n1,g6_n2,g6_n3,g6_n4,g6_n5,g6_n6,g6_n7,g6_n8,g6_n9,g6_l1,g6_l2,g6_l3,g6_l4,g6_l5` |
+| `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s10/test_g9.py` | 2026-10-25T10:36:50.074039+08:00 | 0 | `[passed] v24 G9 M-R: 11 case(s): G9-A, G9-B, G9-C, G9-D, G9-E, G9-F, G9-L, G9-J1, G9-J2, G9-J3, G9-R` |

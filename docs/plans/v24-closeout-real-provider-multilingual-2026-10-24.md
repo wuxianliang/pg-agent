@@ -525,7 +525,7 @@ git status --short
 
 原 5 条开放决策已由 Oracle 于 2026-10-25 裁决并写入 Approach「Oracle 裁决记录」，此处不再重复。裁决 5（closeout 口径）是范围/验收决策，用户可随时以纯文档改动翻转为 14/14。仍然开放、需要用户或后续修订才能定的是：
 
-1. **`deepseek-v4-pro` 是否进入 allowlist**：当前仅 `deepseek-flash`（`v15/provider/deepseek.py:19`）。官方 2026-09-10 新闻称「逐步淘汰 V4-Pro」，但同日 changelog 称 API 服务继续、2026-10-17 计价页仍列出。建议保持仅 `deepseek-flash`；若要纳入，需另立修订并同步 v24 adapter allowlist 与 pricing（`v15/provider/pricing.py` 目前不价 v4-pro）。
+1. **模型选择已由后续计划 D3 收口**：v24 固定 `deepseek-flash`，没有运行时 allowlist，也不消费 v15 allowlist；本轮不加模型参数或 `--model`。v4-pro 另需配置、校验与计价合同。上文外部型号/弃用/价格材料仍仅为 2026-10-24 核查记录，不表示本次重新核验。
 2. **多语言第二批语言**（Go / Swift / DuckDB）：本轮明确不做（避免扩大交付面）。前置条件是 Node 全链 opt-in 实测 exit 0 且工具链可用性有证据，再按同一 `ApprovedAdapterRegistry` 增加 entry——届时才需要处理 `pi_ports` 的 PiG/PiSwift 夹具依赖（外部 checkout 路径）。
 3. **真实 provider 验收的授权**：`--real-provider-smoke` 需要 `DEEPSEEK_API_KEY`（或 `OPENAI_API_KEY`）在环境中。当前 shell 未设置、仓库无 `.env`，因此本计划**不包含任何 live 调用证据**；何时授权实跑由用户决定，跑前按 `AGENTS.md:73-75` 确认当时无打开事务。
 
