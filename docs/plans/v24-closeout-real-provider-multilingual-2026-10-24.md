@@ -213,7 +213,7 @@ ACL 闭合使「开表读」不可行：`REVOKE ALL … FROM PUBLIC, v24_admin, 
 | `G8-H10` | ACL/只读共性 | 17 个 DEFINER 名精确（按 `proname` 排序）、27 个 GRANT 语句、逐角色 EXECUTE 集合精确（**admin 26 / service 27 / operator 27**）、`host_scope_allowed` 无 GRANT、admin 仍被拒 `install`、全部 STABLE/固定 search_path/无 PUBLIC/协议角色仍零表权；直接查 `pg_proc.prosrc` 应用同一禁词正则（防注释漂移）；每个 scoped 函数都有非 owner service 拒绝断言；调用前后十表 fingerprint 不变，reader 无 advisory lock、不进 `pg_blocking_pids` |
 | `G8-H11` | held-G 读 | 另一事务持 G 且有未提交变更时，九个读函数仍能完成且只看到已提交 snapshot；写调用仍受 G 串行 |
 | `G8-H12` | 分页与并发 | 多页扫描无静态数据遗漏/重复；并发插入落在 cursor 前时下一轮可发现；状态改变造成重复时 worker 不重复执行 |
-| `G8-H13` | 未脱敏 `request` 的页尺寸 | 用最大体积的 model `input`（`30_advance.sql` 的 body 上限 1 MiB，`:124-126`）测 64 项页的最坏响应尺寸；若单页不可用，记录实测值并下调页上限（计划级决策，不放宽 64 也不脱敏） |
+| `G8-H13` | 未脱敏 `request` 的页尺寸 | 以每项约 1 MiB 的 ASCII model `input` 夹具测量 64 项页；D1 已由 `v24-post-closeout-followup-2026-10-25.md` 收口：保持 64 项。67,107,712 B 仅为该夹具序列化尺寸，不是字节/内存上限；advance 的 1 MiB outcome body 校验不约束 request |
 
 **闭包增长实测（`G8-C1`/`G8-C2`）**——fixture-only closure probe，**不向产品 SQL 增加测量函数**。`30_advance.sql:320-527` 是 `advance` 函数体内的一段，引用 PL/pgSQL 变量 `p_effect_id`、`v_class`、`v_body`（赋值在 `:126-128`）并以 `SELECT … INTO v_closure` 结束，**不能整段原样拷贝成可执行 SQL**。因此 probe 必须二选一并在 README 写明选了哪个：(a) fixture 自有的 PL/pgSQL probe，复刻这些声明与赋值后返回 `v_closure`；(b) 精确参数化重写，把 effect/class/body 作为入参并去掉 `INTO`。无论哪种，源守卫必须哈希**完整提取段**（不只是 install→effects 边），内核闭包源码变化时守卫失败要求人工同步，而不是继续拿旧公式作证；真正的语义 oracle 仍是真实 `advance` 的 512/513 行为。定义 `H` = 目标 install 上除当前 claim 目标外的历史 host effect 数，`C(H)` = 同一递归 CTE 后八类实体去重总数，`M(H)=512-C(H)`。
 
@@ -426,7 +426,7 @@ prepare/release/inspect 沿用既有 host effect 结果形状（以 `v24/s6/fake
 | unknown tool 阻塞 dispose | P 负例中 dispose 未完成 | 展示阻塞并保留证据；不承诺自动清理 |
 | 单 host 的 admin+service 身份较宽 | 部署只需要一个 LOGIN 同时属两组 | 仅用于受信部署；不作租户或多宿主安全承诺 |
 | jsonb ABI 缺编译期列检查 | 调用方依赖稳定 SQL 行描述符 | G8 逐函数断言信封、字段闭集、JSON 类型、游标与空集；不放宽为 `RETURNS TABLE` 除非裁决 1 被推翻 |
-| 未脱敏 `request` 的单页尺寸 | model `input` 可接近 1 MiB body 上限，64 项页可能不可用 | G8-H13 实测最坏页尺寸；必要时下调页上限（计划级决策），不脱敏、不放宽 64 |
+| 未脱敏 `request` 的单页尺寸 | request 无已定义的全局字节限额；整轮累积不受单页项数限制 | 后续计划 D1 已决定保持 64 项；G8-H13 的 67,107,712 B 仅为夹具测量，不是响应/内存上限，不脱敏 |
 | extension check 未跑即交付（裁决 5-B 的代价） | 11/11 全绿但 G8/G9/G10 未运行 | matrix/ledger/README 必须显式写「未验证」；禁止把 11/11 解读为扩展能力已证明 |
 | deadline 非硬上界 | 慢速滴灌响应超出约 2× `timeout_s`、DNS 不被 socket timeout 覆盖 | 登记为活性披露；正确性不依赖它（结算不查 lease、不在飞不 sweep、挂死经 journal 收敛 unknown） |
 

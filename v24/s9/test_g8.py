@@ -880,7 +880,7 @@ def g8_h12(db, owner, conns, pmap):
 
 
 # ---------------------------------------------------------------------------
-# G8-H13: 64-item worst-case page size
+# G8-H13: 64-item large-input fixture
 # ---------------------------------------------------------------------------
 def g8_h13(db, owner, conns, pmap):
     admin, service = conns["admin"], conns["service"]

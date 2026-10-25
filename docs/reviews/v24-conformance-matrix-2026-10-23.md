@@ -542,3 +542,8 @@ S8 收口后，`error_v1` 的 24 码闭集与生产者集合相同：**没有**�
 - **M-H 结项（2026-10-24）**：host 只读面 9 个公开函数 + `host_scope_allowed` 已落地；DEFINER 17、GRANT 27、逐角色 EXECUTE 26/27/27；G8 **23/23** exit 0；闭包 `B=3`、`H_ok=509`、`H_bad=510`、`C=512/513`；H13 实测 64.00 MiB 页；D-S6-12 由 `G8-D1a` 关闭，D-S8-7 由 `G8-D2` 关闭；九个冻结内核 SQL 的 diff 为空；11 条既有 closeout 在改动后复跑 **11/11**。G8 是 extension check，不改变历史 closeout 计数；G9 已运行 11/11（§0.6），G10 后续由 M-P 完成（§0.7）。
 - **M-P 验收（2026-10-24）**：G10 **8/8** exit 0；`test_node.py --node` 独立 exit 0（Node v24.13.1）；`plugin_smoke.py --multilingual-smoke` exit 0：同一 run Python → Node → final，Unicode/转义换行/空字符串/exit 3 全覆盖，两个 install disposed、scope closed；九个冻结内核 SQL、`v15/**`、`v13/**`、`v99/**` diff 为空；11 条既有 closeout 复跑 **11/11**。D-MP-1 为 §9.1 字面偏差（真实本地子进程），见台账 §1.18。
 - 结项状态：G7（S8）已**完成**；G6（S7）已**完成（S7 W1–W2，30 ID）**，三面并发矩阵已由 S7 补齐，S7 closeout 为 **11/11（10 既有 + G6）**；M-H（G8）已**完成（23/23）**；M-R（G9）已**完成（11/11）**；M-P（G10）已**完成（8/8 + Node + multilingual smoke）**。本矩阵仍不宣称真实 provider/网络（仅 opt-in smoke）、跨主机 lease、starvation/公平性、G5 崩溃窗口重测或多主机证据；顺序 S6 → S8 → S7 → M-H → M-R → M-P，S7 的 11/11 保持冻结。
+
+
+## Post-closeout M-H / P0（2026-10-25）
+
+P0 重新运行 closeout 11/11、G8 23/23、G9 11/11、G10 8/8，全部 exit 0；M-H 再跑 closeout 11/11 与 G8 23/23，全部 exit 0。逐命令时间、源码身份、结果行与九 SQL SHA-256 见正式后续计划的执行记录。历史记录保留，G8/G9/G10 仍为 extension checks。H13 67,107,712 B 仅为夹具序列化尺寸，不是响应/内存上限；分页仍为 64 项。

@@ -136,8 +136,15 @@ are evidence only; no owner-inserted row is presented as public-path evidence.
   loop, journal and real-provider behavior are M-R.
 - **No real provider/network.** All fixtures are in-process; the only socket
   API touched is the monkeypatched deny/restore pair.
-- **No 512-page-cap change.** H13 measured 64.00 MiB for a 64-item page; the
-  cap and unredacted request stay as designed.
+- **Pagination remains 64 items.** The seven paginated readers default to and
+  return at most 64 items; 512 is the closure entity boundary, not a page cap.
+  H13's **67,107,712 B (64.00 MiB)** is this large-input fixture's serialized
+  size, not a response byte limit or memory limit. Compact JSON character
+  length equals UTF-8 byte length for this ASCII fixture; it measures neither
+  PostgreSQL wire size, compression nor process RSS. `effects.request` has no
+  defined global byte limit; advance's 1 MiB outcome-body check does not bound
+  requests. Worker paths can accumulate an entire scan, so a page cap does not
+  bound whole-round memory. Requests remain unredacted.
 - **No kernel edit.** The nine frozen SQL files remain byte-identical; only
   `49_host_reads.sql` (new), `50_permissions.sql`, the two loader tuples,
   `expected_canonical`, and `test_g1.py`'s exact ACL sets changed.
@@ -149,3 +156,8 @@ are evidence only; no owner-inserted row is presented as public-path evidence.
 ```
 
 All 23 IDs ran; the command exited 0 on 2026-10-24.
+
+
+## Post-closeout M-H verification (2026-10-25)
+
+Closeout **11/11** and no-argument G8 **23/23**, all exit 0. H13 again measured 67,107,712 B for this fixture. Full timestamps/source identity are in `docs/plans/v24-post-closeout-followup-2026-10-25.md` execution records. D-PF-1 remains a capacity disclosure; these results do not establish a response or memory bound.

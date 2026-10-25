@@ -511,3 +511,8 @@ S6/S8 收尾轮十个 gate 依序退出 0/0/0/0/0/0/0/0/0/0（load、`s1/setup_d
 - **M-P 验收（2026-10-24）**：G10 **8/8** exit 0（G10-A…H）；`test_node.py --node` 独立 **exit 0**（Node v24.13.1）；`plugin_smoke.py --multilingual-smoke` **exit 0**：同一 run 内 Python → Node → final，Unicode/转义换行/空字符串/exit 3 全覆盖，两个 install disposed、scope closed；九个冻结内核 SQL、`v15/**`、`v13/**`、`v99/**` diff 为空；11 条既有 closeout 复跑 **11/11**。G10 不改变历史 closeout 计数；D-MP-1 为显式 §9.1 偏差（真实本地子进程），D-MP-3 记录三个 digest 负例的隔离方式（§1.18）。
 - **历史口径更新**：S4 的「22 个有生产者、1 个未产生」由本节更新为 23/0；S8 再更新为 **24/0**；S1–S4 的其它验收结论与边界（FakeLLM/FakeTool、真实 IO、S6/S7）继续有效。
 - **R6/R7 规格修订已入账**（D-R6-1…4，§1.8；D-S8-1…12，§1.12）：D-R6-1 仍为规格层（S6 未改变十窗口）；D-R6-2 已由 S8/G7 实施；D-R6-3/4 已由 S6 W1–W4 实施并由 G5 证明；D-S8-12 为 W3 评审修复的产品缺陷（非规格修订）。**G5、G6 与 G7 已完成**（G6 由 S7 W1–W2 证明：30/30 ID、11/11），S7 已结项，S1–S8 全部收口。
+
+
+## Post-closeout M-H（2026-10-25）
+
+**D-PF-1（持续容量披露）**：七个分页函数默认且最多 64 项。H13 的 67,107,712 B 是特定 ASCII 夹具紧凑 JSON 字符/UTF-8 字节数，不是 PostgreSQL wire size、压缩率或进程 RSS，也不是响应字节/内存上限。effects.request 无已定义全局字节限额，advance 的 1 MiB outcome body 校验不约束 request；worker 可累积整轮结果，页项数不限制整轮内存。保持 64 的裁决已完成，容量治理仍未证明。M-H closeout 11/11、G8 23/23 exit 0；P0 三组 extension 全绿，记录见正式后续计划。D-S7-2 保持开启。
