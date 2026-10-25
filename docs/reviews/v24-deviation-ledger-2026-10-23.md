@@ -541,3 +541,16 @@ M-S 在 source `6df64440299b4e6035e9e587bebd5f09eb9d9cbe` 的未提交树上重�
 | `live_attempt` | `not_executed` | `e869e81` | 拟执行：`UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | `not_run` | `not_authorized` | `not_executed` |
 
 该记录只关闭入口短路证据，不证明当前环境本来没有 key，不关闭真实 provider、性能、质量、费用、跨主机或公平性债务。live attempt 的成功摘要（endpoint/model/run/effect/tokens/finish/provider wall_ms）和外部耗时均为 `not_executed`，证明范围为空。
+
+## Post-closeout M-F（2026-10-25）
+
+四项后续范围分别登记，均不在本轮实现：
+
+| 范围 | 当前状态 | 触发与完成证据 |
+|---|---|---|
+| 第二批 Go/Swift/DuckDB | 未验证，未建占位实现 | 明确语言需求后先冻结 artifact/argv/工具链合同，再跑完整生命周期与零 spawn 负例 |
+| D-S7-2 公平性 | **仍开启** | 需要负载假设、等待目标、调度策略和对抗负载活性证据；G6 安全/线性化结果不关闭它 |
+| 跨主机租约 | 未验证 | 明确多主机部署后验证分区、接管、fencing、journal 所有权与重复副作用 |
+| Provider 延迟/质量 | 未验证 | 明确样本、指标、预算和模型版本后独立实验；一次 smoke 不替代实验 |
+
+当前源 `74b3c30` 的 G10 Python、Node 与 multilingual 检查均 exit 0；M-P 候选仍须重跑 Node 两条命令。

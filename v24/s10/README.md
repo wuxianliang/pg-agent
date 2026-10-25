@@ -106,3 +106,7 @@ G9 仍保持 11 个顶层 ID；G9-B/F/L 的既有 smoke 子场景覆盖模型离
 | `live_attempt` | `not_executed` | `e869e81` | 拟执行：`UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | `not_run` | `not_authorized` | `not_executed` |
 
 负控只证明入口短路行为，不证明当前环境本来没有 key，也不证明真实 provider 的成功、失败、延迟、费用或质量。live attempt 的成功摘要（endpoint/model/run/effect/tokens/finish/provider wall_ms）和外部耗时均为 `not_executed`，证明范围为空；D-S7-2 继续开启。
+
+## M-F 后续范围登记（2026-10-25）
+
+四项后续范围分别登记：第二批 Go/Swift/DuckDB 语言接入、D-S7-2 公平性、跨主机租约、provider 延迟与质量实验。本轮不创建占位实现、不修改 scheduler/registry；这些范围仍未验证。当前源 `74b3c30` 的 G10 Python、Node 和同 run multilingual 检查均 exit 0，发布候选仍须重跑 Node 两条命令。

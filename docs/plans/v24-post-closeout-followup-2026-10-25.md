@@ -381,6 +381,18 @@ v24 **没有运行时 allowlist**。引入 v4-pro 需要新增模型配置、验
 
 **Done-when**：ledger、s10/s11 README 与本计划一致；11 条 closeout、G9 和 G10 全量 exit 0。Node 与 multilingual 两条 opt-in 命令在 M-P 的发布候选上必须 exit 0。
 
+## 执行记录 — M-F（2026-10-25）
+
+M-F 完成四项后续范围登记，未创建占位实现、未修改 registry/scheduler，D-S7-2 保持开启。当前 v24 源提交 `74b3c30` 上的 G10、Node 和 multilingual 检查均通过；M-P 仍需在最终发布候选树上重跑同两条 Node 相关命令。
+
+| 命令 | executed_at（Asia/Shanghai） | source_sha | exit | 结果 |
+|---|---|---|---:|---|
+| `uv run python v24/s11/test_g10.py` | 2026-10-25T11:11:31+08:00 | `74b3c30` | 0 | `[passed] v24 G10 M-P Python: 8 case(s): G10-A, G10-B, G10-C, G10-D, G10-E, G10-F, G10-G, G10-H` |
+| `uv run python v24/s11/test_node.py --node` | 2026-10-25T11:11:31+08:00 | `74b3c30` | 0 | `[passed] v24 G10 M-P Node: node=/Users/wxl/.nvm/versions/node/v24.13.1/bin/node` |
+| `uv run python -m v24.host.plugin_smoke --multilingual-smoke` | 2026-10-25T11:11:31+08:00 | `74b3c30` | 0 | `[passed] v24 multilingual smoke python=ok node=/Users/wxl/.nvm/versions/node/v24.13.1/bin/node final=ok` |
+
+上述结果仍只覆盖已交付 Python/Node 插件平面；第二批语言、跨主机租约、D-S7-2 公平性和 provider 性能/质量均未验证。
+
 **Key files**：s10/s11 README、ledger、本计划。
 **Deps**：P0。**Size**：S。
 

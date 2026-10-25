@@ -117,3 +117,7 @@ G10/`test_node.py` 使用真实本地解释器子进程，与设计 §9.1「所�
 存在，判为可接受；已在
 `docs/reviews/v24-deviation-ledger-2026-10-23.md` 登记为一条 §9.1 偏差，并把
 口径固定为「真实**网络** IO 不进 gate」。Go/Swift/DuckDB 不在本轮范围。
+
+## M-F 后续范围登记（2026-10-25）
+
+第二批语言、D-S7-2 公平性、跨主机租约及 provider 延迟/质量分别移交独立计划；本轮不建占位实现。当前源 `74b3c30` 的 `test_g10.py`、`test_node.py --node` 与 `plugin_smoke.py --multilingual-smoke` 均 exit 0。M-P 发布候选仍须在候选树上重跑 Node 与 multilingual 两条命令；Go/Swift/DuckDB 仍未验证。

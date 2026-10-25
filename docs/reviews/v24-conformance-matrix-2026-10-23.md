@@ -575,3 +575,7 @@ M-S 不改变九个冻结 SQL、host worker/journal/transport 格式或 closeout
 | `live_attempt` | `not_executed` | `e869e81` | 拟执行：`UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | `not_run` | `not_authorized` | `not_executed` |
 
 这组结果证明入口短路行为，不证明当前环境本来没有 key，也不证明真实 provider 成功、失败、延迟、费用或模型质量。live attempt 的成功摘要（endpoint/model/run/effect/tokens/finish/provider wall_ms）和外部耗时均为 `not_executed`，证明范围为空；D-S7-2 继续开启。
+
+## Post-closeout M-F（2026-10-25）
+
+四项后续范围已分别登记，均不在本轮实现：第二批 Go/Swift/DuckDB、D-S7-2 公平性、跨主机租约、provider 延迟/质量。当前源 `74b3c30` 的 G10 Python、Node 与同 run multilingual 检查均 exit 0；最终发布候选仍须重跑 Node 与 multilingual 两条命令。
