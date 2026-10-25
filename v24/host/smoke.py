@@ -1,16 +1,11 @@
-"""Opt-in real-provider smoke for the v24 host.  Not a gate.
+"""Opt-in real-provider smoke for the v24 host. Not a gate.
 
-    uv run python -m v24.host.smoke                        # not_requested, 0
-    uv run python -m v24.host.smoke --real-provider-smoke  # opt-in
-
-Without a key the command prints ``credentials_absent`` and exits 2 **before**
-constructing an adapter or opening a database.  With a key it builds one
-disposable v24 fixture and runs exactly one short ``start -> model -> final``
-through the real adapter.  It prints only the endpoint host, model, ids, usage
-and finish; prompts, content, reasoning and credentials are never printed.
-
-Real network I/O is allowed only from this opt-in entry (AGENTS.md).  The
-journal is removed on success and retained, still 0600, on failure.
+No flag: not_requested/0. Flag without a key: credentials_absent/2, before
+constructing an adapter or opening a database. A configured attempt executes
+one short start -> model -> final. Only validated metadata is printed, after
+resources close and the private journal directory is successfully removed.
+Failures before deletion retain the journal; partial deletion cannot be undone.
+Real network I/O is allowed only from this opt-in entry (AGENTS.md).
 """
 from __future__ import annotations
 
@@ -20,12 +15,12 @@ import sys
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import UUID, uuid4
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-_MODEL = "deepseek-flash"
 _BUDGET = {"steps": 3, "tool_calls": 0, "tokens": 5000, "wall_ms": 60000}
 _INPUT = {
     "messages": [{"role": "user", "content": "Reply with exactly: SELECT 1;"}],
@@ -53,123 +48,202 @@ def _flagged() -> int:
     return _live(key)
 
 
+def _close_resources(journal, db, connections, *, best_effort=False) -> None:
+    # Own the raw connections too: HostDB construction/close can fail halfway.
+    error = None
+    interrupt = None
+    for resource in (journal, db, *connections):
+        if resource is None:
+            continue
+        try:
+            resource.close()
+        except KeyboardInterrupt as exc:
+            if interrupt is None:
+                interrupt = exc
+        except Exception as exc:
+            if error is None:
+                error = exc
+    # An interrupt always wins after every close attempt has had a chance to
+    # run. Ordinary best-effort cleanup errors are intentionally suppressed.
+    if interrupt is not None:
+        raise interrupt
+    if error is not None and not best_effort:
+        raise error
+
+
+def _evidence_path(journal_path, journal_dir):
+    """Return a readable evidence path without allowing probing to escape."""
+    for path in (journal_path, journal_dir):
+        if path is None:
+            continue
+        try:
+            if path.exists():
+                return path
+        except Exception:
+            continue
+    return None
+
+
 def _live(key: str) -> int:
-    from v24.s1.setup_db import server_helper_scope, setup_db
-
-    journal_dir = tempfile.mkdtemp(prefix="v24-host-smoke-")
-    os.chmod(journal_dir, 0o700)
-    journal_path = Path(journal_dir) / "journal.jsonl"
-    journal = None
-    db = None
+    journal_dir = journal_path = None
+    deleting = False
     try:
+        from v24.s1.setup_db import server_helper_scope, setup_db
+        from v24.host.db import HostDB
+        from v24.host.deepseek import DeepSeekAdapter
+        from v24.host.journal import HostJournal
+        from v24.host.worker import HostWorker
+
+        journal_dir = Path(tempfile.mkdtemp(prefix="v24-host-smoke-"))
+        journal_path = journal_dir / "journal.jsonl"
+        os.chmod(journal_dir, 0o700)
         with server_helper_scope(), setup_db() as fixture:
-            scope = _bootstrap(fixture)
-            from v24.host.db import HostDB
-            from v24.host.deepseek import DeepSeekAdapter
-            from v24.host.journal import HostJournal
-            from v24.host.worker import HostWorker
-
-            db = HostDB(fixture.role_dsn("admin"), fixture.role_dsn("service"))
-            adapter = DeepSeekAdapter(api_key=key, timeout_s=120)
-            journal = HostJournal.open(journal_path)
+            journal = db = None
+            connections = []
             try:
+                scope, run_id, model_id = _bootstrap(fixture)
+                for role in ("admin", "service"):
+                    connections.append(fixture.connect(role))
+                db = HostDB(*connections)
+                adapter = DeepSeekAdapter(api_key=key, timeout_s=120)
+                journal = HostJournal.open(journal_path)
                 worker = HostWorker(db, journal, adapter=adapter)
-                stats = worker.run_until_idle(scope, max_rounds=8)
-                model = _first_model(db, scope)
-                run_id = _run_of(db, model)
-                run = db.host_runs(scope)
-                completed = any(
-                    item["run_id"] == run_id and item["status"] == "completed"
-                    for item in run.get("items", []))
-                if not completed:
-                    print(f"[failed] run not completed; journal={journal_path}")
-                    return 1
-                reply = stats.last_reply or {}
-                tokens = None
-                if isinstance(reply, dict):
-                    prompt = reply.get("prompt_tokens")
-                    completion = reply.get("completion_tokens")
-                    if isinstance(prompt, int) and isinstance(completion, int):
-                        tokens = prompt + completion
-                finish = reply.get("finish_kind") if isinstance(reply, dict) else None
-                host = urlparse(_endpoint()).hostname
-                print(
-                    f"[smoke] endpoint={host} model={_MODEL} run={run_id} "
-                    f"effect={model} "
-                    f"tokens={tokens if tokens is not None else 'unknown'} "
-                    f"finish={finish if isinstance(finish, str) else 'unknown'} "
-                    f"result=completed")
-                _assert_no_leak(key, reply)
+                worker.run_until_idle(scope, max_rounds=8)
+                summary, reply = _verify_completion(
+                    db, journal, scope, run_id, model_id)
+                _assert_no_leak(key, reply, summary)
+                _close_resources(journal, db, connections)
+                journal = db = None
+                connections = []
             finally:
-                journal.close()
-                journal = None
-                db.close()
-                db = None
-        shutil.rmtree(journal_dir, ignore_errors=True)
+                _close_resources(journal, db, connections, best_effort=True)
+        deleting = True
+        shutil.rmtree(journal_dir)
+        _require(not journal_dir.exists())
+        print(summary)
         return 0
-    except Exception as exc:
-        # After the key check the run is a real attempt: never degrade to SKIP.
-        print(f"[failed] real-provider smoke failed; journal={journal_path} "
-              f"reason={exc.__class__.__name__}")
+    except (Exception, KeyboardInterrupt) as exc:
+        # Never print exception messages, requests, replies or credentials.
+        # A partially removed directory is remaining evidence, not a full copy.
+        evidence = "remaining" if deleting else "retained"
+        available = _evidence_path(journal_path, journal_dir)
+        print(f"[failed] reason={exc.__class__.__name__} evidence={evidence if available else 'absent'} "
+              f"journal={available if available is not None else 'unavailable'}")
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         return 1
-    finally:
-        if journal is not None:
-            journal.close()
-        if db is not None:
-            db.close()
 
 
-def _endpoint() -> str:
-    from v24.host.deepseek import ENDPOINT
-    return ENDPOINT
+def _require(condition) -> None:
+    if not condition:
+        raise RuntimeError("smoke verification failed")
 
 
-def _bootstrap(fixture) -> str:
+def _uuid(value) -> str:
+    _require(isinstance(value, str))
+    return str(UUID(value))
+
+
+def _emitted(response, count: int) -> list[str]:
+    _require(isinstance(response, dict) and "error" not in response
+             and response.get("disposition") == "committed")
+    emitted = response.get("emitted")
+    _require(isinstance(emitted, list) and len(emitted) == count)
+    return [_uuid(item) for item in emitted]
+
+
+def _bootstrap(fixture) -> tuple[str, str, str]:
     from psycopg2.extras import Json
 
+    nonce = uuid4().hex
     conn = fixture.connect("admin")
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT v24.scope_control('create_root',NULL,%s,%s,%s)",
-                (Json({}), "default", f"v24-smoke-scope-{os.getpid()}"))
+                (Json({}), "default", f"v24-smoke-scope-{nonce}"))
             response = cur.fetchone()[0]
         conn.commit()
-        if response.get("disposition") != "committed":
-            raise RuntimeError(f"scope bootstrap: {response.get('error')}")
-        scope = response["emitted"][0]
+        scope, = _emitted(response, 1)
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT v24.start(%s,NULL,%s,%s,%s)",
-                (scope, Json(_INPUT), Json(_BUDGET), f"v24-smoke-start-{os.getpid()}"))
+                (scope, Json(_INPUT), Json(_BUDGET), f"v24-smoke-start-{nonce}"))
             response = cur.fetchone()[0]
         conn.commit()
-        if response.get("disposition") != "committed":
-            raise RuntimeError(f"start bootstrap: {response.get('error')}")
-        return scope
+        run_id, model_id = _emitted(response, 2)
+        return scope, run_id, model_id
     finally:
         conn.close()
 
 
-def _first_model(db, scope):
-    response = db.host_effects(scope, None, None, 64)
-    for item in response.get("items", []):
-        if item.get("kind") == "model_call":
-            return item["effect_id"]
-    return None
+def _single_page(response) -> dict:
+    _require(isinstance(response, dict) and "error" not in response
+             and type(response.get("v")) is int and response["v"] == 1
+             and type(response.get("limit")) is int and response["limit"] == 64
+             and response.get("has_more") is False
+             and "next_cursor" in response and response["next_cursor"] is None)
+    items = response.get("items")
+    _require(isinstance(items, list) and len(items) == 1
+             and isinstance(items[0], dict))
+    return items[0]
 
 
-def _run_of(db, effect_id):
-    if effect_id is None:
-        return None
-    response = db.host_effect(effect_id)
-    if "effect" not in response:
-        return None
-    return response["effect"].get("run_id")
+def _natural(value) -> int:
+    _require(type(value) is int and value >= 0)
+    return value
 
 
-def _assert_no_leak(key: str, reply) -> None:
-    text = repr(reply)
+def _verify_completion(db, journal, scope_id, run_id, model_id) -> tuple[str, dict]:
+    from v24.host.deepseek import ENDPOINT, MODEL
+
+    scope_id, run_id, model_id = map(_uuid, (scope_id, run_id, model_id))
+    run = _single_page(db.host_runs(scope_id))
+    _require(run["run_id"] == run_id and run["scope_id"] == scope_id
+             and run["status"] == "completed")
+    effect = _single_page(db.host_run_effects(run_id))
+    _require(effect["effect_id"] == model_id and effect["run_id"] == run_id
+             and effect["scope_id"] == scope_id and effect["kind"] == "model_call"
+             and effect["status"] == "succeeded")
+    outcome = effect["outcome"]
+    _require(isinstance(outcome, dict) and outcome["class"] == "success")
+    result = outcome["body"]["result"]
+    _require(isinstance(result, dict) and isinstance(result["final"], dict)
+             and isinstance(result["final"]["text"], str))
+    text = result["final"]["text"]
+    _require(run["result"]["final_text"] == text)
+    usage = result["usage"]
+    tokens, wall_ms = _natural(usage["tokens"]), _natural(usage["wall_ms"])
+
+    records = journal.records_for(model_id)
+    starts = [r for r in records if r["event_type"] == "dispatch_started"]
+    finishes = [r for r in records if r["event_type"] == "dispatch_finished"]
+    _require(len(starts) == len(finishes) == 1)
+    started, finished = starts[0], finishes[0]
+    _require(records.index(started) < records.index(finished)
+             and started["run_id"] == finished["run_id"] == run_id)
+    _require(journal.last("dispatch_finished", model_id) == finished)
+    payload = finished["payload"]
+    mapping = payload["mapping"]
+    _require(payload["outcome"] == outcome and mapping["class"] == "success"
+             and mapping["result"] == result)
+    mapped_usage = mapping["result"]["usage"]
+    _require(_natural(mapped_usage["tokens"]) == tokens
+             and _natural(mapped_usage["wall_ms"]) == wall_ms)
+    reply = journal.last("dispatch_finished", model_id)["payload"]["mapping"]["reply"]
+    _require(isinstance(reply, dict) and reply["finish_kind"] == "stop"
+             and reply["content"] == text)
+    _require(_natural(reply["prompt_tokens"]) + _natural(reply["completion_tokens"]) == tokens
+             and _natural(reply["wall_ms"]) == wall_ms)
+    host = urlparse(ENDPOINT).hostname
+    _require(isinstance(host, str) and bool(host))
+    summary = (f"[smoke] endpoint={host} model={MODEL} run={run_id} effect={model_id} "
+               f"tokens={tokens} finish=stop wall_ms={wall_ms} result=completed")
+    return summary, reply
+
+
+def _assert_no_leak(key: str, reply, summary: str) -> None:
+    text = repr((reply, summary))
     if key and key in text:
         raise RuntimeError("summary carried the API key")
     if "Authorization" in text or "Bearer " in text:

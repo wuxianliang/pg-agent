@@ -759,3 +759,22 @@ D3 已落实为文档合同：固定 deepseek-flash；v24 无 runtime allowlist�
 | `uv run python v24/s8/test_g7.py` | 2026-10-25T10:36:40.285082+08:00 | 0 | `[passed] v24 S8 W1-W3 G7-A…H + N1-N7: g7_a,g7_b,g7_c,g7_d,g7_e,g7_f,g7_g,g7_h,n1,n2,n3,n4,n5,n6,n7` |
 | `uv run python v24/s7/test_g6.py` | 2026-10-25T10:36:42.915408+08:00 | 0 | `[passed] v24 S7 W1-W2 G6-A…H + N1-N9 + L1-L5: g6_a1,g6_b1,g6_b2,g6_b3,g6_c1,g6_c2,g6_c3,g6_d1,g6_e1,g6_f1,g6_g1,g6_g2,g6_g3,g6_h1,g6_h2,g6_h3,g6_n1,g6_n2,g6_n3,g6_n4,g6_n5,g6_n6,g6_n7,g6_n8,g6_n9,g6_l1,g6_l2,g6_l3,g6_l4,g6_l5` |
 | `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s10/test_g9.py` | 2026-10-25T10:36:50.074039+08:00 | 0 | `[passed] v24 G9 M-R: 11 case(s): G9-A, G9-B, G9-C, G9-D, G9-E, G9-F, G9-L, G9-J1, G9-J2, G9-J3, G9-R` |
+
+## 执行记录 — M-S（2026-10-25）
+
+M-S 已完成。基于 source SHA `6df64440299b4e6035e9e587bebd5f09eb9d9cbe`，修复 smoke 在成功结算后从 active effect 列表重新发现 model 的缺陷：`_bootstrap` 返回已知的 run/model handles，完成核验改读历史分页面，并将摘要核验、泄漏检查、资源关闭和私有目录清理置于成功输出之前。清理失败不会被吞掉；删除启动前保留完整 journal，递归删除部分完成后报告剩余证据路径。G9 增加了成功、失败、取消后迟到成功、KeyboardInterrupt、初始化/关闭/清理故障、历史/证据畸变及 flag/key 负控覆盖；不调用真实 provider。
+
+| 命令 | 开始时间（Asia/Shanghai +08:00） | exit | 结果行 |
+|---|---|---:|---|
+| `uv run python v24/load.py` | 2026-10-25T10:57:33.560819+08:00 | 0 | `[passed] v24 loader self-check` |
+| `uv run python v24/s1/setup_db.py --self-check` | 2026-10-25T10:57:34.228547+08:00 | 0 | `[passed] v24/s1 setup self-check` |
+| `uv run python v24/s1/test_ddl.py` | 2026-10-25T10:57:35.962049+08:00 | 0 | `[passed] v24 W2 G1-O owner DDL probes (no advance/ACL/lifecycle claim)` |
+| `uv run python v24/s1/test_g1.py` | 2026-10-25T10:57:37.555897+08:00 | 0 | `[passed] v24 G1 kernel, commands, claim, locks, host_prepare settlement and ACL` |
+| `uv run python v24/s2/test_g3a.py` | 2026-10-25T10:57:40.009714+08:00 | 0 | `[passed] v24 S2 W1-W6: resolve, infra, admission, activation, deactivation, dispose` |
+| `uv run python v24/s3/test_g2.py` | 2026-10-25T10:57:41.857238+08:00 | 0 | `[passed] v24 S3 W1-W7: read surface + start + poll/wait_check + cancel + steer + respond (G2a-0/1/2/3/4/5/6/7/8/10/11; G3b-1..5; claimed/unknown settlement release reserved S4)` |
+| `uv run python v24/s4/test_g2b.py` | 2026-10-25T10:57:46.944494+08:00 | 0 | `[passed] v24 S4 W1-W6` |
+| `uv run python v24/s5/test_g4.py` | 2026-10-25T10:57:50.698726+08:00 | 0 | `[passed] v24 S5 W1-W4` |
+| `uv run python v24/s6/test_g5.py` | 2026-10-25T10:57:53.867467+08:00 | 0 | `[passed] v24 S6 W1-W4` |
+| `uv run python v24/s8/test_g7.py` | 2026-10-25T10:57:57.540373+08:00 | 0 | `[passed] v24 S8 W1-W3 G7-A…H + N1-N7: g7_a,g7_b,g7_c,g7_d,g7_e,g7_f,g7_g,g7_h,n1,n2,n3,n4,n5,n6,n7` |
+| `uv run python v24/s7/test_g6.py` | 2026-10-25T10:57:59.890315+08:00 | 0 | `[passed] v24 S7 W1-W2 G6-A…H + N1-N9 + L1-L5: g6_a1,g6_b1,g6_b2,g6_b3,g6_c1,g6_c2,g6_c3,g6_d1,g6_e1,g6_f1,g6_g1,g6_g2,g6_g3,g6_h1,g6_h2,g6_h3,g6_n1,g6_n2,g6_n3,g6_n4,g6_n5,g6_n6,g6_n7,g6_n8,g6_n9,g6_l1,g6_l2,g6_l3,g6_l4,g6_l5` |
+| `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s10/test_g9.py` | 2026-10-25T10:58:06.053677+08:00 | 0 | `[passed] v24 G9 M-R: 11 case(s): G9-A, G9-B, G9-C, G9-D, G9-E, G9-F, G9-L, G9-J1, G9-J2, G9-J3, G9-R` |

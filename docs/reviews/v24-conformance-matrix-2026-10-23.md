@@ -552,3 +552,14 @@ P0 重新运行 closeout 11/11、G8 23/23、G9 11/11、G10 8/8，全部 exit 0�
 ## Post-closeout M-M（2026-10-25）
 
 D3：v24 固定 `deepseek-flash`；无运行时 allowlist，不消费 v15 allowlist。本轮不新增模型参数、环境 override 或 CLI，不修改 adapter 与 v15。closeout 11/11、G9 11/11 均 exit 0；逐命令时间/source/result 见正式后续计划。外部型号与计价事实没有重新查询。
+
+## Post-closeout M-S（2026-10-25）
+
+M-S 修复 smoke 终态核验：保存 `start` 已提交的 scope/run/model handles，完成后从 `host_runs` 与 `host_run_effects` 历史读取面核验 run/effect 身份、completed/succeeded outcome、final 文本、usage 及 journal 的 `dispatch_started`/`dispatch_finished` 绑定。成功摘要在泄漏检查、journal/DB/原始连接关闭、fixture 退出、临时目录删除并确认不存在后才打印；删除启动前失败保留完整 journal，部分删除失败报告剩余证据，不重试。G9-B/F/L 新增并覆盖结算后 model 离开 active work list、空 final、唯一 request key、未完成/取消后的 late success、异常历史/分页/journal、初始化和清理失败、partial deletion，以及 cleanup interrupt；网络 deny、ScriptTransport、borrowed fixture 与 11 个顶层 ID 保持不变。
+
+| extension | 命令 | 状态 | 证据 |
+|---|---|---|---|
+| closeout | 11 条冻结命令（见正式计划执行记录） | **通过 11/11，exit 0** | source `6df64440299b4e6035e9e587bebd5f09eb9d9cbe` 的 M-S 树；各结果行见计划 |
+| G9 | `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s10/test_g9.py` | **通过 11/11，exit 0** | 同上；无真实网络、无 API key |
+
+M-S 不改变九个冻结 SQL、host worker/journal/transport 格式或 closeout 计数；真实 provider smoke 仍为 opt-in，当前未授权且未执行。

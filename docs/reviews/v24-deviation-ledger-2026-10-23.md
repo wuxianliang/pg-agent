@@ -521,3 +521,11 @@ S6/S8 收尾轮十个 gate 依序退出 0/0/0/0/0/0/0/0/0/0（load、`s1/setup_d
 ## Post-closeout M-M（2026-10-25）
 
 D3：v24 固定 `deepseek-flash`；无运行时 allowlist，不消费 v15 allowlist。本轮不新增模型参数、环境 override 或 CLI，不修改 adapter 与 v15。closeout 11/11、G9 11/11 均 exit 0；逐命令时间/source/result 见正式后续计划。外部型号与计价事实没有重新查询。
+
+## Post-closeout M-S（2026-10-25）
+
+**D-PF-2（smoke 终态核验）**：旧入口在 worker 结算后从 `host_effects` active 工作列表寻找 model，会把已成功结算的 model 误判为缺失。M-S 改为使用 `start` 已提交的 run/model handles，从 `host_runs`/`host_run_effects` 历史读取面核验 completed/succeeded、final、usage 与 scope/run/effect 身份，并逐项绑定 journal dispatch 记录和 reply metadata；成功输出延后到资源、fixture、目录清理全部成功之后。失败路径保留或报告可用 evidence，不重试、不泄漏正文、header 或 key。
+
+**M-S 测试偏差与补强**：G9 仍只有 11 个顶层 ID，完整 smoke 子场景集中在 G9-B/F/L；新增空 final、同进程唯一 request key、malformed history/分页/journal、结算后 active list 为空、取消后的 late success、初始化/close/fixture/delete/partial-delete 失败，以及 cleanup 期间普通异常与 `KeyboardInterrupt` 的关闭顺序。`HostDB.close()` 只关闭 control 后抛错时，raw service connection 仍由外层 cleanup 关闭；evidence path 探测异常被 best-effort 脱敏。该补强不改变生产 SQL、journal 格式、worker 或 transport。
+
+M-S 在 source `6df64440299b4e6035e9e587bebd5f09eb9d9cbe` 的未提交树上重跑冻结 closeout 11/11 与 G9 11/11，全部 exit 0；逐命令时间、结果行和日志路径见正式后续计划执行记录。真实 provider 仍未授权、未执行；D-S7-2 继续开启。

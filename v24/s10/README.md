@@ -88,3 +88,9 @@ journal on failure. It is not a gate.
 ## Post-closeout M-M（2026-10-25）
 
 D3：v24 固定 `deepseek-flash`；无运行时 allowlist，不消费 v15 allowlist。本轮不新增模型参数、环境 override 或 CLI，不修改 adapter 与 v15。closeout 11/11、G9 11/11 均 exit 0；逐命令时间/source/result 见正式后续计划。外部型号与计价事实没有重新查询。
+
+## Post-closeout M-S（2026-10-25）
+
+M-S 修复完整 smoke 的终态核验：`_bootstrap()` 保存已提交的 scope/run/model handles，完成后从 `host_runs` 与 `host_run_effects` 历史读取面核对终态、usage 和 outcome，再绑定核对 journal 的 `dispatch_started`/`dispatch_finished` 与 reply metadata。成功摘要在泄漏检查、资源关闭、fixture 退出、临时目录删除并确认不存在之后才输出；删除启动前失败保留完整 journal，部分删除失败报告仍可读取的证据，不重试。失败与 `KeyboardInterrupt` 路径不打印请求、响应正文、Authorization 或 key。
+
+G9 仍保持 11 个顶层 ID；G9-B/F/L 的既有 smoke 子场景覆盖模型离开 active work list、空 final、唯一 request key、未完成/取消后的 late success、malformed history、分页与 journal 不匹配、初始化/关闭/fixture/删除失败、部分删除，以及 cleanup 期间 interrupt。所有响应继续来自 ScriptTransport，网络 deny 和 borrowed fixture 约束不变。M-S 的 11 条 closeout 与 G9 11/11 均 exit 0；真实 provider smoke 仍是 opt-in，当前未授权且未执行。

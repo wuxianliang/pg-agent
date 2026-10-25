@@ -13,6 +13,11 @@ are denied for the whole run.
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack, nullcontext, redirect_stdout
+from copy import deepcopy
+from io import StringIO
+from types import SimpleNamespace
+from unittest.mock import patch
 import hashlib
 import json
 import os
@@ -354,6 +359,385 @@ def assert_unknown(owner, run_id, model_id, *, tokens, remaining=904):
 
 
 # ---------------------------------------------------------------------------
+# Complete smoke entry using a non-owning loan of the current G9 database.
+# ---------------------------------------------------------------------------
+def smoke_attempt(fixture, workdir, script, *, configure=None, before_verify=None):
+    from v24.host import smoke
+    import v24.s1.setup_db as smoke_setup
+    import v24.host.db as db_module
+    import v24.host.deepseek as deep_module
+
+    state = {"paths": [], "connections": [], "journals": [], "interrupted": False}
+    real_mkdtemp = tempfile.mkdtemp
+    real_bootstrap = smoke._bootstrap
+    real_verify = smoke._verify_completion
+    real_open = HostJournal.open
+
+    def connect(role):
+        conn = fixture.connect(role)
+        state["connections"].append(conn)
+        return conn
+
+    borrowed = SimpleNamespace(connect=connect)
+    state["borrowed"] = borrowed
+
+    def mkdtemp(**kwargs):
+        path = Path(real_mkdtemp(prefix="smoke-", dir=workdir))
+        state["paths"].append(path)
+        return str(path)
+
+    def bootstrap(fx):
+        handles = real_bootstrap(fx)
+        state["handles"] = handles
+        return handles
+
+    def db_factory(*args):
+        db = HostDB(*args)
+        state["db"] = db
+        return db
+
+    def adapter_factory(**kwargs):
+        assert kwargs == {"api_key": "smoke-fake-key", "timeout_s": 120}
+        adapter, transport, _ = adapter_for(script, key=kwargs["api_key"])
+        state["transport"] = transport
+        return adapter
+
+    def journal_open(path):
+        journal = real_open(path)
+        state["journals"].append(journal)
+        return journal
+
+    def verify(db, journal, *handles):
+        if before_verify:
+            before_verify(state)
+        # Capture actual committed history and durable evidence for direct
+        # malformed-reader tests. This also proves the old active-list bug.
+        state["runs"] = deepcopy(db.host_runs(handles[0]))
+        state["effects"] = deepcopy(db.host_run_effects(handles[1]))
+        state["active"] = deepcopy(db.host_effects(handles[0]))
+        state["records"] = deepcopy(journal.records_for(handles[2]))
+        return real_verify(db, journal, *handles)
+
+    class Output(StringIO):
+        def write(self, text):
+            if text.startswith("[smoke]"):
+                assert all(not p.exists() for p in state["paths"])
+                assert all(c.closed for c in state["connections"])
+                assert all(j._fd == -1 for j in state["journals"])
+                state["success_after_cleanup"] = True
+            return super().write(text)
+
+    output = Output()
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(smoke_setup, "server_helper_scope",
+                                         lambda: nullcontext()))
+        stack.enter_context(patch.object(smoke_setup, "setup_db",
+                                         lambda: nullcontext(borrowed)))
+        stack.enter_context(patch.object(smoke.tempfile, "mkdtemp", mkdtemp))
+        stack.enter_context(patch.object(smoke, "_bootstrap", bootstrap))
+        stack.enter_context(patch.object(smoke, "_verify_completion", verify))
+        stack.enter_context(patch.object(db_module, "HostDB", db_factory))
+        stack.enter_context(patch.object(deep_module, "DeepSeekAdapter", adapter_factory))
+        stack.enter_context(patch.object(HostJournal, "open", journal_open))
+        if configure:
+            configure(stack, state)
+        with redirect_stdout(output):
+            try:
+                state["exit"] = smoke._live("smoke-fake-key")
+            except KeyboardInterrupt:
+                state["interrupted"] = True
+    state["stdout"] = output.getvalue()
+    assert len(state["paths"]) == 1
+    assert state["paths"][0] != workdir and state["paths"][0].parent == workdir
+    assert all(c.closed for c in state["connections"])
+    assert all(j._fd == -1 for j in state["journals"])
+    assert "smoke-fake-key" not in state["stdout"]
+    return state
+
+
+def smoke_success(fixture, workdir):
+    paths, handles = set(), set()
+    for content in ("SELECT 1;", ""):
+        state = smoke_attempt(fixture, workdir, [reply(chat_body(
+            content=content, reasoning="private-reasoning-sentinel", usage=(12, 3)), 37)])
+        assert state["exit"] == 0 and state["success_after_cleanup"]
+        assert len(state["transport"].calls) == 1
+        assert state["active"]["items"] == [], state["active"]
+        assert state["effects"]["items"][0]["status"] == "succeeded"
+        assert "endpoint=api.deepseek.com model=deepseek-flash" in state["stdout"]
+        assert "tokens=15 finish=stop wall_ms=37 result=completed" in state["stdout"]
+        assert "private-reasoning-sentinel" not in state["stdout"]
+        assert "SELECT 1;" not in state["stdout"]
+        paths.add(state["paths"][0])
+        handles.add(state["handles"])
+    assert len(paths) == len(handles) == 2  # same PID, distinct requests/scopes/runs
+    assert len({x[0] for x in handles}) == 2
+    assert len({x[1] for x in handles}) == 2
+    print("[G9-B/smoke] complete entry succeeds after model leaves work list; "
+          "empty final allowed; unique requests; close/delete precede safe output")
+
+
+def assert_smoke_failure(state, calls, *, partial=False):
+    assert state.get("exit") == 1 and not state["interrupted"], state["stdout"]
+    assert "[smoke]" not in state["stdout"] and "[failed]" in state["stdout"]
+    assert len(state.get("transport", SimpleNamespace(calls=[])).calls) == calls
+    directory = state["paths"][0]
+    assert directory.exists()
+    journal_path = directory / "journal.jsonl"
+    if partial:
+        assert not journal_path.exists()
+        assert "evidence=remaining" in state["stdout"]
+        assert f"journal={directory}" in state["stdout"]
+        assert (directory / "remaining.txt").read_text() == "evidence"
+    elif state["journals"]:
+        assert journal_path.exists()
+        evidence = "remaining" if state.get("delete_calls") else "retained"
+        assert f"evidence={evidence}" in state["stdout"]
+        assert stat.S_IMODE(journal_path.stat().st_mode) == 0o600
+
+
+def smoke_failures(fixture, owner, workdir):
+    from v24.host import smoke
+    for script in (
+        [reply(chat_body(content="truncated", finish="length"))],
+        [ProviderUncertain(detail("transport"))],
+        [status_reply(400)],
+        [reply(chat_body(content="over reserve", usage=(4999, 100)))],
+    ):
+        assert_smoke_failure(smoke_attempt(fixture, workdir, script), 1)
+
+    def no_work(stack, state):
+        stack.enter_context(patch.object(HostWorker, "run_until_idle", lambda *a, **k: None))
+    state = smoke_attempt(fixture, workdir, [], configure=no_work)
+    assert_smoke_failure(state, 0)
+    assert state["runs"]["items"][0]["status"] != "completed"
+
+    def cancel_during_http(stack, state):
+        real_post = ScriptTransport.post
+        def post(transport, *args):
+            _, run_id, _ = state["handles"]
+            generation = run_row(owner, run_id)["driving_generation"]
+            response = one(state["db"].control, "SELECT v24.cancel(%s,%s,%s)",
+                           (run_id, generation, f"smoke-cancel-{uuid4().hex}"))
+            assert response["disposition"] == "committed", response
+            return real_post(transport, *args)
+        stack.enter_context(patch.object(ScriptTransport, "post", post))
+    state = smoke_attempt(fixture, workdir, [reply(chat_body(content="late"))],
+                          configure=cancel_during_http)
+    assert_smoke_failure(state, 1)
+    assert state["runs"]["items"][0]["status"] == "cancelled"
+    assert state["effects"]["items"][0]["status"] == "succeeded"
+
+    state = smoke_attempt(fixture, workdir, [KeyboardInterrupt()])
+    assert state["interrupted"] and "exit" not in state
+    assert "[smoke]" not in state["stdout"]
+    assert len(state["transport"].calls) == 1
+    assert (state["paths"][0] / "journal.jsonl").exists()
+    print("[G9-F/smoke] length/timeout/rejection/over-reserve/uncompleted/cancelled "
+          "late success fail without retry; KeyboardInterrupt propagates, closes, retains")
+
+
+def smoke_contracts(fixture, workdir):
+    from v24.host import smoke
+    import v24.s1.setup_db as smoke_setup
+    import v24.host.deepseek as deep_module
+    import v24.host.db as db_module
+
+    # Both credential names absent, and no flag even when a key is present.
+    for args, env, expected, message in (
+        ([], {"DEEPSEEK_API_KEY": "fake"}, 0, "not_requested"),
+        (["--real-provider-smoke"], {}, 2, "credentials_absent"),
+    ):
+        output = StringIO()
+        with patch.dict(os.environ, env, clear=True), redirect_stdout(output), \
+                patch.object(smoke_setup, "setup_db", _deny), \
+                patch.object(deep_module, "DeepSeekAdapter", _deny), \
+                patch.object(smoke.tempfile, "mkdtemp", _deny):
+            assert smoke.main(args) == expected
+        assert output.getvalue().strip() == message
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "fallback-fake"}, clear=True), \
+            patch.object(smoke, "_live", return_value=7) as live:
+        assert smoke.main(["--real-provider-smoke"]) == 7
+        live.assert_called_once_with("fallback-fake")
+
+    # Reuse one actual successful history for malformed response/evidence tests.
+    good = smoke_attempt(fixture, workdir, [reply(chat_body(content="private-body"))])
+    assert good["exit"] == 0 and "private-body" not in good["stdout"]
+
+    def check(mutator):
+        data = deepcopy({k: good[k] for k in ("runs", "effects", "records")})
+        mutator(data)
+        db = SimpleNamespace(host_runs=lambda *a: data["runs"],
+                             host_run_effects=lambda *a: data["effects"])
+        journal = SimpleNamespace(records_for=lambda *a: data["records"],
+            last=lambda *a: next((r for r in reversed(data["records"])
+                                 if r["event_type"] == "dispatch_finished"), None))
+        _raises((RuntimeError, KeyError, TypeError, ValueError),
+                smoke._verify_completion, db, journal, *good["handles"])
+
+    for reader in ("runs", "effects"):
+        for field, value in (("items", []), ("items", None), ("has_more", True),
+                             ("has_more", 0), ("next_cursor", {}), ("v", True),
+                             ("limit", "64"), ("error", {"code": "not_found_or_denied"})):
+            check(lambda d, r=reader, f=field, v=value: d[r].__setitem__(f, v))
+        for field in ("items", "v", "has_more", "next_cursor", "limit"):
+            check(lambda d, r=reader, f=field: d[r].pop(f))
+        check(lambda d, r=reader: d[r]["items"].append(deepcopy(d[r]["items"][0])))
+    for reader, field, value in (
+        ("runs", "run_id", str(uuid4())), ("runs", "scope_id", str(uuid4())),
+        ("runs", "status", "running"), ("effects", "effect_id", str(uuid4())),
+        ("effects", "run_id", str(uuid4())), ("effects", "scope_id", str(uuid4())),
+        ("effects", "kind", "tool_call"), ("effects", "status", "unknown"),
+    ):
+        check(lambda d, r=reader, f=field, v=value: d[r]["items"][0].__setitem__(f, v))
+    check(lambda d: d["effects"]["items"][0]["outcome"]["body"]["result"].pop("final"))
+    check(lambda d: d["runs"]["items"][0]["result"].__setitem__("final_text", "mismatch"))
+    for event in ("dispatch_started", "dispatch_finished"):
+        check(lambda d, e=event: d.__setitem__("records", [r for r in d["records"]
+                                                       if r["event_type"] != e]))
+        check(lambda d, e=event: d["records"].append(deepcopy(next(
+            r for r in d["records"] if r["event_type"] == e))))
+        check(lambda d, e=event: next(r for r in d["records"] if r["event_type"] == e)
+              .__setitem__("run_id", str(uuid4())))
+    check(lambda d: d["records"].reverse())
+    def finish(d):
+        return next(r for r in d["records"] if r["event_type"] == "dispatch_finished")["payload"]
+    check(lambda d: finish(d)["outcome"].__setitem__("class", "failure"))
+    check(lambda d: finish(d)["mapping"].__setitem__("class", "unknown"))
+    check(lambda d: finish(d)["mapping"].__setitem__("result", {}))
+    for field, value in (("prompt_tokens", True), ("completion_tokens", -1),
+                         ("wall_ms", True), ("wall_ms", 999),
+                         ("prompt_tokens", 999), ("finish_kind", "length"),
+                         ("content", "mismatch")):
+        check(lambda d, f=field, v=value: finish(d)["mapping"]["reply"].__setitem__(f, v))
+    for field in ("tokens", "wall_ms"):
+        check(lambda d, f=field: d["effects"]["items"][0]["outcome"]["body"]
+              ["result"]["usage"].__setitem__(f, True))
+    for response, n in (({}, 1), ({"disposition": "committed", "emitted": []}, 1),
+                        ({"disposition": "committed", "emitted": ["bad-id"]}, 1),
+                        ({"disposition": "committed", "emitted": [str(uuid4())],
+                          "error": None}, 1)):
+        _raises((RuntimeError, ValueError), smoke._emitted, response, n)
+    for reply_value, summary in (({"content": "smoke-fake-key"}, "safe"),
+                                 ({}, "smoke-fake-key"),
+                                 ({"reasoning": "Authorization"}, "safe")):
+        _raises(RuntimeError, smoke._assert_no_leak, "smoke-fake-key", reply_value, summary)
+
+    class ExplodingPath:
+        def exists(self):
+            raise RuntimeError("private-error-sentinel")
+
+    assert smoke._evidence_path(ExplodingPath(), ExplodingPath()) is None
+
+    # Full entry failure injection: verification/leak, permissions, partial
+    # initialization, resource close, fixture exit and both deletion boundaries.
+    def inject(name):
+        def configure(stack, state):
+            def fail(*args, **kwargs):
+                raise PermissionError("private-error-sentinel")
+            if name == "permission":
+                stack.enter_context(patch.object(smoke.os, "chmod", fail))
+            elif name == "second_connection":
+                connect = state["borrowed"].connect
+                def connect_or_fail(role):
+                    if len(state["connections"]) == 2:
+                        fail()
+                    return connect(role)
+                state["borrowed"].connect = connect_or_fail
+            elif name == "db_init":
+                stack.enter_context(patch.object(db_module, "HostDB", fail))
+            elif name == "bootstrap":
+                real_emitted = smoke._emitted
+                def emitted(response, count):
+                    if count == 2:
+                        fail()
+                    return real_emitted(response, count)
+                stack.enter_context(patch.object(smoke, "_emitted", emitted))
+            elif name == "adapter_init":
+                stack.enter_context(patch.object(deep_module, "DeepSeekAdapter", fail))
+            elif name == "journal_open":
+                stack.enter_context(patch.object(HostJournal, "open", fail))
+            elif name == "leak":
+                stack.enter_context(patch.object(smoke, "_assert_no_leak", fail))
+            elif name == "journal_close":
+                real_close = HostJournal.close
+                def close(journal):
+                    real_close(journal)
+                    fail()
+                stack.enter_context(patch.object(HostJournal, "close", close))
+            elif name == "db_close":
+                real_close = HostDB.close
+                def close(db):
+                    real_close(db)
+                    fail()
+                stack.enter_context(patch.object(HostDB, "close", close))
+            elif name == "db_partial_close":
+                def close(db):
+                    db.control.close()
+                    fail()
+                stack.enter_context(patch.object(HostDB, "close", close))
+            elif name == "cleanup_interrupt":
+                real_journal_close = HostJournal.close
+                def journal_close(journal):
+                    real_journal_close(journal)
+                    fail()
+                def db_close(db):
+                    raise KeyboardInterrupt()
+                stack.enter_context(patch.object(HostJournal, "close", journal_close))
+                stack.enter_context(patch.object(HostDB, "close", db_close))
+            elif name == "fixture_exit":
+                class Borrowed:
+                    def __enter__(self):
+                        return state["borrowed"]
+                    def __exit__(self, *args):
+                        fail()
+                stack.enter_context(patch.object(smoke_setup, "setup_db", Borrowed))
+            elif name in ("delete", "partial_delete", "delete_noop"):
+                state["delete_calls"] = 0
+                def remove(path):
+                    state["delete_calls"] += 1
+                    assert all(c.closed for c in state["connections"])
+                    assert all(j._fd == -1 for j in state["journals"])
+                    if name == "delete_noop":
+                        return
+                    if name == "partial_delete":
+                        (Path(path) / "journal.jsonl").unlink()
+                        (Path(path) / "remaining.txt").write_text("evidence")
+                    fail()
+                stack.enter_context(patch.object(smoke.shutil, "rmtree", remove))
+        return configure
+    for name in ("permission", "bootstrap", "second_connection", "db_init",
+                 "adapter_init", "journal_open", "leak", "journal_close", "db_close",
+                 "db_partial_close", "fixture_exit", "delete", "partial_delete", "delete_noop"):
+        state = smoke_attempt(fixture, workdir, [reply(chat_body(content="private-body"))],
+                              configure=inject(name))
+        calls = 0 if name in ("permission", "bootstrap", "second_connection",
+                               "db_init", "adapter_init", "journal_open") else 1
+        assert_smoke_failure(state, calls, partial=name == "partial_delete")
+        assert "private-error-sentinel" not in state["stdout"]
+        assert "private-body" not in state["stdout"]
+        if "delete_calls" in state:
+            assert state["delete_calls"] == 1
+        elif state["journals"]:
+            assert (state["paths"][0] / "journal.jsonl").exists()
+
+    state = smoke_attempt(fixture, workdir, [reply(chat_body(content="private-body"))],
+                          configure=inject("cleanup_interrupt"))
+    assert state["interrupted"] and "exit" not in state
+    assert "[smoke]" not in state["stdout"]
+    assert "private-error-sentinel" not in state["stdout"]
+    assert "private-body" not in state["stdout"]
+    assert len(state["transport"].calls) == 1
+    assert (state["paths"][0] / "journal.jsonl").exists()
+    assert all(c.closed for c in state["connections"])
+    assert all(j._fd == -1 for j in state["journals"])
+    print("[G9-L/smoke] flag/key short circuits, fallback, malformed history/journal "
+          "rejection, output-before-leak guard, init/close/cleanup failures; partial "
+          "deletion reports remaining evidence without success or retry; cleanup "
+          "interrupts propagate after all close attempts")
+
+
+# ---------------------------------------------------------------------------
 # G9-A: descriptor -> provider name and the tool round trip
 # ---------------------------------------------------------------------------
 def g9_a(host, owner, workdir):
@@ -422,7 +806,8 @@ def g9_a(host, owner, workdir):
 # ---------------------------------------------------------------------------
 # G9-B: stop/final mapping and the journal-only metadata boundary
 # ---------------------------------------------------------------------------
-def g9_b(host, owner, workdir):
+def g9_b(host, owner, workdir, *, fixture):
+    smoke_success(fixture, workdir)
     root, run_id, model_id = fresh_run(host, owner)
     adapter, transport, _ = adapter_for([
         reply(chat_body(content="SELECT 1;", finish="stop", reasoning="why",
@@ -625,7 +1010,8 @@ def g9_e(host, owner, workdir):
 # ---------------------------------------------------------------------------
 # G9-F: preflight / HTTP statuses / transport failures
 # ---------------------------------------------------------------------------
-def g9_f(host, owner, workdir):
+def g9_f(host, owner, workdir, *, fixture):
+    smoke_failures(fixture, owner, workdir)
     root, run_id, model_id = fresh_run(host, owner)
     adapter, transport, _ = adapter_for([], key="")
     journal = make_journal(workdir, "g9-f-nokey")
@@ -687,10 +1073,11 @@ def _raises(exc, fn, *args, **kwargs):
         fn(*args, **kwargs)
     except exc:
         return
-    raise AssertionError(f"expected {exc.__name__}")
+    raise AssertionError(f"expected {exc!r}")
 
 
-def g9_l(host, owner, workdir):
+def g9_l(host, owner, workdir, *, fixture):
+    smoke_contracts(fixture, workdir)
     for conn in (host.control, host.service):
         with conn.cursor() as cur:
             cur.execute("SELECT current_setting('transaction_isolation')")
@@ -991,11 +1378,14 @@ def g9_r(host, owner, workdir):
           "explicitly not a fairness promise")
 
 
-def run_case(case, host, owner, workdir):
+def run_case(case, host, owner, workdir, *, fixture):
     table = {"G9-A": g9_a, "G9-B": g9_b, "G9-C": g9_c, "G9-D": g9_d,
              "G9-E": g9_e, "G9-F": g9_f, "G9-L": g9_l, "G9-J1": g9_j1,
              "G9-J2": g9_j2, "G9-J3": g9_j3, "G9-R": g9_r}
-    table[case](host, owner, workdir)
+    if case in ("G9-B", "G9-F", "G9-L"):
+        table[case](host, owner, workdir, fixture=fixture)
+    else:
+        table[case](host, owner, workdir)
 
 
 def main(argv=None):
@@ -1020,7 +1410,7 @@ def main(argv=None):
                     workdir = Path(work)
                     os.chmod(workdir, 0o700)
                     for case in selected:
-                        run_case(case, host, owner, workdir)
+                        run_case(case, host, owner, workdir, fixture=fixture)
             finally:
                 host.close()
                 owner.close()
