@@ -79,7 +79,10 @@ journal on failure. It is not a gate.
 - G9 proves the M-R host worker, journal, adapter mapping and opt-in entry. It
   does **not** prove real-provider latency, availability, cost or model
   quality; those need the opt-in smoke and are not deterministic gate claims.
-- No starvation/fairness claim (`D-S7-2` stays open).
+- The broad D-S7-2 debt stays open. M-F1 adds the bounded host-only
+  FC sub-contract and Fake-only G11 evidence in S12; this G9 stage still
+  makes no open-arrival, wall-clock, cross-crash, multi-host, or provider
+  fairness claim.
 - No cross-host lease, multi-host or M-P plugin/registry claim.
 - `v24/host/process_io.py` is scaffolding for a future plugin host; G9 only
   checks its bounds indirectly through the package static scan.

@@ -588,3 +588,6 @@ The clean candidate uses v24 source `6d53a2d05a2e5439e7694125d4751ba053acb147` o
 `bddeb815608de37bc21594a372085fe1e591db85` (v99 Phase 0) already belongs to the main-base ancestry, so this candidate does not newly introduce v99. W1–W4 remain incomplete. The candidate is **release ready, not published**; no merge SHA or remote-main claim exists.
 
 Full candidate evidence and manifest: [release record](v24-release-2026-10-25.md).
+## Post-closeout M-F1（2026-10-25）
+
+M-F1 在 v24 未提交执行树上完成并通过 31/31 命令：G11 全量、G11-A…L 单 case、loader/DB/既有 gate、G8、G9、G10、Node、smoke 负控与 multilingual smoke。新增 S12 证明的是有限 opportunity-dense host-only FC 子合同及其 Fake-only 对抗证据；不改历史 closeout 11/11、G8 23/23、G9 11/11 或 G10 8/8 计数。完整命令、时间、source/tree 摘要和日志 SHA-256 见 [`v24-d-s7-2-fairness-execution-2026-10-25.md`](v24-d-s7-2-fairness-execution-2026-10-25.md)。D-S7-2 广义债务仍开启：开放到达、墙钟等待/debt 有界、跨崩溃/多主机和真实 provider 公平性未由本批次证明。

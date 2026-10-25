@@ -784,6 +784,12 @@ D3 已落实为文档合同：固定 deepseek-flash；v24 无 runtime allowlist�
 | `uv run python v24/s7/test_g6.py` | 2026-10-25T10:36:42.915408+08:00 | 0 | `[passed] v24 S7 W1-W2 G6-A…H + N1-N9 + L1-L5: g6_a1,g6_b1,g6_b2,g6_b3,g6_c1,g6_c2,g6_c3,g6_d1,g6_e1,g6_f1,g6_g1,g6_g2,g6_g3,g6_h1,g6_h2,g6_h3,g6_n1,g6_n2,g6_n3,g6_n4,g6_n5,g6_n6,g6_n7,g6_n8,g6_n9,g6_l1,g6_l2,g6_l3,g6_l4,g6_l5` |
 | `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s10/test_g9.py` | 2026-10-25T10:36:50.074039+08:00 | 0 | `[passed] v24 G9 M-R: 11 case(s): G9-A, G9-B, G9-C, G9-D, G9-E, G9-F, G9-L, G9-J1, G9-J2, G9-J3, G9-R` |
 
+## 执行记录 — M-F1（2026-10-25）
+
+M-F1 是 D-S7-2 独立设计之后的唯一实现里程碑，a/b/c 作为内部步骤一次收口。v24 源 worktree 的完整 31 命令验证全部 exit 0：G11 全量、G11-A…L、loader/DB/既有回归、G8、G9、G10、Node、smoke 负控与 multilingual smoke。新增调度实现保持 12 个 SQL、loader、HostDB、HostJournal 格式及 legacy 单 scope 入口冻结；未调用真实 provider。详细证据（source HEAD、执行树 digest、逐命令时间/exit/结果摘要/日志 SHA-256）见 [`docs/reviews/v24-d-s7-2-fairness-execution-2026-10-25.md`](../reviews/v24-d-s7-2-fairness-execution-2026-10-25.md)。
+
+M-F1 只登记有限 opportunity-dense host-only FC 子合同及 Fake-only 证据；D-S7-2 广义债务仍开启。下一步 M-P/M-A 在隔离候选 worktree 完成 merge、候选树复验、推送与最终审计记录。
+
 ## 执行记录 — M-S（2026-10-25）
 
 M-S 已完成。基于 source SHA `6df64440299b4e6035e9e587bebd5f09eb9d9cbe`，修复 smoke 在成功结算后从 active effect 列表重新发现 model 的缺陷：`_bootstrap` 返回已知的 run/model handles，完成核验改读历史分页面，并将摘要核验、泄漏检查、资源关闭和私有目录清理置于成功输出之前。清理失败不会被吞掉；删除启动前保留完整 journal，递归删除部分完成后报告剩余证据路径。G9 增加了成功、失败、取消后迟到成功、KeyboardInterrupt、初始化/关闭/清理故障、历史/证据畸变及 flag/key 负控覆盖；不调用真实 provider。

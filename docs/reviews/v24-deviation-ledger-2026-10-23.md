@@ -549,7 +549,7 @@ M-S 在 source `6df64440299b4e6035e9e587bebd5f09eb9d9cbe` 的未提交树上重�
 | 范围 | 当前状态 | 触发与完成证据 |
 |---|---|---|
 | 第二批 Go/Swift/DuckDB | 未验证，未建占位实现 | 明确语言需求后先冻结 artifact/argv/工具链合同，再跑完整生命周期与零 spawn 负例 |
-| D-S7-2 公平性 | **仍开启** | 需要负载假设、等待目标、调度策略和对抗负载活性证据；G6 安全/线性化结果不关闭它 |
+| D-S7-2 公平性 | **仍开启** | 需要负载假设、等待目标、调度策略和对抗负载活性证据；G6 安全/线性化结果不关闭它；M-F1 仅登记有限 host-only FC 子合同与 Fake-only 证据 |
 | 跨主机租约 | 未验证 | 明确多主机部署后验证分区、接管、fencing、journal 所有权与重复副作用 |
 | Provider 延迟/质量 | 未验证 | 明确样本、指标、预算和模型版本后独立实验；一次 smoke 不替代实验 |
 
@@ -565,3 +565,6 @@ No live provider request was made. D-S7-2 remains open, and cross-host lease, se
 Full candidate evidence and manifest: [release record](v24-release-2026-10-25.md).
 
 The full main-to-candidate whitespace check reports three preexisting source-line issues: EOF blank lines in the v24 oracle brief and frozen `40_interpreters.sql`, plus trailing whitespace in G6. These are unchanged from the fixed source. The seven declaration changes pass the source-relative whitespace check; frozen SQL is preserved.
+## Post-closeout M-F1（2026-10-25）
+
+M-F1 31/31 命令 exit 0，结果覆盖 G11 全量及 A…L、既有 v24 回归、G8/G9/G10、Node、smoke 负控和 multilingual smoke。S12 的证据严格限定为有限 Fake-only host 调度合同；不关闭 D-S7-2 广义债务。执行日志与哈希见 [`v24-d-s7-2-fairness-execution-2026-10-25.md`](v24-d-s7-2-fairness-execution-2026-10-25.md)。

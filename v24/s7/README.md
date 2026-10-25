@@ -361,9 +361,10 @@ or multi-host behavior.
 - **D-S7-3 (cross-scope child install): not triggered / not needed.** N7
   builds a real cross-scope child with `new_child_scope` +
   `admit_install(owner_fiber=…)` and passes on the public path.
-- **D-S7-2 (starvation/fairness): remains an explicit debt.** No
-  starvation-freedom or fairness claim is made; that needs a dedicated design
-  and evidence.
+- **D-S7-2 (starvation/fairness): broad debt remains open.** M-F1 now
+  records a bounded host-only FC sub-contract and Fake-only evidence in
+  [`v24/s12/README.md`](../s12/README.md); it does not claim open-arrival,
+  wall-clock, cross-crash, multi-host, or provider fairness.
 
 ## Boundaries
 
