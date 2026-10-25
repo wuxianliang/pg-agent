@@ -812,6 +812,17 @@ M-P 已在最新 `origin/main` 上创建干净的 `--no-ff --no-commit` 候选�
 
 前次候选 `/tmp/pg-agent-v24-release` 的首次直接 `uv run` 因项目相对本地 DuckDB wheel 不可用而 exit 2，未进入 gate；随后设置 `UV_NO_SYNC=1` 和现有 `UV_PROJECT_ENVIRONMENT=/Users/wxl/Projects/pg-agent/.claude/worktrees/v99/.venv`，18 条命令全绿。该环境恢复事实已记录，不把首次环境失败写成 gate 失败。
 
-M-P 当前状态为 **发布就绪、未发布**。真实 provider 仍未调用；M-E 为 `not_run/not_authorized/not_executed`，D-S7-2 继续开启。没有授权时不得创建 merge commit 或推送 `origin/main`。
+候选验证时 M-P 状态为 **发布就绪、未发布**。随后用户已明确授权并完成 M-P 发布，见下方 M-P/M-A 执行记录。真实 provider 仍未调用；M-E 为 `not_run/not_authorized/not_executed`，D-S7-2 继续开启。
 
 基线勘误：Background §1 中“主检出 HEAD 不含 v99”的提供材料与实际提交内容不符；`ab34d697…` 已包含 `v99/core` Phase 0，`bddeb815…` 为其祖先。最新 fetch 未改变 main 基点。本次入站 82 条源码/文档路径均无 `v99/**` 变化；另新增发布记录，最终为 83 条路径。此前候选 checkout 分支使 MERGE_HEAD 丢失，已放弃使用该候选；本次 `/tmp/pg-agent-v24-release-clean` 始终保留 MERGE_HEAD。
+
+
+## 执行记录 — M-P 发布与 M-A 审计（2026-10-25）
+
+用户已明确授权创建 merge commit、推送 `origin/main` 并完成 M-A。再次 `git fetch origin` 后 main 仍为 `ab34d6972a17f688c4a11adba89e363d74adbe81`；候选 MERGE_HEAD 与最终暂存树未变，因此复用已经通过的 18 条候选命令证据，不重复声称本步骤重新运行 runtime gates。
+
+M-P 已完成：merge `d13391d27f9c7363906282af4cea4160c5aa97a8` 正常创建并推送。两个有序 parent 精确为 `ab34d6972a17f688c4a11adba89e363d74adbe81`、`6d53a2d05a2e5439e7694125d4751ba053acb147`；merge tree `ee876a44e25b2570d9ef46238ec1aa9e0479a6d2` 等于最终已审查候选树。2026-10-25T14:11:42+08:00（Asia/Shanghai）fetch 后确认 `origin/main` 恰等于该 merge，v24 source 与 v99 Phase 0 均为祖先，`v24`/`v99` 都是普通 tree。
+
+M-A 仅补齐本计划与 [发布记录](../reviews/v24-release-2026-10-25.md)：提交前检查 merge → audit 差异只包含这两个文档，执行树与冻结 SQL 不变。按路径独立提交并立即正常推送 main；随后 fetch 核验 merge/audit 祖先关系及远端 audit SHA，实际结果在交付消息中报告，文档不预填自身提交 SHA。
+
+本轮发布状态为 **发布完成**。v99 Phase 0 已继承自 main，后续 W1–W4 未完成；真实 provider 未调用，M-E 为 `not_run/not_authorized/not_executed`；D-S7-2 继续开启，第二批语言、跨主机租约、provider 性能与质量仍移交后续独立计划。
