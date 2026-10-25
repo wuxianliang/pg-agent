@@ -563,3 +563,15 @@ M-S 修复 smoke 终态核验：保存 `start` 已提交的 scope/run/model hand
 | G9 | `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s10/test_g9.py` | **通过 11/11，exit 0** | 同上；无真实网络、无 API key |
 
 M-S 不改变九个冻结 SQL、host worker/journal/transport 格式或 closeout 计数；真实 provider smoke 仍为 opt-in，当前未授权且未执行。
+
+## Post-closeout M-E（2026-10-25）
+
+`recorded_at=2026-10-25`。M-E 的两条入口负控已实际执行；未检查实际 key 是否存在，无 flag 命令直接短路，flag 负控显式清除凭据；没有取得 live 授权。`negative_control` 与 `live_attempt` 独立登记，未把负控的 exit 2 复制为 live 结果。
+
+| record_group | executed_at | source_sha | command | status | reason | exit_code |
+|---|---|---|---|---|---|---|
+| `negative_control` | 2026-10-25T11:05:35+08:00 Asia/Shanghai | `e869e81` | `UV_NO_ENV_FILE=1 uv run python -m v24.host.smoke` | passed | `not_requested` | 0 |
+| `negative_control` | 2026-10-25T11:05:35+08:00 Asia/Shanghai | `e869e81` | `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python -m v24.host.smoke --real-provider-smoke` | passed | `credentials_absent` | 2 |
+| `live_attempt` | `not_executed` | `e869e81` | 拟执行：`UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | `not_run` | `not_authorized` | `not_executed` |
+
+这组结果证明入口短路行为，不证明当前环境本来没有 key，也不证明真实 provider 成功、失败、延迟、费用或模型质量。live attempt 的成功摘要（endpoint/model/run/effect/tokens/finish/provider wall_ms）和外部耗时均为 `not_executed`，证明范围为空；D-S7-2 继续开启。

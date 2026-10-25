@@ -354,6 +354,18 @@ v24 **没有运行时 allowlist**。引入 v4-pro 需要新增模型配置、验
 **Key files**：s10 README、matrix、ledger、本计划。
 **Deps**：M-S。**Size**：S。
 
+## 执行记录 — M-E（2026-10-25）
+
+`recorded_at=2026-10-25`，三组记录均基于 source `e869e81`。M-E 仅执行 opt-in 入口负控，未检查实际 key 是否存在；无 flag 命令直接短路，flag 负控显式清除凭据，未取得本次 live smoke 授权，因此没有发起真实请求。负控结果与 live attempt 分开登记：
+
+| 记录组 | executed_at（Asia/Shanghai） | source_sha | command | status | reason | exit_code |
+|---|---|---|---|---|---|---|
+| `negative_control` | 2026-10-25T11:05:35+08:00 | `e869e81` | `UV_NO_ENV_FILE=1 uv run python -m v24.host.smoke` | passed | `not_requested` | 0 |
+| `negative_control` | 2026-10-25T11:05:35+08:00 | `e869e81` | `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python -m v24.host.smoke --real-provider-smoke` | passed | `credentials_absent` | 2 |
+| `live_attempt` | `not_executed` | `e869e81` | 拟执行：`UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | `not_run` | `not_authorized` | `not_executed` |
+
+`not_requested` 与 `credentials_absent` 仅证明入口短路行为；它们不证明当前环境本来没有 key，也不证明真实 provider。live attempt 的成功摘要（endpoint/model/run/effect/tokens/finish/provider wall_ms）和外部耗时均为 `not_executed`，证明范围为空。三处工件已同步记录同一组字段。D-S7-2 继续开启。
+
 ### M-F — 登记独立后续计划
 
 **Goal**：让延期范围具有明确入口，又不在收尾中半实现。

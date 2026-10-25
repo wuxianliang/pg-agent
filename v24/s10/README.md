@@ -94,3 +94,15 @@ D3：v24 固定 `deepseek-flash`；无运行时 allowlist，不消费 v15 allowl
 M-S 修复完整 smoke 的终态核验：`_bootstrap()` 保存已提交的 scope/run/model handles，完成后从 `host_runs` 与 `host_run_effects` 历史读取面核对终态、usage 和 outcome，再绑定核对 journal 的 `dispatch_started`/`dispatch_finished` 与 reply metadata。成功摘要在泄漏检查、资源关闭、fixture 退出、临时目录删除并确认不存在之后才输出；删除启动前失败保留完整 journal，部分删除失败报告仍可读取的证据，不重试。失败与 `KeyboardInterrupt` 路径不打印请求、响应正文、Authorization 或 key。
 
 G9 仍保持 11 个顶层 ID；G9-B/F/L 的既有 smoke 子场景覆盖模型离开 active work list、空 final、唯一 request key、未完成/取消后的 late success、malformed history、分页与 journal 不匹配、初始化/关闭/fixture/删除失败、部分删除，以及 cleanup 期间 interrupt。所有响应继续来自 ScriptTransport，网络 deny 和 borrowed fixture 约束不变。M-S 的 11 条 closeout 与 G9 11/11 均 exit 0；真实 provider smoke 仍是 opt-in，当前未授权且未执行。
+
+## M-E 真实 provider 证据（2026-10-25）
+
+`recorded_at=2026-10-25`。本轮实际执行了两条负控；未检查实际 key 是否存在，无 flag 命令直接短路，flag 负控显式清除凭据；没有取得 live 授权。`negative_control` 与 `live_attempt` 独立记录：
+
+| record_group | executed_at | source_sha | command | status | reason | exit_code |
+|---|---|---|---|---|---|---|
+| `negative_control` | 2026-10-25T11:05:35+08:00 Asia/Shanghai | `e869e81` | `UV_NO_ENV_FILE=1 uv run python -m v24.host.smoke` | passed | `not_requested` | 0 |
+| `negative_control` | 2026-10-25T11:05:35+08:00 Asia/Shanghai | `e869e81` | `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python -m v24.host.smoke --real-provider-smoke` | passed | `credentials_absent` | 2 |
+| `live_attempt` | `not_executed` | `e869e81` | 拟执行：`UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | `not_run` | `not_authorized` | `not_executed` |
+
+负控只证明入口短路行为，不证明当前环境本来没有 key，也不证明真实 provider 的成功、失败、延迟、费用或质量。live attempt 的成功摘要（endpoint/model/run/effect/tokens/finish/provider wall_ms）和外部耗时均为 `not_executed`，证明范围为空；D-S7-2 继续开启。
