@@ -224,18 +224,12 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 $$;
 CREATE FUNCTION v24_cordis.command_seed(p_kind text,p_payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE result jsonb:='[]'; item jsonb; fid uuid; iid uuid; scope_id uuid; fibs jsonb:='[]';
+DECLARE result jsonb:='[]'; item jsonb; iid uuid; fibs jsonb:='[]';
 BEGIN
  IF p_kind='command_install' THEN
   RETURN v24_cordis.install_command_seed(p_payload);
  ELSIF p_kind='command_reconcile' THEN
-  IF NOT v24_cordis.reconcile_payload_valid(p_payload) THEN RETURN '[]'; END IF;
-  fid:=(p_payload->>'fiber_id')::uuid;
-  result:=result||jsonb_build_array(jsonb_build_object('t','fibers','id',fid::text));
-  FOR item IN SELECT jsonb_build_object('t','effects','id',id) FROM v24_cordis.effects
-    WHERE fiber_id=fid AND kind='command_reconcile' AND status IN ('ready','claimed') LOOP
-   result:=result||jsonb_build_array(item);
-  END LOOP;
+  RETURN v24_cordis.reconcile_command_seed(p_payload);
  ELSIF p_kind='command_dispose' THEN
   IF NOT v24_cordis.json_uuid(p_payload->'install_id') THEN RETURN '[]'; END IF;
   iid:=(p_payload->>'install_id')::uuid;
@@ -344,7 +338,7 @@ BEGIN
   IF NOT coalesce(v24_cordis.reconcile_payload_valid(payload),false) THEN
    RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','reconcile_payload'));
   END IF;
-  RAISE EXCEPTION 'DP2 lifecycle reconcile phase is not implemented' USING ERRCODE='0A000';
+  RETURN v24_cordis.interpret_reconcile(p_effect_id,p_principal,p_outcome,p_closure);
  END IF;
  IF kind='command_install' THEN
   RETURN v24_cordis.interpret_install(p_effect_id,p_principal,p_outcome,p_closure);
@@ -571,7 +565,7 @@ BEGIN
 END $$;
 CREATE FUNCTION v24_cordis.validate_domain(p_effect_id uuid,p_principal uuid,p_outcome jsonb,p_delta jsonb,p_closure jsonb) RETURNS jsonb
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE v_kind text; v_payload jsonb; v_action text; v_branch text; v_domain jsonb:=p_delta->'domain';
+DECLARE v_kind text; v_payload jsonb; v_action text; v_branch text; v_domain jsonb:=p_delta->'domain'; v_req_key text; v_dag jsonb; v_dag_ids uuid[];
  v_fiber uuid; f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE; inst v24_cordis.installs%ROWTYPE; v_item jsonb; v_op text; v_allowed text[]; v_i int; v_n int; v_seq bigint; v_old_next int; v_old_reg int;
  v_provides jsonb; v_requires jsonb; v_prov jsonb; v_scope jsonb; v_install jsonb; v_fiberc jsonb; v_begin jsonb; v_control jsonb; v_activate jsonb;
  v_dispose jsonb; v_progress jsonb; v_ev jsonb; v_exp jsonb; v_pin jsonb; v_bind jsonb; v_scope_id uuid; v_install_id uuid; v_fiber_id uuid; v_episode_id uuid; v_epoch int; v_count int;
@@ -710,8 +704,9 @@ BEGIN
   END IF;
   FOR v_i IN 0..jsonb_array_length(v_requires)-1 LOOP
    v_pin:=v_begin->'pins'->v_i;
-   IF v_pin->>'key' IS DISTINCT FROM v_requires->v_i->>'key'
-    OR NOT (v_begin->'committed_view' ? (v_pin->>'key')) THEN
+   v_req_key:=v24_cordis.require_key(v_requires->v_i);
+   IF v_pin->>'key' IS DISTINCT FROM v_req_key
+    OR v_req_key IS NULL OR NOT (v_begin->'committed_view' ? v_req_key) THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p1_pins'));
    END IF;
    v_bind:=v_begin->'committed_view'->(v_pin->>'key');
@@ -731,8 +726,14 @@ BEGIN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p1_binding'));
    END IF;
    v_pin_ids:=v_pin_ids||jsonb_build_array(v_pin->'id');
-   v_require_keys:=v_require_keys||jsonb_build_array(v_requires->v_i->>'key');
+   v_require_keys:=v_require_keys||jsonb_build_array(to_jsonb(v_req_key));
   END LOOP;
+  SELECT coalesce(array_agg((e.value->>'provider_fiber_id')::uuid),ARRAY[]::uuid[]) INTO v_dag_ids
+   FROM jsonb_each(coalesce(v_begin->'committed_view','{}'::jsonb)) e;
+  v_dag:=v24_cordis.activation_dag(f.id,v_dag_ids);
+  IF v_dag IS NOT NULL THEN
+   RETURN v24_cordis.error_v1(v_dag->>'code',jsonb_build_object('reason',v_dag->>'reason'));
+  END IF;
   IF v_ev IS NULL OR v_ev->>'entity_type' IS DISTINCT FROM 'fiber' OR (v_ev->>'entity_id')::uuid IS DISTINCT FROM f.id
    OR v_ev->>'event_kind' IS DISTINCT FROM 'episode_begun'
    OR NOT coalesce(v24_cordis.exact_keys(v_ev->'payload',ARRAY['episode_id','epoch','control_seq','require_keys','pin_ids']),false)
@@ -765,7 +766,8 @@ BEGIN
    v_prov:=v_provides->(v_old_next+v_count-1);
    IF v_prov IS NULL OR v_item->>'key' IS DISTINCT FROM v_prov->>'key'
     OR v_item->'descriptor' IS DISTINCT FROM v_prov->'descriptor'
-    OR v_item->>'contract_version' IS DISTINCT FROM v_prov->>'contract_version' THEN
+    OR v_item->>'contract_version' IS DISTINCT FROM v_prov->>'contract_version'
+    OR v_item->>'realm' IS DISTINCT FROM v24_cordis.service_realm(f.scope_id,v_item->>'key') THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p2_provide'));
    END IF;
    v_contrib_ids:=v_contrib_ids||jsonb_build_array(v_item->'id');
@@ -1038,6 +1040,10 @@ BEGIN
   END IF;
   IF kind='command_reconcile' AND action IN ('off','retry') THEN
    RAISE EXCEPTION 'DP2 reconcile action is not implemented' USING ERRCODE='0A000';
+  END IF;
+  IF kind='command_reconcile' AND action='on' THEN
+   preflight:=v24_cordis.reconcile_preflight(body->'payload');
+   IF preflight IS NOT NULL THEN RETURN v24_cordis.error_v1(preflight->>'code',jsonb_build_object('reason',preflight->>'reason')); END IF;
   END IF;
   IF reserved THEN
    cont:=true;

@@ -1,6 +1,6 @@
 # Cordis v2 DP2：安装与成功激活生命周期 Deep Plan
 
-状态：**B0 已结项（本地验证 + 提交 + 推送 `origin/v24`）；W1 已结项（commit `50affb0`，已推送 `origin/v24`）；W2 已实现，本轮 19 条 post-fix gate 逐条串行 `EXIT 0`；one bounded Oracle review 已完成，六项发现全部修复，W2 按授权在本轮收尾 commit/push；W3–W4 未实现，W5 待实施。** B0 于 2026-10-26 在指定 worktree 实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9（全部退出码 0），复核十二个冻结 SQL SHA-256 与 `57e2c1e` 冻结 diff（逐一相同 / diff 为空）。W1 的测试命令、真实结果与边界见 §6「W1 证据」；W2 的 layout 裁决、实现、19 条 post-fix 实测结果与 bounded review 修复见 §6「W2 证据」。W3–W5 的测试命令仍是未来验收要求，不得从 B0/W1/W2 绿色推断其行为。
+状态：**B0 已结项；W1 已结项（commit `50affb0`，已推送 `origin/v24`）；W2 已结项（commit `1a7deaa`，已推送 `origin/v24`）；W3 已实现，生产 P0–P4 与 CDP2-A 通过，post-fix Cordis/v24 门禁 `EXIT 0`，按授权在本轮收尾 commit/push；W4 未实现，W5 待实施。** B0 于 2026-10-26 在指定 worktree 实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9（全部退出码 0），复核十二个冻结 SQL SHA-256 与 `57e2c1e` 冻结 diff（逐一相同 / diff 为空）。W1 的测试命令、真实结果与边界见 §6「W1 证据」；W2 的 layout 裁决、实现、19 条 post-fix 实测结果与 bounded review 修复见 §6「W2 证据」。W3–W5 的测试命令仍是未来验收要求，不得从 B0/W1/W2 绿色推断其行为。
 
 ## 1. Summary
 
@@ -1104,7 +1104,7 @@ CDP2-K 使用一次性 `TestDB` 并在 probe DB 内替换解释器；真实 `adv
 
 **W1 边界**：W1 时 W2 的 ownerful/child-scope install 与 resolver、W3 的完整 P0–P4 生产激活、W4 的生产 dispose、W5 closeout 均未实现；W2 现已在 §6「W2 证据」实现，W3/W4/W5 仍未实现。`effects_one_reconcile` 仍限制每 fiber 一个 ready/claimed reconcile，故 `validate_delta` 只允许 `command_reconcile` successor 使用 ordinal 0；16 successor 结构上限主要覆盖其他 kind。continuation 仍要求与创建者同一 LOGIN；P1/P2 unsupported 失败后 child 保持 ready 且无 request，可同一 child 重试一次。Oracle 审查：W1 full bounded Oracle review 已完成，五项发现即上述 P1.1–P1.4/P2 并全部修复；早期 focused chat 另确认 parent-fiber predicate、terminal guard 的 ready→succeeded/terminal 拒绝，terminal guard 的 attempt/fence 顺序由该 chat 指出并修复，CDP1-D 增加双向负例。此前 full-file review 请求在配置的 xhigh Oracle model 上超时；该 timeout 只说明 full-file 尝试未完成，不否定 W1 bounded review 已完成，也不冒充完整 full-file review。
 
-**发布状态**：W1 已按 2026-10-26 用户授权单独 commit `50affb0` 并 push `origin/v24`，推送前后 `origin/v24...v24` 为 `0 0`。W2 已按用户 layout 裁决实现；one bounded Oracle review 已完成，六项发现全部修复，19 条 post-fix gate 全部 `EXIT 0`；按 2026-10-26 授权，W2 在本轮收尾单独 commit 并 push `origin/v24`；提交 hash 记录在最终报告。W3/W4 未开始。
+**发布状态**：W1 已按 2026-10-26 用户授权单独 commit `50affb0` 并 push `origin/v24`，推送前后 `origin/v24...v24` 为 `0 0`。W2 已按用户 layout 裁决实现；one bounded Oracle review 已完成，六项发现全部修复，19 条 post-fix gate 全部 `EXIT 0`；按 2026-10-26 授权，W2 在本轮收尾单独 commit 并 push `origin/v24`；提交 hash 记录在最终报告。W3 已在 §6「W3 证据」实现并按授权收尾；W4 未开始。
 
 ### W2 证据（2026-10-26 已实现；bounded review 完成；按授权提交收尾）
 
@@ -1140,14 +1140,28 @@ CDP2-K 使用一次性 `TestDB` 并在 probe DB 内替换解释器；真实 `adv
 
 **Review 状态（已完成，六项修复）**：2026-10-26 的 one bounded Oracle review（两个 lane）已完成，确认并修复六项发现：① `install_delta`/`validate_install_domain` 的 caller UUID 文本大小写与 canonical UUID 比较不一致，改为 canonical UUID/JSON UUID 比较并新增 uppercase regression；② `fiber_lineage_open` 遗漏 `dispose_requested_at`，现在每个 ancestor 都视为 closed，并新增 child-install 与 descendant-resolve 负例；③ owner iterator 仅按 `->>'v'` 接受 numeric/string 且允许额外键，现要求 exact `{v,next_index,registered_through,control_seq}` 且 `v` 为 numeric `1`；④ owner admission 未拒绝 current-generation `failure`，现以 `owner_closing`/`install_owner_failure` 拒绝；⑤ `guard_fiber_graph` 的 `UNION ALL` path enumeration 可误拒 dense DAG，现改为去重 `(root,node,depth)` reachability、按 distinct graph elements 限流并保留 multiple-root/cycle/depth 检查，新增 19-fiber dense DAG regression；⑥ forged test 的 install-owner mutation 改为定位 `install_create`。六项均有 CDP2-I 覆盖，post-fix 19 条 gate 全部 `EXIT 0`。
 
-**W2 边界**：W3 的完整 P0–P4 生产激活与 W4 的生产 dispose 未实现，仍 `0A000`；W2 不创建 episode、activation pin、host/CAS effect 或 successor，四种 replay boolean 只存储和校验。direct install 的 owner ledger 只追加 child contribution 与 episode_progress；resolver 只读。`check_policy_ok` 已实现但 W3 才消费。
+**W2 边界（历史）**：W2 结项时生产 P0–P4 与 dispose 仍 `0A000`。W3 现已实现生产激活。
+
+### W3 证据（2026-10-26 已实现；按授权提交收尾）
+
+**范围**：生产 `interpret_reconcile` 实现 P0 CAS/no-op、P1 冻结 ω/pins/epoch/current、P3 只读一致性、≤32 的 P2 与 P4 totality。成功路径用真实 `command_install` + `command_reconcile`，不用 owner DML 冒充激活证据。`off`/`retry` 与 dispose 仍 `0A000`。
+
+**预算**：`40_advance.sql` 1125/1200；`41_lifecycle.sql` 1038；DDL 前缀 414/900；`30_triggers.sql` 248；manifest 十六文件；十五张表不变。未修改 `v24/load.py`、`v24/sql/**`、`v24/s1`–`v24/s12`。`git diff --exit-code 57e2c1e -- v24/load.py v24/sql v24/s1 … v24/s12` 退出 0。
+
+**CDP2-A**：`uv run python v24/cordis/dp2/test_activation.py` 退出 0。覆盖 0/1/32/33 provides、P0 replay/no-op/stale、缺依赖后同一 ready child 重试一次、33 项第二批失败后同一 child 重试且不重复第一批、不同 realm 同 key、真实 owner 准入、committed view immutable。可达命令图不构造 pin 环；`activation_dag` 直接调用证明 cycle，child requires owner 证明不误拒。
+
+**中间失败**：首轮串行里 `uv run python v24/cordis/dp2/test_kernel.py` 退出 1。根因是 K4/锁序 probe 仍把生产 `on`/空 manifest continuation 当成 `0A000`。改为 `off` 与非准入 manifest 仍 `0A000`。修复后该命令退出 0。失败轮不作为通过证据。
+
+**post-fix 退出码**：Cordis loader、DP1 fixture/environment/CDP1-D/CDP1-K、CDP2-I、CDP2-A 为串行 `EXIT 0`；CDP2-K 为修复后 `EXIT 0`。v24 loader、s1 fixture/DDL/G1、s2 G3a、s3 G2、s4 G2b、s5 G4、s6 G5、s8 G7、s7 G6、s9 G8 串行全部 `EXIT 0`。
+
+**W3 边界**：生产 dispose、`off`/`retry`、drift 转 closing、failure 记录、leave/unload/inverse 仍未实现。settlement 仍 `0A000`。
 
 
 ## 7. Open Questions
 
 **发布分支与 push 目标：已由用户裁决。** 2026-10-26 用户明确授权本计划按里程碑逐个 commit 并 push 到 `origin/v24`。这是发布授权，不是对规格或代码的改动：发布授权（2026-10-26）：用户明确授权本 DP2 计划按里程碑逐个 commit 并 push 到 `origin/v24`；这是针对本工作任务的具体授权，不改写根与 worktree `AGENTS.md` 的 `origin main` 规则，也不切换用户工作树或改写历史。 指定 worktree 为 `v24` 并跟踪 `origin/v24`，与该授权一致。B0 已按此授权结项（证据见 §6）；W1–W5 沿用同一目标，仍不可越过“本里程碑必须完成推送才进入下一里程碑”的纪律，也不得自行改推 `main`、切换用户工作树或改写历史。
 
-其余工程选择已由代码、DP1 分工或 Oracle 裁决确定。§5 标注的四项范围/兼容性/部署假设可由用户覆盖；跨 LOGIN scanner、真正 host/CAS lifecycle 和多 entity 通知须在对应后续阶段重新确认，不能从 DP2 绿色推断它们已实现。B0 已结项（本地验证 + 提交 + 推送 `origin/v24`）；W1 已结项（commit `50affb0`，已推送 `origin/v24`），五项 bounded Oracle review 发现全部修复、最终 18 条 gate 全绿；W2 已实现，one bounded review 完成且六项发现全部修复，19/19 post-fix gate 全绿，并按授权在本轮收尾 commit/push；W3/W4 未开始，W5 随后。每个里程碑完成后同样逐项提交推送，不把相邻里程碑合并成一次提交。
+其余工程选择已由代码、DP1 分工或 Oracle 裁决确定。§5 标注的四项范围/兼容性/部署假设可由用户覆盖；跨 LOGIN scanner、真正 host/CAS lifecycle 和多 entity 通知须在对应后续阶段重新确认，不能从 DP2 绿色推断它们已实现。B0 已结项（本地验证 + 提交 + 推送 `origin/v24`）；W1 已结项（commit `50affb0`，已推送 `origin/v24`），五项 bounded Oracle review 发现全部修复、最终 18 条 gate 全绿；W2 已结项（commit `1a7deaa`）；W3 已实现，CDP2-A 与 post-fix 门禁 `EXIT 0`，按授权在本轮收尾 commit/push；W4 未开始，W5 随后。每个里程碑完成后同样逐项提交推送，不把相邻里程碑合并成一次提交。
 
 ## 8. References
 

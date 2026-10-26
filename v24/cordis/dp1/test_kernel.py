@@ -191,7 +191,7 @@ def test_vectors_acl(db,other):
         with contextlib.closing(db.connect(alias)) as conn:
             sqlstate(conn,'SELECT * FROM v24_cordis.effects',code='42501')
             sqlstate(conn,"INSERT INTO v24_cordis.scopes(id) VALUES(gen_random_uuid())",code='42501')
-            eid,out=command(db,alias,kind='command_reconcile',payload=dict(fiber_id=str(seed['fiber']),action='on',expected_control_seq=0))
+            eid,out=command(db,alias,kind='command_reconcile',payload=dict(fiber_id=str(seed['fiber']),action='off',expected_control_seq=0))
             sqlstate(conn,'SELECT v24_cordis.advance(%s,%s)',(eid,Json(out)))
             if alias!='service': no_write(db,conn,seed['effect'],env('claim',{'lease_ms':1000}),'unauthorized')
     with contextlib.closing(db.connect('owner')) as owner:
@@ -513,7 +513,11 @@ def test_committed_probe(production,probe):
         assert got['error']['code']=='invalid_args',got
         valid={'v':1,'class':'command','claim':None,'body':{'op':'admit_and_apply','kind':'command_reconcile',
             'request_key':'probe','canonical_bytes':'e30=','payload':{'fiber_id':str(uuid.uuid4()),'action':'on','expected_control_seq':0}}}
-        sqlstate(owner,'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',(uuid.uuid4(),uuid.uuid4(),Json(valid),Json([])))
+        got=query(owner,'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',(uuid.uuid4(),uuid.uuid4(),Json(valid),Json([])))[0][0]
+        assert got['error']['code']=='not_found_or_denied',got
+        off=json.loads(json.dumps(valid))
+        off['body']['payload']['action']='off'
+        sqlstate(owner,'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',(uuid.uuid4(),uuid.uuid4(),Json(off),Json([])))
     print('[CDP1-K5] disposable COMMIT probe, new-connection command/terminal replay, post-write rollback, barrier and original production hashes')
 
 
@@ -526,6 +530,6 @@ def main():
         test_delta(production)
         test_locks_closure(production)
         test_committed_probe(production,probe)
-    print(f'[passed] CDP1-K ({COUNT} committed zero-write assertions; W2 install is data-only; reconcile/dispose remain 0A000)')
+    print(f'[passed] CDP1-K ({COUNT} committed zero-write assertions; W3 reconcile on/advance is production; off/retry and dispose remain 0A000)')
 
 if __name__=='__main__': main()

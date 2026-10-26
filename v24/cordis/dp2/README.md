@@ -4,7 +4,7 @@ DP2 定向扩展 Cordis DP1 协议内核，交付声明式安装、scope 创建�
 
 ## 当前状态
 
-**B0 已结项；W1 已结项（commit `50affb0`，已推送 `origin/v24`）；W2 已实现，19 条 post-fix gate 逐条串行 `EXIT 0`；one bounded Oracle review 已完成，六项发现全部修复，W2 按授权在本轮收尾 commit/push；W3–W4 未实现，W5 待实施。不得从 B0/W1/W2 绿色推断 W3–W5 的完整 P0–P4、dispose 或边界行为。**
+**B0/W1/W2 已结项并推送 `origin/v24`（W1 `50affb0`，W2 `1a7deaa`）；W3 已实现，CDP2-A 退出 0，post-fix Cordis/v24 门禁退出 0，按授权收尾 commit/push；W4 未实现，W5 待实施。不得从 W3 绿色推断 dispose 或 DP3 行为。**
 
 - B0 只做证据与环境核验：固定 worktree/分支/HEAD/upstream、串行实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9、复核十二个冻结 SQL SHA-256 与冻结 diff，并更新本 README、matrix、ledger 与计划的 B0 证据。B0 未修改生产实现、未修改冻结目录、未新增 SQL 文件或 helper。
 - W1 已结项：reserved successor identity、ready child 执行/重放、P0→P1 generation 复验、command closure、typed delta 与真实 applier、terminal receipt guard；生产 spec-valid lifecycle 解释器仍抛 `0A000`，由 disposable probe 驱动 CDP2-K。W1 的五项 bounded Oracle review 发现已全部修复，最终 18 条 gate 全绿。
@@ -50,7 +50,7 @@ DP2 自有 gate：
 ```bash
 uv run python v24/cordis/dp2/test_kernel.py      # CDP2-K，W1 — 通过
 uv run python v24/cordis/dp2/test_install.py     # CDP2-I，W2 — 通过
-uv run python v24/cordis/dp2/test_activation.py  # CDP2-A，W3 — 未创建
+uv run python v24/cordis/dp2/test_activation.py  # CDP2-A，W3 — 通过
 uv run python v24/cordis/dp2/test_boundaries.py  # CDP2-B，W4 — 未创建
 ```
 
@@ -138,6 +138,15 @@ active-owner fixture 仅用于维护 DML，不计入 CDP2-A 激活证据。生�
 - **Bounded review 已完成（六项修复）**：2026-10-26 的 one bounded Oracle review（两个 lane）确认并修复：① caller UUID 文本大小写与 canonical UUID 比较不一致；② `fiber_lineage_open` 遗漏 `dispose_requested_at`；③ owner iterator 接受 string `v`/额外键；④ owner admission 未拒绝 current-generation `failure`；⑤ DAG guard 的 `UNION ALL` path enumeration 误拒 dense DAG；⑥ forged test mutation 打错 operation。六项均有 CDP2-I 覆盖，post-fix 19 条 gate 全部 `EXIT 0`。
 - **发布收尾**：W2 按 2026-10-26 授权以显式路径 `git add`、commit 并 push `origin/v24`，无 force、无 hook skip；提交 hash 记录在最终报告。W3 不得从本绿色推断或提前开始。
 
+## W3 证据（2026-10-26）
+
+- 生产 `interpret_reconcile` 完成 P0 CAS/no-op、P1 冻结、P3 一致性、≤32 P2、P4 totality。成功证据来自真实 API，不是 owner DML。
+- `40_advance.sql` 1125/1200；`41_lifecycle.sql` 1038；DDL 前缀 414/900；manifest 十六文件。冻结 diff 退出 0。
+- `uv run python v24/cordis/dp2/test_activation.py` 退出 0（A1–A6）。
+- 中间失败：首轮 `test_kernel.py` 退出 1（旧的生产 `on`=`0A000` 预期）。修复后退出 0。
+- Cordis loader/fixture/environment/CDP1-D/CDP1-K/CDP2-I/CDP2-A 串行退出 0；CDP2-K 修复后退出 0。v24 十一条加 s9 串行退出 0。
+- 未覆盖：生产 dispose、`off`/`retry`、drift 转 closing、failure/leave/unload/inverse。settlement 仍 `0A000`。
+
 ## 边界
 
-DP2 W2 不实现：P0–P4 激活（W3）；生产 dispose（W4）；target drift 处理、失败记录/自动 retry；closing/divert/error、leave/unload、withdraw/release、inverse 执行；完整 live 失效传播、drain/barrier、公平扫描与恢复；run/reducer/model/tool/dispatch/listener 执行；`intercept`、overlay 合并与外部制品准备。这些路径保留 `0A000` 或现有 DP1 行为，不提前实现 DP3。
+DP2 W3 不实现：生产 dispose（W4）；target drift 处理、失败记录/自动 retry；closing/divert/error、leave/unload、withdraw/release、inverse 执行；完整 live 失效传播、drain/barrier、公平扫描与恢复；run/reducer/model/tool/dispatch/listener 执行；`intercept`、overlay 合并与外部制品准备。这些路径保留 `0A000` 或现有 DP1 行为，不提前实现 DP3。

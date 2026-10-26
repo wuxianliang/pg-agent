@@ -305,7 +305,7 @@ def wait_blocked(db, pid):
 
 
 def test_locks(db, replay_db, ctx):
-    f = seed_fiber(db, want_on=True, control_seq=1, prefix='lock')
+    f = seed_fiber(db, provides=('not-admitted',), want_on=True, control_seq=1, prefix='lock')
     parent, _ = seed_parent(db, 'command_reconcile', reconcile_payload(f['fiber'], 'on', 0),
                             fiber=f['fiber'])
     payload = reconcile_payload(f['fiber'], 'advance', 1)
@@ -846,7 +846,8 @@ def zero_state(db, conn, effect, out, code='0A000'):
 
 
 def test_production(db):
-    # W2 production install is data-only; P0-P4 and dispose remain the W3/W4 0A000 seams.
+    # W3 production reconcile on/advance is CDP2-A. This seam still proves install is data-only,
+    # off/dispose remain 0A000, and a DML fiber that fails DP2 manifest admission cannot begin.
     payload = install_payload()
     with contextlib.closing(db.connect('service')) as conn:
         effect, out = command(db, conn, 'service', 'command_install', payload)
@@ -870,11 +871,11 @@ def test_production(db):
     assert rows(db, "SELECT event_kind FROM v24_cordis.events WHERE effect_id=%s",
                 (effect,)) == [('install_created',)]
     f = seed_fiber(db, prefix='prod-p0')
-    p0 = reconcile_payload(f['fiber'], 'on', 0)
+    p0 = reconcile_payload(f['fiber'], 'off', 0)
     with contextlib.closing(db.connect('service')) as conn:
         effect, out = command(db, conn, 'service', 'command_reconcile', p0)
         zero_state(db, conn, effect, out)
-    cf = seed_fiber(db, want_on=True, control_seq=1, prefix='prod-p1')
+    cf = seed_fiber(db, provides=('not-admitted',), want_on=True, control_seq=1, prefix='prod-p1')
     parent, _ = seed_parent(db, 'command_reconcile', reconcile_payload(cf['fiber'], 'on', 1),
                             fiber=cf['fiber'])
     cp = reconcile_payload(cf['fiber'], 'advance', 1)
@@ -902,7 +903,7 @@ def test_production(db):
     with contextlib.closing(db.connect('owner')) as owner:
         assert snapshot(owner) == before
         owner.rollback()
-    print('[CDP2-K4] production install commits data-only; P0-P4 and dispose stay 0A000; malformed payload is invalid_args')
+    print('[CDP2-K4] production install is data-only; off/dispose and non-admitted begin stay 0A000; malformed payload is invalid_args')
 
 
 def test_negatives(db, ctx):

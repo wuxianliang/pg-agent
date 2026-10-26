@@ -178,23 +178,23 @@ W2 budgets and preservation:
 | DDL prefix `10`–`17`/`20`/`30` | 414 physical lines (≤900); `30_triggers.sql` 248 |
 | canonical manifest | sixteen files in `v24/cordis/load.py`; DP1 environment tuple matched |
 | frozen v24 core | `v24/load.py`, `v24/sql/**`, `v24/s1`–`v24/s12` unchanged; twelve SHA-256 and `57e2c1e` diff rechecked |
-| production seam | P0–P4 activation and dispose still `0A000`; direct install creates no episode/host effect/successor |
+| production seam | W2 checkpoint: P0–P4 and dispose were `0A000`. W3 now implements P0–P4; dispose remains `0A000` |
 
 **W2 bounded review status: complete.** The one bounded Oracle review (two lanes) completed and raised six findings, all fixed and re-gated: uppercase caller UUID text versus canonical UUID comparison (event/domain canonicalization plus regression); `fiber_lineage_open` ignoring `dispose_requested_at` (now closes every ancestor, with child-install and descendant-resolve negatives); owner iterator accepting string `v` or extra keys (now exact `{v,next_index,registered_through,control_seq}` with numeric `v`); owner admission ignoring current-generation `failure` (now `owner_closing`/`install_owner_failure`); `guard_fiber_graph` counting paths via `UNION ALL` (now deduplicated reachability, distinct-element limit, multiple-root/cycle/depth retained, dense-DAG regression); and the forged install-owner test mutating `fiber_create` instead of `install_create`. The post-fix 19-command sequence is all `EXIT 0`; W2 is committed/pushed to `origin/v24` in this closeout, and no W3 work was started.
 
 
 ## DP2 named-assertion coverage
 
-CDP2-K is implemented and passed by W1; CDP2-I is implemented and passed locally by W2; CDP2-A/B remain unimplemented and unrun. They are listed with their planned work item so B0 is not read as DP2 coverage.
+CDP2-K is implemented and passed by W1; CDP2-I is implemented and passed by W2; CDP2-A is implemented and passed by W3; CDP2-B remains unimplemented. They are listed with their planned work item so B0 is not read as DP2 coverage.
 
 | Assertion | Planned work item | Producer | Evidence | Exit | Uncovered remainder |
 |---|---|---|---|---:|---|
 | CDP2-K1…K8 | W1 | `v24/cordis/dp2/test_kernel.py` | CDP2-K exit 0 with K1–K8/K4b printed assertions | 0 | covered: lock order, ready continuation replay/identity/forgery, typed delta shapes and branch permissions, injected-fault atomicity, terminal guard, generation recheck, aggregate events. Remaining: W3/W4 domains and cross-LOGIN continuation |
 | CDP2-I1…I7/I5b/I6b | W2 | `v24/cordis/dp2/test_install.py` | CDP2-I exit 0 with all named sections printed | 0 | covered: direct data-only install, three scope variants, declaration/contracts/check, owner ledger, resolver/realms/provider admission, unique root, pin/run DAG cycles, committed-view immutable, forged deltas, disposed root. Remaining: W3/W4 behavior |
-| CDP2-A1…A6 | W3 | `v24/cordis/dp2/test_activation.py` | none — file does not exist | — | all: P0 CAS/no-op, P1 freeze, P2 batching ≤32, P4 totality, address exclusivity, ownership/DAG |
+| CDP2-A1…A6 | W3 | `v24/cordis/dp2/test_activation.py` | CDP2-A exit 0; A1–A6 printed | 0 | covered: real P0–P4 for 0/1/32/33, retry after missing dependency and failed later batch, realm split, real owner, immutable view. Remaining: reachable command graphs do not build a pin cycle (direct `activation_dag` proves the cycle result); dispose and DP3 drift conversion are W4/later |
 | CDP2-B1…B5 | W4 | `v24/cordis/dp2/test_boundaries.py` | none — file does not exist | — | all: unsupported `0A000` boundaries, basic dispose proofs and host-obligation refusals, table/manifest/budget invariants |
 
-B0 therefore covers **zero** DP2 named assertions; W1 covers CDP2-K1…K8 (exit 0); W2 covers CDP2-I1…I7/I5b/I6b (exit 0). B0 covers the DP1 named assertions CDP1-E1…E3, CDP1-D1…D4 and CDP1-K1…K5 by rerun, and the eleven v24 plus s9 regression suites by rerun.
+B0 therefore covers **zero** DP2 named assertions; W1 covers CDP2-K1…K8 (exit 0); W2 covers CDP2-I1…I7/I5b/I6b (exit 0); W3 covers CDP2-A1…A6 (exit 0). B0 covers the DP1 named assertions CDP1-E1…E3, CDP1-D1…D4 and CDP1-K1…K5 by rerun, and the eleven v24 plus s9 regression suites by rerun.
 
 ## B0 uncovered items
 
