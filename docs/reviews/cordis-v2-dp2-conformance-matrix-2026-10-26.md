@@ -4,7 +4,7 @@ B0 executed on 2026-10-26 in worktree `/Users/wxl/Projects/pg-agent/.claude/work
 
 ## Scope
 
-B0 is a baseline-verification milestone only. Covered: repository/environment facts, the five existing Cordis DP1 commands, the eleven v24 regression commands, the separate s9 gate, the twelve frozen SQL SHA-256 values, the frozen diff, the current SQL line budgets, and the four DP2 documentation artifacts. Not covered: any DP2 implementation and any DP2 named assertion (CDP2-K/I/A/B remain unimplemented and unrun). Local verification is complete and the B0 milestone is **closed**: on 2026-10-26 the user authorized per-milestone commit + push to `origin/v24`, and B0 was committed and pushed accordingly (closure commit `v24: close out Cordis DP2 B0 baseline with gate and frozen evidence`).
+B0 is a baseline-verification milestone only; W1 is the first DP2 implementation milestone. B0 covered repository/environment facts, the five existing Cordis DP1 commands, the eleven v24 regression commands, the separate s9 gate, the twelve frozen SQL SHA-256 values, the frozen diff, the current SQL line budgets, and the four DP2 documentation artifacts. W1 covers ready-continuation execution/replay, reserved successor identity, P0→P1 generation, command closure, typed delta/applier, terminal receipt guard and CDP2-K. W2–W5 implementation and CDP2-I/A/B remain unimplemented and unrun. The W1 bounded Oracle review is **complete**: five actionable findings were raised and fixed (event null/type, successor prevalidation, dispose closure 513, dispose timestamp preservation, cross-fiber P1 context). An earlier full-file review attempt timed out; that timeout is recorded separately and is not claimed as a completed full-file review. Local verification is complete and the B0 milestone is **closed**: on 2026-10-26 the user authorized per-milestone commit + push to `origin/v24`, and B0 was committed and pushed accordingly (closure commit `v24: close out Cordis DP2 B0 baseline with gate and frozen evidence`).
 
 ## B0 environment and repository facts
 
@@ -70,18 +70,77 @@ All twelve `v24/sql/*.sql` SHA-256 values match the DP1 P0 record exactly:
 
 `git diff 57e2c1e -- v24/load.py v24/sql v24/s1 v24/s2 v24/s3 v24/s4 v24/s5 v24/s6 v24/s7 v24/s8 v24/s9 v24/s10 v24/s11 v24/s12` exited 0 with no output: the frozen v24 loader, SQL and stage directories are byte-identical to the comparison baseline. No frozen file was modified to make a regression pass.
 
+## W1 actual results — 2026-10-26
+
+W1 was executed in the same worktree on top of B0 HEAD `5e36a5a`, branch `v24`. The W1 change is uncommitted at the time of this matrix update; publication follows the authorized per-milestone commit/push step.
+
+| Gate | Command | Exit | Observed named assertions |
+|---|---|---:|---|
+| CDP1-D | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | D1–D4; 113 zero-write probes; terminal reopen/outcome/settled/attempt (increase and decrease)/fence/claim/lease → `55000`; printed `terminal attempt/fence +1 and -1 -> 55000`; request response immutable |
+| CDP1-K | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | K1–K5; 66 committed zero-write assertions; malformed command → `invalid_args`, valid lifecycle → `0A000` |
+| CDP2-K | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | K1 lock order/replay bypass; K2 P0→P1→P2→P4/install/dispose/replay + mixed-history timestamp preservation; K3 forged identity/non-ready/ordinal; K4 nine typed ops, six event null/type, invalid successor, branch denial; K4b production seams, owner/dispose/pin/provide bounds, 512 fibers + 1 episode 513 cutoff, P0 no-op; K5 injected faults; K6 terminal guard; K7 generation and retry; K8 aggregate events |
+| Cordis loader/fixture/environment | `load.py`, `setup_db.py --self-check`, `test_environment.py` | 0 | fifteen-file manifest refusal probes; PG 18.4/psycopg2 2.9.12; socket-only/libpq refusals; exact prefix catalogs |
+| eleven v24 + s9 | the B0 command list, rerun serially | 0 | same named assertions as the B0 table; s9 23 cases; no domain regression |
+
+The W1 gate is a disposable-DB probe: it creates two `TestDB` databases, leaves production `interpret_command`/`interpret_settlement` at `0A000`, and replaces the interpreters only in the probe DB so the real `advance`, `validate_delta`, `validate_domain`, `validate_and_apply_delta`, triggers and lock graph execute. `test_support.py` reuses DP1's `Server`/`TestDB`/`TABLES`/`snapshot`; no production DB is reused.
+
+W1 budgets and preservation:
+
+| Item | W1 observed value |
+|---|---|
+| `40_advance.sql` | 1196 physical lines (≤1200), 4 lines remaining |
+| DDL prefix `10`–`17`/`20`/`30` | 360 physical lines (≤900); `30_triggers.sql` 194 |
+| canonical manifest | fifteen files, unchanged (`v24/cordis/load.py`) |
+| frozen v24 core | `v24/load.py`, `v24/sql/**`, `v24/s1`–`v24/s12` unchanged; twelve SHA-256 and `57e2c1e` diff rechecked |
+| production seam | install/reconcile/dispose spec-valid paths still `0A000`; W2–W4 own their branches |
+
+Wire v1 conformance: `command_dispose` takes exactly `{install_id}`; the probe-derived `basic_dispose` delta alone carries `fiber_ids`. Root scope is exactly `{mode,id,realm_overrides}`, existing `{mode,id}`, child `{mode,id,parent_id}`. `test_kernel.py` inserts its DP1 directory with `Path(__file__).resolve()` before fixture imports; K2 asserts the one-entity `[0,1,2,3]` cursor. The `40_advance.sql` review fixes leave only 4 lines; W2–W4 need an estimated 150–250 lines, so the 1200 cap is not viable for W2–W4. **W2–W4 are blocked pending a user decision on the plan’s SQL layout/cap**; this is recorded as an integration blocker, not a scope change.
+
+The **full bounded Oracle review** raised five findings, all fixed in W1: (1) `event_payload_valid`/`json_array_valid` validate all six lifecycle event variants (nested UUID/integer/boolean/array types and nulls; DP1 host `receipt` remains object-only) and branch comparisons use `IS DISTINCT FROM`; (2) lifecycle successors are prevalidated as command_reconcile/ordinal 0/exact input before DML and invalid kinds return `invalid_outcome`/`successor_kind`; (3) dispose closure uses `UNION ... LIMIT 513` with an append-time bound; (4) `basic_dispose` only stamps non-disposed fibers and preserves existing timestamps; (5) the P2 cross-fiber negative supplies a valid event/successor and asserts `p1_context` with the episode DML sentinel. New negatives: six event variants null/type, invalid successor, 512 fibers + 1 episode closure, mixed-history dispose.
+
+K2 episode-binding negative is deliberately non-NULL: the child points at a closed episode or an open episode whose fiber `current_episode_id` is NULL; both are rejected before any request/event/DML. The owner full-schema snapshot is identical before and after.
+
+W1 boundary not claimed: ownerful/child-scope install admission and resolver (W2), full P0–P4 production activation (W3), production dispose (W4), cross-LOGIN continuation principal separation, and any W5 closeout. W2–W4 remain **blocked pending a user decision on the plan’s SQL layout/cap**. `effects_one_reconcile` still allows one ready/claimed reconcile per fiber; CDP2-K's 16-successor structural bound therefore mostly exercises non-reconcile successor kinds. A failed P1/P2 child remains `ready` with no request and can be retried once; K7 proves replay does not duplicate it.
+
+**Bounded Oracle review status: complete.** The full bounded review raised five findings — event null/type (P1.1), successor prevalidation (P1.2), dispose closure 513 (P1.3), dispose timestamp preservation (P1.4), and the cross-fiber test reaching `p1_context` (P2) — all fixed and covered by CDP2-K/CDP1. Two earlier focused Oracle chats separately confirmed the parent-fiber predicate and the terminal guard's `ready`→`succeeded`/terminal rejection, and surfaced the attempt/fence ordering issue now fixed. Full-file review requests timed out against `codex_custom_gpt-6-astra-xhigh`; that timeout is not claimed as a completed full-file review and does not negate the completed bounded review. Per instruction there were no retries after the timeout.
+
+**Actual W1 exit codes (18/18):**
+
+```text
+EXIT 0 :: v24/load.py
+EXIT 0 :: v24/s1/setup_db.py --self-check
+EXIT 0 :: v24/s1/test_ddl.py
+EXIT 0 :: v24/s1/test_g1.py
+EXIT 0 :: v24/s2/test_g3a.py
+EXIT 0 :: v24/s3/test_g2.py
+EXIT 0 :: v24/s4/test_g2b.py
+EXIT 0 :: v24/s5/test_g4.py
+EXIT 0 :: v24/s6/test_g5.py
+EXIT 0 :: v24/s8/test_g7.py
+EXIT 0 :: v24/s7/test_g6.py
+EXIT 0 :: v24/s9/test_g8.py
+EXIT 0 :: v24/cordis/load.py
+EXIT 0 :: v24/cordis/dp1/setup_db.py --self-check
+EXIT 0 :: v24/cordis/dp1/test_environment.py
+EXIT 0 :: v24/cordis/dp1/test_ddl.py
+EXIT 0 :: v24/cordis/dp1/test_kernel.py
+EXIT 0 :: v24/cordis/dp2/test_kernel.py
+```
+
+**Intermediate failure (honest record).** The first post-review full rerun stopped at `[5] uv run python v24/cordis/dp1/test_kernel.py` with `EXIT 1`; `test_kernel.py:428` raised `KeyError: 'disposition'`. The strict event validator had initially rejected DP1’s synthetic `receipt` event (`payload {}`), causing the successful host settlement to return an error. Adding the object-only `receipt` carve-out restored CDP1-K, and the final 18-command rerun above is all `EXIT 0`; the failed run is not counted as passing evidence.
+
 ## DP2 named-assertion coverage
 
-DP2 named assertions are **not implemented and not run**. They are listed here with their planned work item so that B0 is not read as partial DP2 coverage.
+CDP2-I/A/B are **not implemented and not run**; CDP2-K is implemented and passed by W1. They are listed with their planned work item so B0 is not read as DP2 coverage.
 
 | Assertion | Planned work item | Producer | Evidence | Exit | Uncovered remainder |
 |---|---|---|---|---:|---|
-| CDP2-K1…K8 | W1 | `v24/cordis/dp2/test_kernel.py` | none — file does not exist | — | all: lock order, ready continuation replay/identity/forgery, typed delta shapes and branch permissions, injected-fault atomicity, terminal guard, generation recheck, aggregate events |
+| CDP2-K1…K8 | W1 | `v24/cordis/dp2/test_kernel.py` | CDP2-K exit 0 with K1–K8/K4b printed assertions | 0 | covered: lock order, ready continuation replay/identity/forgery, typed delta shapes and branch permissions, injected-fault atomicity, terminal guard, generation recheck, aggregate events. Remaining: W2–W4 domains and cross-LOGIN continuation |
 | CDP2-I1…I5 | W2 | `v24/cordis/dp2/test_install.py` | none — file does not exist | — | all: three scope variants, declaration validation, owner ledger, realm routing, deferred unique-root guard |
 | CDP2-A1…A6 | W3 | `v24/cordis/dp2/test_activation.py` | none — file does not exist | — | all: P0 CAS/no-op, P1 freeze, P2 batching ≤32, P4 totality, address exclusivity, ownership/DAG |
 | CDP2-B1…B5 | W4 | `v24/cordis/dp2/test_boundaries.py` | none — file does not exist | — | all: unsupported `0A000` boundaries, basic dispose proofs and host-obligation refusals, table/manifest/budget invariants |
 
-B0 therefore covers **zero** DP2 named assertions. It covers the DP1 named assertions CDP1-E1…E3, CDP1-D1…D4 and CDP1-K1…K5 by rerun, and the eleven v24 plus s9 regression suites by rerun.
+B0 therefore covers **zero** DP2 named assertions; W1 covers CDP2-K1…K8 (exit 0). B0 covers the DP1 named assertions CDP1-E1…E3, CDP1-D1…D4 and CDP1-K1…K5 by rerun, and the eleven v24 plus s9 regression suites by rerun.
 
 ## B0 uncovered items
 

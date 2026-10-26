@@ -34,9 +34,18 @@ def env(cls,body=None,claim=None,**extra):
     return dict(v=1,**{'class':cls},claim=claim,body={} if body is None else body,**extra)
 
 
+def install_payload():
+    scope,install,fiber=(uuid.uuid4() for _ in range(3))
+    return dict(scope=dict(mode='root',id=str(scope),realm_overrides={}),
+                owner=None,install_id=str(install),fiber_id=str(fiber),identity='dp1-probe',version='1',
+                manifest=dict(requires=[],provides=[],priority=0,check={}),
+                artifact_digest='a'*64,contracts={},policy_ref=None,overlay={})
+
+
 def command(db,alias='service',key=None,payload=None,kind='command_install'):
     key=key or uuid.uuid4().hex
-    payload={} if payload is None else payload
+    if payload is None:
+        payload=install_payload() if kind=='command_install' else dict(install_id=str(uuid.uuid4()))
     principal=uuid.UUID(hashlib.md5(db.roles[alias].encode()).hexdigest())
     effect=uuid.UUID(hashlib.sha256(f'{principal}:{kind}:{key}'.encode()).hexdigest()[:32])
     # Obtain PostgreSQL canonical spelling; fixed vectors below independently freeze the protocol.
@@ -99,15 +108,35 @@ def replace_function(db,name,definition):
 
 def install_probe(db):
     original=function_defs(db)
-    for name in ('interpret_command','interpret_settlement'):
-        signature='p_effect_id uuid,p_principal uuid,p_outcome jsonb,p_closure jsonb'
-        definition=f'''CREATE OR REPLACE FUNCTION v24_cordis.{name}({signature}) RETURNS jsonb
+    definition='''CREATE OR REPLACE FUNCTION v24_cordis.interpret_command(p_effect_id uuid,p_principal uuid,p_outcome jsonb,p_closure jsonb) RETURNS jsonb
         LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis AS $$
-        BEGIN RETURN jsonb_build_object('domain','[]'::jsonb,'receipt',jsonb_build_object('status',
-        CASE p_outcome->>'class' WHEN 'command' THEN 'succeeded' WHEN 'success' THEN 'succeeded' WHEN 'failure' THEN 'failed' ELSE 'unknown' END),
-        'events',jsonb_build_array(jsonb_build_object('entity_type','effect','entity_id',p_effect_id,'event_kind','receipt','payload','{{}}'::jsonb)),
-        'successors','[]'::jsonb); END $$;'''
-        replace_function(db,name,definition)
+        DECLARE p jsonb:=p_outcome->'body'->'payload';
+        BEGIN
+          IF p_outcome->>'class'<>'command' THEN
+            RETURN jsonb_build_object('domain','[]'::jsonb,'receipt',jsonb_build_object('status',
+              CASE p_outcome->>'class' WHEN 'success' THEN 'succeeded' WHEN 'failure' THEN 'failed' ELSE 'unknown' END),
+              'events',jsonb_build_array(jsonb_build_object('entity_type','effect','entity_id',p_effect_id,
+                'event_kind','receipt','payload','{}'::jsonb)),'successors','[]'::jsonb);
+          END IF;
+          RETURN jsonb_build_object('domain',jsonb_build_array(
+            jsonb_build_object('op','scope_create','id',p->'scope'->'id','parent_id',p->'scope'->'parent_id',
+              'realm_overrides',p->'scope'->'realm_overrides'),
+            jsonb_build_object('op','install_create','id',p->'install_id','scope_id',p->'scope'->'id',
+              'owner_fiber_id',p->'owner'->'fiber_id','owner_episode_id',p->'owner'->'episode_id',
+              'identity',p->'identity','version',p->'version','manifest',p->'manifest',
+              'artifact_digest',p->'artifact_digest','contracts',p->'contracts','policy_ref',p->'policy_ref',
+              'overlay',p->'overlay'),
+            jsonb_build_object('op','fiber_create','id',p->'fiber_id','install_id',p->'install_id',
+              'owner_id',p->'owner'->'fiber_id','owner_episode_id',p->'owner'->'episode_id','scope_id',p->'scope'->'id')),
+            'receipt',jsonb_build_object('status','succeeded'),
+            'events',jsonb_build_array(jsonb_build_object('entity_type','install','entity_id',p->'install_id',
+              'event_kind','install_created','payload',jsonb_build_object('scope_id',p->'scope'->'id',
+                'scope_created',p->'scope'->>'mode'='root','fiber_id',p->'fiber_id','owner_fiber_id',NULL,
+                'owner_episode_id',NULL,'child_contribution_id',NULL))),
+            'successors','[]'::jsonb);
+        END $$;'''
+    replace_function(db,'interpret_command',definition)
+    replace_function(db,'interpret_settlement',definition.replace('v24_cordis.interpret_command','v24_cordis.interpret_settlement'))
     actual=function_defs(db)
     assert original['validate_and_apply_delta']==actual['validate_and_apply_delta']
     return original
@@ -263,23 +292,35 @@ def test_preflight_claim(db):
 def test_delta(db):
     with contextlib.closing(db.connect('owner')) as owner:
         base=dict(domain=[],receipt=dict(status='succeeded'),events=[],successors=[])
-        def validate(delta,structure=False):
-            return query(owner,"SELECT v24_cordis.validate_delta(%s,'command',%s)",(Json(delta),structure))[0][0]
+        def validate(delta,structure=False,cls='command'):
+            return query(owner,"SELECT v24_cordis.validate_delta(%s,%s,%s)",(Json(delta),cls,structure))[0][0]
         assert validate(base) is None
         successors=[dict(ordinal=i,kind='host_io',input={}) for i in range(16)]
         assert validate({**base,'successors':successors},True) is None
         for delta in ({**base,'successors':successors+[dict(ordinal=16,kind='host_io',input={})]},
                       {**base,'successors':[successors[0],successors[0]]},{**base,'successors':[dict(ordinal=16,kind='host_io',input={})]},
                       {**base,'receipt':dict(status='failed')},{**base,'events':[{}]},{**base,'extra':1},
-                      {**base,'domain':[dict(inverse=dict(op='sql'))]},{**base,'domain':[dict(inverse=dict(op='unknown'))]}):
+                      {**base,'domain':[dict(op='episode_begin')]},
+                      {**base,'domain':[dict(op='contribution_append',inverse=dict(op='unknown'))]}):
             assert validate(delta,True)['error']['code']=='invalid_outcome',delta
-        for op in ('delete_row','restore_prev','release_reservation','dispose_child','unknown'):
-            domain=[dict(inverse=dict(op=op,**({'debt':'pending'} if op=='unknown' else {})))]
-            assert validate({**base,'domain':domain},True) is None
-            assert validate({**base,'domain':domain})['error']['detail']==dict(reason='dp1_empty_domain_only')
-        assert validate({**base,'successors':successors})['error']['detail']==dict(reason='dp1_empty_domain_only')
+        # DP1's old inverse-only probe is replaced by a typed contribution delta; the union is closed.
+        contribution=dict(op='contribution_append',id=str(uuid.uuid4()),fiber_id=str(uuid.uuid4()),
+            episode_id=str(uuid.uuid4()),seq=0,kind='service',realm='root',key='svc',descriptor={},
+            prev_contribution_id=None,inverse=dict(op='delete_row'),contract_version='1')
+        assert validate({**base,'domain':[contribution]},True) is None
+        assert validate({**base,'domain':[contribution]}) is None
+        for mutation in ({'key':None},{'realm':None},{'seq':-1},{'inverse':dict(op='unknown')},
+                         {'extra':1},{'descriptor':[]},{'kind':'child'},{'prev_contribution_id':str(uuid.uuid4())}):
+            assert validate({**base,'domain':[{**contribution,**mutation}]},True)['error']['code']=='invalid_outcome'
+        # Non-command settlement classes never gain domain or successor write rights.
+        for cls,status in (('success','succeeded'),('failure','failed'),('unknown','unknown')):
+            delta={**base,'receipt':dict(status=status),'domain':[contribution]}
+            got=validate(delta,False,cls)['error']['detail']
+            assert got==dict(reason='settlement_has_no_domain'),got
+            got=validate({**base,'receipt':dict(status=status),'successors':successors[:1]},False,cls)['error']['detail']
+            assert got==dict(reason='settlement_has_no_domain'),got
         owner.rollback()
-    print('[CDP1-K3] real delta validator: empty-only, 16/17 successors, ordinal/inverse/receipt/event closure')
+    print('[CDP1-K3] typed delta validator: closed shapes, 16/17 successors, settlement write denial')
 
 
 def wait_blocked(db,pid):
@@ -446,8 +487,16 @@ def test_committed_probe(production,probe):
     probe.cleanup()
     assert function_defs(production)==frozen
     with contextlib.closing(production.connect('owner')) as owner:
-        for name in ('interpret_command','interpret_settlement'):
-            sqlstate(owner,f"SELECT v24_cordis.{name}(gen_random_uuid(),gen_random_uuid(),'{{}}','[]')")
+        sqlstate(owner,"SELECT v24_cordis.interpret_settlement(gen_random_uuid(),gen_random_uuid(),'{}','[]')")
+        got=query(owner,"SELECT v24_cordis.interpret_command(gen_random_uuid(),gen_random_uuid(),'{}','[]')")[0][0]
+        assert got['error']['code']=='invalid_args',got
+        malformed={'v':1,'class':'command','claim':None,'body':{'op':'admit_and_apply','kind':'command_reconcile',
+            'request_key':'probe','canonical_bytes':'e30=','payload':{'action':'on'}}}
+        got=query(owner,'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',(uuid.uuid4(),uuid.uuid4(),Json(malformed),Json([])))[0][0]
+        assert got['error']['code']=='invalid_args',got
+        valid={'v':1,'class':'command','claim':None,'body':{'op':'admit_and_apply','kind':'command_reconcile',
+            'request_key':'probe','canonical_bytes':'e30=','payload':{'fiber_id':str(uuid.uuid4()),'action':'on','expected_control_seq':0}}}
+        sqlstate(owner,'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',(uuid.uuid4(),uuid.uuid4(),Json(valid),Json([])))
     print('[CDP1-K5] disposable COMMIT probe, new-connection command/terminal replay, post-write rollback, barrier and original production hashes')
 
 

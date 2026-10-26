@@ -63,7 +63,17 @@ BEGIN
            OLD.kind,OLD.input,OLD.request_actor) THEN
       RAISE EXCEPTION 'effect identity and input are immutable' USING ERRCODE='55000';
     END IF;
-    IF NEW.attempt < OLD.attempt OR NEW.fence < OLD.fence THEN
+    -- A terminal receipt is durable: no reopen and no outcome/settlement replacement (plan 3.13).
+    -- Check it before the non-terminal monotonic rule so every terminal attempt/fence edit is 55000.
+    IF OLD.status IN ('succeeded','failed','unknown','cancelled') THEN
+      IF NEW.status IS DISTINCT FROM OLD.status OR NEW.outcome IS DISTINCT FROM OLD.outcome
+        OR NEW.settled_at IS DISTINCT FROM OLD.settled_at
+        OR NEW.attempt IS DISTINCT FROM OLD.attempt OR NEW.fence IS DISTINCT FROM OLD.fence
+        OR NEW.claim_owner IS DISTINCT FROM OLD.claim_owner
+        OR NEW.lease_until IS DISTINCT FROM OLD.lease_until THEN
+        RAISE EXCEPTION 'terminal effect receipt is immutable' USING ERRCODE='55000';
+      END IF;
+    ELSEIF NEW.attempt < OLD.attempt OR NEW.fence < OLD.fence THEN
       RAISE EXCEPTION 'effect attempt and fence cannot decrease' USING ERRCODE='23514';
     END IF;
   ELSIF TG_TABLE_NAME='scopes' THEN

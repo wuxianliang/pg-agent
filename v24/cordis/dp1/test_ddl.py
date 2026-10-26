@@ -240,7 +240,23 @@ def guards(conn):
             assert exc.pgcode=='23503'; conn.rollback()
         else: raise AssertionError('dangling '+target+' effect committed')
         assert snapshot(conn)==before
-    print('[CDP1-D4] immutable identities, monotonic values, append-only events, real COMMIT FK rollback')
+    # DP2 W1 terminal receipt guard: one legal ready->succeeded, then no reopen or replacement.
+    with conn.cursor() as c:
+        c.execute("UPDATE v24_cordis.effects SET status='succeeded',outcome='{\"ok\":1}',settled_at=now(),claim_owner=NULL,lease_until=NULL WHERE id=%s",(IDS['effect'],))
+    conn.commit()
+    for change in ("status='ready'","outcome='{\"ok\":2}'","settled_at=now()+interval '1 second'",'attempt=attempt+1','attempt=attempt-1','fence=fence+1','fence=fence-1',"claim_owner='reopen'","lease_until=now()+interval '1 second'"):
+        rejected(conn,'terminal effect '+change,f'UPDATE v24_cordis.effects SET {change} WHERE id=%s',(IDS['effect'],),states=('55000',))
+    print('[CDP1-D4] terminal attempt/fence +1 and -1 -> 55000')
+    for status in ('failed','unknown','cancelled'):
+        terminal=clone(conn,'effects',IDS['effect'],{'status':status,'outcome':({} if status!='cancelled' else None),'settled_at':'2026-01-01'})
+        rejected(conn,status+' reopen',"UPDATE v24_cordis.effects SET status='ready',settled_at=NULL WHERE id=%s",(terminal,),states=('55000',))
+        rejected(conn,status+' outcome','UPDATE v24_cordis.effects SET outcome=%s WHERE id=%s',(json.dumps({'x':1}),terminal),states=('55000',))
+    principal=uuid.uuid4()
+    with conn.cursor() as c:
+        c.execute("INSERT INTO v24_cordis.requests(principal_id,request_key,kind,request_bytes,request_digest,effect_id,response) VALUES(%s,'terminal','command_install','x',sha256('x'::bytea),%s,'{}'::jsonb)",(principal,IDS['effect']))
+    conn.commit()
+    rejected(conn,'request response immutable',"UPDATE v24_cordis.requests SET response='{\"x\":1}' WHERE principal_id=%s AND request_key='terminal'",(principal,),states=('55000',))
+    print('[CDP1-D4] immutable identities, monotonic values, terminal receipts, append-only events, real COMMIT FK rollback')
 
 
 def main():
