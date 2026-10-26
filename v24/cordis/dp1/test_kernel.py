@@ -1,5 +1,6 @@
 """CDP1-K: protocol, real LOGIN ACL, ordered locking and durable receipt probes.
 Only disposable probe interpreters/barrier are replaced; the applier is always production SQL.
+The probe install path reuses the production typed install delta builder; W2 admission is CDP2-I.
 """
 from __future__ import annotations
 import base64
@@ -77,21 +78,48 @@ def no_write(db,conn,effect,outcome,code=None,disposition=None,detail=None):
     return result
 
 
+def active_root(db):
+    """One spec-valid ownerless root per database; fixtures attach their fibers to it."""
+    with contextlib.closing(db.connect('owner')) as owner:
+        query(owner,'SELECT pg_advisory_xact_lock(24,1)')
+        row=query(owner,"SELECT id,install_id,scope_id,current_episode_id,want_on FROM v24_cordis.fibers WHERE owner_id IS NULL LIMIT 1")
+        if row:
+            fiber,install,scope,episode,want_on=row[0]
+            if episode is None:
+                episode=uuid.uuid4()
+                query(owner,"INSERT INTO v24_cordis.episodes(id,fiber_id,epoch,state,committed_view,iterator) SELECT %s,%s,coalesce(max(epoch),-1)+1,'active','{}',%s FROM v24_cordis.episodes WHERE fiber_id=%s",(episode,fiber,Json(dict(v=1,next_index=0,registered_through=-1,control_seq=0)),fiber))
+                query(owner,'UPDATE v24_cordis.fibers SET current_episode_id=%s WHERE id=%s',(episode,fiber))
+            if not want_on:
+                query(owner,'UPDATE v24_cordis.fibers SET want_on=true WHERE id=%s',(fiber,))
+            owner.commit()
+            return dict(fiber=fiber,install=install,scope=scope,episode=episode)
+        scope,install,fiber,episode=(uuid.uuid4() for _ in range(4))
+        query(owner,'INSERT INTO v24_cordis.scopes(id) VALUES(%s)',(scope,))
+        query(owner,"INSERT INTO v24_cordis.installs(id,scope_id,identity,version,manifest,artifact_digest,contracts,state) VALUES(%s,%s,%s,'1',%s,%s,'{}','installed')",(install,scope,str(install),Json({'requires':[],'provides':[],'priority':0,'check':{}}),'a'*64))
+        query(owner,'INSERT INTO v24_cordis.fibers(id,install_id,scope_id) VALUES(%s,%s,%s)',(fiber,install,scope))
+        query(owner,"INSERT INTO v24_cordis.episodes(id,fiber_id,epoch,state,committed_view,iterator) VALUES(%s,%s,0,'active','{}',%s)",(episode,fiber,Json(dict(v=1,next_index=0,registered_through=-1,control_seq=0))))
+        query(owner,'UPDATE v24_cordis.fibers SET current_episode_id=%s,want_on=true WHERE id=%s',(episode,fiber))
+        owner.commit()
+    return dict(fiber=fiber,install=install,scope=scope,episode=episode)
+
+
 def host_seed(db,replay=True,binding=True,scopes=1,kind='host_io',status='ready',repeat=None,concurrent=None,replay_config=None,digest_value='a'*64,binding_digest_value=None):
     ids=[uuid.uuid4() for _ in range(4)]
     scope,install,fiber,effect=ids
+    root=active_root(db)
     contract=dict(contract_version='1',handler_digest=digest_value,replay=(replay_config if replay_config is not None else dict(repeat=replay if repeat is None else repeat,concurrent=replay if concurrent is None else concurrent)))
     frozen=dict(contract_version='1',handler_digest=(binding_digest_value if binding_digest_value is not None else (digest_value if binding else ('b'*64))))
     with contextlib.closing(db.connect('owner')) as owner:
+        query(owner,'SELECT pg_advisory_xact_lock(24,1)')
         parent=None
         for i in range(scopes):
             node=scope if i==scopes-1 else uuid.uuid4()
             query(owner,'INSERT INTO v24_cordis.scopes(id,parent_id) VALUES(%s,%s)',(node,parent)); parent=node
-        query(owner,"INSERT INTO v24_cordis.installs(id,scope_id,identity,version,manifest,artifact_digest,contracts,state) VALUES(%s,%s,%s,'1',%s,%s,%s,'installed')",(install,scope,str(install),Json({'requires':[],'provides':[],'priority':0,'check':{}}),'a'*64,Json({'host_io':contract})))
-        query(owner,'INSERT INTO v24_cordis.fibers(id,install_id,scope_id) VALUES(%s,%s,%s)',(fiber,install,scope))
+        query(owner,"INSERT INTO v24_cordis.installs(id,scope_id,owner_fiber_id,owner_episode_id,identity,version,manifest,artifact_digest,contracts,state) VALUES(%s,%s,%s,%s,%s,'1',%s,%s,%s,'installed')",(install,scope,root['fiber'],root['episode'],str(install),Json({'requires':[],'provides':[],'priority':0,'check':{}}),'a'*64,Json({'host_io':contract})))
+        query(owner,'INSERT INTO v24_cordis.fibers(id,install_id,owner_id,owner_episode_id,scope_id) VALUES(%s,%s,%s,%s,%s)',(fiber,install,root['fiber'],root['episode'],scope))
         query(owner,"INSERT INTO v24_cordis.effects(id,fiber_id,kind,status,input,request_actor,settled_at) VALUES(%s,%s,%s,%s,%s,'seed',%s)",(effect,fiber,kind,status,Json({'contract':frozen}),'2026-01-01' if status=='cancelled' else None))
         owner.commit()
-    return dict(scope=scope,install=install,fiber=fiber,effect=effect)
+    return dict(scope=scope,install=install,fiber=fiber,effect=effect,root=root)
 
 
 def function_defs(db):
@@ -118,22 +146,7 @@ def install_probe(db):
               'events',jsonb_build_array(jsonb_build_object('entity_type','effect','entity_id',p_effect_id,
                 'event_kind','receipt','payload','{}'::jsonb)),'successors','[]'::jsonb);
           END IF;
-          RETURN jsonb_build_object('domain',jsonb_build_array(
-            jsonb_build_object('op','scope_create','id',p->'scope'->'id','parent_id',p->'scope'->'parent_id',
-              'realm_overrides',p->'scope'->'realm_overrides'),
-            jsonb_build_object('op','install_create','id',p->'install_id','scope_id',p->'scope'->'id',
-              'owner_fiber_id',p->'owner'->'fiber_id','owner_episode_id',p->'owner'->'episode_id',
-              'identity',p->'identity','version',p->'version','manifest',p->'manifest',
-              'artifact_digest',p->'artifact_digest','contracts',p->'contracts','policy_ref',p->'policy_ref',
-              'overlay',p->'overlay'),
-            jsonb_build_object('op','fiber_create','id',p->'fiber_id','install_id',p->'install_id',
-              'owner_id',p->'owner'->'fiber_id','owner_episode_id',p->'owner'->'episode_id','scope_id',p->'scope'->'id')),
-            'receipt',jsonb_build_object('status','succeeded'),
-            'events',jsonb_build_array(jsonb_build_object('entity_type','install','entity_id',p->'install_id',
-              'event_kind','install_created','payload',jsonb_build_object('scope_id',p->'scope'->'id',
-                'scope_created',p->'scope'->>'mode'='root','fiber_id',p->'fiber_id','owner_fiber_id',NULL,
-                'owner_episode_id',NULL,'child_contribution_id',NULL))),
-            'successors','[]'::jsonb);
+          RETURN v24_cordis.install_delta(p);
         END $$;'''
     replace_function(db,'interpret_command',definition)
     replace_function(db,'interpret_settlement',definition.replace('v24_cordis.interpret_command','v24_cordis.interpret_settlement'))
@@ -178,7 +191,7 @@ def test_vectors_acl(db,other):
         with contextlib.closing(db.connect(alias)) as conn:
             sqlstate(conn,'SELECT * FROM v24_cordis.effects',code='42501')
             sqlstate(conn,"INSERT INTO v24_cordis.scopes(id) VALUES(gen_random_uuid())",code='42501')
-            eid,out=command(db,alias)
+            eid,out=command(db,alias,kind='command_reconcile',payload=dict(fiber_id=str(seed['fiber']),action='on',expected_control_seq=0))
             sqlstate(conn,'SELECT v24_cordis.advance(%s,%s)',(eid,Json(out)))
             if alias!='service': no_write(db,conn,seed['effect'],env('claim',{'lease_ms':1000}),'unauthorized')
     with contextlib.closing(db.connect('owner')) as owner:
@@ -370,7 +383,7 @@ def test_locks_closure(db):
             blocker.rollback(); thread.join(6)
         assert not thread.is_alive() and result[0]['disposition']=='claimed',result
     # Exactly 512 typed targets: effect/fiber/install plus 509 ancestor scopes.
-    at_limit=host_seed(db,scopes=509); over=host_seed(db,scopes=510)
+    at_limit=host_seed(db,scopes=505); over=host_seed(db,scopes=506)
     with contextlib.closing(db.connect('service')) as conn:
         assert api(conn,at_limit['effect'],env('claim',{'lease_ms':1000}))['disposition']=='claimed'; conn.rollback()
         no_write(db,conn,over['effect'],env('claim',{'lease_ms':1000}),'retry_with_closure')
@@ -385,7 +398,7 @@ def test_locks_closure(db):
             owner.rollback()
             target=dict(t='effects',id=str(item['effect']))
             got=query(owner,'SELECT v24_cordis.discover_closure(%s)',(Json([target,target]),))[0][0]
-            assert len(got)==4
+            assert len(got)==8
             missing=[dict(t='effects',id=str(uuid.uuid4()))]
             assert query(owner,'SELECT v24_cordis.discover_closure(%s)',(Json(missing),))[0][0] is None
     finally: replace_function(db,'target_refs',definitions['target_refs'])
@@ -438,7 +451,7 @@ def test_committed_probe(production,probe):
         no_write(probe,conn,item['effect'],env('claim',{'lease_ms':1000}),'blocked_unknown')
         assert api(conn,item['effect'],env('success',{},token))['disposition']=='committed'; conn.commit()
     # A replay/conflict cannot invoke discovery even for an oversized closure or wait on its scope.
-    over=host_seed(probe,scopes=510)
+    over=host_seed(probe,scopes=506)
     with contextlib.closing(probe.connect('owner')) as owner:
         query(owner,"UPDATE v24_cordis.effects SET status='claimed',attempt=1,fence=1,claim_owner=%s,lease_until='2020-01-01' WHERE id=%s",(probe.roles['service'],over['effect']))
         owner.commit()
@@ -469,7 +482,11 @@ def test_committed_probe(production,probe):
           RAISE EXCEPTION 'post effect/request fault' USING ERRCODE='U0001'; END $$;
         CREATE TRIGGER probe_fault BEFORE INSERT ON v24_cordis.events FOR EACH ROW EXECUTE FUNCTION v24_cordis.probe_fault();""")
         owner.commit(); before=snapshot(owner); owner.rollback()
-        eid,attempt=command(probe,key='fault')
+        fault_payload=install_payload()
+        fault_payload['scope']=dict(mode='existing',id=str(over['root']['scope']))
+        fault_payload['identity']='dp1-fault'
+        fault_payload['owner']=dict(fiber_id=str(over['root']['fiber']),episode_id=str(over['root']['episode']))
+        eid,attempt=command(probe,key='fault',payload=fault_payload)
         with contextlib.closing(probe.connect('service')) as conn:
             sqlstate(conn,'SELECT v24_cordis.advance(%s,%s)',(eid,Json(attempt)),code='U0001')
         assert snapshot(owner)==before
@@ -509,6 +526,6 @@ def main():
         test_delta(production)
         test_locks_closure(production)
         test_committed_probe(production,probe)
-    print(f'[passed] CDP1-K ({COUNT} committed zero-write assertions; lifecycle interpreters remain 0A000)')
+    print(f'[passed] CDP1-K ({COUNT} committed zero-write assertions; W2 install is data-only; reconcile/dispose remain 0A000)')
 
 if __name__=='__main__': main()

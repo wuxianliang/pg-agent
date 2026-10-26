@@ -72,15 +72,20 @@ def clone(conn,table,base,changes,label=None,state='23514'):
 
 def seed(conn):
     with conn.cursor() as c:
+        c.execute('SELECT pg_advisory_xact_lock(24,1)')
         c.execute('INSERT INTO v24_cordis.scopes(id) VALUES(%s),(%s)',(IDS['s1'],IDS['s2']))
         for suffix in ('1','2'):
-            c.execute("INSERT INTO v24_cordis.installs(id,scope_id,identity,version,manifest,artifact_digest,contracts,state) VALUES(%s,%s,%s,'1',%s,%s,'{}','installed')",
-                      (IDS['i'+suffix],IDS['s'+suffix],'plugin-'+suffix,json.dumps({'requires':[],'provides':[],'priority':0,'check':{}}),'a'*64))
-            c.execute('INSERT INTO v24_cordis.fibers(id,install_id,scope_id) VALUES(%s,%s,%s)',(IDS['f'+suffix],IDS['i'+suffix],IDS['s'+suffix]))
+            c.execute("INSERT INTO v24_cordis.installs(id,scope_id,owner_fiber_id,owner_episode_id,identity,version,manifest,artifact_digest,contracts,state) VALUES(%s,%s,%s,%s,%s,'1',%s,%s,'{}','installed')",
+                      (IDS['i'+suffix],IDS['s'+suffix],(None if suffix=='1' else IDS['f1']),
+                       (None if suffix=='1' else IDS['e1']),'plugin-'+suffix,
+                       json.dumps({'requires':[],'provides':[],'priority':0,'check':{}}),'a'*64))
+            c.execute('INSERT INTO v24_cordis.fibers(id,install_id,owner_id,owner_episode_id,scope_id) VALUES(%s,%s,%s,%s,%s)',
+                      (IDS['f'+suffix],IDS['i'+suffix],(None if suffix=='1' else IDS['f1']),
+                       (None if suffix=='1' else IDS['e1']),IDS['s'+suffix]))
         c.execute("INSERT INTO v24_cordis.episodes(id,fiber_id,epoch,state,closed_at) VALUES(%s,%s,0,'active',NULL),(%s,%s,1,'closing',now()),(%s,%s,0,'active',NULL)",
                   (IDS['e1'],IDS['f1'],IDS['e2'],IDS['f1'],IDS['e3'],IDS['f2']))
         c.execute('UPDATE v24_cordis.fibers SET current_episode_id=%s WHERE id=%s',(IDS['e1'],IDS['f1']))
-        c.execute('INSERT INTO v24_cordis.runs(id,owner_fiber_id,owner_episode_id,scope_id,remaining_steps) VALUES(%s,%s,%s,%s,4)',(IDS['run'],IDS['f1'],IDS['e1'],IDS['s1']))
+        c.execute('INSERT INTO v24_cordis.runs(id,owner_fiber_id,owner_episode_id,scope_id,remaining_steps) VALUES(%s,%s,%s,%s,4)',(IDS['run'],IDS['f2'],IDS['e3'],IDS['s1']))
         for name,episode,seq in [('c1','e1',0),('c2','e2',0)]:
             c.execute("INSERT INTO v24_cordis.contributions(id,fiber_id,episode_id,seq,kind,realm,key,descriptor,inverse,contract_version) VALUES(%s,%s,%s,%s,'service','r',%s,'{}','{\"op\":\"delete_row\"}','1')",(IDS[name],IDS['f1'],IDS[episode],seq,name))
         c.execute("INSERT INTO v24_cordis.pins(id,consumer_fiber_id,consumer_episode_id,key,contribution_id,provider_epoch) VALUES(%s,%s,%s,'k',%s,0)",(IDS['pin'],IDS['f2'],IDS['e3'],IDS['c1']))
@@ -121,12 +126,12 @@ def relations(conn):
         clone(conn,'installs',IDS['i1'],{'identity':'manifest-'+label,'manifest':manifest},label)
     clone(conn,'installs',IDS['i1'],{'identity':'bad-digest','artifact_digest':'A'*64},'artifact sha256')
     clone(conn,'fibers',IDS['f2'],{'owner_id':IDS['f1'],'owner_episode_id':IDS['e3']},'fiber cross episode','23503')
-    clone(conn,'fibers',IDS['f2'],{'owner_id':IDS['f1']},'fiber owner pair')
+    clone(conn,'fibers',IDS['f2'],{'owner_id':IDS['f1'],'owner_episode_id':None},'fiber owner pair')
     ident=uuid.uuid4()
     clone(conn,'fibers',IDS['f2'],{'id':ident,'owner_id':ident,'owner_episode_id':IDS['e3']},'fiber self owner')
     for cols in ({'owner_fiber_id':None,'owner_episode_id':None},{'owner_fiber_id':None},{'owner_episode_id':None}):
         clone(conn,'runs',IDS['run'],cols,'run nonnullable owner','23502')
-    clone(conn,'runs',IDS['run'],{'owner_episode_id':IDS['e3']},'run cross episode','23503')
+    clone(conn,'runs',IDS['run'],{'owner_episode_id':IDS['e1']},'run cross episode','23503')
     clone(conn,'runs',IDS['run'],{'remaining_steps':-1},'run budget')
     clone(conn,'runs',IDS['run'],{'parent_run_id':uuid.uuid4()},'run missing parent','23503')
     clone(conn,'runs',IDS['run'],{'parent_run_id':IDS['run'],'spawn_key':'k'})
@@ -256,6 +261,14 @@ def guards(conn):
         c.execute("INSERT INTO v24_cordis.requests(principal_id,request_key,kind,request_bytes,request_digest,effect_id,response) VALUES(%s,'terminal','command_install','x',sha256('x'::bytea),%s,'{}'::jsonb)",(principal,IDS['effect']))
     conn.commit()
     rejected(conn,'request response immutable',"UPDATE v24_cordis.requests SET response='{\"x\":1}' WHERE principal_id=%s AND request_key='terminal'",(principal,),states=('55000',))
+    rejected(conn,'committed view immutable',"UPDATE v24_cordis.episodes SET committed_view='{\"k\":1}' WHERE id=%s",(IDS['e1'],),states=('55000',))
+    rejected(conn,'second ownerless root',"INSERT INTO v24_cordis.fibers(id,install_id,scope_id) VALUES(%s,%s,%s)",(uuid.uuid4(),IDS['i1'],IDS['s1']))
+    rejected(conn,'fiber graph self pin',"INSERT INTO v24_cordis.pins(id,consumer_fiber_id,consumer_episode_id,key,contribution_id,provider_epoch) VALUES(%s,%s,%s,'graph-cycle',%s,0)",(uuid.uuid4(),IDS['f1'],IDS['e1'],IDS['c1']))
+    run2=uuid.uuid4()
+    with conn.cursor() as c:
+        c.execute("INSERT INTO v24_cordis.runs(id,owner_fiber_id,owner_episode_id,scope_id,remaining_steps) VALUES(%s,%s,%s,%s,1)",(run2,IDS['f1'],IDS['e1'],IDS['s1']))
+    conn.commit()
+    rejected(conn,'fiber graph run pin',"INSERT INTO v24_cordis.pins(id,consumer_run_id,key,contribution_id,provider_epoch) VALUES(%s,%s,'graph-run-cycle',%s,0)",(uuid.uuid4(),run2,IDS['c1']))
     print('[CDP1-D4] immutable identities, monotonic values, terminal receipts, append-only events, real COMMIT FK rollback')
 
 

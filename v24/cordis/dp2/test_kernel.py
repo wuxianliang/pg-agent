@@ -24,7 +24,7 @@ from test_support import (Server, TestDB, TABLES, snapshot, query, api, principa
                           successor_key, command, install_payload, reconcile_payload,
                           dispose_payload, sqlstate, no_write, install_probe, set_probe,
                           set_probe_raise, delta, successor, event, seed_fiber, seed_episode,
-                          seed_provider, seed_parent, seed_child, install_delta)
+                          seed_provider, seed_parent, seed_child, install_delta, active_owner)
 
 
 def scalar(db, statement, params=()):
@@ -194,29 +194,37 @@ def test_lifecycle(db):
     assert scalar(db, 'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s',
                   (noop_effect,)) == 0
 
-    root = install_payload()
-    root_effect, root_result = run_new(db, 'command_install', root, install_delta(root))
+    owner_root = f['root']
+    root_owner = dict(fiber_id=str(owner_root['fiber']), episode_id=str(owner_root['episode']))
+    root = install_payload(mode='existing', existing_scope=owner_root['scope'], owner=root_owner)
+    root_effect, root_result = run_new(db, 'command_install', root, install_delta(db, root))
     ok(root_result)
     assert scalar(db, 'SELECT fiber_id FROM v24_cordis.effects WHERE id=%s',
-                  (root_effect,)) == uuid.UUID(root['fiber_id'])
-    assert scalar(db, 'SELECT episode_id FROM v24_cordis.effects WHERE id=%s', (root_effect,)) is None
+                  (root_effect,)) == owner_root['fiber']
+    assert scalar(db, 'SELECT episode_id FROM v24_cordis.effects WHERE id=%s',
+                  (root_effect,)) == owner_root['episode']
     assert scalar(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s',
                   (root['install_id'],)) == 'installed'
     assert rows(db, "SELECT seq,event_kind,payload FROM v24_cordis.events WHERE effect_id=%s",
                 (root_effect,))[0][:2] == (0, 'install_created')
+    assert scalar(db, 'SELECT owner_id FROM v24_cordis.fibers WHERE id=%s',
+                  (root['fiber_id'],)) == owner_root['fiber']
 
     existing = seed_fiber(db, prefix='existing')
-    existing_payload = install_payload(mode='existing', existing_scope=existing['scope'])
+    existing_payload = install_payload(mode='existing', existing_scope=existing['scope'],
+                                        owner=root_owner)
     existing_effect, existing_result = run_new(db, 'command_install', existing_payload,
-                                                install_delta(existing_payload))
+                                                install_delta(db, existing_payload))
     ok(existing_result)
     assert scalar(db, 'SELECT count(*) FROM v24_cordis.scopes WHERE id=%s',
                   (existing_payload['scope']['id'],)) == 1
 
     second = uuid.uuid4()
     with contextlib.closing(db.connect('owner')) as owner:
-        query(owner, 'INSERT INTO v24_cordis.fibers(id,install_id,scope_id) VALUES(%s,%s,%s)',
-              (second, root['install_id'], root['scope']['id']))
+        query(owner, 'INSERT INTO v24_cordis.fibers(id,install_id,owner_id,owner_episode_id,'
+                     'scope_id) VALUES(%s,%s,%s,%s,%s)',
+              (second, root['install_id'], owner_root['fiber'], owner_root['episode'],
+               root['scope']['id']))
         owner.commit()
     fibers = sorted(str(x[0]) for x in rows(db, 'SELECT id FROM v24_cordis.fibers '
                                                  'WHERE install_id=%s', (root['install_id'],)))
@@ -277,7 +285,8 @@ def test_lifecycle(db):
     return dict(fiber=f['fiber'], scope=f['scope'], child0=child0, child1=child1, child2=child2,
                 child3=child3, episode=episode, p4=p4, p4_key=key3, p4_result=r3, root=root,
                 root_effect=root_effect, dispose_effect=dispose_effect, dispose_fibers=fibers,
-                c0=c0, c1=c1, pinid=pinid, pepisode=pepisode, noop_effect=noop_effect)
+                c0=c0, c1=c1, pinid=pinid, pepisode=pepisode, noop_effect=noop_effect,
+                owner_root=owner_root)
 
 
 def block(conn, sqltext, params=()):
@@ -652,14 +661,20 @@ def test_faults(db):
           CREATE TRIGGER w1_fault_v BEFORE INSERT ON v24_cordis.events FOR EACH ROW EXECUTE FUNCTION v24_cordis.w1_fault();""")
         owner.commit()
     try:
+        owner_root = active_owner(db)
         for point in ('scope', 'effect', 'request', 'event'):
-            payload = install_payload()
+            payload = install_payload(mode='existing', existing_scope=owner_root['scope'],
+                                      owner=dict(fiber_id=str(owner_root['fiber']),
+                                                 episode_id=str(owner_root['episode'])))
+            if point=='scope':
+                payload['scope']=dict(mode='child', id=str(uuid.uuid4()),
+                                      parent_id=str(owner_root['scope']), realm_overrides={})
             with contextlib.closing(db.connect('owner')) as owner:
                 before = snapshot(owner)
                 owner.rollback()
             with contextlib.closing(db.connect('service')) as conn:
                 effect, out = command(db, conn, 'service', 'command_install', payload)
-                set_probe(conn, install_delta(payload))
+                set_probe(conn, install_delta(db, payload))
                 query(conn, "SELECT set_config('cordis_fault.point',%s,false)", (point,))
                 sqlstate(conn, 'SELECT v24_cordis.advance(%s,%s)', (effect, Json(out)), code='U0001')
             with contextlib.closing(db.connect('owner')) as owner:
@@ -801,10 +816,13 @@ def test_events(db, ctx):
     assert got[3][2] == {'episode_id': str(ctx['episode']), 'epoch': 1}, got[3]
     install = rows(db, 'SELECT seq,event_kind,payload FROM v24_cordis.events WHERE effect_id=%s',
                    (ctx['root_effect'],))
-    assert install == [(0, 'install_created', {
-        'scope_id': ctx['root']['scope']['id'], 'scope_created': True,
-        'fiber_id': ctx['root']['fiber_id'], 'owner_fiber_id': None,
-        'owner_episode_id': None, 'child_contribution_id': None})], install
+    assert [r[:2] for r in install] == [(0, 'install_created')], install
+    assert install[0][2]['scope_id'] == ctx['root']['scope']['id']
+    assert install[0][2]['scope_created'] is False
+    assert install[0][2]['fiber_id'] == ctx['root']['fiber_id']
+    assert install[0][2]['owner_fiber_id'] == str(ctx['owner_root']['fiber'])
+    assert install[0][2]['owner_episode_id'] == str(ctx['owner_root']['episode'])
+    assert install[0][2]['child_contribution_id'] is not None
     dispose = rows(db, "SELECT seq,event_kind,payload FROM v24_cordis.events "
                        "WHERE entity_type='install' AND entity_id=%s ORDER BY seq",
                    (ctx['root']['install_id'],))
@@ -828,11 +846,29 @@ def zero_state(db, conn, effect, out, code='0A000'):
 
 
 def test_production(db):
-    # The W1 production seam: valid lifecycle commands reach the interpreter and still raise 0A000.
+    # W2 production install is data-only; P0-P4 and dispose remain the W3/W4 0A000 seams.
     payload = install_payload()
     with contextlib.closing(db.connect('service')) as conn:
         effect, out = command(db, conn, 'service', 'command_install', payload)
-        zero_state(db, conn, effect, out)
+        result = api(conn, effect, out)
+        assert result.get('disposition') == 'committed', result
+        conn.commit()
+    assert scalar(db, 'SELECT fiber_id FROM v24_cordis.effects WHERE id=%s',
+                  (effect,)) == uuid.UUID(payload['fiber_id'])
+    assert scalar(db, 'SELECT episode_id FROM v24_cordis.effects WHERE id=%s', (effect,)) is None
+    assert scalar(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s',
+                  (payload['install_id'],)) == 'installed'
+    assert scalar(db, 'SELECT want_on OR control_seq<>0 OR current_episode_id IS NOT NULL '
+                      'FROM v24_cordis.fibers WHERE id=%s', (payload['fiber_id'],)) is False
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.episodes WHERE fiber_id=%s',
+                  (payload['fiber_id'],)) == 0
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.contributions WHERE fiber_id=%s',
+                  (payload['fiber_id'],)) == 0
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.pins WHERE consumer_fiber_id=%s',
+                  (payload['fiber_id'],)) == 0
+    assert scalar(db, "SELECT count(*) FROM v24_cordis.effects WHERE kind<>'command_install'") == 0
+    assert rows(db, "SELECT event_kind FROM v24_cordis.events WHERE effect_id=%s",
+                (effect,)) == [('install_created',)]
     f = seed_fiber(db, prefix='prod-p0')
     p0 = reconcile_payload(f['fiber'], 'on', 0)
     with contextlib.closing(db.connect('service')) as conn:
@@ -866,7 +902,7 @@ def test_production(db):
     with contextlib.closing(db.connect('owner')) as owner:
         assert snapshot(owner) == before
         owner.rollback()
-    print('[CDP2-K4] production install/reconcile/dispose seams stay 0A000; malformed payload is invalid_args')
+    print('[CDP2-K4] production install commits data-only; P0-P4 and dispose stay 0A000; malformed payload is invalid_args')
 
 
 def test_negatives(db, ctx):
@@ -882,30 +918,38 @@ def test_negatives(db, ctx):
                          reconcile_payload(f['fiber'], 'advance', 0))
         bad(api(conn, e, out), 'invalid_args', 'reserved_key_pairing')
         conn.rollback()
-    # W1 ownerful installs and child scopes stay behind their separate admission milestones.
+    # W2 admission: an ownerful root-mode install is not a legal scope/owner combination.
     of = seed_fiber(db, prefix='neg-owner')
     oep = seed_episode(db, of['fiber'], epoch=1, state='active', control_seq=0)
     owner = dict(fiber_id=str(of['fiber']), episode_id=str(oep))
     payload = install_payload(owner=owner)
     with contextlib.closing(db.connect('service')) as conn:
         e, out = command(db, conn, 'service', 'command_install', payload)
-        set_probe(conn, install_delta(payload))
-        bad(api(conn, e, out), 'invalid_outcome', 'w2_owner_install')
+        set_probe(conn, install_delta(db, payload))
+        bad(api(conn, e, out), 'invalid_outcome', 'install_admission')
+        conn.rollback()
+    # A second ownerless root is refused by admission before the forged delta can apply.
+    duplicate = install_payload()
+    with contextlib.closing(db.connect('service')) as conn:
+        e, out = command(db, conn, 'service', 'command_install', duplicate)
+        set_probe(conn, delta(domain=[]))
+        bad(api(conn, e, out), 'invalid_outcome', 'install_admission')
         conn.rollback()
     # Root scope wire v1 is exactly {mode,id,realm_overrides}; parent_id is child-only.
     badroot = install_payload()
     badroot['scope']['parent_id'] = None
     with contextlib.closing(db.connect('service')) as conn:
         e, out = command(db, conn, 'service', 'command_install', badroot)
-        set_probe(conn, install_delta(badroot))
-        bad(api(conn, e, out), 'invalid_outcome')
+        set_probe(conn, delta(domain=[]))
+        bad(api(conn, e, out), 'invalid_args', 'install_payload')
         conn.rollback()
     # Dispose must name exactly the install's fiber set.
     d = seed_fiber(db, prefix='neg-dispose')
     second = uuid.uuid4()
     with contextlib.closing(db.connect('owner')) as owner_conn:
-        query(owner_conn, 'INSERT INTO v24_cordis.fibers(id,install_id,scope_id) VALUES(%s,%s,%s)',
-              (second, d['install'], d['scope']))
+        query(owner_conn, 'INSERT INTO v24_cordis.fibers(id,install_id,owner_id,owner_episode_id,'
+                          'scope_id) VALUES(%s,%s,%s,%s,%s)',
+              (second, d['install'], d['root']['fiber'], d['root']['episode'], d['scope']))
         owner_conn.commit()
     subset = [str(d['fiber'])]
     dis = dispose_payload(d['install'])
@@ -967,9 +1011,10 @@ def test_negatives(db, ctx):
     # 513-or-more dispose closure is refused before any lock or interpreter call.
     big = seed_fiber(db, prefix='neg-cap')
     with contextlib.closing(db.connect('owner')) as owner_conn:
-        query(owner_conn, 'INSERT INTO v24_cordis.fibers(id,install_id,scope_id) '
-                          'SELECT gen_random_uuid(),%s,%s FROM generate_series(1,511)',
-              (big['install'], big['scope']))
+        query(owner_conn, 'INSERT INTO v24_cordis.fibers(id,install_id,owner_id,'
+                          'owner_episode_id,scope_id) SELECT gen_random_uuid(),%s,%s,%s,%s '
+                          'FROM generate_series(1,511)',
+              (big['install'], big['root']['fiber'], big['root']['episode'], big['scope']))
         owner_conn.commit()
     seed_episode(db, big['fiber'], epoch=1, state='reloading', control_seq=0)
     with contextlib.closing(db.connect('owner')) as owner_conn:

@@ -173,14 +173,53 @@ def event(entity_type, entity_id, kind, payload):
     return dict(entity_type=entity_type, entity_id=str(entity_id), event_kind=kind, payload=payload)
 
 
-def install_delta(payload):
+def active_owner(db, prefix='root'):
+    """One spec-valid ownerless root per database; W2 fixtures attach child resources to it."""
+    with contextlib.closing(db.connect('owner')) as owner:
+        query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
+        row = query(owner, 'SELECT id,install_id,scope_id,current_episode_id,want_on '
+                           'FROM v24_cordis.fibers WHERE owner_id IS NULL LIMIT 1')
+        if row:
+            fiber, install, scope, episode, want_on = row[0]
+            if episode is None:
+                episode = uuid.uuid4()
+                query(owner, 'INSERT INTO v24_cordis.episodes(id,fiber_id,epoch,state,'
+                             'committed_view,iterator) SELECT %s,%s,coalesce(max(epoch),-1)+1,'
+                             "'active','{}',%s FROM v24_cordis.episodes WHERE fiber_id=%s",
+                      (episode, fiber, Json(dict(v=1, next_index=0, registered_through=-1,
+                                                 control_seq=0)), fiber))
+                query(owner, 'UPDATE v24_cordis.fibers SET current_episode_id=%s WHERE id=%s',
+                      (episode, fiber))
+            if not want_on:
+                query(owner, 'UPDATE v24_cordis.fibers SET want_on=true WHERE id=%s', (fiber,))
+            owner.commit()
+            return dict(fiber=fiber, install=install, scope=scope, episode=episode)
+        scope, install, fiber, episode = (uuid.uuid4() for _ in range(4))
+        query(owner, 'INSERT INTO v24_cordis.scopes(id) VALUES(%s)', (scope,))
+        query(owner, "INSERT INTO v24_cordis.installs(id,scope_id,identity,version,manifest,"
+                     "artifact_digest,contracts,state) VALUES(%s,%s,%s,'1',%s,%s,'{}','installed')",
+              (install, scope, prefix + '-' + install.hex[:8],
+               Json(dict(requires=[], provides=[], priority=0, check={})), 'a' * 64))
+        query(owner, 'INSERT INTO v24_cordis.fibers(id,install_id,scope_id) VALUES(%s,%s,%s)',
+              (fiber, install, scope))
+        query(owner, "INSERT INTO v24_cordis.episodes(id,fiber_id,epoch,state,committed_view,"
+                     "iterator) VALUES(%s,%s,0,'active','{}',%s)",
+              (episode, fiber, Json(dict(v=1, next_index=0, registered_through=-1, control_seq=0))))
+        query(owner, 'UPDATE v24_cordis.fibers SET current_episode_id=%s,want_on=true WHERE id=%s',
+              (episode, fiber))
+        owner.commit()
+    return dict(fiber=fiber, install=install, scope=scope, episode=episode)
+
+
+def install_delta(db, payload):
     scope = payload['scope']
-    scope_created = scope['mode'] == 'root'
+    scope_created = scope['mode'] != 'existing'
+    owner = payload['owner']
     domain = []
     if scope_created:
-        domain.append(dict(op='scope_create', id=scope['id'], parent_id=scope.get('parent_id'),
+        domain.append(dict(op='scope_create', id=scope['id'],
+                           parent_id=scope.get('parent_id'),
                            realm_overrides=scope.get('realm_overrides', {})))
-    owner = payload['owner']
     domain.append(dict(op='install_create', id=payload['install_id'], scope_id=scope['id'],
                        owner_fiber_id=(owner or {}).get('fiber_id'),
                        owner_episode_id=(owner or {}).get('episode_id'),
@@ -191,28 +230,51 @@ def install_delta(payload):
     domain.append(dict(op='fiber_create', id=payload['fiber_id'], install_id=payload['install_id'],
                        owner_id=(owner or {}).get('fiber_id'),
                        owner_episode_id=(owner or {}).get('episode_id'), scope_id=scope['id']))
+    child = None
+    if owner:
+        with contextlib.closing(db.connect('owner')) as conn:
+            next_index, registered = query(
+                conn, "SELECT (iterator->>'next_index')::int,(iterator->>'registered_through')::int "
+                      "FROM v24_cordis.episodes WHERE id=%s", (owner['episode_id'],))[0]
+            seq = query(conn, 'SELECT coalesce(max(seq),-1)::bigint+1 FROM v24_cordis.contributions '
+                              'WHERE fiber_id=%s AND episode_id=%s',
+                        (owner['fiber_id'], owner['episode_id']))[0][0]
+        child = uuid.uuid4()
+        domain.append(dict(op='contribution_append', id=str(child),
+                           fiber_id=owner['fiber_id'], episode_id=owner['episode_id'],
+                           seq=int(seq), kind='child', realm=None, key=None,
+                           descriptor=dict(child_fiber_id=payload['fiber_id']),
+                           prev_contribution_id=None, inverse=dict(op='dispose_child'),
+                           contract_version='1'))
+        domain.append(dict(op='episode_progress', episode_id=owner['episode_id'],
+                           next_index=next_index, registered_through=int(seq)))
     return delta(domain=domain, events=[event(
         'install', payload['install_id'], 'install_created',
         dict(scope_id=scope['id'], scope_created=scope_created, fiber_id=payload['fiber_id'],
              owner_fiber_id=(owner or {}).get('fiber_id'),
              owner_episode_id=(owner or {}).get('episode_id'),
-             child_contribution_id=None))])
+             child_contribution_id=(str(child) if child else None)))])
 
 
 def seed_fiber(db, provides=(), requires=(), want_on=False, control_seq=0, prefix='w1'):
     scope, install, fiber = (uuid.uuid4() for _ in range(3))
+    root = active_owner(db)
     manifest = dict(requires=[dict(key=k, descriptor={}, contract_version='1') for k in requires],
                     provides=[dict(key=k, descriptor={}, contract_version='1') for k in provides],
                     priority=0, check={})
     with contextlib.closing(db.connect('owner')) as owner:
+        query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
         query(owner, 'INSERT INTO v24_cordis.scopes(id) VALUES(%s)', (scope,))
-        query(owner, "INSERT INTO v24_cordis.installs(id,scope_id,identity,version,manifest,"
-                     "artifact_digest,contracts,state) VALUES(%s,%s,%s,'1',%s,%s,'{}','installed')",
-              (install, scope, prefix + '-' + install.hex[:8], Json(manifest), 'a' * 64))
-        query(owner, 'INSERT INTO v24_cordis.fibers(id,install_id,scope_id,want_on,control_seq) '
-                     'VALUES(%s,%s,%s,%s,%s)', (fiber, install, scope, want_on, control_seq))
+        query(owner, "INSERT INTO v24_cordis.installs(id,scope_id,owner_fiber_id,owner_episode_id,"
+                     "identity,version,manifest,artifact_digest,contracts,state) "
+                     "VALUES(%s,%s,%s,%s,%s,'1',%s,%s,'{}','installed')",
+              (install, scope, root['fiber'], root['episode'], prefix + '-' + install.hex[:8],
+               Json(manifest), 'a' * 64))
+        query(owner, 'INSERT INTO v24_cordis.fibers(id,install_id,owner_id,owner_episode_id,'
+                     'scope_id,want_on,control_seq) VALUES(%s,%s,%s,%s,%s,%s,%s)',
+              (fiber, install, root['fiber'], root['episode'], scope, want_on, control_seq))
         owner.commit()
-    return dict(scope=scope, install=install, fiber=fiber, manifest=manifest)
+    return dict(scope=scope, install=install, fiber=fiber, manifest=manifest, root=root)
 
 
 def seed_episode(db, fiber, epoch=1, state='reloading', next_index=0, registered=-1, control_seq=1,
@@ -220,6 +282,7 @@ def seed_episode(db, fiber, epoch=1, state='reloading', next_index=0, registered
     episode = uuid.uuid4()
     iterator = dict(v=1, next_index=next_index, registered_through=registered, control_seq=control_seq)
     with contextlib.closing(db.connect('owner')) as owner:
+        query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
         query(owner, 'INSERT INTO v24_cordis.episodes(id,fiber_id,epoch,state,committed_view,iterator) '
                      'VALUES(%s,%s,%s,%s,%s,%s)', (episode, fiber, epoch, state,
                                                   Json(committed_view or {}), Json(iterator)))
@@ -244,6 +307,7 @@ def seed_provider(db, realm='root', key='svc', epoch=1):
     contribution = uuid.uuid4()
     descriptor = {'name': key}
     with contextlib.closing(db.connect('owner')) as owner:
+        query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
         query(owner, "INSERT INTO v24_cordis.contributions(id,fiber_id,episode_id,seq,kind,realm,key,"
                      "descriptor,inverse,contract_version) VALUES(%s,%s,%s,0,'service',%s,%s,%s,"
                      "'{\"op\":\"delete_row\"}','1')",
@@ -259,6 +323,7 @@ def seed_parent(db, kind, payload, actor='service', fiber=None, episode=None, ke
     body = dict(op='admit_and_apply', kind=kind, request_key=key,
                 canonical_bytes=base64.b64encode(json.dumps(payload).encode()).decode(), payload=payload)
     with contextlib.closing(db.connect('owner')) as owner:
+        query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
         query(owner, "INSERT INTO v24_cordis.effects(id,kind,status,fiber_id,episode_id,input,"
                      "request_actor,outcome,settled_at) VALUES(%s,%s,%s,%s,%s,%s,%s,"
                      "CASE WHEN %s IN ('succeeded','failed','unknown') THEN %s::jsonb ELSE NULL END,"
@@ -274,6 +339,7 @@ def seed_child(db, parent, fiber, payload, episode=None, ordinal=0, actor='servi
     key = successor_key(parent, ordinal)
     effect = derive(db.roles[actor], key, 'command_reconcile')
     with contextlib.closing(db.connect('owner')) as owner:
+        query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
         query(owner, "INSERT INTO v24_cordis.effects(id,parent_id,ordinal,fiber_id,episode_id,kind,"
                      "status,input,request_actor,attempt,fence) VALUES(%s,%s,%s,%s,%s,"
                      "'command_reconcile',%s,%s,%s,%s,%s)",

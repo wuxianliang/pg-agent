@@ -7,7 +7,7 @@ CANONICAL_ORDER = (
     '00_schema.sql', '10_installs.sql', '11_scopes.sql', '12_fibers.sql',
     '13_episodes.sql', '14_contributions.sql', '15_pins.sql', '16_runs.sql',
     '17_effects.sql', '18_events.sql', '19_requests.sql', '20_relations.sql',
-    '30_triggers.sql', '40_advance.sql', '50_permissions.sql',
+    '30_triggers.sql', '40_advance.sql', '41_lifecycle.sql', '50_permissions.sql',
 )
 SQL_LOAD_ORDER = CANONICAL_ORDER
 
@@ -37,7 +37,7 @@ def load_stage(conn, *, root=None, order=None):
 
 
 def self_check_manifest():
-    assert len(CANONICAL_ORDER) == 15
+    assert len(CANONICAL_ORDER) == 16
     validate_manifest()
     with TemporaryDirectory(prefix='cordis-loader-') as tmp:
         root = Path(tmp)

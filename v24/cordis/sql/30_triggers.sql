@@ -28,6 +28,9 @@ BEGIN
     IF OLD.closed_at IS NOT NULL AND NEW.closed_at IS DISTINCT FROM OLD.closed_at THEN
       RAISE EXCEPTION 'episode close tombstone cannot change' USING ERRCODE='55000';
     END IF;
+    IF NEW.committed_view IS DISTINCT FROM OLD.committed_view THEN
+      RAISE EXCEPTION 'episode committed view is immutable' USING ERRCODE='55000';
+    END IF;
   ELSIF TG_TABLE_NAME='contributions' THEN
     IF ROW(NEW.id,NEW.fiber_id,NEW.episode_id,NEW.seq,NEW.kind,NEW.realm,NEW.key,
            NEW.descriptor,NEW.prev_contribution_id,NEW.inverse,NEW.contract_version)
@@ -178,6 +181,57 @@ END $$;
 CREATE CONSTRAINT TRIGGER pins_provider_epoch AFTER INSERT OR UPDATE OF contribution_id,provider_epoch
   ON v24_cordis.pins DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_pin_epoch();
+
+CREATE FUNCTION v24_cordis.guard_fiber_graph() RETURNS trigger
+LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE roots int; has_cycle boolean; too_deep boolean; elements bigint;
+BEGIN
+ SELECT count(*) INTO roots FROM v24_cordis.fibers WHERE owner_id IS NULL;
+ IF roots>1 THEN RAISE EXCEPTION 'fiber graph multiple roots' USING ERRCODE='23514'; END IF;
+ SELECT (SELECT count(*) FROM v24_cordis.fibers)
+       +(SELECT count(*) FROM v24_cordis.pins)
+       +(SELECT count(*) FROM v24_cordis.runs) INTO elements;
+ IF elements>262144 THEN
+  RAISE EXCEPTION 'fiber graph validation limit' USING ERRCODE='23514';
+ END IF;
+ WITH RECURSIVE edges(child,parent) AS (
+   SELECT f.id,f.owner_id FROM v24_cordis.fibers f
+    WHERE f.owner_id IS NOT NULL AND f.disposed_at IS NULL
+   UNION
+   SELECT p.consumer_fiber_id,c.fiber_id FROM v24_cordis.pins p
+    JOIN v24_cordis.contributions c ON c.id=p.contribution_id
+    JOIN v24_cordis.fibers cf ON cf.id=p.consumer_fiber_id AND cf.disposed_at IS NULL
+    JOIN v24_cordis.fibers pf ON pf.id=c.fiber_id AND pf.disposed_at IS NULL
+    WHERE p.released_at IS NULL AND p.consumer_fiber_id IS NOT NULL
+   UNION
+   SELECT r.owner_fiber_id,c.fiber_id FROM v24_cordis.pins p
+    JOIN v24_cordis.runs r ON r.id=p.consumer_run_id
+    JOIN v24_cordis.fibers rf ON rf.id=r.owner_fiber_id AND rf.disposed_at IS NULL
+    JOIN v24_cordis.contributions c ON c.id=p.contribution_id
+    JOIN v24_cordis.fibers pf ON pf.id=c.fiber_id AND pf.disposed_at IS NULL
+    WHERE p.released_at IS NULL AND p.consumer_run_id IS NOT NULL
+ ), reach(root,node,depth) AS (
+   SELECT f.id,f.id,0 FROM v24_cordis.fibers f
+   UNION
+   SELECT r.root,e.parent,r.depth+1
+    FROM reach r JOIN edges e ON e.child=r.node
+    WHERE r.depth<512
+ )
+ SELECT coalesce(bool_or(root=node AND depth>0),false),
+        coalesce(max(depth)>=512,false)
+  INTO has_cycle,too_deep FROM reach;
+ IF has_cycle THEN RAISE EXCEPTION 'fiber graph cycle' USING ERRCODE='23514'; END IF;
+ IF too_deep THEN
+  RAISE EXCEPTION 'fiber graph validation limit' USING ERRCODE='23514';
+ END IF;
+ RETURN NULL;
+END $$;
+CREATE CONSTRAINT TRIGGER fibers_graph AFTER INSERT OR UPDATE OR DELETE ON v24_cordis.fibers
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_fiber_graph();
+CREATE CONSTRAINT TRIGGER pins_graph AFTER INSERT OR UPDATE OR DELETE ON v24_cordis.pins
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_fiber_graph();
+CREATE CONSTRAINT TRIGGER runs_graph AFTER INSERT OR UPDATE OR DELETE ON v24_cordis.runs
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_fiber_graph();
 
 CREATE FUNCTION v24_cordis.reject_append_only_change() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$

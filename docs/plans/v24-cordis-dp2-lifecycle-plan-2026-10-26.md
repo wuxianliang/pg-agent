@@ -1,6 +1,6 @@
 # Cordis v2 DP2：安装与成功激活生命周期 Deep Plan
 
-状态：**B0 已结项（本地验证 + 提交 + 推送 `origin/v24`）；W1 已实现、五项 bounded Oracle review 发现全部修复、最终 18 条 gate 全绿，review-ready，待按授权 commit/push；W2–W4 因 4 行容量 blocked pending 用户对 SQL layout/cap 的裁决（1196/1200；W2–W4 估算另需 150–250 行），W5 待实施。** B0 于 2026-10-26 在指定 worktree 实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9（全部退出码 0），复核十二个冻结 SQL SHA-256 与 `57e2c1e` 冻结 diff（逐一相同 / diff 为空），并更新 `v24/cordis/dp2/README.md`、DP2 conformance matrix、DP2 deviation ledger 与本文 §6 的 B0 证据；未修改生产代码与冻结目录，未新增任何 DP2 gate 或 helper。按仓库纪律，里程碑必须在测试全绿并更新收尾工件后**单独提交并推送**才算结项；发布目标已由用户于 2026-10-26 裁决为逐里程碑 commit + push `origin/v24`（见 §7），B0 据此结项，B0 关闭提交（subject：`v24: close out Cordis DP2 B0 baseline with gate and frozen evidence`）。W1 的测试命令、真实结果与边界见 §6「W1 证据」；W2–W5 的测试命令仍是未来验收要求，不得从 B0/W1 绿色推断其行为。
+状态：**B0 已结项（本地验证 + 提交 + 推送 `origin/v24`）；W1 已结项（commit `50affb0`，已推送 `origin/v24`）；W2 已实现，本轮 19 条 post-fix gate 逐条串行 `EXIT 0`；one bounded Oracle review 已完成，六项发现全部修复，W2 按授权在本轮收尾 commit/push；W3–W4 未实现，W5 待实施。** B0 于 2026-10-26 在指定 worktree 实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9（全部退出码 0），复核十二个冻结 SQL SHA-256 与 `57e2c1e` 冻结 diff（逐一相同 / diff 为空）。W1 的测试命令、真实结果与边界见 §6「W1 证据」；W2 的 layout 裁决、实现、19 条 post-fix 实测结果与 bounded review 修复见 §6「W2 证据」。W3–W5 的测试命令仍是未来验收要求，不得从 B0/W1/W2 绿色推断其行为。
 
 ## 1. Summary
 
@@ -28,7 +28,7 @@ DP2 定向扩展已完成的 Cordis 内核，交付声明式安装、scope 创�
 
 直接复用：
 
-- `load.py` 的十五文件 canonical manifest 和调用方事务。
+- `load.py` 的十六文件 canonical manifest 和调用方事务。
 - `principal_id`、`effect_id_for`、canonical bytes、24 个错误码及角色族认证。
 - `advance` 的纯参数预检、G、replay-first、claim 和 terminal receipt 顺序。
 - typed closure、512 个目标上限和现有行锁全序。
@@ -84,7 +84,7 @@ DP2 定向扩展已完成的 Cordis 内核，交付声明式安装、scope 创�
 
 采用定向扩展，不重构冻结 v24，也不新建 scheduler、通用 SQL executor 或第二种生命周期账本。DP1 的协议路径已经有实跑证据；本阶段只扩展它缺少的领域上下文、解释器和应用能力。
 
-所有新增 SQL/helper 保留在 `v24/cordis/sql/40_advance.sql`，新增数据库保护放在 `30_triggers.sql`。不增加 SQL 文件，十五文件 manifest 不变；全部新增 helper 仍计入 1200 物理行预算。Oracle-adjudicated 2026-10-26：选择沿用这两个文件而非扩展 canonical manifest；W1 实测后仅余 4 行，W2–W4 必须 blocked pending 用户对 SQL layout/cap 的裁决，在此之前不得开始 W2，也不得把 helper 移出预算或把代码藏进 JSON。
+W2 的 SQL layout 由用户 2026-10-26 裁决：新增 `v24/cordis/sql/41_lifecycle.sql`，置于 `40_advance.sql` 与 `50_permissions.sql` 之间，canonical manifest 由十五文件增至十六文件。`40_advance.sql` 仍 ≤1200 物理行，DDL 前缀 `10`–`17`/`20`/`30` 仍 ≤900 物理行；十五张表、列、枚举与扩展均不变。W2 的 install/admission/resolver/check helper 全部落在 41，`40_advance.sql` 只保留必要的命令入口接缝；不把 helper 移出预算或把代码藏进 JSON。
 
 ## 3. Design
 
@@ -96,7 +96,7 @@ DP2 定向扩展已完成的 Cordis 内核，交付声明式安装、scope 创�
 |---|---|---|---|---|---|
 | B0 | 固定当前基线 | 五条 DP1、十一条 v24 及单列 s9 命令有本轮结果，冻结 diff/hash 一致，README/matrix/ledger 已更新，并已按用户授权独立提交推送到 `origin/v24`，B0 结项 | DP2 README、matrix、ledger、plan | — | S：证据与环境核验 |
 | W1 | 后继执行与 typed delta 基础 | ready child 可执行并持久重放，terminal receipt 不可重开，伪造/越界/故障零写 | `40_advance.sql`、`30_triggers.sql`、DP1/DP2 kernel gates | B0 | L：内核协议与应用器 |
-| W2 | 安装与 scope 后果 | 三种 scope、声明、owner 账本、resolve、committed-view/root/DAG 保护与维护 fixture 通过 | `40_advance.sql`、`30_triggers.sql`、install/DDL gates | W1 | L：准入与解析 |
+| W2 | 安装与 scope 后果 | 三种 scope、声明、owner 账本、resolve、committed-view/root/DAG 保护与维护 fixture 通过 | `40_advance.sql`、`41_lifecycle.sql`、`30_triggers.sql`、install/DDL gates | W1 | L：准入与解析 |
 | W3 | 成功 P0–P4 | 真实命令完成零贡献、单批、多批激活，ω/pin/seq/totality 与精确事件通过 | `40_advance.sql`、activation gate | W2 | L：分阶段生命周期 |
 | W4 | 基本 dispose 与失败边界 | 全实例无义务墓碑化成功，各活义务和六种 host 状态阻止，DP3 seam 回滚 | `40_advance.sql`、boundary gate | W3 | M：证明与边界 |
 | W5 | closeout | 全部当前 gate、冻结检查、预算与工件通过，未覆盖范围明确 | README、matrix、ledger、plan | W1–W4 | S：回归与收尾 |
@@ -907,7 +907,7 @@ uv run python v24/s9/test_g8.py
 
 不修改：
 
-- `v24/cordis/load.py`、十五文件 manifest、DP1 environment 的精确 tuple。
+- `v24/cordis/load.py`、十六文件 manifest、DP1 environment 的精确 tuple。
 - DP1 `TABLES`、fixture catalog 表集和角色族。
 - `00_schema.sql`、八张领域表文件、两张簿记表及 `20_relations.sql`。
 - 冻结的 `v24/load.py`、`v24/sql/**`、`v24/s1`–`v24/s12`。
@@ -961,7 +961,7 @@ schema loader 是新库加载器，不是在线 migration。DP2 gates 使用 dis
 | 后继身份与回执 | reserved request key，经现有 `effect_id_for` 派生 ID；ready child 先不写 request | 保持 command ABI 和首次 response replay（高） | 新 ABI 明确要求 ID 独立于 command key，或要求执行前即有 request receipt |
 | resolver/config 范围 | 递归最小 resolver、root realm 默认、受限 equals check；intercept/overlay 后置 | 符合 DP1 分工及 `scopes.parent_id` 路由形状（高） | 新规格要求 DP2 就支持非空 interception/overlay |
 | 失败映射 | malformed/stale 使用现有稳定错误；未实现的依赖/检查/注册/漂移/清理路径 `0A000` 全回滚 | 不虚构已实现失败转换（高） | 新合同定义这些错误码的 receipt/replay 与状态转换 |
-| SQL 文件布局 | 扩展 `40_advance.sql` 与 `30_triggers.sql`，保留十五文件 manifest | 当前预算范围内无须增加 loader 入口（中高） | 精简后仍实测超过 1200 advance/helper 物理行 |
+| SQL 文件布局 | 新增 `41_lifecycle.sql`（40 与 50 之间），manifest 十六文件；40 ≤1200、DDL 前缀 ≤900 | 用户 2026-10-26 对 layout/cap 的裁决；W2 helper 与命令入口分离，实测预算通过 | 实测 40 或 DDL 前缀超限，或新增表/列/枚举/扩展 |
 | root/owner 准入 | 唯一 ownerless root；ownerful install 要求开放 active owner episode | 与设计 §4.2/§7.1 的 root 与 owner 图约束一致（高） | 修订设计明确允许多个独立 ownerless roots |
 
 #### 评审后补充裁决与可覆盖假设
@@ -994,7 +994,7 @@ Oracle-adjudicated 2026-10-26：有界评审指出原 draft 的外部写 classif
 | scope创建 | existing/root/child闭集；root默认realm | O-Insert必要时建scope，scope_control并入install |
 | installed/preparing | 仅无需host准备的installed | settlement明确后续 |
 | dispose时机 | W4实交付、每种义务具名gate | binding明确包含基本dispose |
-| SQL布局 | 只扩40与30，manifest不变 | 保留十五文件和预算口径 |
+| SQL布局 | 新增41，manifest十六文件；40只留命令入口接缝 | 40/DDL前缀预算与十五表不变 |
 | revision | 0 | DP1无freshness，DP2不引入新语义 |
 
 实施前仍须核实的事实：
@@ -1007,7 +1007,7 @@ Oracle-adjudicated 2026-10-26：有界评审指出原 draft 的外部写 classif
 
 2. **W1：原子落地内核扩展与对应测试更新（本地已完成；证据见本节）。** 先实现 reserved successor identity、ready continuation 执行、P0→P1 generation 复验、command closure 接线、typed 结构/上下文校验和真实 applier；同时把 terminal effect/receipt guard 放进 `30_triggers.sql`，在本里程碑保护 ready→succeeded、禁止 terminal reopen/outcome 替换，并保留 requests response immutable。保留尚未实现的领域分支`0A000`。同一里程碑更新 obsolete DP1 kernel 预期并新增 CDP2-K；用 disposable probe 证明域写、receipt 和后继的原子性、失败后 ready child 可重试。不得提交一个只能登记、不能执行的后继协议，也不能先提交没有 terminal guard 的 durable receipt writer。
 
-3. **W2：安装、路由和 guard。** 实现声明/check/contracts、scope 变体、root/owner 准入、O-Insert 和 child 账本；加入 committed_view immutable、唯一 root deferred final-state guard 与联合 DAG 兜底。使用 `test_support.py` 的 spec-valid active-owner maintenance fixture 验证 ownerful admission，同时明确该 seed 不是激活证据。guard、writer、DDL/kernel 预期及 CDP2-I 必须一起落地。实际验证 direct install 不激活、不生成 host/CAS preparation；四种 replay boolean 只被存储和校验。
+3. **W2：安装、路由和 guard。** 新增 `41_lifecycle.sql`，实现声明/check/contracts、scope 变体、root/owner 准入、O-Insert 和 child 账本；加入 committed_view immutable、唯一 root deferred final-state guard 与联合 DAG 兜底。使用 `test_support.py` 的 spec-valid active-owner maintenance fixture 验证 ownerful admission，同时明确该 seed 不是激活证据。guard、writer、DDL/kernel 预期及 CDP2-I 必须一起落地。实际验证 direct install 不激活、不生成 host/CAS preparation；四种 replay boolean 只被存储和校验。
 
 4. **W3：P0–P4。** 实现 CAS/no-op、P1 完整冻结、P3 只读一致性检查、≤32 的 P2 及 P4 totality；每个状态改变阶段同时落地本计划的精确 aggregate event，成功 no-op/replay 不落 event。新增 CDP2-A 和对应 unsupported 负例；用真实 API 驱动全部 phase，不能用 owner DML 代替成功路径。确认当前 effect 先结算、next successor 后插入，并在第二批失败后用同一 ready child 继续而不重复写。
 
@@ -1033,7 +1033,7 @@ B0 的本地验证与四个工件已完成；发布授权（2026-10-26）：用�
 | Python / psycopg2 / PostgreSQL | 3.12.11 / 2.9.12（dt dec pq3 ext lo64）/ 18.4（180004），仅 Unix socket |
 | 跟踪文件工作区 | 无修改、无暂存、无删除 |
 | 未跟踪文件 | B0 前已有 24 个，全部位于 `docs/`，属用户输入；B0 只新增本文与三个 DP2 工件 |
-| Cordis manifest | `v24/cordis/load.py` 未改，仍十五文件 |
+| Cordis manifest | `v24/cordis/load.py` 改为十六文件；新增 `41_lifecycle.sql`，十五张表不变 |
 | 预算 | `40_advance.sql` 340 物理行（≤1200）；DDL 前缀 `10`–`17`/`20`/`30` 合计 350 物理行（≤900） |
 
 **实跑结果（串行执行）**
@@ -1066,9 +1066,9 @@ CDP1-D 报 97 个零写负例加正例与真实 COMMIT 失败；CDP1-K 报 66 �
 
 **提交/推送状态（已关闭）**：发布授权由用户于 2026-10-26 给出（逐里程碑 commit + push `origin/v24`）。B0 关闭提交即B0 关闭提交（subject：`v24: close out Cordis DP2 B0 baseline with gate and frozen evidence`），已推送到 `origin/v24`（非 force、未跳过 hook）；推送前 `origin/v24...v24` 为 `0 0`，推送后本地与 `origin/v24` 同步。提交只包含四个 DP2 工件路径，未使用 `git add -A` / `git add .`，未卷入 24 个未跟踪用户文档，未 reset 用户改动。B0 核实的 upstream 只作证据，不凌驾于用户授权。后续 W1–W5 沿用同一发布目标，仍遵循「本里程碑推送后才进入下一里程碑」的纪律；远端冲突按实际仓库规则处理。
 
-### W1 证据（2026-10-26 实跑；本地完成，待按授权 commit/push）
+### W1 证据（2026-10-26 实跑；已结项：commit `50affb0`，pushed `origin/v24`）
 
-W1 在 B0 HEAD `5e36a5a` 之上实现；改动为 `v24/cordis/sql/40_advance.sql`（340→1196 物理行）、`v24/cordis/sql/30_triggers.sql`（+10 行，194 行）、DP1 的 `test_ddl.py`/`test_kernel.py` 预期，以及新增 `v24/cordis/dp2/test_support.py`、`v24/cordis/dp2/test_kernel.py`。未新增 SQL 文件，未改 `v24/load.py` 的十五文件 manifest。
+W1 在 B0 HEAD `5e36a5a` 之上实现，结项提交为 `50affb0`（subject：`v24: implement DP2 continuation and typed delta kernel`），已推送到 `origin/v24`。改动为 `v24/cordis/sql/40_advance.sql`（340→1196 物理行）、`v24/cordis/sql/30_triggers.sql`（+10 行，194 行）、DP1 的 `test_ddl.py`/`test_kernel.py` 预期，以及新增 `v24/cordis/dp2/test_support.py`、`v24/cordis/dp2/test_kernel.py`。W1 当时未新增 SQL 文件、manifest 仍十五文件；W2 随后新增 `41_lifecycle.sql` 并扩为十六文件。
 
 **实跑结果（全部串行，退出码 0）**
 
@@ -1100,17 +1100,54 @@ W1 在 B0 HEAD `5e36a5a` 之上实现；改动为 `v24/cordis/sql/40_advance.sql
 
 CDP2-K 使用一次性 `TestDB` 并在 probe DB 内替换解释器；真实 `advance`、`validate_delta`、`validate_domain`、`validate_and_apply_delta`、trigger 与锁图均执行。生产 `interpret_command`/`interpret_settlement` 对 spec-valid lifecycle payload 仍为 `0A000`。
 
-**预算与冻结**：`40_advance.sql` 1196/1200（余 4 行；W1 的 review 修复增加 event payload 校验、successor 预检、closure 上界与 dispose 时间戳保护，已无可用于 W2–W4 的容量；W2–W4 估算另需 150–250 行，**blocked pending 用户对 SQL layout/cap 的裁决**）；DDL 前缀 `10`–`17`/`20`/`30` 360/900（`30_triggers.sql` 194）；十二个 `v24/sql/*.sql` SHA-256 与 DP1 P0 表逐项相同；`git diff --exit-code 57e2c1e -- v24/load.py v24/sql v24/s1..s12` 退出 0 且无输出；manifest 仍为十五文件。
+**预算与冻结（W1 历史，W2 已更新）**：W1 结束时 `40_advance.sql` 1196/1200（余 4 行）、`30_triggers.sql` 194 行、DDL 前缀 360/900、manifest 十五文件；W1 的 review 修复增加 event payload 校验、successor 预检、closure 上界与 dispose 时间戳保护，留下 4 行。该余量促成 W2 layout 裁决。W2 后实测：`40_advance.sql` 1119/1200、`41_lifecycle.sql` 586、`30_triggers.sql` 248、DDL 前缀 414/900、manifest 十六文件。十二个 `v24/sql/*.sql` SHA-256 与 DP1 P0 表逐项相同；`git diff --exit-code 57e2c1e -- v24/load.py v24/sql v24/s1..s12` 退出 0 且无输出。
 
-**W1 边界**：W2 的 ownerful/child-scope install 与 resolver、W3 的完整 P0–P4 生产激活、W4 的生产 dispose、W5 closeout 均未实现。`effects_one_reconcile` 仍限制每 fiber 一个 ready/claimed reconcile，故 `validate_delta` 只允许 `command_reconcile` successor 使用 ordinal 0；16 successor 结构上限主要覆盖其他 kind。continuation 仍要求与创建者同一 LOGIN；P1/P2 unsupported 失败后 child 保持 ready 且无 request，可同一 child 重试一次。**W2–W4 未实现且 blocked pending 用户对 SQL layout/cap 的裁决；W1 不预实现其分支。** Oracle 审查：full bounded Oracle review 已完成，五项发现即上述 P1.1–P1.4/P2 并全部修复；早期 focused chat 另确认 parent-fiber predicate、terminal guard 的 ready→succeeded/terminal 拒绝，terminal guard 的 attempt/fence 顺序由该 chat 指出并修复，CDP1-D 增加双向负例。此前 full-file review 请求在配置的 xhigh Oracle model 上超时；该 timeout 只说明 full-file 尝试未完成，不否定 bounded review 已完成，也不冒充完整 full-file review。
+**W1 边界**：W1 时 W2 的 ownerful/child-scope install 与 resolver、W3 的完整 P0–P4 生产激活、W4 的生产 dispose、W5 closeout 均未实现；W2 现已在 §6「W2 证据」实现，W3/W4/W5 仍未实现。`effects_one_reconcile` 仍限制每 fiber 一个 ready/claimed reconcile，故 `validate_delta` 只允许 `command_reconcile` successor 使用 ordinal 0；16 successor 结构上限主要覆盖其他 kind。continuation 仍要求与创建者同一 LOGIN；P1/P2 unsupported 失败后 child 保持 ready 且无 request，可同一 child 重试一次。Oracle 审查：W1 full bounded Oracle review 已完成，五项发现即上述 P1.1–P1.4/P2 并全部修复；早期 focused chat 另确认 parent-fiber predicate、terminal guard 的 ready→succeeded/terminal 拒绝，terminal guard 的 attempt/fence 顺序由该 chat 指出并修复，CDP1-D 增加双向负例。此前 full-file review 请求在配置的 xhigh Oracle model 上超时；该 timeout 只说明 full-file 尝试未完成，不否定 W1 bounded review 已完成，也不冒充完整 full-file review。
 
-**发布状态**：W1 本地验证与工件已完成；按 2026-10-26 用户授权，W1 仍需单独 commit 并 push `origin/v24`。W1 推送后也不能直接进入 W2/W3/W4：`40_advance.sql` 只剩 4 行，估算 W2–W4 还需 150–250 行，**blocked pending 用户对 SQL layout/cap 的裁决**；1200 行上限对 W2–W4 已不可行。
+**发布状态**：W1 已按 2026-10-26 用户授权单独 commit `50affb0` 并 push `origin/v24`，推送前后 `origin/v24...v24` 为 `0 0`。W2 已按用户 layout 裁决实现；one bounded Oracle review 已完成，六项发现全部修复，19 条 post-fix gate 全部 `EXIT 0`；按 2026-10-26 授权，W2 在本轮收尾单独 commit 并 push `origin/v24`；提交 hash 记录在最终报告。W3/W4 未开始。
+
+### W2 证据（2026-10-26 已实现；bounded review 完成；按授权提交收尾）
+
+**范围与布局**：W2 只实现 install declaration、contracts/check、root/existing/child scope admission、owner ledger、unique-root / final-state DAG / committed-view guard 与 resolver。用户 2026-10-26 的 layout 裁决落在 `v24/cordis/sql/41_lifecycle.sql`（586 物理行），置于 `40_advance.sql` 与 `50_permissions.sql` 之间；`40_advance.sql` 只保留 3 行 command entry seam，实测 1119/1200；DDL 前缀 `10`–`17`/`20`/`30` 实测 414/900（`30_triggers.sql` 248）；canonical manifest 十六文件；十五张表及列/枚举/扩展不变。未修改 `v24/load.py`、`v24/sql/**`、`v24/s1`–`v24/s12`。
+
+**CDP2-I**：新增 `v24/cordis/dp2/test_install.py`，本轮 `uv run python v24/cordis/dp2/test_install.py` 退出 0。覆盖 I1 direct root install 为纯数据、replay 逐字节相同、second ownerless root 拒绝；I2 ownerless install 到 existing open scope；I3 owner ledger seq/descriptor/inverse/progress、scope/owner/UUID/identity/0A000 负例，以及 uppercase UUID canonicalization、owner iterator 的 numeric `v`/exact keys、current-generation failure 拒绝；I4 declaration/contracts/check 四种 replay 组合与 malformed shape 零写；I5 nearest realm override、root default、无跨 realm fallback、provider admission、256-key 边界与 NULL key；I5b closed ancestor 使整条 resolver chain unavailable；I5c ancestor 的 `dispose_requested_at` 同时关闭 child admission 与 descendant resolution；I6 unique root、pin/run DAG cycle、committed-view immutable；I6b disposed ownerless root 仍占 unique root；I6c 19-fiber dense DAG 不再因 path multiplicity 被误拒；I7 forged install delta 的 context/ledger/event/successor 校验，install-owner mutation 命中 `install_create`。active-owner fixture 仅为维护 DML，不计入 CDP2-A 激活证据；生产 P0–P4 与 dispose 仍 `0A000`。
+
+**19 条 gate（串行，真实退出码）**：
+
+| # | Command | Exit |
+|---:|---|---:|
+| 1 | `uv run python v24/cordis/load.py` | 0 |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 |
+| 8 | `uv run python v24/load.py` | 0 |
+| 9 | `uv run python v24/s1/setup_db.py --self-check` | 0 |
+| 10 | `uv run python v24/s1/test_ddl.py` | 0 |
+| 11 | `uv run python v24/s1/test_g1.py` | 0 |
+| 12 | `uv run python v24/s2/test_g3a.py` | 0 |
+| 13 | `uv run python v24/s3/test_g2.py` | 0 |
+| 14 | `uv run python v24/s4/test_g2b.py` | 0 |
+| 15 | `uv run python v24/s5/test_g4.py` | 0 |
+| 16 | `uv run python v24/s6/test_g5.py` | 0 |
+| 17 | `uv run python v24/s8/test_g7.py` | 0 |
+| 18 | `uv run python v24/s7/test_g6.py` | 0 |
+| 19 | `uv run python v24/s9/test_g8.py` | 0 |
+
+**冻结证据**：十二个 `v24/sql/*.sql` SHA-256 与 DP1 P0 表逐项相同；`git diff --exit-code 57e2c1e -- v24/load.py v24/sql v24/s1 … v24/s12` 退出 0 且无输出。
+
+**Review 状态（已完成，六项修复）**：2026-10-26 的 one bounded Oracle review（两个 lane）已完成，确认并修复六项发现：① `install_delta`/`validate_install_domain` 的 caller UUID 文本大小写与 canonical UUID 比较不一致，改为 canonical UUID/JSON UUID 比较并新增 uppercase regression；② `fiber_lineage_open` 遗漏 `dispose_requested_at`，现在每个 ancestor 都视为 closed，并新增 child-install 与 descendant-resolve 负例；③ owner iterator 仅按 `->>'v'` 接受 numeric/string 且允许额外键，现要求 exact `{v,next_index,registered_through,control_seq}` 且 `v` 为 numeric `1`；④ owner admission 未拒绝 current-generation `failure`，现以 `owner_closing`/`install_owner_failure` 拒绝；⑤ `guard_fiber_graph` 的 `UNION ALL` path enumeration 可误拒 dense DAG，现改为去重 `(root,node,depth)` reachability、按 distinct graph elements 限流并保留 multiple-root/cycle/depth 检查，新增 19-fiber dense DAG regression；⑥ forged test 的 install-owner mutation 改为定位 `install_create`。六项均有 CDP2-I 覆盖，post-fix 19 条 gate 全部 `EXIT 0`。
+
+**W2 边界**：W3 的完整 P0–P4 生产激活与 W4 的生产 dispose 未实现，仍 `0A000`；W2 不创建 episode、activation pin、host/CAS effect 或 successor，四种 replay boolean 只存储和校验。direct install 的 owner ledger 只追加 child contribution 与 episode_progress；resolver 只读。`check_policy_ok` 已实现但 W3 才消费。
+
 
 ## 7. Open Questions
 
 **发布分支与 push 目标：已由用户裁决。** 2026-10-26 用户明确授权本计划按里程碑逐个 commit 并 push 到 `origin/v24`。这是发布授权，不是对规格或代码的改动：发布授权（2026-10-26）：用户明确授权本 DP2 计划按里程碑逐个 commit 并 push 到 `origin/v24`；这是针对本工作任务的具体授权，不改写根与 worktree `AGENTS.md` 的 `origin main` 规则，也不切换用户工作树或改写历史。 指定 worktree 为 `v24` 并跟踪 `origin/v24`，与该授权一致。B0 已按此授权结项（证据见 §6）；W1–W5 沿用同一目标，仍不可越过“本里程碑必须完成推送才进入下一里程碑”的纪律，也不得自行改推 `main`、切换用户工作树或改写历史。
 
-其余工程选择已由代码、DP1 分工或 Oracle 裁决确定。§5 标注的四项范围/兼容性/部署假设可由用户覆盖；跨 LOGIN scanner、真正 host/CAS lifecycle 和多 entity 通知须在对应后续阶段重新确认，不能从 DP2 绿色推断它们已实现。B0 已结项（本地验证 + 提交 + 推送 `origin/v24`）；W1 已实现、五项 bounded Oracle review 发现全部修复、最终 18 条 gate 全绿，待按授权单独 commit/push；W2–W4 尚未开始，且 blocked pending 用户对 SQL layout/cap 的裁决（4 行余量对 150–250 行估算不可行），W5 随后。每个里程碑完成后同样逐项提交推送，不把相邻里程碑合并成一次提交。
+其余工程选择已由代码、DP1 分工或 Oracle 裁决确定。§5 标注的四项范围/兼容性/部署假设可由用户覆盖；跨 LOGIN scanner、真正 host/CAS lifecycle 和多 entity 通知须在对应后续阶段重新确认，不能从 DP2 绿色推断它们已实现。B0 已结项（本地验证 + 提交 + 推送 `origin/v24`）；W1 已结项（commit `50affb0`，已推送 `origin/v24`），五项 bounded Oracle review 发现全部修复、最终 18 条 gate 全绿；W2 已实现，one bounded review 完成且六项发现全部修复，19/19 post-fix gate 全绿，并按授权在本轮收尾 commit/push；W3/W4 未开始，W5 随后。每个里程碑完成后同样逐项提交推送，不把相邻里程碑合并成一次提交。
 
 ## 8. References
 
