@@ -114,6 +114,7 @@ def relations(conn):
     clone(conn,'installs',IDS['i1'],{},'install identity unique','23505')
     clone(conn,'installs',IDS['i1'],{'identity':'bad-state','state':'bogus'},'install state')
     for manifest,label in [({'requires':[],'provides':[],'priority':0},'manifest requires check'),
+                           ({'provides':[],'priority':0,'check':{}},'manifest missing requires'),
                            ({'requires':{},'provides':[],'priority':0,'check':{}},'manifest requires array'),
                            ({'requires':[],'provides':{},'priority':0,'check':{}},'manifest provides array'),
                            ({'requires':[],'provides':[],'priority':'0','check':{}},'manifest priority number')]:

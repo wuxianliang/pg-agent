@@ -76,3 +76,24 @@ The five current DP1 commands all exited 0 after the final W3 corrections: loade
 | CDP1-K5 | Disposable interpreter/barrier replacement with independent COMMIT; new-connection command and terminal replay; receipt-key exclusion; post-effect/request fault rollback; barrier deferred/null claim; production function definitions/hash unchanged and interpreters remain `0A000` | Passed |
 
 W3 implementation review found and corrected temporary-catalog authentication shadowing, numeric handler-digest acceptance, nullable inverse operation, final-row pin epoch checking, quadratic body traversal, and missing independent authorization/lock-order probes. The review was static; all corrections were followed by the real gate run above.
+
+## W4 closeout actual results (2026-10-26)
+
+All 11 required v24 closeout commands exited 0 in this run, in the planned serial order. The separately listed s9 extension gate also exited 0 with 23 named cases:
+
+| Command | Exit |
+|---|---:|
+| `uv run python v24/load.py` | 0 |
+| `uv run python v24/s1/setup_db.py --self-check` | 0 |
+| `uv run python v24/s1/test_ddl.py` | 0 |
+| `uv run python v24/s1/test_g1.py` | 0 |
+| `uv run python v24/s2/test_g3a.py` | 0 |
+| `uv run python v24/s3/test_g2.py` | 0 |
+| `uv run python v24/s4/test_g2b.py` | 0 |
+| `uv run python v24/s5/test_g4.py` | 0 |
+| `uv run python v24/s6/test_g5.py` | 0 |
+| `uv run python v24/s8/test_g7.py` | 0 |
+| `uv run python v24/s7/test_g6.py` | 0 |
+| `uv run python v24/s9/test_g8.py` (separate extension) | 0 |
+
+Final baseline checks: `git diff --exit-code 57e2c1e -- v24/load.py v24/sql v24/s1..s12` exited 0; the explicit nine frozen SQL diff exited 0; all twelve SHA-256 values exactly match P0 above; canonical v24 manifest remains its original twelve-file order; `origin/v24...v24` was `0 0` before W4 closeout. All five current DP1 commands were rerun and exited 0: loader, fixture self-check, environment, DDL (97 zero-write negative probes), and kernel (66 committed zero-write assertions). W3 kernel behavior, including command durable replay, terminal replay, barrier probe, real G/row lock evidence, and production interpreter/hash preservation, is recorded above.

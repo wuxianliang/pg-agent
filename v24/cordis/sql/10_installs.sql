@@ -5,11 +5,11 @@ CREATE TABLE v24_cordis.installs (
   owner_episode_id uuid,
   identity text NOT NULL,
   version text NOT NULL,
-  manifest jsonb NOT NULL CHECK (jsonb_typeof(manifest)='object'
+  manifest jsonb NOT NULL CHECK ((jsonb_typeof(manifest)='object'
     AND jsonb_typeof(manifest->'requires')='array'
     AND jsonb_typeof(manifest->'provides')='array'
     AND jsonb_typeof(manifest->'priority')='number'
-    AND manifest ? 'check'),
+    AND manifest ? 'check') IS TRUE),
   artifact_digest text NOT NULL CHECK (artifact_digest ~ '^[0-9a-f]{64}$'),
   contracts jsonb NOT NULL CHECK (jsonb_typeof(contracts)='object'),
   policy_ref text,

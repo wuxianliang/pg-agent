@@ -23,3 +23,9 @@
 - The deferred pin epoch trigger re-reads the final surviving pin row and ignores deleted rows, so intermediate update and insert/delete sequences are checked by final COMMIT state. DDL gate covers these sequences.
 - Body traversal was changed to a recursive set-based walk to avoid stack-array slicing quadratic behavior; CDP1-K includes a 20,000-element wide-array boundary probe and NULL body probe.
 - W3 gate final result: loader, fixture, environment, DDL and kernel exit 0; production lifecycle interpreters remain explicit `0A000`; no DP2+ lifecycle behavior is claimed.
+
+## W4 closeout
+
+- Final W4 reran all 11 v24 closeout commands and the separate s9 extension gate on 2026-10-26; all exit 0 and s9 reports 23 passing named cases.
+- The full v24 loader/SQL/s1–s12 diff and explicit nine-frozen-SQL diff against P0 commit `57e2c1e` are empty; all twelve original v24 SQL hashes match P0; remote tracking status was synchronized before W4 (`0/0`).
+- All five DP1 gates were rerun after W3 final fixes and exit 0. The final DDL gate has 97 zero-write negatives. A final review found that a missing manifest property could make its CHECK expression NULL (which PostgreSQL accepts); the full manifest predicate now requires `IS TRUE`, and a missing-`requires` probe with all other properties present rejects. Implementation review corrections described above are included in this final evidence; lifecycle handlers remain intentionally unimplemented (`0A000`).
