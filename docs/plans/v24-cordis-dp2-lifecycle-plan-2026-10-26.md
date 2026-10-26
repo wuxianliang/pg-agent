@@ -1179,7 +1179,7 @@ CDP2-K 使用一次性 `TestDB` 并在 probe DB 内替换解释器；真实 `adv
 
 **发布分支与 push 目标：已由用户裁决。** 2026-10-26 用户明确授权本计划按里程碑逐个 commit 并 push 到 `origin/v24`。这是发布授权，不是对规格或代码的改动：发布授权（2026-10-26）：用户明确授权本 DP2 计划按里程碑逐个 commit 并 push 到 `origin/v24`；这是针对本工作任务的具体授权，不改写根与 worktree `AGENTS.md` 的 `origin main` 规则，也不切换用户工作树或改写历史。 指定 worktree 为 `v24` 并跟踪 `origin/v24`，与该授权一致。B0 已按此授权结项（证据见 §6）；W1–W5 沿用同一目标，仍不可越过“本里程碑必须完成推送才进入下一里程碑”的纪律，也不得自行改推 `main`、切换用户工作树或改写历史。
 
-其余工程选择已由代码、DP1 分工或 Oracle 裁决确定。§5 标注的四项范围/兼容性/部署假设可由用户覆盖；跨 LOGIN scanner、真正 host/CAS lifecycle 和多 entity 通知须在对应后续阶段重新确认，不能从 DP2 绿色推断它们已实现。B0 已结项（本地验证 + 提交 + 推送 `origin/v24`）；W1 已结项（commit `50affb0`，已推送 `origin/v24`），五项 bounded Oracle review 发现全部修复、最终 18 条 gate 全绿；W2 已结项（commit `1a7deaa`）；W3 已实现，CDP2-A 与 post-fix 门禁 `EXIT 0`，按授权在本轮收尾 commit/push；W4 未开始，W5 随后。每个里程碑完成后同样逐项提交推送，不把相邻里程碑合并成一次提交。
+其余工程选择已由代码、DP1 分工或 Oracle 裁决确定。§5 标注的四项范围/兼容性/部署假设可由用户覆盖；跨 LOGIN scanner、真正 host/CAS lifecycle 和多 entity 通知须在对应后续阶段重新确认，不能从 DP2 绿色推断它们已实现。B0 已结项（本地验证 + 提交 + 推送 `origin/v24`）；W1 已结项（commit `50affb0`，已推送 `origin/v24`），五项 bounded Oracle review 发现全部修复、最终 18 条 gate 全绿；W2 已结项（commit `1a7deaa`）；W3 已结项（`cd93134`）；W4 已结项（`d5fd1bc`）；W5 在 `d5fd1bc` 上重跑 21 条门禁全部 `EXIT 0` 并在本轮收尾 commit/push。每个里程碑完成后同样逐项提交推送，不把相邻里程碑合并成一次提交。
 
 ## 8. References
 
