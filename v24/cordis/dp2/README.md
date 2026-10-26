@@ -51,7 +51,7 @@ DP2 自有 gate：
 uv run python v24/cordis/dp2/test_kernel.py      # CDP2-K，W1 — 通过
 uv run python v24/cordis/dp2/test_install.py     # CDP2-I，W2 — 通过
 uv run python v24/cordis/dp2/test_activation.py  # CDP2-A，W3 — 通过
-uv run python v24/cordis/dp2/test_boundaries.py  # CDP2-B，W4 — 未创建
+uv run python v24/cordis/dp2/test_boundaries.py  # CDP2-B，W4 — 通过
 ```
 
 ## B0 基线证据（2026-10-26）
@@ -147,6 +147,15 @@ active-owner fixture 仅用于维护 DML，不计入 CDP2-A 激活证据。生�
 - Cordis loader/fixture/environment/CDP1-D/CDP1-K/CDP2-I/CDP2-A 串行退出 0；CDP2-K 修复后退出 0。v24 十一条加 s9 串行退出 0。
 - 未覆盖：生产 dispose、`off`/`retry`、drift 转 closing、failure/leave/unload/inverse。settlement 仍 `0A000`。
 
+## W4 证据（2026-10-26）
+
+- 生产 `interpret_dispose` 在证明 install 全部实例无活义务后写墓碑。成功例是真实 direct child install，没有 host/CAS effect。
+- 单独阻止：want_on、open episode、未释放 contribution、活 pin、未结束 run、未 disposed child install、六种 kind 的 ready/claimed effect、六种 `host_io` 状态。
+- B1：缺依赖、check=false、地址冲突、control drift 仍 `0A000`，当前调用零写。
+- `40_advance.sql` 1130/1200；`41_lifecycle.sql` 1097；DDL 414/900；十张表；manifest 十六文件；仅 `advance` DEFINER。
+- Cordis 九条与 v24 十二条（含 s9）本轮串行全部退出 0。冻结 diff 退出 0。
+- 未覆盖：closing/divert/error、leave/unload、withdraw/release、inverse 执行、settlement。已激活且仍有 open episode 或未释放 contribution 的实例不能 basic dispose。
+
 ## 边界
 
-DP2 W3 不实现：生产 dispose（W4）；target drift 处理、失败记录/自动 retry；closing/divert/error、leave/unload、withdraw/release、inverse 执行；完整 live 失效传播、drain/barrier、公平扫描与恢复；run/reducer/model/tool/dispatch/listener 执行；`intercept`、overlay 合并与外部制品准备。这些路径保留 `0A000` 或现有 DP1 行为，不提前实现 DP3。
+DP2 W4 不实现：target drift 处理、失败记录/自动 retry；closing/divert/error、leave/unload、withdraw/release、inverse 执行；完整 live 失效传播、drain/barrier、公平扫描与恢复；run/reducer/model/tool/dispatch/listener 执行；`intercept`、overlay 合并与外部制品准备。这些路径保留 `0A000` 或现有 DP1 行为，不提前实现 DP3。

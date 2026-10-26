@@ -884,6 +884,10 @@ def test_production(db):
         effect, out = command(db, conn, 'service', 'command_reconcile', cp, key=key, effect=child)
         zero_state(db, conn, effect, out)
     d = seed_fiber(db, prefix='prod-dispose')
+    with contextlib.closing(db.connect('owner')) as owner:
+        query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
+        query(owner, 'UPDATE v24_cordis.fibers SET want_on=true WHERE id=%s', (d['fiber'],))
+        owner.commit()
     dis = dispose_payload(d['install'])
     with contextlib.closing(db.connect('service')) as conn:
         effect, out = command(db, conn, 'service', 'command_dispose', dis)

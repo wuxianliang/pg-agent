@@ -1029,6 +1029,65 @@ BEGIN
  RETURN (SELECT coalesce(jsonb_agg(x ORDER BY x->>'t',x->>'id'),'[]'::jsonb)
   FROM (SELECT DISTINCT value x FROM jsonb_array_elements(result)) s);
 END $$;
+CREATE FUNCTION v24_cordis.dispose_preflight(p_payload jsonb) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM v24_cordis.installs WHERE id=(p_payload->>'install_id')::uuid) THEN
+  RETURN jsonb_build_object('code','not_found_or_denied','reason','dispose_install');
+ END IF;
+ RETURN NULL;
+END $$;
+CREATE FUNCTION v24_cordis.dispose_block_reason(p_install uuid) RETURNS text
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE fids uuid[];
+BEGIN
+ SELECT coalesce(array_agg(id),ARRAY[]::uuid[]) INTO fids FROM v24_cordis.fibers WHERE install_id=p_install;
+ IF EXISTS(SELECT 1 FROM v24_cordis.fibers WHERE id=ANY(fids) AND want_on) THEN RETURN 'want_on'; END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.episodes WHERE fiber_id=ANY(fids) AND closed_at IS NULL) THEN RETURN 'open_episode'; END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.contributions WHERE fiber_id=ANY(fids) AND released_at IS NULL) THEN RETURN 'contribution'; END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.pins p WHERE p.released_at IS NULL AND (
+   p.consumer_fiber_id=ANY(fids)
+   OR p.contribution_id IN (SELECT id FROM v24_cordis.contributions WHERE fiber_id=ANY(fids))
+   OR p.consumer_run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=ANY(fids)))) THEN
+  RETURN 'pin'; END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.runs WHERE owner_fiber_id=ANY(fids) AND ended_at IS NULL) THEN RETURN 'run'; END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.fibers c WHERE c.owner_id=ANY(fids) AND c.install_id<>p_install
+  AND c.disposed_at IS NULL) THEN RETURN 'child_fiber'; END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.installs i WHERE i.owner_fiber_id=ANY(fids) AND i.id<>p_install
+  AND i.state<>'disposed') THEN RETURN 'child_install'; END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.status IN ('ready','claimed') AND (
+   x.fiber_id=ANY(fids)
+   OR x.episode_id IN (SELECT id FROM v24_cordis.episodes WHERE fiber_id=ANY(fids))
+   OR x.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=ANY(fids)))) THEN
+  RETURN 'live_effect'; END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.kind='host_io' AND (
+   x.fiber_id=ANY(fids)
+   OR x.episode_id IN (SELECT id FROM v24_cordis.episodes WHERE fiber_id=ANY(fids))
+   OR x.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=ANY(fids)))) THEN
+  RETURN 'host_io'; END IF;
+ RETURN NULL;
+END $$;
+CREATE FUNCTION v24_cordis.interpret_dispose(p_effect_id uuid,p_principal uuid,p_outcome jsonb,p_closure jsonb) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE inst v24_cordis.installs%ROWTYPE; payload jsonb:=p_outcome->'body'->'payload';
+ ids jsonb; reason text;
+BEGIN
+ SELECT * INTO inst FROM v24_cordis.installs WHERE id=(payload->>'install_id')::uuid;
+ IF NOT FOUND THEN RETURN v24_cordis.error_v1('not_found_or_denied',jsonb_build_object('reason','dispose_install')); END IF;
+ IF inst.state='disposed' THEN RETURN v24_cordis.error_v1('already_terminal',jsonb_build_object('reason','dispose_terminal')); END IF;
+ IF inst.state<>'installed' THEN RAISE EXCEPTION 'install_state' USING ERRCODE='0A000'; END IF;
+ reason:=v24_cordis.dispose_block_reason(inst.id);
+ IF reason IS NOT NULL THEN RAISE EXCEPTION '%',reason USING ERRCODE='0A000'; END IF;
+ SELECT coalesce(jsonb_agg(id::text ORDER BY id::text),'[]'::jsonb) INTO ids
+  FROM v24_cordis.fibers WHERE install_id=inst.id;
+ RETURN jsonb_build_object('domain',jsonb_build_array(jsonb_build_object('op','basic_dispose',
+   'install_id',to_jsonb(inst.id),'fiber_ids',ids)),
+  'receipt',jsonb_build_object('status','succeeded'),
+  'events',jsonb_build_array(jsonb_build_object('entity_type','install','entity_id',to_jsonb(inst.id),
+   'event_kind','install_disposed','payload',jsonb_build_object('fiber_ids',ids))),
+  'successors','[]'::jsonb);
+END $$;
+
 
 
 

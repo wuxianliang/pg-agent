@@ -1,6 +1,6 @@
 # Cordis v2 DP2：安装与成功激活生命周期 Deep Plan
 
-状态：**B0 已结项；W1 已结项（commit `50affb0`，已推送 `origin/v24`）；W2 已结项（commit `1a7deaa`，已推送 `origin/v24`）；W3 已实现，生产 P0–P4 与 CDP2-A 通过，post-fix Cordis/v24 门禁 `EXIT 0`，按授权在本轮收尾 commit/push；W4 未实现，W5 待实施。** B0 于 2026-10-26 在指定 worktree 实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9（全部退出码 0），复核十二个冻结 SQL SHA-256 与 `57e2c1e` 冻结 diff（逐一相同 / diff 为空）。W1 的测试命令、真实结果与边界见 §6「W1 证据」；W2 的 layout 裁决、实现、19 条 post-fix 实测结果与 bounded review 修复见 §6「W2 证据」。W3–W5 的测试命令仍是未来验收要求，不得从 B0/W1/W2 绿色推断其行为。
+状态：**B0 已结项；W1 已结项（commit `50affb0`，已推送 `origin/v24`）；W2 已结项（commit `1a7deaa`，已推送 `origin/v24`）；W3 已结项（commit `cd93134`，已推送 `origin/v24`）；W4 已实现，CDP2-B 与本轮 Cordis/v24 门禁 `EXIT 0`，按授权收尾 commit/push；W5 待实施。** B0 于 2026-10-26 在指定 worktree 实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9（全部退出码 0），复核十二个冻结 SQL SHA-256 与 `57e2c1e` 冻结 diff（逐一相同 / diff 为空）。W1 的测试命令、真实结果与边界见 §6「W1 证据」；W2 的 layout 裁决、实现、19 条 post-fix 实测结果与 bounded review 修复见 §6「W2 证据」。W3–W5 的测试命令仍是未来验收要求，不得从 B0/W1/W2 绿色推断其行为。
 
 ## 1. Summary
 
@@ -1154,7 +1154,19 @@ CDP2-K 使用一次性 `TestDB` 并在 probe DB 内替换解释器；真实 `adv
 
 **post-fix 退出码**：Cordis loader、DP1 fixture/environment/CDP1-D/CDP1-K、CDP2-I、CDP2-A 为串行 `EXIT 0`；CDP2-K 为修复后 `EXIT 0`。v24 loader、s1 fixture/DDL/G1、s2 G3a、s3 G2、s4 G2b、s5 G4、s6 G5、s8 G7、s7 G6、s9 G8 串行全部 `EXIT 0`。
 
-**W3 边界**：生产 dispose、`off`/`retry`、drift 转 closing、failure 记录、leave/unload/inverse 仍未实现。settlement 仍 `0A000`。
+**W3 边界（历史）**：W3 结项时生产 dispose 仍 `0A000`。W4 现已实现基本 dispose。
+
+### W4 证据（2026-10-26 已实现；按授权提交收尾）
+
+**范围**：`interpret_dispose` 对 install 全部实例做无活义务证明后写墓碑。阻止项包括 want_on、open episode、未释放 contribution、活 pin、未结束 run、未 disposed child install、ready/claimed effect（六种 kind）以及关联 `host_io` 的 ready/claimed/unknown/succeeded/failed/cancelled。direct child install 无 host/CAS 时成功。`off`/`retry`、drift 转 closing、failure 记录仍 `0A000`。
+
+**预算**：`40_advance.sql` 1130/1200；`41_lifecycle.sql` 1097；DDL 前缀 414/900；manifest 十六文件；十张表；仅 `advance` 为 DEFINER。冻结 diff 退出 0。
+
+**CDP2-B**：`uv run python v24/cordis/dp2/test_boundaries.py` 退出 0。
+
+**退出码**：Cordis loader、DP1 fixture/environment/CDP1-D/CDP1-K、CDP2-K/I/A/B 串行全部 `EXIT 0`。v24 loader、s1 fixture/DDL/G1、s2 G3a、s3 G2、s4 G2b、s5 G4、s6 G5、s8 G7、s7 G6、s9 G8 串行全部 `EXIT 0`。
+
+**W4 边界**：不关闭 scope、不释放 contribution、不执行 inverse、不写 closing/divert/error。已激活且仍有 open episode 或未释放 contribution 的 fiber 不能 basic dispose。settlement 仍 `0A000`。
 
 
 ## 7. Open Questions

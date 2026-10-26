@@ -347,7 +347,7 @@ BEGIN
   IF NOT coalesce(v24_cordis.exact_keys(payload,ARRAY['install_id']) AND v24_cordis.json_uuid(payload->'install_id'),false) THEN
    RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','dispose_payload'));
   END IF;
-  RAISE EXCEPTION 'DP2 lifecycle dispose is not implemented' USING ERRCODE='0A000';
+  RETURN v24_cordis.interpret_dispose(p_effect_id,p_principal,p_outcome,p_closure);
  END IF;
  RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','command_body'));
 END $$;
@@ -1043,6 +1043,11 @@ BEGIN
   END IF;
   IF kind='command_reconcile' AND action='on' THEN
    preflight:=v24_cordis.reconcile_preflight(body->'payload');
+   IF preflight IS NOT NULL THEN RETURN v24_cordis.error_v1(preflight->>'code',jsonb_build_object('reason',preflight->>'reason')); END IF;
+  END IF;
+  IF kind='command_dispose' AND v24_cordis.exact_keys(body->'payload',ARRAY['install_id'])
+   AND v24_cordis.json_uuid(body->'payload'->'install_id') THEN
+   preflight:=v24_cordis.dispose_preflight(body->'payload');
    IF preflight IS NOT NULL THEN RETURN v24_cordis.error_v1(preflight->>'code',jsonb_build_object('reason',preflight->>'reason')); END IF;
   END IF;
   IF reserved THEN
