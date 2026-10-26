@@ -8,9 +8,9 @@ CREATE TABLE v24_cordis.contributions (
   key text,
   descriptor jsonb NOT NULL CHECK(jsonb_typeof(descriptor)='object'),
   prev_contribution_id uuid,
-  inverse jsonb NOT NULL CHECK(jsonb_typeof(inverse)='object' AND inverse ? 'op'
-    AND inverse->>'op' IN ('delete_row','restore_prev','release_reservation','dispose_child','unknown')
-    AND (inverse->>'op'<>'unknown' OR (inverse ? 'debt' AND inverse->'debt'<>'null'::jsonb))),
+  inverse jsonb NOT NULL CHECK((jsonb_typeof(inverse)='object' AND jsonb_typeof(inverse->'op')='string'
+    AND inverse ? 'op' AND inverse->>'op' IN ('delete_row','restore_prev','release_reservation','dispose_child','unknown')
+    AND (inverse->>'op'<>'unknown' OR (inverse ? 'debt' AND inverse->'debt'<>'null'::jsonb))) IS TRUE),
   contract_version text NOT NULL,
   withdrawn_at timestamptz,
   released_at timestamptz,

@@ -75,7 +75,7 @@ def seed(conn):
         c.execute('INSERT INTO v24_cordis.scopes(id) VALUES(%s),(%s)',(IDS['s1'],IDS['s2']))
         for suffix in ('1','2'):
             c.execute("INSERT INTO v24_cordis.installs(id,scope_id,identity,version,manifest,artifact_digest,contracts,state) VALUES(%s,%s,%s,'1',%s,%s,'{}','installed')",
-                      (IDS['i'+suffix],IDS['s'+suffix],'plugin-'+suffix,json.dumps({'requires':[],'provides':[],'priority':0}),'a'*64))
+                      (IDS['i'+suffix],IDS['s'+suffix],'plugin-'+suffix,json.dumps({'requires':[],'provides':[],'priority':0,'check':{}}),'a'*64))
             c.execute('INSERT INTO v24_cordis.fibers(id,install_id,scope_id) VALUES(%s,%s,%s)',(IDS['f'+suffix],IDS['i'+suffix],IDS['s'+suffix]))
         c.execute("INSERT INTO v24_cordis.episodes(id,fiber_id,epoch,state,closed_at) VALUES(%s,%s,0,'active',NULL),(%s,%s,1,'closing',now()),(%s,%s,0,'active',NULL)",
                   (IDS['e1'],IDS['f1'],IDS['e2'],IDS['f1'],IDS['e3'],IDS['f2']))
@@ -113,6 +113,11 @@ def relations(conn):
     clone(conn,'installs',IDS['i1'],{'identity':'pair','owner_fiber_id':IDS['f1']},'install pair')
     clone(conn,'installs',IDS['i1'],{},'install identity unique','23505')
     clone(conn,'installs',IDS['i1'],{'identity':'bad-state','state':'bogus'},'install state')
+    for manifest,label in [({'requires':[],'provides':[],'priority':0},'manifest requires check'),
+                           ({'requires':{},'provides':[],'priority':0,'check':{}},'manifest requires array'),
+                           ({'requires':[],'provides':{},'priority':0,'check':{}},'manifest provides array'),
+                           ({'requires':[],'provides':[],'priority':'0','check':{}},'manifest priority number')]:
+        clone(conn,'installs',IDS['i1'],{'identity':'manifest-'+label,'manifest':manifest},label)
     clone(conn,'installs',IDS['i1'],{'identity':'bad-digest','artifact_digest':'A'*64},'artifact sha256')
     clone(conn,'fibers',IDS['f2'],{'owner_id':IDS['f1'],'owner_episode_id':IDS['e3']},'fiber cross episode','23503')
     clone(conn,'fibers',IDS['f2'],{'owner_id':IDS['f1']},'fiber owner pair')
@@ -133,6 +138,12 @@ def relations(conn):
     clone(conn,'pins',IDS['pin'],{'consumer_episode_id':None,'key':'partial'},'pin partial consumer')
     clone(conn,'pins',IDS['pin'],{'consumer_fiber_id':None,'consumer_episode_id':None,'consumer_run_id':uuid.uuid4()},'pin missing run','23503')
     clone(conn,'pins',IDS['pin'],{'key':'epoch','provider_epoch':1},'pin provider epoch')
+    # Constraint triggers inspect the final pin row, not an intermediate UPDATE version.
+    with conn.cursor() as c:
+        temporary=uuid.uuid4()
+        c.execute("INSERT INTO v24_cordis.pins(id,consumer_fiber_id,consumer_episode_id,key,contribution_id,provider_epoch) VALUES(%s,%s,%s,'delete-before-commit',%s,1)",(temporary,IDS['f2'],IDS['e3'],IDS['c1']))
+        c.execute('DELETE FROM v24_cordis.pins WHERE id=%s',(temporary,))
+    conn.commit()
     clone(conn,'pins',IDS['pin'],{},'pin active fiber unique','23505')
     clone(conn,'pins',IDS['pin'],{'released_at':'2026-01-01'})
     runpin={'consumer_fiber_id':None,'consumer_episode_id':None,'consumer_run_id':IDS['run']}
@@ -142,6 +153,7 @@ def relations(conn):
     clone(conn,'contributions',IDS['c1'],{'seq':2,'key':'new','released_at':'2026-01-01'},'release needs withdrawal')
     clone(conn,'contributions',IDS['c1'],{'seq':2,'key':'new','withdrawn_at':'2026-01-02','released_at':'2026-01-01'},'release time order')
     clone(conn,'contributions',IDS['c1'],{'seq':2,'key':'new','inverse':{'op':'unknown'}},'unknown inverse needs debt')
+    clone(conn,'contributions',IDS['c1'],{'seq':2,'key':'new','inverse':{'op':None}},'inverse op cannot be null')
     clone(conn,'contributions',IDS['c1'],{'seq':2,'key':'new','inverse':{'op':'sql'}},'closed inverse ops')
     listener={'seq':3,'kind':'listener','descriptor':{'event':'ev','listener_id':'l'}}
     clone(conn,'contributions',IDS['c1'],listener)
@@ -190,9 +202,10 @@ def guards(conn):
     for table,base,change in [('installs',IDS['i1'],"contracts='{}'::jsonb || '{\"changed\":true}'"),
                               ('fibers',IDS['f1'],'scope_id=NULL'),('episodes',IDS['e1'],'epoch=9'),
                               ('contributions',IDS['c1'],"inverse='{\"op\":\"unknown\",\"debt\":\"x\"}'"),
+                              ('pins',IDS['pin'],'provider_epoch=1'),('runs',IDS['run'],'scope_id=NULL'),
                               ('effects',IDS['effect'],"input='{\"x\":1}'")]:
         rejected(conn,table+' immutable',f'UPDATE v24_cordis.{table} SET {change} WHERE id=%s',(base,),states=('55000',))
-    for table,base,field in [('scopes',IDS['s1'],'closed_at'),('fibers',IDS['f2'],'dispose_requested_at'),('fibers',IDS['f2'],'disposed_at')]:
+    for table,base,field in [('scopes',IDS['s1'],'closed_at'),('fibers',IDS['f2'],'dispose_requested_at'),('fibers',IDS['f2'],'disposed_at'),('pins',IDS['pin'],'released_at')]:
         with conn.cursor() as c: c.execute(f'UPDATE v24_cordis.{table} SET {field}=now() WHERE id=%s',(base,))
         conn.commit()
         rejected(conn,field+' tombstone',f'UPDATE v24_cordis.{table} SET {field}=NULL WHERE id=%s',(base,),states=('55000',))

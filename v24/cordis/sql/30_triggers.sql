@@ -1,5 +1,5 @@
 CREATE FUNCTION v24_cordis.guard_immutable() RETURNS trigger
-LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis AS $$
+LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 BEGIN
   IF TG_TABLE_NAME='installs' THEN
     IF ROW(NEW.id,NEW.scope_id,NEW.owner_fiber_id,NEW.owner_episode_id,NEW.identity,
@@ -40,6 +40,21 @@ BEGIN
        OR (OLD.released_at IS NOT NULL AND NEW.released_at IS DISTINCT FROM OLD.released_at) THEN
       RAISE EXCEPTION 'contribution tombstone cannot change' USING ERRCODE='55000';
     END IF;
+  ELSIF TG_TABLE_NAME='runs' THEN
+    IF ROW(NEW.id,NEW.owner_fiber_id,NEW.owner_episode_id,NEW.scope_id,NEW.parent_run_id,NEW.spawn_key)
+       IS DISTINCT FROM ROW(OLD.id,OLD.owner_fiber_id,OLD.owner_episode_id,OLD.scope_id,OLD.parent_run_id,OLD.spawn_key) THEN
+      RAISE EXCEPTION 'run identity and ownership are immutable' USING ERRCODE='55000';
+    END IF;
+  ELSIF TG_TABLE_NAME='pins' THEN
+    IF ROW(NEW.id,NEW.consumer_fiber_id,NEW.consumer_episode_id,NEW.consumer_run_id,NEW.key,
+           NEW.contribution_id,NEW.provider_epoch,NEW.created_at)
+       IS DISTINCT FROM ROW(OLD.id,OLD.consumer_fiber_id,OLD.consumer_episode_id,OLD.consumer_run_id,OLD.key,
+           OLD.contribution_id,OLD.provider_epoch,OLD.created_at) THEN
+      RAISE EXCEPTION 'pin identity and provider epoch are immutable' USING ERRCODE='55000';
+    END IF;
+    IF OLD.released_at IS NOT NULL AND NEW.released_at IS DISTINCT FROM OLD.released_at THEN
+      RAISE EXCEPTION 'pin release tombstone cannot change' USING ERRCODE='55000';
+    END IF;
   ELSIF TG_TABLE_NAME='effects' THEN
     IF ROW(NEW.id,NEW.parent_id,NEW.ordinal,NEW.fiber_id,NEW.episode_id,NEW.run_id,
            NEW.kind,NEW.input,NEW.request_actor)
@@ -74,13 +89,17 @@ CREATE TRIGGER contributions_immutable BEFORE UPDATE ON v24_cordis.contributions
   FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_immutable();
 CREATE TRIGGER effects_immutable BEFORE UPDATE ON v24_cordis.effects
   FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_immutable();
+CREATE TRIGGER runs_immutable BEFORE UPDATE ON v24_cordis.runs
+  FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_immutable();
+CREATE TRIGGER pins_immutable BEFORE UPDATE ON v24_cordis.pins
+  FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_immutable();
 CREATE TRIGGER scopes_immutable BEFORE UPDATE ON v24_cordis.scopes
   FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_immutable();
 CREATE TRIGGER requests_immutable BEFORE UPDATE ON v24_cordis.requests
   FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_immutable();
 
 CREATE FUNCTION v24_cordis.guard_scope_tree() RETURNS trigger
-LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis AS $$
+LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE has_cycle boolean;
 BEGIN
   IF NEW.parent_id IS NULL THEN RETURN NEW; END IF;
@@ -102,7 +121,7 @@ CREATE CONSTRAINT TRIGGER scopes_acyclic AFTER INSERT OR UPDATE OF parent_id ON 
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_scope_tree();
 
 CREATE FUNCTION v24_cordis.guard_current_episode() RETURNS trigger
-LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis AS $$
+LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE fiber uuid; target uuid; closed timestamptz;
 BEGIN
   IF TG_TABLE_NAME='fibers' THEN
@@ -132,14 +151,16 @@ CREATE CONSTRAINT TRIGGER episodes_current_open AFTER UPDATE OF closed_at
   FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_current_episode();
 
 CREATE FUNCTION v24_cordis.guard_pin_epoch() RETURNS trigger
-LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis AS $$
-DECLARE actual_epoch int;
+LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE actual_epoch int; final_pin v24_cordis.pins%ROWTYPE;
 BEGIN
+  SELECT * INTO final_pin FROM v24_cordis.pins WHERE id=NEW.id;
+  IF NOT FOUND THEN RETURN NEW; END IF;
   SELECT e.epoch INTO actual_epoch
     FROM v24_cordis.contributions c JOIN v24_cordis.episodes e
       ON e.fiber_id=c.fiber_id AND e.id=c.episode_id
-    WHERE c.id=NEW.contribution_id;
-  IF NOT FOUND OR actual_epoch IS DISTINCT FROM NEW.provider_epoch THEN
+    WHERE c.id=final_pin.contribution_id;
+  IF NOT FOUND OR actual_epoch IS DISTINCT FROM final_pin.provider_epoch THEN
     RAISE EXCEPTION 'pin provider epoch mismatch' USING ERRCODE='23514';
   END IF;
   RETURN NEW;
@@ -149,7 +170,7 @@ CREATE CONSTRAINT TRIGGER pins_provider_epoch AFTER INSERT OR UPDATE OF contribu
   FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_pin_epoch();
 
 CREATE FUNCTION v24_cordis.reject_append_only_change() RETURNS trigger
-LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis AS $$
+LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 BEGIN
   RAISE EXCEPTION '% is append-only',TG_TABLE_NAME USING ERRCODE='55000';
 END $$;

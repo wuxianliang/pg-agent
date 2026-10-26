@@ -62,3 +62,17 @@ All four commands ran again after the final W2 correction and exited 0: `v24/cor
 | CDP1-D4 | Immutable declaration/input/identity, monotonic counters/tombstones, scope cycles, events UPDATE/DELETE/TRUNCATE; real COMMIT failures for dangling effect FK | Passed |
 
 88 negative savepoint probes assert SQLSTATE and ten-table snapshot equality before and after caller COMMIT. Two additional real COMMIT failures assert SQLSTATE 23503 and rollback equality. W2 does not claim lifecycle state-machine behavior or W3 error-code/ACL coverage.
+
+## W3 actual results
+
+The five current DP1 commands all exited 0 after the final W3 corrections: loader, fixture self-check, environment, DDL, and kernel. `40_advance.sql` is within the 1200 physical-line budget; the DDL prefix is 350 physical lines (≤900).
+
+| Assertion | Evidence | Result |
+|---|---|---|
+| CDP1-K1 | Independent hashlib/base64 golden vectors; closed 24-code error producer; random role-family ACL; 120 role/class/kind combinations; schema/table/function PUBLIC revocation; foreign LOGIN with explicit grants and hostile temporary catalog shadows | Passed |
+| CDP1-K2 | Pure preflight before G; malformed/null/depth/key/size/wide-array bodies; claim visibility and caller rollback; active busy and expired reclaim; independent repeat/concurrent rights; string digest binding; old-token and cancelled-effect behavior | Passed |
+| CDP1-K3 | Production delta validator and applier seam: empty-domain only, receipt mapping, inverse closed set, events, ordinal/B=16 and 17 rejection | Passed |
+| CDP1-K4 | Actual advisory/row lock waits; G-before-effect probe; ordered closure pass; typed dedupe, missing reference, drift, 512/513 cutoff | Passed |
+| CDP1-K5 | Disposable interpreter/barrier replacement with independent COMMIT; new-connection command and terminal replay; receipt-key exclusion; post-effect/request fault rollback; barrier deferred/null claim; production function definitions/hash unchanged and interpreters remain `0A000` | Passed |
+
+W3 implementation review found and corrected temporary-catalog authentication shadowing, numeric handler-digest acceptance, nullable inverse operation, final-row pin epoch checking, quadratic body traversal, and missing independent authorization/lock-order probes. The review was static; all corrections were followed by the real gate run above.

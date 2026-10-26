@@ -15,3 +15,11 @@
 - Initial scope cycle guard ran BEFORE rows and admitted a two-row cycle. It is now an AFTER, initially-deferred constraint trigger and checks the final parent graph. Current-episode deferred checks likewise query final stored rows so an intermediate pointer can be cleared/replaced before COMMIT.
 - Install/fiber historical owner episode FKs are deferred to support constructing cyclic declaration references in one transaction without mutating immutable ownership later. All references remain enforced at COMMIT.
 - Final W2 loader/self-check/environment/DDL commands exit 0; CDP1-D reports 88 zero-write negatives plus positive and actual COMMIT failure cases.
+
+## W3 implementation review and gate findings
+
+- Static implementation review identified a temporary-schema catalog shadowing risk in `role_family()`: all Cordis functions now explicitly place `pg_temp` after `pg_catalog,v24_cordis`, and CDP1-K injects temporary catalog lookalikes through a foreign LOGIN and expects `unauthorized` with zero writes.
+- Contract admission now requires JSON string types for both installed `handler_digest` and frozen effect binding; a numeric 64-digit digest is rejected. The inverse CHECK now requires a string-valued closed-set `op`, including an explicit `{"op":null}` negative.
+- The deferred pin epoch trigger re-reads the final surviving pin row and ignores deleted rows, so intermediate update and insert/delete sequences are checked by final COMMIT state. DDL gate covers these sequences.
+- Body traversal was changed to a recursive set-based walk to avoid stack-array slicing quadratic behavior; CDP1-K includes a 20,000-element wide-array boundary probe and NULL body probe.
+- W3 gate final result: loader, fixture, environment, DDL and kernel exit 0; production lifecycle interpreters remain explicit `0A000`; no DP2+ lifecycle behavior is claimed.
