@@ -4,7 +4,7 @@ DP2 定向扩展 Cordis DP1 协议内核，交付声明式安装、scope 创建�
 
 ## 当前状态
 
-**B0/W1/W2 已结项并推送 `origin/v24`（W1 `50affb0`，W2 `1a7deaa`）；W3 已实现，CDP2-A 退出 0，post-fix Cordis/v24 门禁退出 0，按授权收尾 commit/push；W4 未实现，W5 待实施。不得从 W3 绿色推断 dispose 或 DP3 行为。**
+**B0–W5 已结项。W3 `cd93134`，W4 `d5fd1bc`，均已推送 `origin/v24`。W5 在 `d5fd1bc` 上串行重跑 21 条门禁，全部退出 0。不得从 DP2 绿色推断 DP3。**
 
 - B0 只做证据与环境核验：固定 worktree/分支/HEAD/upstream、串行实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9、复核十二个冻结 SQL SHA-256 与冻结 diff，并更新本 README、matrix、ledger 与计划的 B0 证据。B0 未修改生产实现、未修改冻结目录、未新增 SQL 文件或 helper。
 - W1 已结项：reserved successor identity、ready child 执行/重放、P0→P1 generation 复验、command closure、typed delta 与真实 applier、terminal receipt guard；生产 spec-valid lifecycle 解释器仍抛 `0A000`，由 disposable probe 驱动 CDP2-K。W1 的五项 bounded Oracle review 发现已全部修复，最终 18 条 gate 全绿。
@@ -156,6 +156,12 @@ active-owner fixture 仅用于维护 DML，不计入 CDP2-A 激活证据。生�
 - Cordis 九条与 v24 十二条（含 s9）本轮串行全部退出 0。冻结 diff 退出 0。
 - 未覆盖：closing/divert/error、leave/unload、withdraw/release、inverse 执行、settlement。已激活且仍有 open episode 或未释放 contribution 的实例不能 basic dispose。
 
+## W5 closeout（2026-10-26）
+
+在 `d5fd1bc` 上串行重跑，全部退出 0：Cordis loader、DP1 fixture/environment/CDP1-D/CDP1-K、CDP2-K/I/A/B、v24 loader、s1 fixture/DDL/G1、s2–s6、s8、s7、s9。冻结 diff 退出 0。`40_advance.sql` 1130/1200，`41_lifecycle.sql` 1097，DDL 414/900，manifest 16，十张表，仅 `advance` DEFINER。
+
+仍未覆盖：`off`/`retry`；不把 drift 转成 closing，不写 failure，不自动 retry；leave/unload、withdraw/release、inverse；closing/divert/error；settlement 仍 `0A000`；已激活且有 open episode 或未释放 contribution 的实例不能 basic dispose；无 CAS ownership；continuation 限同一 LOGIN；多 entity 事件留 DP5。
+
 ## 边界
 
-DP2 W4 不实现：target drift 处理、失败记录/自动 retry；closing/divert/error、leave/unload、withdraw/release、inverse 执行；完整 live 失效传播、drain/barrier、公平扫描与恢复；run/reducer/model/tool/dispatch/listener 执行；`intercept`、overlay 合并与外部制品准备。这些路径保留 `0A000` 或现有 DP1 行为，不提前实现 DP3。
+DP2 不实现：target drift 处理、失败记录/自动 retry；closing/divert/error、leave/unload、withdraw/release、inverse 执行；完整 live 失效传播、drain/barrier、公平扫描与恢复；run/reducer/model/tool/dispatch/listener 执行；`intercept`、overlay 合并与外部制品准备。这些路径保留 `0A000` 或现有 DP1 行为，不提前实现 DP3。

@@ -1,6 +1,6 @@
 # Cordis v2 DP2：安装与成功激活生命周期 Deep Plan
 
-状态：**B0 已结项；W1 已结项（commit `50affb0`，已推送 `origin/v24`）；W2 已结项（commit `1a7deaa`，已推送 `origin/v24`）；W3 已结项（commit `cd93134`，已推送 `origin/v24`）；W4 已实现，CDP2-B 与本轮 Cordis/v24 门禁 `EXIT 0`，按授权收尾 commit/push；W5 待实施。** B0 于 2026-10-26 在指定 worktree 实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9（全部退出码 0），复核十二个冻结 SQL SHA-256 与 `57e2c1e` 冻结 diff（逐一相同 / diff 为空）。W1 的测试命令、真实结果与边界见 §6「W1 证据」；W2 的 layout 裁决、实现、19 条 post-fix 实测结果与 bounded review 修复见 §6「W2 证据」。W3–W5 的测试命令仍是未来验收要求，不得从 B0/W1/W2 绿色推断其行为。
+状态：**B0 已结项；W1 已结项（commit `50affb0`，已推送 `origin/v24`）；W2 已结项（commit `1a7deaa`，已推送 `origin/v24`）；W3 已结项（commit `cd93134`，已推送 `origin/v24`）；W4 已结项（commit `d5fd1bc`，已推送 `origin/v24`）；W5 closeout 已于 `d5fd1bc` 之上串行重跑全部当前门禁，全部 `EXIT 0`，按授权收尾 commit/push。** B0 于 2026-10-26 在指定 worktree 实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9（全部退出码 0），复核十二个冻结 SQL SHA-256 与 `57e2c1e` 冻结 diff（逐一相同 / diff 为空）。W1 的测试命令、真实结果与边界见 §6「W1 证据」；W2 的 layout 裁决、实现、19 条 post-fix 实测结果与 bounded review 修复见 §6「W2 证据」。W3–W5 的测试命令仍是未来验收要求，不得从 B0/W1/W2 绿色推断其行为。
 
 ## 1. Summary
 
@@ -1167,6 +1167,12 @@ CDP2-K 使用一次性 `TestDB` 并在 probe DB 内替换解释器；真实 `adv
 **退出码**：Cordis loader、DP1 fixture/environment/CDP1-D/CDP1-K、CDP2-K/I/A/B 串行全部 `EXIT 0`。v24 loader、s1 fixture/DDL/G1、s2 G3a、s3 G2、s4 G2b、s5 G4、s6 G5、s8 G7、s7 G6、s9 G8 串行全部 `EXIT 0`。
 
 **W4 边界**：不关闭 scope、不释放 contribution、不执行 inverse、不写 closing/divert/error。已激活且仍有 open episode 或未释放 contribution 的 fiber 不能 basic dispose。settlement 仍 `0A000`。
+
+### W5 证据（2026-10-26 closeout；HEAD `d5fd1bc` 之上重跑）
+
+重跑时本地与 `origin/v24` 均为 `d5fd1bc`。21 条命令串行全部 `EXIT 0`：Cordis loader、DP1 fixture/environment/CDP1-D/CDP1-K、CDP2-K/I/A/B、v24 loader、s1 fixture/DDL/G1、s2 G3a、s3 G2、s4 G2b、s5 G4、s6 G5、s8 G7、s7 G6、s9 G8。`git diff --exit-code 57e2c1e -- v24/load.py v24/sql v24/s1 … v24/s12` 退出 0。预算：`40_advance.sql` 1130/1200，`41_lifecycle.sql` 1097，DDL 前缀 414/900，manifest 十六文件，十张表，仅 `advance` DEFINER。
+
+**仍未覆盖**：`off`/`retry`；drift 不转 closing，不写 failure，不自动 retry；leave/unload、withdraw/release、inverse 执行；closing/divert/error 不是 DP2 成功状态；`interpret_settlement` 仍 `0A000`；`barrier_ready` 仍为 `true` 接缝；已激活且有 open episode 或未释放 contribution 的实例不能 basic dispose；direct install 不取得 CAS；continuation 仍限 originating LOGIN；多 entity 事件流留 DP5。可达命令图不构造 pin 环，cycle 由 `activation_dag` 直接调用证明。
 
 
 ## 7. Open Questions

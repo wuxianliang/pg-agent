@@ -185,7 +185,7 @@ W2 budgets and preservation:
 
 ## DP2 named-assertion coverage
 
-CDP2-K is implemented and passed by W1; CDP2-I is implemented and passed by W2; CDP2-A is implemented and passed by W3; CDP2-B remains unimplemented. They are listed with their planned work item so B0 is not read as DP2 coverage.
+CDP2-K is implemented and passed by W1; CDP2-I is implemented and passed by W2; CDP2-A is implemented and passed by W3; CDP2-B is implemented and passed by W4. They are listed with their planned work item so B0 is not read as DP2 coverage.
 
 | Assertion | Planned work item | Producer | Evidence | Exit | Uncovered remainder |
 |---|---|---|---|---:|---|
