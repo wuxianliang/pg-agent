@@ -522,7 +522,12 @@ def test_typed(db):
         'episode_progress': dict(op='episode_progress', episode_id=str(uuid.uuid4()), next_index=1,
                                  registered_through=0),
         'episode_activate': dict(op='episode_activate', episode_id=str(uuid.uuid4())),
-        'basic_dispose': dict(op='basic_dispose', install_id=str(uuid.uuid4()), fiber_ids=[]),
+        'install_dispose_request': dict(op='install_dispose_request', install_id=str(uuid.uuid4())),
+        'fiber_dispose_request': dict(op='fiber_dispose_request', install_id=str(uuid.uuid4()),
+                                      fiber_id=str(uuid.uuid4()), want_on=False, control_seq=1),
+        'fiber_dispose_finish': dict(op='fiber_dispose_finish', install_id=str(uuid.uuid4()),
+                                     fiber_id=str(uuid.uuid4())),
+        'install_dispose_finish': dict(op='install_dispose_finish', install_id=str(uuid.uuid4())),
     }
     base = delta()
     with contextlib.closing(db.connect('owner')) as owner:
@@ -575,8 +580,10 @@ def test_typed(db):
                 seq_from=0, seq_through=0, next_index=1)),
             'episode_activated': event('fiber', uuid.uuid4(), 'episode_activated',
                                         dict(episode_id=str(uuid.uuid4()), epoch=1)),
-            'install_disposed': event('install', uuid.uuid4(), 'install_disposed',
-                                       dict(fiber_ids=[str(uuid.uuid4())])),
+            'install_dispose_progress': event(
+                'install', uuid.uuid4(), 'install_dispose_progress',
+                dict(phase='requested', fiber_id=None, child_install_id=None,
+                     scheduled_targets=None)),
         }
         bads = {
             'install_created': [dict(scope_id=None), dict(scope_created='true'), dict(owner_fiber_id='x')],
@@ -584,7 +591,8 @@ def test_typed(db):
             'episode_begun': [dict(episode_id=None), dict(epoch='1'), dict(require_keys=[None]), dict(pin_ids=['x'])],
             'contributions_appended': [dict(episode_id=None), dict(seq_from='0'), dict(contribution_ids=[None])],
             'episode_activated': [dict(episode_id=None), dict(epoch='1')],
-            'install_disposed': [dict(fiber_ids=None), dict(fiber_ids=['x'])],
+            'install_dispose_progress': [dict(phase='bogus'), dict(fiber_id='x'),
+                                         dict(scheduled_targets=[None])],
         }
         for kind, ev in evs.items():
             assert check(delta(events=[ev])) is None, kind
@@ -652,7 +660,7 @@ def test_typed(db):
             query(owner, 'DROP TRIGGER w1_no_dml ON v24_cordis.episodes')
             query(owner, 'DROP FUNCTION v24_cordis.w1_no_dml()')
             owner.commit()
-    print('[CDP2-K4] nine typed ops closed shapes; branch/cross-fiber denial before domain DML')
+    print('[CDP2-K4] twelve typed ops closed shapes; branch/cross-fiber denial before domain DML')
 
 
 def test_faults(db):

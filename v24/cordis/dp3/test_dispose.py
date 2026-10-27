@@ -193,21 +193,26 @@ def parent_child(db):
 
 def test_bounded_child_first(db):
     root, child = parent_child(db)
+    grandchild = activate(db, child)
     root_install_id = root['install_id']
     out = drive(db, root_install_id)
     assert_tree_disposed(db, root_install_id)
-    assert one(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s', (child['install_id'],)) == 'disposed'
+    for item in (child, grandchild):
+        assert one(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s',
+                   (item['install_id'],)) == 'disposed'
     phases = rows(db, "SELECT payload->>'phase',payload->>'fiber_id',payload->>'child_install_id' "
                       "FROM v24_cordis.events WHERE entity_type='install' AND entity_id=%s "
                       "AND event_kind='install_dispose_progress' ORDER BY seq", (root_install_id,))
     assert phases[0][0] == 'requested', phases
     assert phases[-1][0] == 'completed' and phases[-1][2] is None, phases
+    grandchild_completed = [k for k, ph in enumerate(phases)
+                            if ph[0] == 'completed' and ph[2] == grandchild['install_id']]
     child_completed = [k for k, ph in enumerate(phases)
                        if ph[0] == 'completed' and ph[2] == child['install_id']]
     parent_fiber_disposed = [k for k, ph in enumerate(phases)
                              if ph[0] == 'fiber_disposed' and ph[1] == root['fiber_id']]
-    assert child_completed and parent_fiber_disposed, phases
-    assert child_completed[0] < parent_fiber_disposed[0], phases
+    assert grandchild_completed and child_completed and parent_fiber_disposed, phases
+    assert grandchild_completed[0] < child_completed[0] < parent_fiber_disposed[0], phases
     # Exactly one successor per dispose step, always the selected fiber's ordinal 0.
     slots = rows(db, "SELECT x.ordinal,x.kind,x.input->>'fiber_id' FROM v24_cordis.effects x "
                      "JOIN v24_cordis.fibers f ON f.id=x.fiber_id "
@@ -237,9 +242,7 @@ def test_seal_blocks_descendants(db):
     payload = declaration(owner=owner, mode='existing', existing=root['scope']['id'])
     with contextlib.closing(db.connect('service')) as conn:
         effect, outcome = command(db, conn, 'service', 'command_install', payload)
-        result = api(conn, effect, outcome)
-        conn.rollback()
-    assert result.get('error', {}).get('code') == 'owner_closing', result
+        no_write(db, conn, effect, outcome, 'owner_closing')
 
     # Activation/retry on sealed descendants is rejected before any write. 'on' for an
     # already-on fiber is the legitimate P0 no-op, so use the unactivated sibling.
@@ -251,9 +254,7 @@ def test_seal_blocks_descendants(db):
         with contextlib.closing(db.connect('service')) as conn:
             effect, outcome = command(db, conn, 'service', 'command_reconcile',
                                       reconcile_payload(uuid.UUID(fiber), action, control))
-            result = api(conn, effect, outcome)
-            conn.rollback()
-        assert result.get('error', {}).get('code') in ('owner_closing', 'stale_generation'), result
+            no_write(db, conn, effect, outcome, 'owner_closing')
 
     # Resolve returns nothing for a contribution owned by the sealed install.
     assert one(db, 'SELECT count(*) FROM v24_cordis.resolve(%s,ARRAY[%s]) WHERE available',
@@ -268,9 +269,7 @@ def test_seal_blocks_descendants(db):
     with contextlib.closing(db.connect('service')) as conn:
         effect, outcome = command(db, conn, 'service', 'command_reconcile',
                                   reconcile_payload(root_fiber, 'on', root_control))
-        result = api(conn, effect, outcome)
-        conn.rollback()
-    assert result.get('error', {}).get('code') == 'already_terminal', result
+        no_write(db, conn, effect, outcome, 'already_terminal')
     assert one(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s', (root['install_id'],)) == 'disposed'
     print('[CDP3-D2] dispose seal blocks descendant register/on/retry/resolve; tombstone never revives')
 
@@ -288,9 +287,7 @@ def test_different_login(db):
     key = successor_key(parent)
     with contextlib.closing(db.connect('operator')) as conn:
         _, outcome = command(db, conn, 'operator', 'command_reconcile', payload, key=key, effect=slot)
-        result = api(conn, slot, outcome)
-        conn.rollback()
-    assert result.get('error', {}).get('code') == 'effect_id_conflict', result
+        no_write(db, conn, slot, outcome, 'effect_id_conflict')
     assert one(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (slot,)) == 'ready'
     print('[CDP3-D3] a different LOGIN cannot take over the selected fiber reconcile')
 
@@ -396,19 +393,65 @@ def test_validator_forgery(db):
                 effect, outcome = command(db, conn, 'service', 'command_dispose',
                                           dispose_payload(root['install_id']))
                 set_probe(conn, forged)
-                result = api(conn, effect, outcome)
-                conn.rollback()
-            assert result.get('error', {}).get('code') == 'invalid_outcome', result
+                no_write(db, conn, effect, outcome, 'invalid_outcome')
         assert one(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s', (root['install_id'],)) == 'installed'
     finally:
         replace_function(db, original['interpret_command'])
     print('[CDP3-D7] validator recomputes target/phase/successor and rejects forged interpreter output')
 
 
+def test_forged_successor(db):
+    root = root_install(db)
+    child = activate(db, root)
+    control = one(db, 'SELECT control_seq FROM v24_cordis.fibers WHERE id=%s', (child['fiber_id'],))
+    episode = one(db, 'SELECT current_episode_id FROM v24_cordis.fibers WHERE id=%s', (child['fiber_id'],))
+    parent, result, _ = dispose_request(db, root['install_id'])
+    assert result['emitted'] == []
+    payload = reconcile_payload(uuid.UUID(child['fiber_id']), 'advance', control)
+    key = successor_key(parent)
+    forged = derive(db.roles['service'], key, 'command_reconcile')
+    mutate(db, "INSERT INTO v24_cordis.effects(id,parent_id,ordinal,fiber_id,episode_id,kind,status,"
+               "input,request_actor) VALUES(%s,%s,0,%s,%s,'command_reconcile','ready',%s,%s)",
+           (forged, parent, child['fiber_id'], episode, Json(payload), db.roles['service']))
+    with contextlib.closing(db.connect('service')) as conn:
+        _, outcome = command(db, conn, 'service', 'command_reconcile', payload, key=key, effect=forged)
+        no_write(db, conn, forged, outcome, 'effect_id_conflict')
+    mutate(db, 'DELETE FROM v24_cordis.effects WHERE id=%s', (forged,))
+    # A second parent really emits the selected child successor; an ordinal-1 forgery
+    # under it is rejected even though the fiber is in the sealed subtree.
+    parent2, result2, _ = dispose_request(db, root['install_id'])
+    assert len(result2['emitted']) == 1, result2
+    key2 = successor_key(parent2, 1)
+    forged2 = derive(db.roles['service'], key2, 'command_reconcile')
+    root_control = one(db, 'SELECT control_seq FROM v24_cordis.fibers WHERE id=%s', (root['fiber_id'],))
+    root_episode = one(db, 'SELECT current_episode_id FROM v24_cordis.fibers WHERE id=%s', (root['fiber_id'],))
+    payload2 = reconcile_payload(uuid.UUID(root['fiber_id']), 'advance', root_control)
+    mutate(db, "INSERT INTO v24_cordis.effects(id,parent_id,ordinal,fiber_id,episode_id,kind,status,"
+               "input,request_actor) VALUES(%s,%s,1,%s,%s,'command_reconcile','ready',%s,%s)",
+           (forged2, parent2, root['fiber_id'], root_episode, Json(payload2), db.roles['service']))
+    with contextlib.closing(db.connect('service')) as conn:
+        _, outcome = command(db, conn, 'service', 'command_reconcile', payload2, key=key2, effect=forged2)
+        no_write(db, conn, forged2, outcome, 'effect_id_conflict')
+    print('[CDP3-D8] dispose-parent successors require ordinal 0 and the parent receipt emitted id')
+
+
+def test_history_does_not_inflate_closure(db):
+    root = root_install(db)
+    mutate(db, "INSERT INTO v24_cordis.effects(id,fiber_id,kind,status,input,request_actor,outcome,settled_at) "
+               "SELECT gen_random_uuid(),%s,'dispatch','succeeded','{}','seed','{}',now() "
+               'FROM generate_series(1,600)', (root['fiber_id'],))
+    assert one(db, 'SELECT count(*) FROM v24_cordis.effects WHERE fiber_id=%s',
+               (root['fiber_id'],)) >= 600
+    out = drive(db, root['install_id'])
+    assert_tree_disposed(db, root['install_id'])
+    print(f'[CDP3-D9] 600 settled historical effects do not inflate closure; '
+          f'attempts={out["attempts"]}/{out["fuel"]}')
+
+
 def main():
     tests = (test_bounded_child_first, test_seal_blocks_descendants, test_different_login,
              test_host_io_states, test_deferred_zero_write_and_g, test_unknown_effect,
-             test_validator_forgery)
+             test_validator_forgery, test_forged_successor, test_history_does_not_inflate_closure)
     with Server() as server:
         for test in tests:
             with TestDB(server) as db:

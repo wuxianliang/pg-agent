@@ -1109,30 +1109,17 @@ EXCEPTION WHEN SQLSTATE 'P0401' THEN RETURN NULL;
 END $$;
 CREATE FUNCTION v24_cordis.dispose_command_seed(p_payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE result jsonb:='[]'::jsonb; iid uuid; plan jsonb; fid uuid; ep uuid; n int;
+DECLARE result jsonb:='[]'::jsonb; iid uuid; plan jsonb; fid uuid; n int;
 BEGIN
  IF NOT v24_cordis.json_uuid(p_payload->'install_id') THEN RETURN '[]'::jsonb; END IF;
  iid:=(p_payload->>'install_id')::uuid;
  result:=result||jsonb_build_array(jsonb_build_object('t','installs','id',iid::text));
  plan:=v24_cordis.dispose_plan(iid);
+ -- Only the object this step can write is locked. History, pins, runs, effects and
+ -- contribution proof sets are read under G; released/settled history never inflates closure.
  IF plan->>'kind' IN ('fiber_request','fiber_control','schedule','fiber_finish','wait_slot') THEN
   fid:=(plan->>'fiber_id')::uuid;
   result:=result||jsonb_build_array(jsonb_build_object('t','fibers','id',fid::text));
-  SELECT f.current_episode_id INTO ep FROM v24_cordis.fibers f WHERE f.id=fid;
-  result:=result||(SELECT coalesce(jsonb_agg(x),'[]'::jsonb) FROM (
-   SELECT jsonb_build_object('t','episodes','id',e.id) x FROM v24_cordis.episodes e
-    WHERE e.fiber_id=fid
-   UNION ALL SELECT jsonb_build_object('t','contributions','id',c.id)
-    FROM v24_cordis.contributions c WHERE c.fiber_id=fid AND c.released_at IS NULL
-   UNION ALL SELECT jsonb_build_object('t','runs','id',r.id)
-    FROM v24_cordis.runs r WHERE r.owner_fiber_id=fid
-   UNION ALL SELECT jsonb_build_object('t','effects','id',x.id)
-    FROM v24_cordis.effects x WHERE x.fiber_id=fid
-     OR (ep IS NOT NULL AND x.episode_id=ep)
-     OR x.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=fid)
-   UNION ALL SELECT jsonb_build_object('t','pins','id',p.id) FROM v24_cordis.pins p
-    WHERE p.consumer_fiber_id=fid
-     OR p.contribution_id IN (SELECT id FROM v24_cordis.contributions WHERE fiber_id=fid)) q);
  ELSIF plan->>'kind'='child_install_finish' THEN
   result:=result||jsonb_build_array(jsonb_build_object('t','installs','id',plan->>'install_id'));
  END IF;

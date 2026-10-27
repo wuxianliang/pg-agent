@@ -6,7 +6,7 @@ DP3 从 DP2 内核继续做失效传播与可逆退役。权威规格是 `docs/d
 
 **B0=`ba4f533`、W1=`103ec596`、W2=`72af2528`、W3=`284d7f2` 已发布到 `origin/v24`。W4 已于 2026-10-27 在 W3 基线上实现并通过 24 条串行门禁；本提交发布 W4 到 `origin/v24`。W5 尚未实现。**
 
-W4 最终门禁于 2026-10-27 在 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`、分支 `v24`、HEAD `284d7f2d420f6c9a73b1326bb7b4497ee8fa498e` 加 W4 改动（提交前）上实跑。计划 §4.1 的 21 条旧命令、CDP3-P、CDP3-T、CDP3-D 依次单独启动并等待退出，**24 条全部退出 0，总耗时 95 秒**。命令、耗时及结果见 `docs/reviews/cordis-v2-dp3-conformance-matrix-2026-10-27.md` 的 W4 节。
+W4 最终门禁于 2026-10-27 在 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`、分支 `v24`、HEAD `284d7f2d420f6c9a73b1326bb7b4497ee8fa498e` 加 W4 改动（提交前）上实跑。计划 §4.1 的 21 条旧命令、CDP3-P、CDP3-T、CDP3-D 依次单独启动并等待退出，**24 条全部退出 0，总耗时 93 秒**。命令、耗时及结果见 `docs/reviews/cordis-v2-dp3-conformance-matrix-2026-10-27.md` 的 W4 节。
 
 W3 最终门禁于 2026-10-27 在 W2 基线上实跑，23 条全部退出 0，总耗时 62.92 秒；其生产 P6 证据保留在 matrix/ledger 的 W3 节。
 
@@ -23,11 +23,13 @@ W3 最终门禁于 2026-10-27 在 W2 基线上实跑，23 条全部退出 0，�
 - `install_dispose_progress` 严格四键，phase 仅 `requested/fiber_requested/fiber_disposed/work_scheduled/completed`，`scheduled_targets` ≤1。domain 写恰一条领域事件；successor-only schedule 恰一条 `work_scheduled`；coalescing/replay/deferred/error 零事件。
 - `continuation_state` 新增 dispose parent → 该 parent 已 seal 的 owner subtree 中 selected fiber reconcile 分支；`dispose_delta` 独立重算 target/phase/successor/event，伪造 interpreter 输出零写拒绝。
 - `dispose_plan` 对 host_io 六态保守返回 `unsupported/0A000`，unknown 返回 `blocked_unknown`，open run / 非 reconcile ready/claimed effect 返回 deferred；不持 G 等待，deferred 十表零写。
-- CDP3-D 覆盖真实 activated parent/child 的 child-first、parent-last、seal no-revival、不同 LOGIN 拒绝、原 request replay、fresh request 合并，以及燃料 `16×(1+F+I+E+C+P)` 内的 `(M,U)` rank driver。
+- `dispose_command_seed` 只锁定 target install 与本次选中 fiber/child install；episode/owner/scope 由引用链补入，settled/released 历史不膨胀 closure。dispose parent successor 必须 ordinal 0 且被 parent receipt 的 `emitted` 精确列出。
+- `basic_dispose` 已从生产 typed op、validator、applier 和事件闭集删除；非生产 probe 也使用 staged op。
+- CDP3-D 覆盖 root→child→grandchild 的 child-first、parent-last、seal no-revival、不同 LOGIN 拒绝、原 request replay、fresh request 合并、伪造后继拒绝、600 条历史 effect 不膨胀 closure，以及燃料 `16×(1+F+I+E+C+P)` 内的 `(M,U)` rank driver。一次 Oracle review 的 closure/successor/basic-dispose/negative-test 发现和自审的多级 child-install 顺序已修复。
 
 ## 容量与冻结
 
-40=1407、41=1206、42=966，全部 helper 合计 **3579≤5000** 物理行。共享预算函数仍在临时三文件树验证恰好5000通过、5001拒绝。DDL 前缀461≤900，manifest17（loader未改、已核验），十表，仅 `advance` 为 SECURITY DEFINER，public function EXECUTE 0；源码 VIEW/EXTENSION 均0。十二份 frozen SQL SHA-256 与 DP2 matrix 一致，`57e2c1e` frozen diff、v8 相对 HEAD diff、`git diff --check` 均退出0。
+40=1373、41=1193、42=964，全部 helper 合计 **3530≤5000** 物理行。共享预算函数仍在临时三文件树验证恰好5000通过、5001拒绝。DDL 前缀461≤900，manifest17（loader未改、已核验），十表，仅 `advance` 为 SECURITY DEFINER，public function EXECUTE 0；源码 VIEW/EXTENSION 均0。十二份 frozen SQL SHA-256 与 DP2 matrix 一致，`57e2c1e` frozen diff、v8 相对 HEAD diff、`git diff --check` 均退出0。
 
 ## 历史与证明边界
 

@@ -11,11 +11,6 @@ BEGIN
   refs:='[]'::jsonb;
   IF item ? 'fiber_id' THEN refs:=refs||jsonb_build_array(jsonb_build_object('t','fibers','id',item->'fiber_id')); END IF;
   IF item ? 'episode_id' THEN refs:=refs||jsonb_build_array(jsonb_build_object('t','episodes','id',item->'episode_id')); END IF;
-  IF item->>'op'='basic_dispose' THEN
-   refs:=refs||jsonb_build_array(jsonb_build_object('t','installs','id',item->'install_id'));
-   SELECT refs||coalesce(jsonb_agg(jsonb_build_object('t','fibers','id',value)),'[]'::jsonb) INTO refs
-    FROM jsonb_array_elements(item->'fiber_ids');
-  END IF;
   IF item->>'op' IN ('contributions_withdraw','contribution_inverse') THEN
    SELECT refs||coalesce(jsonb_agg(jsonb_build_object('t','contributions','id',value)),'[]'::jsonb) INTO refs
     FROM jsonb_array_elements(item->'contribution_ids');
@@ -81,10 +76,6 @@ BEGIN
    SELECT state='disposed' AND v24_cordis.dispose_block_reason(id) IS NULL
     AND NOT EXISTS(SELECT 1 FROM v24_cordis.fibers f WHERE f.install_id=i.id
      AND f.disposed_at IS NULL) INTO ok
-    FROM v24_cordis.installs i WHERE id=(item->>'install_id')::uuid;
-  WHEN 'basic_dispose' THEN
-   SELECT state='disposed' AND NOT EXISTS(SELECT 1 FROM v24_cordis.fibers f
-    WHERE f.install_id=i.id AND f.disposed_at IS NULL) INTO ok
     FROM v24_cordis.installs i WHERE id=(item->>'install_id')::uuid;
   WHEN 'fiber_control' THEN
    SELECT want_on=(item->>'want_on')::boolean AND control_seq=(item->>'control_seq')::bigint INTO ok
@@ -844,7 +835,7 @@ BEGIN
 END $$;
 CREATE FUNCTION v24_cordis.dispose_plan(p_install uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE inst v24_cordis.installs%ROWTYPE; rec record; reason text;
+DECLARE inst v24_cordis.installs%ROWTYPE; rec record; reason text; first_block jsonb;
 BEGIN
  SELECT * INTO inst FROM v24_cordis.installs WHERE id=p_install;
  IF NOT FOUND THEN RETURN jsonb_build_object('kind','missing'); END IF;
@@ -885,16 +876,21 @@ BEGIN
   RETURN v24_cordis.dispose_fiber_next(p_install,rec.id);
  END LOOP;
  FOR rec IN
-  SELECT i.id FROM (SELECT DISTINCT install_id FROM v24_cordis.dispose_subtree(p_install)
-   WHERE install_id<>p_install) t JOIN v24_cordis.installs i ON i.id=t.install_id
+  SELECT i.id FROM (SELECT install_id,max(depth) AS depth
+   FROM v24_cordis.dispose_subtree(p_install)
+   WHERE install_id<>p_install GROUP BY install_id) t
+  JOIN v24_cordis.installs i ON i.id=t.install_id
   WHERE i.state<>'disposed'
    AND NOT EXISTS(SELECT 1 FROM v24_cordis.fibers f WHERE f.install_id=i.id AND f.disposed_at IS NULL)
-  ORDER BY i.id LOOP
+  ORDER BY t.depth DESC,i.id LOOP
   reason:=v24_cordis.dispose_block_reason(rec.id);
   IF reason IS NULL THEN
-   RETURN jsonb_build_object('kind','child_install_finish','install_id',rec.id); END IF;
-  RETURN v24_cordis.dispose_block_kind(reason);
+   RETURN jsonb_build_object('kind','child_install_finish','install_id',rec.id);
+  ELSIF first_block IS NULL THEN
+   first_block:=v24_cordis.dispose_block_kind(reason);
+  END IF;
  END LOOP;
+ IF first_block IS NOT NULL THEN RETURN first_block; END IF;
  FOR rec IN
   SELECT t.id FROM v24_cordis.dispose_subtree(p_install) t
   JOIN v24_cordis.fibers f ON f.id=t.id
@@ -928,7 +924,9 @@ BEGIN
     'receipt',jsonb_build_object('status','succeeded'),
     'events',jsonb_build_array(jsonb_build_object('entity_type','install','entity_id',to_jsonb(p_install),
      'event_kind','install_dispose_progress','payload',jsonb_build_object('phase','fiber_requested',
-      'fiber_id',to_jsonb(fid),'child_install_id',to_jsonb(child),'scheduled_targets',jsonb_build_array(fid)))),
+      'fiber_id',to_jsonb(fid),'child_install_id',to_jsonb(child),'scheduled_targets',
+      CASE WHEN plan->>'kind'='fiber_control' THEN 'null'::jsonb
+       ELSE jsonb_build_array(fid) END))),
     'successors',CASE WHEN plan->>'kind'='fiber_control' THEN '[]'::jsonb
      ELSE v24_cordis.reconcile_successor(fid,seq) END);
   ELSIF plan->>'kind'='schedule' THEN

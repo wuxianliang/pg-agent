@@ -124,9 +124,6 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
      AND jsonb_array_length(p_payload->'scheduled_targets')<=1
      AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_payload->'scheduled_targets') e
       WHERE NOT v24_cordis.json_uuid(e.value))))
-  WHEN p_kind='install_disposed' THEN
-   coalesce(v24_cordis.exact_keys(p_payload,ARRAY['fiber_ids']),false)
-   AND v24_cordis.json_array_valid(p_payload->'fiber_ids','uuid',512)
   WHEN p_kind='receipt' THEN jsonb_typeof(p_payload)='object'
   ELSE false END,false)
 $$;
@@ -325,11 +322,14 @@ BEGIN
   IF par.fiber_id IS DISTINCT FROM e.fiber_id THEN
    RETURN jsonb_build_object('code','effect_id_conflict','reason','continuation_parent'); END IF;
  ELSIF par.kind='command_dispose' THEN
-  -- A dispose parent may only schedule a reconcile inside its sealed owner subtree.
-  IF NOT v24_cordis.json_uuid(par.input->'install_id')
+  -- A dispose parent may only have its own ordinal-0 successor, inside its sealed
+  -- owner subtree, and the parent receipt must name this exact effect.
+  IF ord<>0 OR NOT v24_cordis.json_uuid(par.input->'install_id')
    OR NOT v24_cordis.fiber_in_install_subtree(e.fiber_id,(par.input->>'install_id')::uuid)
    OR NOT EXISTS(SELECT 1 FROM v24_cordis.installs WHERE id=(par.input->>'install_id')::uuid
-     AND state IN ('dispose_pending','disposed')) THEN
+     AND state IN ('dispose_pending','disposed'))
+   OR NOT EXISTS(SELECT 1 FROM v24_cordis.requests rq WHERE rq.effect_id=pid
+     AND rq.response->'emitted' @> jsonb_build_array(e.id::text)) THEN
    RETURN jsonb_build_object('code','effect_id_conflict','reason','continuation_parent'); END IF;
  ELSE
   RETURN jsonb_build_object('code','effect_id_conflict','reason','continuation_parent');
@@ -407,7 +407,7 @@ DECLARE item jsonb; sub jsonb; op text; ordinal int; ordinals int[]:=ARRAY[]::in
  n_scope int:=0; n_install int:=0; n_fiber int:=0; n_begin int:=0; n_service int:=0; n_child int:=0;
  n_progress int:=0; n_control int:=0; n_activate int:=0; n_dispose int:=0; n_retire int:=0;
  n_close_start int:=0; n_withdraw int:=0; n_inverse int:=0; n_pin_release int:=0; n_close_ep int:=0;
- i int; keys text[];
+ i int;
 BEGIN
  IF NOT coalesce(v24_cordis.exact_keys(p_delta,ARRAY['domain','receipt','events','successors']),false)
   OR jsonb_typeof(p_delta->'domain')<>'array' OR jsonb_typeof(p_delta->'events')<>'array'
@@ -631,19 +631,6 @@ BEGIN
     OR NOT v24_cordis.json_uuid(item->'episode_id') THEN
     RETURN v24_cordis.error_v1('invalid_outcome');
    END IF;
-  ELSIF op='basic_dispose' THEN
-   n_dispose:=n_dispose+1;
-   IF n_dispose>1 OR NOT coalesce(v24_cordis.exact_keys(item,ARRAY['op','install_id','fiber_ids']),false)
-    OR NOT v24_cordis.json_uuid(item->'install_id') OR jsonb_typeof(item->'fiber_ids')<>'array' THEN
-    RETURN v24_cordis.error_v1('invalid_outcome');
-   END IF;
-   keys:=ARRAY(SELECT jsonb_array_elements_text(item->'fiber_ids'));
-   IF cardinality(keys)<>jsonb_array_length(item->'fiber_ids')
-    OR EXISTS(SELECT 1 FROM unnest(keys) k WHERE k !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
-    OR cardinality(keys)<>cardinality(ARRAY(SELECT DISTINCT unnest(keys)))
-    OR keys<>ARRAY(SELECT unnest(keys) ORDER BY 1) THEN
-    RETURN v24_cordis.error_v1('invalid_outcome');
-   END IF;
   ELSIF op='install_dispose_request' THEN
    n_dispose:=n_dispose+1;
    IF n_dispose>1 OR NOT coalesce(v24_cordis.exact_keys(item,ARRAY['op','install_id']),false)
@@ -688,7 +675,7 @@ LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE v_kind text; v_payload jsonb; v_action text; v_branch text; v_domain jsonb:=p_delta->'domain'; v_req_key text; v_dag jsonb; v_dag_ids uuid[];
  v_fiber uuid; f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE; inst v24_cordis.installs%ROWTYPE; v_item jsonb; v_op text; v_allowed text[]; v_i int; v_n int; v_seq bigint; v_old_next int; v_old_reg int;
  v_provides jsonb; v_requires jsonb; v_prov jsonb; v_scope jsonb; v_install jsonb; v_fiberc jsonb; v_begin jsonb; v_control jsonb; v_activate jsonb;
- v_dispose jsonb; v_progress jsonb; v_retire jsonb; v_close_start jsonb; v_withdraw jsonb; v_ev jsonb; v_exp jsonb; v_pin jsonb; v_bind jsonb; v_scope_id uuid; v_install_id uuid; v_fiber_id uuid; v_episode_id uuid; v_epoch int; v_count int;
+ v_plan jsonb; v_progress jsonb; v_retire jsonb; v_close_start jsonb; v_withdraw jsonb; v_ev jsonb; v_pin jsonb; v_bind jsonb; v_scope_id uuid; v_install_id uuid; v_fiber_id uuid; v_episode_id uuid; v_epoch int; v_count int;
  v_contrib_ids jsonb:='[]'; v_pin_ids jsonb:='[]'; v_require_keys jsonb:='[]'; v_first bigint; v_last bigint; v_ctl bigint; v_maxbig bigint;
  v_prov_epoch int; v_prov_fiber uuid; v_prov_ep uuid; v_prov_cv text; v_prov_digest text; v_expected jsonb;
  v_resolved record;
@@ -784,7 +771,7 @@ BEGIN
   WHEN 'p2' THEN ARRAY['contribution_append','episode_progress']
   WHEN 'p4' THEN ARRAY['episode_activate']
   WHEN 'dispose' THEN ARRAY['install_dispose_request','fiber_dispose_request',
-   'fiber_dispose_finish','install_dispose_finish','basic_dispose']
+   'fiber_dispose_finish','install_dispose_finish']
   WHEN 'teardown' THEN ARRAY['fiber_retire','episode_close_start','contributions_withdraw']
   WHEN 'p6' THEN ARRAY['contribution_inverse','pins_release','episode_close']
   ELSE ARRAY[]::text[] END;
@@ -799,7 +786,6 @@ BEGIN
  SELECT value INTO v_begin FROM jsonb_array_elements(v_domain) x WHERE x.value->>'op'='episode_begin' LIMIT 1;
  SELECT value INTO v_control FROM jsonb_array_elements(v_domain) x WHERE x.value->>'op'='fiber_control' LIMIT 1;
  SELECT value INTO v_activate FROM jsonb_array_elements(v_domain) x WHERE x.value->>'op'='episode_activate' LIMIT 1;
- SELECT value INTO v_dispose FROM jsonb_array_elements(v_domain) x WHERE x.value->>'op'='basic_dispose' LIMIT 1;
  SELECT value INTO v_progress FROM jsonb_array_elements(v_domain) x WHERE x.value->>'op'='episode_progress' LIMIT 1;
  SELECT value INTO v_retire FROM jsonb_array_elements(v_domain) x WHERE x.value->>'op'='fiber_retire' LIMIT 1;
  SELECT value INTO v_close_start FROM jsonb_array_elements(v_domain) x WHERE x.value->>'op'='episode_close_start' LIMIT 1;
@@ -981,26 +967,10 @@ BEGIN
   END IF;
   RETURN NULL;
  ELSIF v_branch='dispose' THEN
-  IF v_dispose IS NOT NULL THEN
-   -- Legacy compatibility for non-production probe deltas; production never emits basic_dispose.
-   IF (v_dispose->>'install_id')::uuid<>inst.id OR inst.state<>'installed' THEN
-    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','dispose_context'));
-   END IF;
-   SELECT coalesce(jsonb_agg(id::text ORDER BY id::text),'[]') INTO v_exp
-    FROM v24_cordis.fibers WHERE install_id=inst.id;
-   IF v_dispose->'fiber_ids' IS DISTINCT FROM v_exp THEN
-    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','dispose_set'));
-   END IF;
-   IF v_ev IS NULL OR v_ev->>'entity_type' IS DISTINCT FROM 'install' OR (v_ev->>'entity_id')::uuid IS DISTINCT FROM inst.id
-    OR v_ev->>'event_kind' IS DISTINCT FROM 'install_disposed'
-    OR NOT coalesce(v24_cordis.exact_keys(v_ev->'payload',ARRAY['fiber_ids']),false)
-    OR v_ev->'payload'->'fiber_ids' IS DISTINCT FROM v_exp THEN
-    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','event_shape'));
-   END IF;
-   IF p_delta->'successors'<>'[]'::jsonb THEN
-    RETURN v24_cordis.error_v1('invalid_outcome');
-   END IF;
-   RETURN NULL;
+  v_plan:=v24_cordis.dispose_plan(inst.id);
+  IF v_plan->>'kind' NOT IN ('request','fiber_request','fiber_control','schedule',
+    'fiber_finish','child_install_finish','install_finish','wait_slot') THEN
+   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','dispose_state'));
   END IF;
   IF p_delta IS DISTINCT FROM v24_cordis.dispose_delta(inst.id) THEN
    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','dispose_diagnosis'));
@@ -1048,7 +1018,7 @@ BEGIN
   'contribution_append','episode_progress','fiber_control','fiber_retire','episode_close_start',
   'contributions_withdraw','contribution_inverse','pins_release','episode_close',
   'episode_activate','install_dispose_request','fiber_dispose_request','fiber_dispose_finish',
-  'install_dispose_finish','basic_dispose'] LOOP
+  'install_dispose_finish'] LOOP
   FOR item IN SELECT value FROM jsonb_array_elements(p_delta->'domain') WITH ORDINALITY x(value,ord)
    WHERE x.value->>'op'=v_op ORDER BY ord LOOP
    IF v_op='scope_create' THEN
@@ -1162,10 +1132,6 @@ BEGIN
      disposed_at=clock_timestamp()
      WHERE id=(item->>'fiber_id')::uuid AND disposed_at IS NULL;
    ELSIF v_op='install_dispose_finish' THEN
-    UPDATE v24_cordis.installs SET state='disposed' WHERE id=(item->>'install_id')::uuid;
-   ELSIF v_op='basic_dispose' THEN
-    UPDATE v24_cordis.fibers SET dispose_requested_at=coalesce(dispose_requested_at,clock_timestamp()),
-     disposed_at=clock_timestamp() WHERE install_id=(item->>'install_id')::uuid AND disposed_at IS NULL;
     UPDATE v24_cordis.installs SET state='disposed' WHERE id=(item->>'install_id')::uuid;
    END IF;
   END LOOP;
