@@ -171,6 +171,22 @@ BEGIN
  END LOOP;
  RETURN false;
 END $$;
+CREATE FUNCTION v24_cordis.lineage_fault(p_fiber uuid) RETURNS text
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE cur uuid:=p_fiber; seen uuid[]:=ARRAY[]::uuid[]; f v24_cordis.fibers%ROWTYPE; i int:=0;
+BEGIN
+ -- Distinguish graph faults from an ordinary sealed lineage fact.
+ WHILE cur IS NOT NULL LOOP
+  i:=i+1;
+  IF cur=ANY(seen) THEN RETURN 'cycle'; END IF;
+  IF i>512 THEN RETURN 'closure_overflow'; END IF;
+  seen:=array_append(seen,cur);
+  SELECT * INTO f FROM v24_cordis.fibers WHERE id=cur;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  cur:=f.owner_id;
+ END LOOP;
+ RETURN NULL;
+END $$;
 CREATE FUNCTION v24_cordis.fiber_in_install_subtree(p_fiber uuid,p_install uuid) RETURNS boolean
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE cur uuid:=p_fiber; seen uuid[]:=ARRAY[]::uuid[]; f v24_cordis.fibers%ROWTYPE; i int:=0;
@@ -696,6 +712,8 @@ BEGIN
  IF NOT v24_cordis.scope_lineage_open(f.scope_id) THEN
   RETURN jsonb_build_object('code','scope_closed','reason','reconcile_scope'); END IF;
  IF v24_cordis.scope_intercepted(f.scope_id) THEN RETURN v24_cordis.activation_fail('install_intercept'); END IF;
+ IF v24_cordis.lineage_fault(f.id) IS NOT NULL THEN
+  RETURN jsonb_build_object('code','retry_with_closure','reason','provider_closure'); END IF;
  IF f.dispose_requested_at IS NOT NULL OR f.disposed_at IS NOT NULL
   OR v24_cordis.dispose_ancestor_sealed(f.id)
   OR (NOT p_control AND f.retire_started_at IS NOT NULL) THEN

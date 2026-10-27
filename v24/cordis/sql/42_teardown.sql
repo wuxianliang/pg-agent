@@ -249,6 +249,8 @@ BEGIN
  IF f.dispose_requested_at IS NOT NULL OR f.disposed_at IS NOT NULL THEN RETURN 'dispose'; END IF;
  SELECT * INTO i FROM v24_cordis.installs WHERE id=f.install_id;
  IF NOT FOUND OR i.state<>'installed' THEN RETURN 'install'; END IF;
+ fault:=v24_cordis.lineage_fault(f.owner_id);
+ IF fault IS NOT NULL THEN RETURN fault; END IF;
  IF v24_cordis.dispose_ancestor_sealed(f.owner_id) THEN RETURN 'lineage'; END IF;
  IF i.overlay<>'{}'::jsonb THEN RETURN 'overlay'; END IF;
  fault:=v24_cordis.scope_live_fault(f.scope_id);

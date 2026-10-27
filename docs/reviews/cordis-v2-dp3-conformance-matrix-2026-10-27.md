@@ -366,3 +366,82 @@ A post-implementation Oracle review raised four issues; all were verified and fi
 | `basic_dispose` and `install_disposed` were removed from the typed-op, validator, applier and event closed sets. Staged dispose is the only path, including probe tests. |
 | `lifecycle_step` remains read-only idle and unwired; production dispose selection lives in `dispose_plan`/`dispose_delta`. |
 | W4 is delivered by this commit to `origin/v24`. |
+
+## W5 / closeout (2026-10-27)
+
+Same worktree and branch `v24`, HEAD `f6a3a74` plus W5 changes before staging. The 21 legacy commands and CDP3-P/L/T/D/B were launched one process at a time; **all 26 exited 0, total 121.64 seconds**. W4's 24-command table omitted CDP3-L; W5 includes it. The first W5 sequence stopped at CDP3-L5 on the owner-chain cycle fixture, exposing a W4 regression that was fixed before this final sequence (see the deviation row below).
+
+| # | Command | Exit | Duration (s) | Evidence |
+|---:|---|---:|---:|---|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0.59 | canonical loader, 17 entries |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1.75 | fixture/role family/OID cleanup |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1.68 | CDP1-E |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 1.78 | CDP1-D, DDL 461 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 16.03 | CDP1-K, 5000/5001 budget proof |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3.64 | CDP2-K, staged dispose probe path |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4.49 | CDP2-I, ancestor seal admission |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3.55 | CDP2-A |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 4.40 | CDP2-B, staged dispose and obligations |
+| 10 | `uv run python v24/load.py` | 0 | 0.56 | v24 loader self-check |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1.63 | v24/s1 setup |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1.86 | G1-O owner DDL probes |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2.73 | G1 kernel/commands/ACL |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 1.96 | S2 W1-W6 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5.91 | S3 W1-W7 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 4.07 | S4 W1-W6 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3.54 | S5 W1-W4 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 4.91 | S6 W1-W4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 3.00 | S8 W1-W3 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 7.46 | S7 W1-W2 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 11.05 | G8, 23 cases |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3.16 | CDP3-P |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 11.46 | CDP3-L, including cycle/overflow fix |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 7.80 | CDP3-T |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 5.91 | CDP3-D |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 6.72 | CDP3-B1…B13 |
+
+Order s8 before s7 follows §4.1. No gate was run concurrently. The earlier W5 sequence that failed at CDP3-L5 is not counted as green; the table above is the final continuous sequence after the fix.
+
+| W5 invariant | Actual evidence |
+|---|---|
+| Layout / budget / manifest | 10 tables; 0 new public writers; only `advance` is SECURITY DEFINER; 40/41/42 and future 40–49 helpers total 3550≤5000 with temporary 5000/5001 proof; DDL prefix 461≤900; manifest 17; source VIEW/EXTENSION 0; public function EXECUTE 0. CDP3-B1 |
+| Production service/child | Real install/activation/resolve creates a live service contribution and a live child contribution; no fixture is used. CDP3-B2 |
+| Listener fixture boundary | A listener row is an explicitly labelled owner fixture; real P6 teardown releases the ledger row and keeps descriptor/inverse/physical row. No production listener registration or dispatch is claimed. CDP3-B3 |
+| Unsupported inverse | Real cell and reservation contributions each make `advance` raise `0A000`; ten-table snapshot is unchanged. Unknown inverse returns `blocked_unknown` with zero write and keeps the debt row. CDP3-B4 |
+| Barrier fields / lease expiry | Ready and claimed non-reconcile effects defer the drain; status, claim owner, lease, attempt and fence are unchanged; an expired lease is not cancelled, completed or treated as release. A second connection takes G after the caller commits. CDP3-B5 |
+| Settlement / unwired surfaces | Claimed `host_io` settlement still raises `0A000` with no write; intercept and overlay installs raise `0A000`; dispatch/run_start cannot be admitted as commands; no production INSERT/UPDATE of `runs`, no recovery/scanner function, and `run_pin_release_delta` is read-only. CDP3-B6 |
+| Caps / history | Structural successor 16 accepted and 17/duplicate refused; real closure seed 512 accepted and 513 refused; 600 terminal parents plus 601 closed generations leave the current closure under 50; real P6 inverse batches 32 then 1. CDP3-B7 |
+| Address concurrency | Two simultaneous same-realm/same-key P2 attempts through separate connections yield exactly one live service contribution and one committed p2 `provide_conflict/address_conflict` Raise; two different realms both stay live and resolve locally. CDP3-B8 |
+| P5 exact set | Exactly 256 service contributions are withdrawn with the exact event ID set; 257 eligible contributions refuse before writes with `retry_with_closure/withdraw_budget`; child/reservation debts are untouched. CDP3-B9 |
+| Post-lock drift | Another session locks a pin/run/child contribution, then mutates its reference after the advance's first closure read; the real advance returns `retry_with_closure` with no DML, request, event or successor. CDP3-B10b |
+| Postcondition rollback | Suppressing the inverse contribution update raises `23514`; suppressing the close episode update also raises `23514`; ten-table snapshots are unchanged in both cases. CDP3-B10 |
+| Event cardinality | Domain+successor dispose produces exactly one `fiber_requested` event; successor-only produces exactly one `work_scheduled` event and no lifecycle-table change; coalescing emits nothing; replay adds no event. CDP3-B11 |
+| Validator independence | A replaced interpreter returning forged target, phase, event or successor is rejected by the production validator with `invalid_outcome` and zero write. CDP3-B12 |
+| Iterator / loader / guards | Iterator keys stay exactly `v,next_index,registered_through,control_seq`; the canonical loader refuses autocommit/online use; control-seq decrease, closed-episode rewrite, withdrawn/released reversal, run-end rewrite and scope-close rewrite all raise and leave snapshots unchanged. CDP3-B13 |
+
+| Evidence class | W5 examples |
+|---|---|
+| Production path | Real service and child activation; real P5/P6 inside teardown; real staged dispose; real same-key race through two connections; real 512/513 closure discovery; real inverse/close postcondition rollback; real event cardinality; real validator rejection; real forward-only guard probes. |
+| Owner fixture | Listener ledger row; cell/reservation/unknown inverse rows; ready/claimed barrier effect; claimable `host_io` row for settlement; run/pin/child drift targets and pre-lock mutation; 600 terminal parents and 601 closed generations; temporary fault-injection triggers; forged interpreter probe. Each is labelled at the point of use. |
+| Not implemented / unclaimed | DP4 settlement, DP5 listener/dispatch/intercept/overlay, DP6 scanner/fairness/external recovery, unbounded child cleanup fan-out, production listener registration/dispatch and a production run loop. Owner fixtures do not upgrade those boundaries. |
+
+| W5 capacity / freeze / scope | Observed |
+|---|---|
+| Helper physical lines | 40=1373, 41=1211, 42=966, sum **3550≤5000**; temporary 5000/5001 proof runs inside CDP1-K/CDP2-K/CDP3-B |
+| DDL prefix | 461≤900 |
+| Manifest / tables | 17 exact entries; 10 tables; source VIEW/EXTENSION 0 |
+| DEFINER / ACL | one `SECURITY DEFINER` (`advance`); public function EXECUTE 0; public DML 0; service/admin/operator can execute only `advance` |
+| Freeze | all 12 `v24/sql` SHA-256 values equal the DP2 matrix; `57e2c1e` frozen diff exit 0; v8 vs HEAD diff exit 0 |
+| Hygiene/isolation | `git diff --check` exit 0; pre-existing dirty docs and unrelated untracked files preserved; only W5 paths staged |
+| Deferred/G | ten-table snapshot unchanged and a second connection acquires G after the deferred caller commits |
+
+| W5 deviation / fix | Detail |
+|---|---|
+| CDP3-L cycle regression | The first 26-command W5 sequence stopped at CDP3-L5: an owner-chain cycle was reported as `lineage`/`owner_closing`, not `cycle`/`retry_with_closure`. Root cause: W4's `dispose_ancestor_sealed` deliberately fails closed on cycles and overflow, and both `live_node_fault` and `activation_admission` used it before graph diagnostics. Fix: a private `lineage_fault` now distinguishes `cycle`/`closure_overflow` from sealed lineage; `activation_admission` maps it to `retry_with_closure`, and `live_node_fault` supplies the cycle/overflow fault to `fiber_live_state`. Sealed-lineage behavior is unchanged. Production SQL changed only 41 (+18 lines) and 42 (+2 lines); no table, column, enum, extension, public writer or new scheduler was added. The full 26-command sequence was rerun from command 1 and is the table above. |
+
+| W5 not covered / final scope |
+|---|
+| DP4 settlement, DP5 listener/dispatch/intercept/overlay, DP6 scanner/fairness/external recovery and unbounded child cleanup fan-out are not implemented. |
+| `host_io` and settlement remain conservative refusals; no terminal label is treated as proof of external release. |
+| Listener, cell, reservation, unknown, run, cell/listener inverse, drift targets and history rows are owner fixtures or explicit barriers; they do not establish production registration, dispatch, settlement or external recovery. |
+| W5 is delivered by this commit to `origin/v24`. |

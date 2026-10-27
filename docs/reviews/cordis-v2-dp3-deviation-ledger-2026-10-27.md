@@ -103,4 +103,31 @@ W4 gates ran on HEAD `284d7f2` plus W4 changes before staging in v99. The matrix
 - W5/CDP3-B closeout, DP4 settlement, DP5 listener/dispatch/intercept/overlay, DP6 scanner/fairness/external recovery and unbounded child cleanup fan-out are not delivered.
 - W1's disposable barrier/deferred/replay probes remain protocol evidence only. W3's CDP3-P7 is the production P6 deferred/first-commit/replay evidence.
 - No production listener registration/dispatch, run settlement, external recovery or scanner/fairness claim follows from owner fixtures. W4 child cleanup is bounded to a real dispose controller driving real child-fiber reconciles; external consumers remain barriers, not production fan-out.
-- W3 remains delivered at `284d7f2`. W4 is delivered by this commit to `origin/v24`.
+- W3 remains delivered at `284d7f2`. W4 is delivered by its commit to `origin/v24`.
+
+## W5 observations (2026-10-27)
+
+W5 gates ran on HEAD `f6a3a74` plus W5 changes before staging in v99. The matrix records all 26 commands, each exit 0, total 121.64 seconds. W4's 24-command table omitted CDP3-L; W5 includes it. W5 is delivered by this commit to `origin/v24`.
+
+| Item | Finding | W5 treatment and evidence |
+|---|---|---|
+| CDP3-L cycle regression | The first 26-command W5 run stopped at `test_live.py` L5: an owner-chain cycle returned `lineage`/`owner_closing` instead of `cycle`/`retry_with_closure` | Root cause: W4's `dispose_ancestor_sealed` intentionally fails closed on cycle and overflow, but `live_node_fault` and `activation_admission` used it before the graph diagnostics. Added private `lineage_fault` (cycle/overflow vs sealed), mapped admission to `retry_with_closure`, and let `live_node_fault` surface `cycle`/`closure_overflow` to `fiber_live_state`. Sealed semantics unchanged. 41 +18 lines, 42 +2 lines; no new table/column/enum/extension/public writer/scheduler. Full 26-command rerun from command 1 is green |
+| CDP3-B layout/ACL | W5 must prove the public surface did not grow | 10 tables; zero public writers; one `SECURITY DEFINER` (`advance`); public function EXECUTE 0; source VIEW/EXTENSION 0; manifest 17; DDL 461; helper total 3550 with temporary 5000/5001 proof. CDP3-B1 |
+| Production versus fixture | Listener/run/cell/reservation/unknown paths must not be reported as production features | Real service+child activation is the production success path. Listener is an owner fixture cleaned by real teardown. Cell/reservation inverse are real `0A000` with ten-table rollback; unknown is real `blocked_unknown` zero-write. Ready/claimed/expired-lease barriers preserve all lease fields and do not complete or cancel. CDP3-B2…B5 |
+| Unwired surfaces | Settlement and dispatch/intercept/overlay must remain unconnected | Claimed `host_io` settlement is still `0A000`; intercept/overlay installs are `0A000`; dispatch/run_start are not command kinds; no SQL writes `runs`; no recovery/scanner function exists; `run_pin_release_delta` is read-only. CDP3-B6 |
+| Bounds and history | Caps must be real, not prose | Structural successor 16 accepted, 17/duplicate refused; real closure 512 accepted, 513 refused; 600 terminal parents and 601 closed generations leave the current closure under 50; real P6 inverse batches 32 then 1; P5 exactly 256 succeeds and 257 refuses before writes. CDP3-B7/B9 |
+| Concurrency | Address and closure drift must be serialized or rejected | Two connections racing the same realm/key produce one live service contribution and one committed p2 Raise; different realms both succeed. Reverse-pin/run/child mutation after the first closure read is rejected with `retry_with_closure` and no DML/request/event/successor. CDP3-B8/B10b |
+| Failure atomicity | Applier postconditions must roll back the whole advance | Suppressing the inverse contribution update or the close episode update produces `23514` and an unchanged ten-table snapshot. CDP3-B10 |
+| Event/replay | One aggregate event per branch, none for coalescing/replay | Domain+successor is one `fiber_requested`; successor-only is one `work_scheduled` with no lifecycle-table change; coalescing emits nothing; replay is byte-identical and adds no event. CDP3-B11 |
+| Independent validator | The validator must not trust interpreter output | Forged target, phase, event and successor each return `invalid_outcome` with zero write. CDP3-B12 |
+| Iterator/loader/guards | Frozen protocol and forward-only facts must survive | Iterator keys remain exactly `v,next_index,registered_through,control_seq`; loader refuses autocommit/online use; control-seq decrease, closed-episode rewrite, withdrawn/released reversal, run-end rewrite and scope-close rewrite all raise with unchanged snapshots. CDP3-B13 |
+| Capacity/freeze | Helper budget ≤5000; no frozen edits | 40=1373, 41=1211, 42=966, sum 3550; DDL 461; manifest 17; tables 10; one DEFINER; public function EXECUTE 0; source VIEW/EXTENSION 0. All 12 frozen hashes match DP2; frozen `57e2c1e` diff, v8 diff and `git diff --check` exit 0 |
+| Isolation | Preserve pre-existing work | Only W5 implementation/test/artifact paths are edited and staged. The pre-existing dirty docs and unrelated untracked files remain |
+
+## Final unclaimed scope (W5 closeout)
+
+- W5/CDP3-B closeout is delivered by this commit. DP4 settlement, DP5 listener/dispatch/intercept/overlay, DP6 scanner/fairness/external recovery and unbounded child cleanup fan-out are not delivered.
+- W1's disposable barrier/deferred/replay probes remain protocol evidence only. W3's CDP3-P7 remains the production P6 deferred/first-commit/replay evidence. W5 adds real production P6 deferred ten-table zero-write and second-connection G evidence.
+- No production listener registration/dispatch, run settlement, external recovery, scanner/fairness or unbounded child fan-out is claimed. Listener, cell, reservation, unknown, run, drift-target and historical rows are owner fixtures or explicit barriers.
+- `host_io` and settlement remain conservative refusals; terminal labels never prove external release.
+- W3 remains delivered at `284d7f2`; W4 is delivered by its commit; W5 is delivered by this commit to `origin/v24`.

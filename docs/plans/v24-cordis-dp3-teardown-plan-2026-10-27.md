@@ -362,7 +362,7 @@ B0 在 v99 根独立记录 `pwd -P`、`git rev-parse --show-toplevel`、branch�
 | failure v1 | phase按实际检测点为p2/p3/p4；七键闭集与code/reason/key精确组合见§3.6，P4可定位key；不清空旧代字段，历史由episode/event保存 | 高；无既有生产writer兼容负担，权威消费者合同可推翻；key上限沿用源码128 |
 | finite driver | 测试 driver 用新 request keys、原 key 只 replay；fixture fuel=`16 × (1+F+I+E+C+P)`，每个 productive step 严格降 rank；燃料公式为测试假设，不是生产上限 | 中高；若合法 required fixture 超燃料或 rank 无法下降，报告失败并按证据修正 rank/系数，不缩减必需覆盖，也不取消进展要求 |
 
-发布分支/remote 是**用户级阻塞**而非 Oracle 工程问题：`AGENTS.md` 写 origin main，DP2 的 origin/v24 授权不延伸至 DP3。2026-10-27 用户已明确目标为 `origin/v24` 并授权全部 DP3 里程碑逐个发布。B0/W1/W2/W3 已发布。W4 已实现且 24 条门禁全绿，本提交发布；W5 未实现。
+发布分支/remote 是**用户级阻塞**而非 Oracle 工程问题：`AGENTS.md` 写 origin main，DP2 的 origin/v24 授权不延伸至 DP3。2026-10-27 用户已明确目标为 `origin/v24` 并授权全部 DP3 里程碑逐个发布。B0/W1/W2/W3 已发布。W4 已实现且 24 条门禁全绿并由其提交发布。W5 已实现，最终 26 条门禁全绿并由本提交发布（见 W5 result）。
 
 ## 8. Implementation order
 
@@ -443,7 +443,11 @@ B0 在 v99 根独立记录 `pwd -P`、`git rev-parse --show-toplevel`、branch�
 - **Dependencies：**W4。
 - **Size：**M。
 
-每个里程碑收尾顺序：全部当前gate串行实跑且全绿 → 更新计划/README/matrix/ledger及loader核验 → `git status` → 按具体路径逐项 `git add`（严禁 `-A`/`.`）→ 检查 staged name-status、完整diff、diff-check和凭据 → 独立commit → 仅推送用户明确授权目标。失败即停，不跳过hook，不 force-push，不重置用户历史，不把多个里程碑合并提交。B0/W1/W2/W3 已按此纪律发布到 `origin/v24`（`ba4f533` / `103ec596` / `72af2528` / `284d7f2`）。W4 已由本提交发布到 origin/v24；W5 不得自动开始。
+**W5 result (2026-10-27)：**v99、分支 `v24`、HEAD `f6a3a74` 加 W5 改动（提交前）。按 §4.1 的 21 条旧命令，再 CDP3-P、CDP3-L、CDP3-T、CDP3-D、CDP3-B，**26 条逐条串行启动并等待退出，全部退出 0，总耗时 121.64 秒**。W4 的 24 条表漏掉 CDP3-L；W5 首次按 26 条执行时 CDP3-L5 在 owner-chain cycle fixture 上失败，暴露 W4 回归：`dispose_ancestor_sealed` 把 cycle/overflow 与普通 sealed lineage 混为一类，使 `fiber_live_state` 返回 `lineage` 而非 `cycle`，并使 `activation_admission` 返回 `owner_closing` 而非 `retry_with_closure`。修复为新增私有 `lineage_fault`，在 sealed 检查前独立返回 `cycle`/`closure_overflow`；`activation_admission` 将其分类为 `retry_with_closure`，`live_node_fault` 将其传给 `fiber_live_state`；sealed 语义不变。该修复只涉及 DP3 已声明的环/容量诊断与准入分类，不涉及 DP4/DP5/DP6。修复后从第 1 条重跑全部 26 条并通过。
+  - CDP3-B 覆盖：10 表/0 公开 writer/唯一 DEFINER/40-49 helper 合计≤5000（临时 5000/5001 证明）/DDL≤900/manifest 17/源码 VIEW+EXTENSION 0/public EXECUTE 0；service+child 真实生产路径；listener owner fixture + 真实 teardown 账本清理；cell/reservation 真实 `0A000` 十表回滚；unknown `blocked_unknown` 零写；ready/claimed/过期 lease 字段不变且不转 cancelled/completed；settlement `0A000`；dispatch/intercept/overlay 未接通；无 run_start writer/外部恢复；closure512/batch32/successor16；600 parent/601 closed 代不膨胀当前 closure；真实 512/513；reverse-pin/run/child 锁后漂移 `retry_with_closure`；双连接同 realm 同 key 仅一方成功、不同 realm 均成功；P5 256/257；inverse/close 后置失败整笔回滚；successor-only 单事件、domain+schedule 单事件、coalescing `emitted=[]`、replay 不重复 event；十表 snapshot 与 immutable/iterator 输入；iterator v1 精确键、loader 非在线迁移、forward-only guards；独立 validator 拒绝伪造 target/phase/event/successor。
+  - **W5 容量/冻结/范围：**40=1373、41=1211、42=966，合计 **3550≤5000**；DDL 前缀 461≤900、manifest 17、十表、唯一 DEFINER=`advance`、public function EXECUTE 0、源码 VIEW/EXTENSION 0。十二份 frozen SQL SHA-256 与 DP2 matrix 一致；`57e2c1e` frozen diff、v8 相对 HEAD diff、`git diff --check` 均退出 0。deferred 十表零写且调用方提交后第二连接取得 G。未实现 DP4 settlement、DP5 listener/dispatch/intercept/overlay、DP6 scanner/fairness/external recovery 与无界 child fan-out；listener/run/cell/reservation/unknown 仍为 owner fixture 或明确拒绝/阻塞边界。本提交仅逐路径暂存 W5 文件，保留既有 dirty docs 与无关 untracked。
+
+每个里程碑收尾顺序：全部当前gate串行实跑且全绿 → 更新计划/README/matrix/ledger及loader核验 → `git status` → 按具体路径逐项 `git add`（严禁 `-A`/`.`）→ 检查 staged name-status、完整diff、diff-check和凭据 → 独立commit → 仅推送用户明确授权目标。失败即停，不跳过hook，不 force-push，不重置用户历史，不把多个里程碑合并提交。B0/W1/W2/W3 已按此纪律发布到 `origin/v24`（`ba4f533` / `103ec596` / `72af2528` / `284d7f2`）。W4 由其提交发布到 origin/v24；W5 由本提交发布到 origin/v24。
 
 ## 9. References 与保真索引
 
