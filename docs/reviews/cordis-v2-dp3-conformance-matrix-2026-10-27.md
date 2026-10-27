@@ -1,10 +1,10 @@
 # Cordis v2 DP3 Conformance Matrix
 
-B0 executed on 2026-10-27 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `9fe6b5b170776907d490fab079fca63cdde6aa28`. Every exit code below is the process exit from this serial run. DP2's 2026-10-26 exits, including the W5 rerun on `d5fd1bc`, are not copied here. Durations were not recorded. No DP3 gate exists yet, so this matrix does not claim CDP3-P/L/T/D/B.
+B0 executed on 2026-10-27 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `9fe6b5b170776907d490fab079fca63cdde6aa28`. Every exit code in the B0 table is the process exit from that serial run. DP2's 2026-10-26 exits, including the W5 rerun on `d5fd1bc`, are not copied here. Durations were not recorded. W1 later ran its own 22-command sequence on the same uncommitted HEAD. That sequence is the W1 section. It does not replace the B0 numbers.
 
 ## Scope
 
-B0 records the live baseline and corrects stale DP2 current-state text. It does not implement teardown. W1–W5 of DP3 are unstarted.
+B0 records the live baseline and corrects stale DP2 current-state text. It does not implement teardown. W1 adds the canonical teardown module, the 5000 budget gate, and the non-production command protocol probe. W2–W5 are unstarted. CDP3-L/T/D/B are not claimed.
 
 ## Environment
 
@@ -50,9 +50,9 @@ All twelve `v24/sql/*.sql` SHA-256 values match the DP2 matrix frozen column:
 
 `git diff --exit-code 57e2c1e -- v24/load.py v24/sql v24/s1 v24/s2 v24/s3 v24/s4 v24/s5 v24/s6 v24/s7 v24/s8 v24/s9 v24/s10 v24/s11 v24/s12` exited 0 with no output. `git diff --check` exited 0.
 
-## Capacity
+## B0 capacity
 
-Physical lines use `str.splitlines()`, the same count as DP1/DP2 budget asserts. DDL prefix is `10_installs.sql` through `17_effects.sql`, plus `20_relations.sql` and `30_triggers.sql`.
+This section is the B0 measurement. W1 counts are in the W1 section and do not replace these rows. Physical lines use `str.splitlines()`, the same count as DP1/DP2 budget asserts. DDL prefix is `10_installs.sql` through `17_effects.sql`, plus `20_relations.sql` and `30_triggers.sql`.
 
 | Item | Observed |
 |---|---|
@@ -69,9 +69,9 @@ Physical lines use `str.splitlines()`, the same count as DP1/DP2 budget asserts.
 | batch | CDP2-A3 printed `1/32/33 provides batch at most 32` |
 | successors | CDP1-K3 printed `16/17 successors`. Source rejects `successors` length above 16 and ordinals outside 0..15 |
 
-## Serial gates
+## B0 serial gates
 
-Each command was a separate process. None was joined with `;`, run in the background, or skipped after a failure. There was no failure.
+Each command was a separate process. None was joined with `;`, run in the background, or skipped after a failure. There was no failure. These exits are the B0 run. The W1 rerun is a separate table.
 
 | # | Command | Exit | Printed result used as evidence |
 |---:|---|---:|---|
@@ -99,6 +99,64 @@ Each command was a separate process. None was joined with `;`, run in the backgr
 
 Order 19 then 20 follows the plan: s8 before s7.
 
-## Not covered
+## B0 not covered
 
-DP3 production paths are uncovered: live propagation, Divert/Raise/Leave, withdraw/release, inverse, P6 drain, and bounded dispose of an already-activated instance. No CDP3 script was run because none exists. The 5000/5001 budget boundary was not executed. Commit and push were not performed.
+At B0, DP3 production paths were uncovered: live propagation, Divert/Raise/Leave, withdraw/release, inverse, P6 drain, and bounded dispose of an already-activated instance. No CDP3 script existed. The 5000/5001 budget boundary was not executed. Commit and push were not performed. W1 later changed the budget gate and added CDP3-P; it did not implement those production paths. See the W1 section.
+
+## W1 (2026-10-27)
+
+Same worktree and the same uncommitted HEAD `9fe6b5b170776907d490fab079fca63cdde6aa28`. No commit and no push. This records the pre-commit rerun. This commit publishes W1 to `origin/v24` under the 2026-10-27 authorization. The fixture self-check again printed PostgreSQL `('18.4', '180004')` and psycopg2 2.9.12. `git diff --exit-code 57e2c1e -- v24/load.py v24/sql v24/s1 v24/s2 v24/s3 v24/s4 v24/s5 v24/s6 v24/s7 v24/s8 v24/s9 v24/s10 v24/s11 v24/s12` exited 0. `git diff --check` exited 0. This section records the serial rerun after two P2 proof gaps were closed. `40_advance.sql`, `41_lifecycle.sql`, and `42_teardown.sql` were not edited in that fix, so the line counts match the first W1 measurement.
+
+Physical lines use `str.splitlines()`. Helper modules are Cordis SQL files whose two-digit prefix is 40–49.
+
+| Item | Observed |
+|---|---|
+| `40_advance.sql` | 1170. CDP1-K0, CDP2-K0, CDP2-I0, and CDP2-B printed this count |
+| `41_lifecycle.sql` | 1097. Same prints |
+| `42_teardown.sql` | 16. Same prints. The file exists and is the 17th manifest entry |
+| helper sum | 2283 ≤ 5000. Shared `assert_helper_budget` in `v24/cordis/helper_budget.py` is invoked on temporary directories whose files are exactly `40_advance.sql`, `41_lifecycle.sql`, and `42_teardown.sql`. A tree of 5000 physical lines returns total 5000. A tree of 5001 physical lines raises `AssertionError` with total 5001. The same function then checks the real tree. CDP1-K0 calls `prove_helper_budget_boundary()` directly and does not import DP2. DP2 `test_support.assert_helper_budget` runs that proof before the real directory, so CDP2-K0, CDP2-I0, and CDP2-B exercise it. A literal 5000/5001 integer comparison is not the proof. CDP1-K0, CDP2-K0, and CDP2-I0 print `predicate admits a 5000-line tree and rejects 5001` |
+| DDL prefix | 414. CDP1-D printed `DDL lines 414`; CDP2-B printed `ddl=414` |
+| manifest | 17. Loader self-check requires 17. CDP2-B printed `manifest=17` |
+| tables | 10. CDP2-B printed `tables=10` |
+| `SECURITY DEFINER` | source has one, on `advance`. CDP2-B asserts the catalog count is 1. CDP3-P4 asserts the same |
+| views / extensions | 0 `CREATE VIEW` and 0 `CREATE EXTENSION` in the 17 Cordis SQL files. Source scan, not a catalog count |
+| closure / batch / successors | unchanged from the B0 prints: `512/513`, `1/32/33`, `16/17` |
+
+`42_teardown.sql` defines `command_barrier`, which returns NULL, and stable `lifecycle_step`, which returns exactly `{tag:"idle"}`. CDP3-P4 shows that tag, shows `lifecycle_step` is absent from `advance` and `interpret_command`, and shows only `advance` is SECURITY DEFINER. The idle body is not a teardown selector. W2/W3 replace it. The other six planned helpers are not created.
+
+CDP3-P is `v24/cordis/dp3/test_protocol.py`. It replaces `command_barrier` only. Production `interpret_command` returns `{kind, step, barrier, context}` and does not return a raw four-key delta. `advance` unwraps `kind=ready` before `validate_and_apply_delta`. A delta with no top-level `kind` still goes to the applier, so the existing DP2 probe stays valid. Deferred, `blocked_unknown`, and `unsupported` are the disposable barrier probe. CDP3-P3 records ten-table zero writes, no effect settlement, request, event, or successor, and a second connection acquiring `pg_try_advisory_xact_lock(24,1)` only after the caller commits. That probe is not production P6. Replay-first is checked before the barrier is restored. One admitted existing-scope install is committed while `command_barrier` still returns NULL (`disposition` committed). The function is then replaced with `{disposition:deferred}` and with `{disposition:blocked_unknown}`. The identical request (same key, same payload, same effect) returns the original response. The ten-table snapshot is unchanged, and exactly one request and one event remain. The original function is restored afterward in `finally`. That replay is not production P6 and is not a W3 first commit after the barrier is satisfied.
+
+CDP3-P1 shows valid-identity generation, target, and phase drift as `{class:"control", reason}` with no `code`, and shows `advance` of the generation case still raises `0A000` with an unchanged snapshot. Forged continuation input stays `effect_id_conflict` / `continuation_identity`. CDP3-P2 shows ready-input `UPDATE` is `55000`, a second ready reconcile is `23505`, `on` beside that slot and `off` are `0A000`, a different LOGIN is `effect_id_conflict`, and a live claim is `stale_claim` / `claim_busy`. No coalesce receipt is written. `off`/`retry` stay unimplemented.
+
+Each command below was a separate process. The runner stopped on the first non-zero exit. There was no failure. CDP3-L/T/D/B were not run.
+
+| # | Command | Exit | Printed result used as evidence |
+|---:|---|---:|---|
+| 1 | `uv run python v24/cordis/load.py` | 0 | `[passed] Cordis canonical loader and five refusal probes` |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | PostgreSQL `('18.4', '180004')`, psycopg2 2.9.12; `[passed] Cordis fixture: transaction/catalog/role family/OID cleanup` |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | CDP1-E1, E2, E3; `[passed] CDP1-E` |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | CDP1-D1…D4; `[passed] CDP1-D (117 zero-write negative probes plus positive/COMMIT cases)` |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | `[CDP1-K0] helper budget 2283<=5000 {'40_advance.sql': 1170, '41_lifecycle.sql': 1097, '42_teardown.sql': 16}; predicate admits a 5000-line tree and rejects 5001`; CDP1-K1…K5; `[passed] CDP1-K (66 committed zero-write assertions; W3 reconcile on/advance is production; off/retry and dispose remain 0A000)` |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | `[CDP2-K0]` prints the same helper-budget sentence as CDP1-K0; CDP2-K1…K8 and K4b, including K7 `drift 0A000`; `[passed] CDP2-K (W1 continuation, typed delta, closure, terminal receipt, events)` |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | `[CDP2-I0]` prints the same helper-budget sentence as CDP1-K0; CDP2-I1…I7 and the named extras; `[passed] CDP2-I (W2 install declaration, scope/owner admission, resolver, W2 guards)` |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | CDP2-A1…A6, including `1/32/33 provides batch at most 32`; `[passed] CDP2-A` |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | `[CDP2-B4/B5] multi-fiber dispose; tables=10 manifest=17 helpers=2283 40=1170 41=1097 42=16 ddl=414`; `[passed] CDP2-B` |
+| 10 | `uv run python v24/load.py` | 0 | `[passed] v24 loader self-check` |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | `[passed] v24/s1 setup self-check` |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | `[passed] v24 W2 G1-O owner DDL probes (no advance/ACL/lifecycle claim)` |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | `[passed] v24 G1 kernel, commands, claim, locks, host_prepare settlement and ACL` |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | `[passed] v24 S2 W1-W6: resolve, infra, admission, activation, deactivation, dispose` |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | `[passed] v24 S3 W1-W7` with the same G2a/G3b case list as the B0 row |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | `[passed] v24 S4 W1-W6` |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | `[passed] v24 S5 W1-W4` |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | `[passed] v24 S6 W1-W4` |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | `[passed] v24 S8 W1-W3` with G7-A…H and N1–N7 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | `[passed] v24 S7 W1-W2` with G6-A…H, N1–N9, L1–L5 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | `[passed] v24 G8 host reads / closure / lease / recovery: 23 case(s)` |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | CDP3-P1…P4; `[CDP3-P3] non-production barrier routes deferred, blocked_unknown and unsupported; G is held until the caller commits; replay-first keeps the original response while the barrier is non-ready`; `[passed] CDP3-P` |
+
+Order 19 then 20 follows the plan: s8 before s7. Command 22 is the only new DP3 gate in this milestone.
+
+## W1 not covered
+
+Live propagation, Divert/Raise/Leave, withdraw/release, inverse, production P6 classification, and bounded dispose of an already-activated instance are not implemented. CDP3-L/T/D/B were not added. The idle `lifecycle_step` and the deferred barrier probe are not those behaviors. Commit and push were not performed.

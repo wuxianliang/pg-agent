@@ -13,7 +13,7 @@ from v24.cordis.dp1.setup_db import Server, TestDB, validate_local_dsn
 def main():
     assert CANONICAL_ORDER == ('00_schema.sql','10_installs.sql','11_scopes.sql','12_fibers.sql',
         '13_episodes.sql','14_contributions.sql','15_pins.sql','16_runs.sql','17_effects.sql',
-        '18_events.sql','19_requests.sql','20_relations.sql','30_triggers.sql','40_advance.sql','41_lifecycle.sql','50_permissions.sql')
+        '18_events.sql','19_requests.sql','20_relations.sql','30_triggers.sql','40_advance.sql','41_lifecycle.sql','42_teardown.sql','50_permissions.sql')
     self_check_manifest()
     print('[CDP1-E1] exact manifest and five refusal families')
     socket='/tmp/cordis-dsn-probe'

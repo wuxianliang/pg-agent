@@ -9,7 +9,7 @@ DP2 定向扩展 Cordis DP1 协议内核，交付声明式安装、scope 创建�
 - B0 只做证据与环境核验：固定 worktree/分支/HEAD/upstream、串行实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9、复核十二个冻结 SQL SHA-256 与冻结 diff，并更新本 README、matrix、ledger 与计划的 B0 证据。B0 未修改生产实现、未修改冻结目录、未新增 SQL 文件或 helper。
 - W1 已结项：reserved successor identity、ready child 执行/重放、P0→P1 generation 复验、command closure、typed delta 与真实 applier、terminal receipt guard；生产 spec-valid lifecycle 解释器仍抛 `0A000`，由 disposable probe 驱动 CDP2-K。W1 的五项 bounded Oracle review 发现已全部修复，最终 18 条 gate 全绿。
 - W2 已在 `v24/cordis/sql/41_lifecycle.sql` 实现 install declaration、contracts/check、root/existing/child scope admission、owner ledger、unique-root / final-state DAG / committed-view guard 与 resolver。`40_advance.sql` 只保留 3 行 command entry seam。CDP2-I 与全量回归本轮均 `EXIT 0`；one bounded review 完成且六项发现修复，W2 按授权在本轮收尾 commit/push。
-- 发布授权（2026-10-26 用户给出）：本计划逐里程碑 commit 并 push `origin/v24`；这是任务特定授权，不改写根与 worktree `AGENTS.md` 的 `origin main` 规则。B0、W1、W2、W3、W4、W5 已据此结项。该授权不覆盖 DP3。 2026-10-27 用户另行授权全部 DP3 里程碑逐个 commit 并 push `origin/v24`。本提交只含这条 DP2 当前状态订正，不含 DP3 W1。
+- 发布授权（2026-10-26 用户给出）：本计划逐里程碑 commit 并 push `origin/v24`；这是任务特定授权，不改写根与 worktree `AGENTS.md` 的 `origin main` 规则。B0、W1、W2、W3、W4、W5 已据此结项。该授权不覆盖 DP3。 2026-10-27 用户另行授权全部 DP3 里程碑逐个 commit 并 push `origin/v24`。B0 提交发布这条 DP2 当前状态订正。本提交发布 DP3 W1，不改 DP2 行为。
 
 ## Commands
 
@@ -162,7 +162,7 @@ active-owner fixture 仅用于维护 DML，不计入 CDP2-A 激活证据。生�
 
 仍未覆盖：`off`/`retry`；不把 drift 转成 closing，不写 failure，不自动 retry；leave/unload、withdraw/release、inverse；closing/divert/error；settlement 仍 `0A000`；已激活且有 open episode 或未释放 contribution 的实例不能 basic dispose；无 CAS ownership；continuation 限同一 LOGIN；多 entity 事件留 DP5。
 
-以上是 2026-10-26 在 `d5fd1bc` 上的历史记录，保留不改。2026-10-27 DP3 B0 在 HEAD `9fe6b5b` 重测了容量和 21 条命令：`40_advance.sql` 1130、`41_lifecycle.sql` 1097、无 `42_teardown.sql`、合计 2227，DDL 414，manifest 16。旧 gate 仍按单文件 1200 断言通过，没有执行 5000/5001 迁移。退出码见 DP3 matrix。
+以上是 2026-10-26 在 `d5fd1bc` 上的历史记录，保留不改。2026-10-27 DP3 B0 在 HEAD `9fe6b5b` 重测了容量和 21 条命令：`40_advance.sql` 1130、`41_lifecycle.sql` 1097、无 `42_teardown.sql`、合计 2227，DDL 414，manifest 16。旧 gate 仍按单文件 1200 断言通过，没有执行 5000/5001 迁移。退出码见 DP3 matrix 的 B0 节。DP3 W1 随后在同一未提交 HEAD 上测得 40=1170、41=1097、42=16、合计 2283，manifest 17，并把预算断言迁到共享 `assert_helper_budget`：临时 40/41/42 树合计 5000 行接受、5001 行拒绝。22 条退出码见 DP3 matrix 的 W1 节。本段的 1130/1097/2227 与 1200 断言描述仍是 B0 观察。
 
 ## 边界
 

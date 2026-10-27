@@ -61,5 +61,5 @@ B0–W5 are **closed** on `origin/v24`. Commits: B0 `5e36a5a`, W1 `50affb0`, W2 
 
 ## Open
 
-- DP2 publication to `origin/v24` is closed for that line (user authorization 2026-10-26). It does not authorize DP3. `AGENTS.md` still says push `origin main`. On 2026-10-27 the user authorized every DP3 milestone to `origin/v24`. This commit publishes the DP2 status correction, not DP3 W1.
-- DP3 teardown remains unimplemented. The single-file 1200 asserts are not migrated to the 5000 total, and the 5000/5001 boundary was not run.
+- DP2 publication to `origin/v24` is closed for that line (user authorization 2026-10-26). It does not authorize DP3. `AGENTS.md` still says push `origin main`. On 2026-10-27 the user authorized every DP3 milestone to `origin/v24`. The B0 commit published the DP2 status correction. This commit publishes DP3 W1 and is not a DP2 behavior change.
+- DP3 W2–W5 teardown behavior remains unimplemented. DP3 W1 migrated the single-file 1200 asserts to the 5000 total. The boundary calls shared `assert_helper_budget` on temporary 40/41/42 trees of 5000 lines (accepted) and 5001 lines (rejected); see the DP3 matrix W1 section. That migration is not a DP2 behavior change.

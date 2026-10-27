@@ -12,8 +12,12 @@ from pathlib import Path
 import sys
 import uuid
 
-DP1 = Path(__file__).resolve().parents[1] / 'dp1'
+CORDIS = Path(__file__).resolve().parents[1]
+DP1 = CORDIS / 'dp1'
+sys.path.insert(0, str(CORDIS))
 sys.path.insert(0, str(DP1))
+from helper_budget import assert_helper_budget as _assert_helper_budget  # noqa: E402
+from helper_budget import prove_helper_budget_boundary  # noqa: E402
 from setup_db import Server, TestDB, TABLES  # noqa: E402
 from test_ddl import snapshot  # noqa: E402
 import psycopg2  # noqa: E402
@@ -354,3 +358,9 @@ def execute(db, effect, outcome, alias='service'):
         got = api(conn, effect, outcome)
         conn.commit()
     return got
+
+
+def assert_helper_budget(sql_dir):
+    """Real helper tree, after the same predicate accepts 5000 lines and rejects 5001."""
+    prove_helper_budget_boundary()
+    return _assert_helper_budget(sql_dir)

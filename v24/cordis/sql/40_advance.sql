@@ -312,44 +312,61 @@ BEGIN
   IF NOT FOUND OR ep.closed_at IS NOT NULL OR f.current_episode_id IS DISTINCT FROM ep.id THEN
    RETURN jsonb_build_object('code','effect_id_conflict','reason','continuation_binding'); END IF;
  END IF;
- -- P0->P1 generation recheck, before resolution/episode creation/any domain DML (plan 3.5/3.8).
+ -- Identity stayed above. control_seq, want_on and legal active/closing are not identity failures.
+ -- W1 records that split and still fail-closes before Divert/Leave exist.
  IF (e.input->>'expected_control_seq')::bigint<>f.control_seq THEN
   IF f.current_episode_id IS NULL THEN RETURN jsonb_build_object('code','stale_generation','reason','continuation_generation'); END IF;
-  RETURN jsonb_build_object('code','0A000','reason','continuation_generation_drift');
+  RETURN jsonb_build_object('class','control','reason','generation');
  END IF;
  IF NOT f.want_on THEN
   IF f.current_episode_id IS NULL THEN RETURN jsonb_build_object('code','stale_generation','reason','continuation_target'); END IF;
-  RETURN jsonb_build_object('code','0A000','reason','continuation_target_drift');
+  RETURN jsonb_build_object('class','control','reason','target');
  END IF;
  IF f.current_episode_id IS NULL THEN
   IF EXISTS(SELECT 1 FROM v24_cordis.episodes WHERE fiber_id=f.id AND closed_at IS NULL) THEN
-   RETURN jsonb_build_object('code','0A000','reason','continuation_phase_drift'); END IF;
+   RETURN jsonb_build_object('class','control','reason','phase'); END IF;
  ELSIF ep.state<>'reloading' THEN
-  RETURN jsonb_build_object('code','0A000','reason','continuation_phase_drift');
+  RETURN jsonb_build_object('class','control','reason','phase');
  END IF;
  RETURN NULL;
 END $$;
+CREATE FUNCTION v24_cordis.command_control(p_kind text,p_barrier jsonb,p_delta jsonb) RETURNS jsonb
+LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE disposition text;
+BEGIN
+ IF p_barrier IS NULL THEN
+  RETURN jsonb_build_object('kind','ready','step',to_jsonb(p_kind),'barrier','null'::jsonb,'context',p_delta);
+ END IF;
+ IF NOT coalesce(v24_cordis.exact_keys(p_barrier,ARRAY['disposition']),false)
+  OR p_barrier->>'disposition' NOT IN ('deferred','blocked_unknown','unsupported') THEN
+  RAISE EXCEPTION 'command barrier result' USING ERRCODE='0A000';
+ END IF;
+ disposition:=p_barrier->>'disposition';
+ RETURN jsonb_build_object('kind',disposition,'step','null'::jsonb,'barrier',p_barrier,'context','null'::jsonb);
+END $$;
 CREATE FUNCTION v24_cordis.interpret_command(p_effect_id uuid,p_principal uuid,p_outcome jsonb,p_closure jsonb) RETURNS jsonb
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE kind text; payload jsonb;
+DECLARE kind text; payload jsonb; delta jsonb; barrier jsonb;
 BEGIN
  kind:=p_outcome->'body'->>'kind'; payload:=p_outcome->'body'->'payload';
  IF kind='command_reconcile' THEN
   IF NOT coalesce(v24_cordis.reconcile_payload_valid(payload),false) THEN
    RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','reconcile_payload'));
   END IF;
-  RETURN v24_cordis.interpret_reconcile(p_effect_id,p_principal,p_outcome,p_closure);
- END IF;
- IF kind='command_install' THEN
-  RETURN v24_cordis.interpret_install(p_effect_id,p_principal,p_outcome,p_closure);
- END IF;
- IF kind='command_dispose' THEN
+  delta:=v24_cordis.interpret_reconcile(p_effect_id,p_principal,p_outcome,p_closure);
+ ELSIF kind='command_install' THEN
+  delta:=v24_cordis.interpret_install(p_effect_id,p_principal,p_outcome,p_closure);
+ ELSIF kind='command_dispose' THEN
   IF NOT coalesce(v24_cordis.exact_keys(payload,ARRAY['install_id']) AND v24_cordis.json_uuid(payload->'install_id'),false) THEN
    RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','dispose_payload'));
   END IF;
-  RETURN v24_cordis.interpret_dispose(p_effect_id,p_principal,p_outcome,p_closure);
+  delta:=v24_cordis.interpret_dispose(p_effect_id,p_principal,p_outcome,p_closure);
+ ELSE
+  RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','command_body'));
  END IF;
- RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','command_body'));
+ IF delta IS NULL OR jsonb_typeof(delta)<>'object' OR delta ? 'error' THEN RETURN delta; END IF;
+ barrier:=v24_cordis.command_barrier(p_effect_id,p_outcome,p_closure);
+ RETURN v24_cordis.command_control(kind,barrier,delta);
 END $$;
 CREATE FUNCTION v24_cordis.interpret_settlement(p_effect_id uuid,p_principal uuid,p_outcome jsonb,p_closure jsonb) RETURNS jsonb
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
@@ -1053,6 +1070,9 @@ BEGIN
   IF reserved THEN
    cont:=true;
    state:=v24_cordis.continuation_state(p_effect_id,principal,body);
+   IF state->>'class'='control' THEN
+    RAISE EXCEPTION 'continuation_%_drift',state->>'reason' USING ERRCODE='0A000';
+   END IF;
    IF state IS NOT NULL THEN
     IF state->>'code'='0A000' THEN RAISE EXCEPTION '%',state->>'reason' USING ERRCODE='0A000'; END IF;
     RETURN v24_cordis.error_v1(state->>'code',jsonb_build_object('reason',state->>'reason'));
@@ -1126,5 +1146,25 @@ BEGIN
   RAISE EXCEPTION 'interpreter returned no delta' USING ERRCODE='0A000';
  END IF;
  IF delta ? 'error' THEN RETURN delta; END IF;
+ IF delta ? 'kind' THEN
+  IF NOT coalesce(v24_cordis.exact_keys(delta,ARRAY['kind','step','barrier','context']),false) THEN
+   RAISE EXCEPTION 'command control result' USING ERRCODE='0A000';
+  END IF;
+  IF delta->>'kind'='ready' THEN
+   delta:=delta->'context';
+   IF delta IS NULL OR jsonb_typeof(delta)<>'object' THEN
+    RAISE EXCEPTION 'interpreter returned no delta' USING ERRCODE='0A000';
+   END IF;
+   IF delta ? 'error' THEN RETURN delta; END IF;
+  ELSIF delta->>'kind'='deferred' THEN
+   RETURN jsonb_build_object('v',1,'disposition','deferred','effect_id',p_effect_id,'emitted','[]'::jsonb,'revision',0,'claim',NULL);
+  ELSIF delta->>'kind'='blocked_unknown' THEN
+   RETURN v24_cordis.error_v1('blocked_unknown');
+  ELSIF delta->>'kind'='unsupported' THEN
+   RAISE EXCEPTION 'unsupported command obligation' USING ERRCODE='0A000';
+  ELSE
+   RAISE EXCEPTION 'command control result' USING ERRCODE='0A000';
+  END IF;
+ END IF;
  RETURN v24_cordis.validate_and_apply_delta(p_effect_id,principal,p_outcome,delta,closure);
 END $$;
