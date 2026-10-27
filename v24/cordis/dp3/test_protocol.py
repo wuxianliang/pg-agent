@@ -3,7 +3,7 @@
 Run with: uv run python v24/cordis/dp3/test_protocol.py
 The barrier stand-in is a disposable replacement of command_barrier. It proves
 private control routing, ten-table zero writes, and release of G after the caller
-ends the transaction. off/on/retry transitions stay unimplemented.
+ends the transaction. W2 cumulatively proves production P0 controls.
 """
 from __future__ import annotations
 import contextlib
@@ -87,15 +87,23 @@ def test_drift_split(db):
     target_ep = seed_episode(db, target_fiber['fiber'], epoch=1, state='reloading', control_seq=1)
     target_payload = reconcile_payload(target_fiber['fiber'], 'advance', 1)
     target_parent, _ = seed_parent(db, 'command_reconcile', reconcile_payload(target_fiber['fiber'], 'on', 1),
-                                   actor='owner', fiber=target_fiber['fiber'])
+                                   actor='service', fiber=target_fiber['fiber'])
     target_child, target_key = seed_child(db, target_parent, target_fiber['fiber'], target_payload,
-                                          episode=target_ep, actor='owner')
-    with contextlib.closing(db.connect('owner')) as conn:
-        principal = query(conn, 'SELECT v24_cordis.principal_id(session_user)')[0][0]
-        target = query(conn, 'SELECT v24_cordis.continuation_state(%s,%s,%s)',
-                       (target_child, principal, Json(body_for(target_key, target_payload))))[0][0]
-        conn.rollback()
-    assert target == {'class': 'control', 'reason': 'target'}, target
+                                          episode=target_ep, actor='service')
+    # The private continuation classifier is exercised through advance below;
+    # direct helper EXECUTE is intentionally revoked from LOGIN roles.
+    # Valid continuation target drift is classified by the lifecycle selector:
+    # the old reloading episode is diverted and remains withdraw-free.
+    with contextlib.closing(db.connect('service')) as conn:
+        effect, outcome = command(db, conn, 'service', 'command_reconcile',
+                                  target_payload, key=target_key, effect=target_child)
+        result = api(conn, effect, outcome)
+        assert result.get('disposition') == 'committed', (result, outcome)
+        conn.commit()
+    assert scalar(db, 'SELECT state FROM v24_cordis.episodes WHERE id=%s', (target_ep,)) == 'closing'
+    assert scalar(db, 'SELECT outcome FROM v24_cordis.episodes WHERE id=%s', (target_ep,)) == 'divert'
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.contributions WHERE episode_id=%s AND withdrawn_at IS NOT NULL',
+                  (target_ep,)) == 0
     stale = seed_fiber(db, want_on=True, control_seq=1, prefix='p-stale')
     stale_payload = reconcile_payload(stale['fiber'], 'advance', 0)
     stale_parent, _ = seed_parent(db, 'command_reconcile', reconcile_payload(stale['fiber'], 'on', 1),
@@ -106,7 +114,7 @@ def test_drift_split(db):
         stale_state = query(conn, 'SELECT v24_cordis.continuation_state(%s,%s,%s)',
                             (stale_child, principal, Json(body_for(stale_key, stale_payload))))[0][0]
         conn.rollback()
-    assert stale_state['code'] == 'stale_generation', stale_state
+    assert stale_state == {'class': 'control', 'reason': 'generation'}, stale_state
     service = seed_fiber(db, want_on=True, control_seq=1, prefix='p-svc')
     service_ep = seed_episode(db, service['fiber'], epoch=1, state='reloading', control_seq=1)
     service_payload = reconcile_payload(service['fiber'], 'advance', 0)
@@ -120,12 +128,12 @@ def test_drift_split(db):
     with contextlib.closing(db.connect('service')) as conn:
         effect, outcome = command(db, conn, 'service', 'command_reconcile', service_payload,
                                   key=service_key, effect=service_child)
-        sqlstate(conn, 'SELECT v24_cordis.advance(%s,%s)', (effect, Json(outcome)))
-    with contextlib.closing(db.connect('owner')) as owner:
-        assert snapshot(owner) == before
-        owner.rollback()
-    assert scalar(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (service_child,)) == 'ready'
-    print('[CDP3-P1] control drift is not effect_id_conflict; advance still fail-closes with zero writes')
+        result = api(conn, effect, outcome)
+        assert result.get('disposition') == 'committed', result
+        conn.commit()
+    assert scalar(db, 'SELECT outcome FROM v24_cordis.episodes WHERE id=%s', (service_ep,)) == 'divert'
+    assert scalar(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (service_child,)) == 'succeeded'
+    print('[CDP3-P1] control drift is not effect_id_conflict; target drift diverts without withdrawal')
 
 
 def test_preserved(db):
@@ -149,19 +157,25 @@ def test_preserved(db):
                  code='23505')
     assert scalar(db, "SELECT count(*) FROM v24_cordis.effects WHERE fiber_id=%s AND kind='command_reconcile' "
                       "AND status IN ('ready','claimed')", (fiber['fiber'],)) == 1
-    with contextlib.closing(db.connect('owner')) as owner:
-        before = snapshot(owner)
-        owner.rollback()
     with contextlib.closing(db.connect('service')) as conn:
         on_payload = reconcile_payload(fiber['fiber'], 'on', 0)
         effect, outcome = command(db, conn, 'service', 'command_reconcile', on_payload)
-        sqlstate(conn, 'SELECT v24_cordis.advance(%s,%s)', (effect, Json(outcome)))
-        off_payload = reconcile_payload(fiber['fiber'], 'off', 0)
+        first = api(conn, effect, outcome)
+        assert first.get('disposition') == 'committed', first
+        conn.commit()
+    assert scalar(db, 'SELECT control_seq FROM v24_cordis.fibers WHERE id=%s', (fiber['fiber'],)) == 1
+    assert scalar(db, 'SELECT input FROM v24_cordis.effects WHERE id=%s', (child,)) == stored
+    assert scalar(db, "SELECT count(*) FROM v24_cordis.effects WHERE fiber_id=%s AND kind='command_reconcile' "
+                      "AND status IN ('ready','claimed')", (fiber['fiber'],)) == 1
+    with contextlib.closing(db.connect('service')) as conn:
+        off_payload = reconcile_payload(fiber['fiber'], 'off', 1)
         effect, outcome = command(db, conn, 'service', 'command_reconcile', off_payload)
-        sqlstate(conn, 'SELECT v24_cordis.advance(%s,%s)', (effect, Json(outcome)))
-    with contextlib.closing(db.connect('owner')) as owner:
-        assert snapshot(owner) == before
-        owner.rollback()
+        second = api(conn, effect, outcome)
+        assert second.get('disposition') == 'committed', second
+        conn.commit()
+    assert scalar(db, 'SELECT want_on FROM v24_cordis.fibers WHERE id=%s', (fiber['fiber'],)) is False
+    assert scalar(db, 'SELECT control_seq FROM v24_cordis.fibers WHERE id=%s', (fiber['fiber'],)) == 2
+    assert scalar(db, 'SELECT input FROM v24_cordis.effects WHERE id=%s', (child,)) == stored
     assert scalar(db, 'SELECT input FROM v24_cordis.effects WHERE id=%s', (child,)) == stored
     with contextlib.closing(db.connect('operator')) as conn:
         effect, outcome = command(db, conn, 'operator', 'command_reconcile', payload,
@@ -178,7 +192,7 @@ def test_preserved(db):
     with contextlib.closing(db.connect('service')) as conn:
         no_write(db, conn, effect_id, env('claim', {'lease_ms': 1000}),
                  code='stale_claim', detail={'reason': 'claim_busy'})
-    print('[CDP3-P2] ready input unchanged, I7 slot, same-LOGIN rejection, off 0A000, claim_busy')
+    print('[CDP3-P2] ready input unchanged, I7 slot, same-LOGIN rejection, P0 coalescing, claim_busy')
 
 
 def control_shape(db, disposition=None):
@@ -320,11 +334,169 @@ def test_layout(db):
     print('[CDP3-P4] lifecycle_step stays idle and unwired; only advance is SECURITY DEFINER')
 
 
+def test_p0_truth_table(db):
+    # On-on/off-off are fresh durable receipts without an event or second slot.
+    f = seed_fiber(db, admitted=True, prefix='p0-table')
+    def control(action, seq, expected_code=None):
+        payload = reconcile_payload(f['fiber'], action, seq)
+        with contextlib.closing(db.connect('service')) as conn:
+            effect, outcome = command(db, conn, 'service', 'command_reconcile', payload)
+            if expected_code:
+                return no_write(db, conn, effect, outcome, code=expected_code)
+            result = api(conn, effect, outcome)
+            assert result.get('disposition') == 'committed', result
+            conn.commit()
+            assert api(conn, effect, outcome) == result
+            conn.commit()
+        assert scalar(db, 'SELECT count(*) FROM v24_cordis.requests WHERE effect_id=%s', (effect,)) == 1
+        return effect, result
+    for action in ('on', 'off', 'retry'):
+        control(action, 9, 'stale_generation')
+    control('retry', 0, 'stale_generation')
+    noop, result = control('off', 0)
+    assert result['emitted'] == []
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s', (noop,)) == 0
+    on, result = control('on', 0)
+    assert len(result['emitted']) == 1
+    slot = uuid.UUID(result['emitted'][0])
+    frozen = scalar(db, 'SELECT to_jsonb(e) FROM v24_cordis.effects e WHERE id=%s', (slot,))
+    noop, _ = control('on', 1)
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s', (noop,)) == 0
+    control('retry', 1, 'stale_generation')
+    control('off', 1)
+    control('off', 2)
+    control('on', 2)
+    assert scalar(db, 'SELECT to_jsonb(e) FROM v24_cordis.effects e WHERE id=%s', (slot,)) == frozen
+    # A claimed slot is coalesced without changing its lease, actor or frozen input.
+    with contextlib.closing(db.connect('owner')) as owner:
+        query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
+        query(owner, "UPDATE v24_cordis.effects SET status='claimed',claim_owner=request_actor,"
+                     "lease_until=now()+interval '1 minute',attempt=1,fence=1 WHERE id=%s", (slot,))
+        owner.commit()
+    frozen = scalar(db, 'SELECT to_jsonb(e) FROM v24_cordis.effects e WHERE id=%s', (slot,))
+    ep = seed_episode(db, f['fiber'], state='reloading', control_seq=3)
+    with contextlib.closing(db.connect('owner')) as owner:
+        query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
+        query(owner, "UPDATE v24_cordis.episodes SET state='closing',outcome='error' WHERE id=%s", (ep,))
+        query(owner, "UPDATE v24_cordis.fibers SET failure=v24_cordis.failure_v1(3,%s,'p2',"
+                     "'provide_conflict','address_conflict','fixture') WHERE id=%s", (ep, f['fiber']))
+        owner.commit()
+    control('retry', 3)
+    assert scalar(db, 'SELECT control_seq FROM v24_cordis.fibers WHERE id=%s', (f['fiber'],)) == 4
+    assert scalar(db, "SELECT failure->>'control_seq' FROM v24_cordis.fibers WHERE id=%s", (f['fiber'],)) == '3'
+    assert scalar(db, 'SELECT to_jsonb(e) FROM v24_cordis.effects e WHERE id=%s', (slot,)) == frozen
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.effects WHERE fiber_id=%s AND '
+                      "status IN ('ready','claimed') AND kind='command_reconcile'", (f['fiber'],)) == 1
+    # Off remains admitted with a closed scope. On/retry do not reopen lineage.
+    with contextlib.closing(db.connect('owner')) as owner:
+        query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
+        query(owner, 'UPDATE v24_cordis.scopes SET closed_at=now() WHERE id=%s', (f['scope'],))
+        owner.commit()
+    control('off', 4)
+    control('on', 5, 'scope_closed')
+    control('retry', 5, 'scope_closed')
+    # Exact bigint max permits no-op, refuses every required increment before DML.
+    maxf = seed_fiber(db, admitted=True, want_on=False, control_seq=9223372036854775807, prefix='p0-max')
+    for action in ('on', 'off', 'retry'):
+        with contextlib.closing(db.connect('service')) as conn:
+            effect, outcome = command(db, conn, 'service', 'command_reconcile',
+                reconcile_payload(maxf['fiber'], action, 9223372036854775807))
+            if action == 'on':
+                no_write(db, conn, effect, outcome, code='budget_exceeded', detail={'reason': 'control_seq'})
+            elif action == 'retry':
+                no_write(db, conn, effect, outcome, code='stale_generation')
+            else:
+                assert api(conn, effect, outcome)['disposition'] == 'committed'
+                conn.commit()
+    maxon = seed_fiber(db, admitted=True, want_on=True, control_seq=9223372036854775807, prefix='p0-max-on')
+    maxep = seed_episode(db, maxon['fiber'], state='closing', control_seq=9223372036854775807)
+    for action in ('off', 'retry'):
+        with contextlib.closing(db.connect('service')) as conn:
+            effect, outcome = command(db, conn, 'service', 'command_reconcile',
+                reconcile_payload(maxon['fiber'], action, 9223372036854775807))
+            no_write(db, conn, effect, outcome, code='budget_exceeded', detail={'reason': 'control_seq'})
+    # Off-off with an open old episode and no slot schedules once without a domain event.
+    scheduled = seed_fiber(db, admitted=True, prefix='p0-schedule')
+    seed_episode(db, scheduled['fiber'], state='reloading', control_seq=0)
+    with contextlib.closing(db.connect('service')) as conn:
+        effect, outcome = command(db, conn, 'service', 'command_reconcile',
+                                  reconcile_payload(scheduled['fiber'], 'off', 0))
+        result = api(conn, effect, outcome)
+        assert result['disposition'] == 'committed' and len(result['emitted']) == 1, result
+        conn.commit()
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s', (effect,)) == 0
+    assert scalar(db, 'SELECT control_seq FROM v24_cordis.fibers WHERE id=%s', (scheduled['fiber'],)) == 0
+    # Terminal facts are owner fixtures; every direct control refuses without writes.
+    for state, code in [('dispose_pending', 'owner_closing'), ('disposed', 'already_terminal')]:
+        terminal = seed_fiber(db, admitted=True, prefix='p0-terminal')
+        with contextlib.closing(db.connect('owner')) as owner:
+            query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
+            query(owner, 'UPDATE v24_cordis.installs SET state=%s WHERE id=%s', (state, terminal['install']))
+            owner.commit()
+        for action in ('on', 'off', 'retry'):
+            with contextlib.closing(db.connect('service')) as conn:
+                effect, outcome = command(db, conn, 'service', 'command_reconcile',
+                                          reconcile_payload(terminal['fiber'], action, 0))
+                no_write(db, conn, effect, outcome, code=code)
+    print('[CDP3-P5] production P0 truth table/CAS/no-op receipt/replay, ready+claimed coalescing, all increment overflows and terminal refusal')
+
+
+def test_null_fence_progress(db):
+    from test_activation import install, commit_new, child_call, finish
+    root = active_owner(db)  # Existing owner fixture; child controls and activation use advance.
+    for turn_on in (False, True):
+        declaration, _, _ = install(db, mode='existing', existing=root['scope'],
+                                     owner=dict(fiber_id=str(root['fiber']), episode_id=str(root['episode'])))
+        fiber = declaration['fiber_id']
+        parent, first, _ = commit_new(db, 'command_reconcile', reconcile_payload(fiber, 'on', 0))
+        slot, old_outcome = child_call(db, parent, reconcile_payload(fiber, 'advance', 1))
+        frozen = scalar(db, 'SELECT input FROM v24_cordis.effects WHERE id=%s', (slot,))
+        commit_new(db, 'command_reconcile', reconcile_payload(fiber, 'off', 1))
+        control = 2
+        if turn_on:
+            commit_new(db, 'command_reconcile', reconcile_payload(fiber, 'on', 2))
+            control = 3
+        with contextlib.closing(db.connect('service')) as conn:
+            result = api(conn, slot, old_outcome)
+            assert result.get('disposition') == 'committed' and result['emitted'] == [], result
+            conn.commit()
+            assert api(conn, slot, old_outcome) == result
+            conn.commit()
+        assert scalar(db, 'SELECT input FROM v24_cordis.effects WHERE id=%s', (slot,)) == frozen
+        assert scalar(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (slot,)) == 'succeeded'
+        assert scalar(db, 'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s', (slot,)) == 0
+        assert scalar(db, 'SELECT count(*) FROM v24_cordis.episodes WHERE fiber_id=%s', (fiber,)) == 0
+        assert scalar(db, 'SELECT control_seq FROM v24_cordis.fibers WHERE id=%s', (fiber,)) == control
+        assert scalar(db, "SELECT count(*) FROM v24_cordis.effects WHERE fiber_id=%s AND status IN ('ready','claimed')",
+                      (fiber,)) == 0
+        # A new legal control cycle can now allocate the sole current-generation
+        # slot. The obsolete input never begins or schedules another generation.
+        if turn_on:
+            off_parent, off_result, _ = commit_new(db, 'command_reconcile',
+                                                   reconcile_payload(fiber, 'off', control))
+            control += 1
+            assert len(off_result['emitted']) == 1, off_result
+            off_slot, off_outcome = child_call(db, off_parent, reconcile_payload(fiber, 'advance', control))
+            with contextlib.closing(db.connect('service')) as conn:
+                settled = api(conn, off_slot, off_outcome)
+                assert settled.get('disposition') == 'committed' and settled['emitted'] == [], settled
+                conn.commit()
+            assert scalar(db, 'SELECT count(*) FROM v24_cordis.episodes WHERE fiber_id=%s', (fiber,)) == 0
+        parent, result, _ = commit_new(db, 'command_reconcile', reconcile_payload(fiber, 'on', control))
+        assert len(result['emitted']) == 1, (turn_on, control, result,
+            scalar(db, 'SELECT row_to_json(f) FROM v24_cordis.fibers f WHERE id=%s', (fiber,)))
+        finish(db, parent, fiber, 0, control + 1)
+        assert scalar(db, 'SELECT count(*) FROM v24_cordis.episodes WHERE fiber_id=%s', (fiber,)) == 1
+    print('[CDP3-P6] NULL-fence on/off and on/off/on settle obsolete slots as no-op; new legal controls reach active')
+
+
 def main():
     with Server() as server, TestDB(server) as db:
         test_layout(db)
         test_drift_split(db)
         test_preserved(db)
+        test_p0_truth_table(db)
+        test_null_fence_progress(db)
         test_routing(db)
     print('[passed] CDP3-P')
 

@@ -26,10 +26,38 @@ Same uncommitted HEAD `9fe6b5b`. These rows do not replace the B0 rows above. A 
 | 2026-10-27 | I7 coalescing probe | §3.4 keeps one ready/claimed reconcile and forbids rewriting its input. The P0 coalesce receipt is W2 | Owner `UPDATE` of ready input is `55000` and the row is unchanged. A second ready insert is `23505`. `on` beside the slot is `0A000` with the stored input unchanged. No coalesce receipt is written | CDP3-P2. Marked as a probe, not production registration |
 | 2026-10-27 | Publication | Plan §7 had withheld authorization at drafting. `AGENTS.md` still says push `origin main` | The gate rerun was on uncommitted HEAD `9fe6b5b` before this commit. The user on 2026-10-27 authorized every DP3 milestone to `origin/v24`. This commit publishes W1. Unrelated dirty docs stay unstaged | Frozen diff and `git diff --check` exited 0 at the rerun. This commit |
 
-## Not claimed
+## Historical B0/W1 boundaries
 
-- B0 did not add `42_teardown.sql`, a CDP3 gate, or the 5000/5001 assertion. Those B0 negatives stay in the rows above.
-- W1 does not implement off/on/retry transitions, live propagation, Divert/Raise/Leave, withdraw/release, inverse, production P6, or bounded dispose of an activated instance.
-- `lifecycle_step` returning idle is not a production teardown diagnosis. The deferred barrier probe is not production P6. Replay while `command_barrier` is deferred or `blocked_unknown` is not the W3 case of a satisfied barrier followed by the first commit of that request.
-- No claim that the 2026-10-26 DP2 exits were re-used as the B0 or W1 run.
-- The gate rows record the pre-commit runs. This commit publishes W1 to `origin/v24`. W2–W5 are not published.
+B0 did not add42, a CDP3 gate or the budget boundary; W1 did not implement production off/retry/live/closing/withdraw. Those gate-time negatives above remain history. B0 and W1 were subsequently published as `ba4f533` and `103ec596`. Their exits were independently measured, not reused from DP2.
+
+## W2 observations (2026-10-27)
+
+Final gates ran on HEAD `103ec596040506e74a7babdc240312885843d9f0` plus W2 changes in v99. The matrix records all23 commands, each exit0, total87.36 seconds. This commit publishes W2 only.
+
+| Item | Plan / risk | W2 treatment and evidence |
+|---|---|---|
+| Publication and pause | AGENTS default says origin main; user explicitly authorized independent W2 publication to origin/v24 and then stop | B0/W1 already published; stage only16 W2 paths, normal commit/hooks and push origin v24. W3–W5 remain paused |
+| Generation selector/domain disagreement | First development gate found generation-drift interpreter/validator mismatch | Domain independently recomputes the same selector and complete P0/closing delta; normal control drift routes through lifecycle, forged identity/binding still rejects. CDP2-K7/P1/L8 green |
+| Oracle: obsolete NULL fence | A valid old on→off NULL-fence slot could be rejected stale_generation and permanently strand I7 | continuation returns control drift without an episode; obsolete input settles empty no-op, never begins a new generation. P6 covers on/off and on/off/on, exact replay, frozen input, cleared slot and later legal activation |
+| Oracle: independent P1 target proof | Wrong target production negative first failed write closure, insufficient to prove independent resolver recomputation | Keep production `retry_with_closure/write_target`; additionally call private validate_domain with expanded closure and actual principal, asserting `invalid_outcome/p1_target`, zero snapshot and rollback. No grants widened. L8 |
+| DP1 old unsupported assertions | Off/retry unsupported sentinel is obsolete | Off-off now commits first no-op receipt (request1/event0/no successor/seq0) and exact replay; missing fiber off/retry rejects not_found_or_denied.69 committed zero-write assertions, real ACL retained |
+| DP2 missing P1 dependency | No episode/failure may be invented for absent provider | dependency_unresolved ten-table zero-write; original input retry succeeds after provider arrives. DP2-A/B |
+| DP2 failed append migration | Old test resumed same episode after an uncommitted provide error | Later conflict now commits Raise, preserves32-row prefix, and refuses illegal same-episode continuation. Production1/32/33 batching and service/child successes retained; W3 cleanup/retry not simulated as production |
+| DP2 provider fixtures | Transitive live requires complete manifest/contract/key/pin facts | Updated valid provider fixtures; retained malformed negative fixtures and real success assertions. No fixture exemption from totality |
+| Final-batch legacy diagnosis failure | First final batch stopped at command7: test_dispose_request expected install_owner, recursive live returned install_owner_live with same owner_closing code | Read source and migrated only the reason plus explanatory comment; zero-write assertion retained. Targeted DP2-I green, then restarted all23 from command1. Final23 all green; failed initial batch is not counted as green |
+| Failure atomicity | Only exact after-write23505/contributions_service_addr may become Raise | L2 sees34 rows in AFTER INSERT after committed32 prefix; current2/iterator rollback, one same-call Raise. Six U0007 write boundaries and other23505/FK/CHECK/cancel/timeout propagate/rollback. Receipt/event/successor outside narrow domain catch |
+| Failure and guards | failure-v1 is seven exact typed keys bound to frozen episode/control generation; no clear on retry | L3/L4/L9 cover all five classified combinations, NULL/range/key negatives, unassignable p4 propagation, failure immutability and closing/withdraw guards |
+| P0 vs P5 | Control requests must not withdraw; Leave must withdraw exact visibility set | P5/P6 and L1/L7 prove CAS/no-op/coalescing/overflow and exact≤256 withdraw;257 refuses before writes, child/reservation debts unchanged, no production release |
+| Lock/closure and fresh SQL | Historical facts must not inflate active closure; validator cannot trust proposed targets | L6 exact512/513 plus601 closed generations/600 terminal parents; L8 independent diagnosis and P1 binding, suppressed INSERT fails fresh VOLATILE postcheck. Existing G/ordered lock/ACL tests pass |
+| Fixture boundary / no W3 | Old pins/run/nonservice facts need explicit fixture scope; child release CHECK must not be weakened early | Old activation/run pin reads and fixture release tested. No production inverse, pin release, close or activated dispose. Existing child CHECK untouched. command_barrier remains production NULL; lifecycle_step remains idle/unwired, not a teardown diagnosis |
+| Budget/manifest/freeze | Across all helper modules≤5000; no frozen edits |40=1259,41=1119,42=557,sum2935; temporary5000/5001 proof retained;DDL458,manifest17,tables10,DEFINER1,new helpers private,sourceVIEW/EXTENSION0. All12 frozen hashes match DP2; frozen57e2c1e/v8 diffs and diff-check exit0 |
+| Isolation | Preserve pre-existing work |34-path SHA-256 snapshot covers10 unrelated modified docs and24 unrelated untracked files; all preserved. Precise16 W2 paths only, no add-A/add-dot |
+
+One Oracle review was used; its two findings above were fixed before the final23-command serial run. The initial provider exhaustion left an incomplete42 edit; it was inspected and completed with production writer/validator/applier, guards and gates rather than accepted as evidence.
+
+## Current unclaimed scope
+
+- P6 production drain/inverse/pin release/episode close, activated dispose, CDP3-T/D/B and later milestones are not delivered.
+- W1's disposable barrier/deferred/replay probes remain protocol evidence only. They do not prove production P6 or the W3 first commit after a satisfied barrier.
+- No production listener registration/dispatch, run settlement, external recovery or scanner/fairness claim follows from owner fixtures.
+- This W2 commit is the stopping point after push to origin/v24; no W3 work begins.

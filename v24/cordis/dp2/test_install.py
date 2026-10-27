@@ -107,6 +107,9 @@ def fresh_owner(db, *, want_on=True, state='active', current=True, iterator=None
                 install_state='installed', disposed=False, retire=False, failure=None):
     root = active_owner(db)
     scope, install, fiber, episode = (uuid.uuid4() for _ in range(4))
+    if failure is not None:
+        failure = dict(v=1, control_seq=0, episode_id=str(episode), phase='p2',
+                       code='provide_conflict', reason='address_conflict', key='fixture')
     with contextlib.closing(db.connect('owner')) as conn:
         query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
         query(conn, 'INSERT INTO v24_cordis.scopes(id,parent_id) VALUES(%s,%s)',
@@ -474,7 +477,7 @@ def test_resolver(db):
         return got
     got = resolved(b, ['svc'])
     assert len(got) == 1 and got[0][0] == 'svc' and got[0][8] is True
-    assert got[0][6] == descriptor_digest(db, {'name': 'svc'}) and got[0][7] == '1'
+    assert got[0][6] == providers['root']['digest'] and got[0][7] == '1'
     assert resolved(ra, ['svc'])[0][1] != got[0][1]
     assert resolved(d, ['svc'])[0][1] == resolved(rc, ['svc'])[0][1]
     assert resolved(b, ['missing']) == [('missing', None, None, None, None, None, None, None, False)]
@@ -495,8 +498,9 @@ def test_resolver(db):
     query_owner(db, 'UPDATE v24_cordis.fibers SET disposed_at=now() WHERE id=%s', (disposed['fiber'],))
     assert resolved(b, ['svc-disposed'])[0][8] is False
     failure = extra['svc-failure']
-    query_owner(db, 'UPDATE v24_cordis.fibers SET failure=%s WHERE id=%s',
-                (Json({'control_seq': 0}), failure['fiber']))
+    query_owner(db, "UPDATE v24_cordis.fibers SET failure=v24_cordis.failure_v1(0,%s,'p2',"
+                    "'provide_conflict','address_conflict',%s) WHERE id=%s",
+                (failure['episode'], failure['key'], failure['fiber']))
     assert resolved(b, ['svc-failure'])[0][8] is False
     preparing = extra['svc-install']
     query_owner(db, 'UPDATE v24_cordis.installs SET state=%s WHERE id=(SELECT install_id FROM '
@@ -584,7 +588,8 @@ def test_dispose_request(server):
                     (root['fiber'],))
         payload = install_payload(mode='existing', existing_scope=child['scope'],
                                   owner=dict(fiber_id=str(child['fiber']), episode_id=str(episode)))
-        bad(db, payload, 'owner_closing', 'install_owner')
+        # W2 recursively checks the owner's lineage, including ancestor retirement.
+        bad(db, payload, 'owner_closing', 'install_owner_live')
         provider = seed_provider(db, realm='root', key='dispose-lineage')
         query_owner(db, 'UPDATE v24_cordis.fibers SET want_on=true WHERE id=%s',
                     (provider['fiber'],))

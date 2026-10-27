@@ -14,6 +14,9 @@ BEGIN
        IS DISTINCT FROM ROW(OLD.id,OLD.install_id,OLD.owner_id,OLD.owner_episode_id,OLD.scope_id) THEN
       RAISE EXCEPTION 'fiber identity is immutable' USING ERRCODE='55000';
     END IF;
+    IF OLD.failure IS NOT NULL AND NEW.failure IS NULL THEN
+      RAISE EXCEPTION 'failure history cannot be cleared' USING ERRCODE='55000';
+    END IF;
     IF NEW.control_seq < OLD.control_seq THEN
       RAISE EXCEPTION 'fiber control sequence cannot decrease' USING ERRCODE='23514';
     END IF;
@@ -27,6 +30,13 @@ BEGIN
     END IF;
     IF OLD.closed_at IS NOT NULL AND NEW.closed_at IS DISTINCT FROM OLD.closed_at THEN
       RAISE EXCEPTION 'episode close tombstone cannot change' USING ERRCODE='55000';
+    END IF;
+    IF (OLD.state='closing' AND (NEW.state IS DISTINCT FROM OLD.state OR NEW.outcome IS DISTINCT FROM OLD.outcome
+       OR NEW.iterator IS DISTINCT FROM OLD.iterator))
+       OR (OLD.state='active' AND NEW.state='reloading')
+       OR (OLD.closed_at IS NOT NULL AND ROW(NEW.state,NEW.outcome,NEW.iterator)
+         IS DISTINCT FROM ROW(OLD.state,OLD.outcome,OLD.iterator)) THEN
+      RAISE EXCEPTION 'episode lifecycle cannot reopen or rewrite closing facts' USING ERRCODE='55000';
     END IF;
     IF NEW.committed_view IS DISTINCT FROM OLD.committed_view THEN
       RAISE EXCEPTION 'episode committed view is immutable' USING ERRCODE='55000';
@@ -111,6 +121,24 @@ CREATE TRIGGER scopes_immutable BEFORE UPDATE ON v24_cordis.scopes
 CREATE TRIGGER requests_immutable BEFORE UPDATE ON v24_cordis.requests
   FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_immutable();
 
+CREATE FUNCTION v24_cordis.guard_failure() RETURNS trigger
+LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE fact jsonb;
+BEGIN
+ SELECT failure INTO fact FROM v24_cordis.fibers WHERE id=NEW.id;
+ IF fact IS NOT NULL AND NOT coalesce(v24_cordis.failure_v1_valid(fact),false) THEN
+  RAISE EXCEPTION 'failure must be exact v1' USING ERRCODE='23514'; END IF;
+ IF fact IS NOT NULL AND NOT EXISTS(
+  SELECT 1 FROM v24_cordis.episodes e WHERE e.id=(fact->>'episode_id')::uuid AND e.fiber_id=NEW.id
+   AND e.iterator->'control_seq'=fact->'control_seq') THEN
+  RAISE EXCEPTION 'failure must identify its frozen episode generation' USING ERRCODE='23514';
+ END IF;
+ RETURN NULL;
+END $$;
+CREATE CONSTRAINT TRIGGER fibers_failure AFTER INSERT OR UPDATE OF failure
+ ON v24_cordis.fibers DEFERRABLE INITIALLY DEFERRED
+ FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_failure();
+
 CREATE FUNCTION v24_cordis.guard_scope_tree() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE has_cycle boolean;
@@ -165,22 +193,38 @@ CREATE CONSTRAINT TRIGGER episodes_current_open AFTER UPDATE OF closed_at
 
 CREATE FUNCTION v24_cordis.guard_pin_epoch() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE actual_epoch int; final_pin v24_cordis.pins%ROWTYPE;
+DECLARE actual_epoch int; final_pin v24_cordis.pins%ROWTYPE; contribution_released timestamptz;
 BEGIN
   SELECT * INTO final_pin FROM v24_cordis.pins WHERE id=NEW.id;
   IF NOT FOUND THEN RETURN NEW; END IF;
-  SELECT e.epoch INTO actual_epoch
+  SELECT e.epoch,c.released_at INTO actual_epoch,contribution_released
     FROM v24_cordis.contributions c JOIN v24_cordis.episodes e
       ON e.fiber_id=c.fiber_id AND e.id=c.episode_id
     WHERE c.id=final_pin.contribution_id;
   IF NOT FOUND OR actual_epoch IS DISTINCT FROM final_pin.provider_epoch THEN
     RAISE EXCEPTION 'pin provider epoch mismatch' USING ERRCODE='23514';
   END IF;
+  IF final_pin.released_at IS NULL AND contribution_released IS NOT NULL THEN
+    RAISE EXCEPTION 'live pin cannot reference released contribution' USING ERRCODE='23514';
+  END IF;
   RETURN NEW;
 END $$;
-CREATE CONSTRAINT TRIGGER pins_provider_epoch AFTER INSERT OR UPDATE OF contribution_id,provider_epoch
+CREATE CONSTRAINT TRIGGER pins_provider_epoch AFTER INSERT OR UPDATE
   ON v24_cordis.pins DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_pin_epoch();
+
+CREATE FUNCTION v24_cordis.guard_contribution_release() RETURNS trigger
+LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM v24_cordis.contributions c JOIN v24_cordis.pins p ON p.contribution_id=c.id
+   WHERE c.id=NEW.id AND c.released_at IS NOT NULL AND p.released_at IS NULL) THEN
+  RAISE EXCEPTION 'released contribution has live pin' USING ERRCODE='23514';
+ END IF;
+ RETURN NULL;
+END $$;
+CREATE CONSTRAINT TRIGGER contributions_pin_release AFTER UPDATE OF released_at
+ ON v24_cordis.contributions DEFERRABLE INITIALLY DEFERRED
+ FOR EACH ROW EXECUTE FUNCTION v24_cordis.guard_contribution_release();
 
 CREATE FUNCTION v24_cordis.guard_fiber_graph() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$

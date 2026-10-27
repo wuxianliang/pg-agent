@@ -230,14 +230,15 @@ def test_multi_and_bounds(db, owner, scope):
           f'42={counts["42_teardown.sql"]} ddl={prefix}')
 
 
-def test_unsupported(db, owner, scope):
+def test_w2_classification(db, owner, scope):
     missing = child_install(db, owner, scope)
     missing['manifest'] = dict(requires=['absent'], provides=[], priority=0, check={})
     # Real missing dependency: install a consumer and execute its P1 child.
     consumer, _, _ = install(db, requires=['absent'], owner=owner, mode='existing', existing=scope)
     parent, started, _ = __import__('test_activation', fromlist=['p0']).p0(db, uuid.UUID(consumer['fiber_id']))
     effect, outcome = child_call(db, parent, reconcile_payload(uuid.UUID(consumer['fiber_id']), 'advance', 1))
-    expect_raise(db, effect, outcome)
+    with contextlib.closing(db.connect('service')) as conn:
+        no_write(db, conn, effect, outcome, 'dependency_unresolved')
     assert one(db, 'SELECT current_episode_id FROM v24_cordis.fibers WHERE id=%s',
                (consumer['fiber_id'],)) is None
     checked = declaration(provides=['checked'], owner=owner, mode='existing', existing=scope)
@@ -262,7 +263,13 @@ def test_unsupported(db, owner, scope):
         conn.commit()
     assert got['disposition'] == 'committed', got
     effect, outcome = child_call(db, begun, reconcile_payload(uuid.UUID(second['fiber_id']), 'advance', 1))
-    expect_raise(db, effect, outcome)
+    with contextlib.closing(db.connect('service')) as conn:
+        assert api(conn, effect, outcome)['disposition'] == 'committed'
+        conn.commit()
+    assert one(db, "SELECT e.state='closing' AND e.outcome='error' AND f.failure->>'phase'='p2' "
+                   "AND f.failure->>'key'='clash' FROM v24_cordis.fibers f "
+                   "JOIN v24_cordis.episodes e ON e.id=f.current_episode_id WHERE f.id=%s",
+               (second['fiber_id'],)) is True
     assert one(db, 'SELECT count(*) FROM v24_cordis.contributions WHERE fiber_id=%s AND kind=%s',
                (second['fiber_id'], 'service')) == 0
     drifted = declaration(provides=['drifted'], owner=owner, mode='existing', existing=scope)
@@ -274,11 +281,16 @@ def test_unsupported(db, owner, scope):
         conn.commit()
     dml(db, [('UPDATE v24_cordis.fibers SET control_seq=control_seq+1 WHERE id=%s', (drifted['fiber_id'],))])
     effect, outcome = child_call(db, begun, reconcile_payload(uuid.UUID(drifted['fiber_id']), 'advance', 1))
-    expect_raise(db, effect, outcome)
+    with contextlib.closing(db.connect('service')) as conn:
+        assert api(conn, effect, outcome)['disposition'] == 'committed'
+        conn.commit()
+    assert one(db, "SELECT e.state='closing' AND e.outcome='divert' AND f.failure IS NULL "
+                   "FROM v24_cordis.fibers f JOIN v24_cordis.episodes e ON e.id=f.current_episode_id "
+                   "WHERE f.id=%s", (drifted['fiber_id'],)) is True
     assert one(db, "SELECT (iterator->>'next_index')::int FROM v24_cordis.episodes e "
                    "JOIN v24_cordis.fibers f ON f.current_episode_id=e.id WHERE f.id=%s",
                (drifted['fiber_id'],)) == 0
-    print('[CDP2-B1] missing dependency, check failure, address conflict and drift stay 0A000')
+    print('[CDP2-B1] missing P1 dependency zero-write; P1 check stays unsupported; P2 conflict Raises; drift Diverts')
 
 
 def main():
@@ -286,7 +298,7 @@ def main():
         root, owner, scope = test_clean_dispose(db)
         test_obligations(db, owner, scope)
         test_multi_and_bounds(db, owner, scope)
-        test_unsupported(db, owner, scope)
+        test_w2_classification(db, owner, scope)
     print('[passed] CDP2-B')
 
 

@@ -260,20 +260,28 @@ def install_delta(db, payload):
              child_contribution_id=(str(child) if child else None)))])
 
 
-def seed_fiber(db, provides=(), requires=(), want_on=False, control_seq=0, prefix='w1'):
+def seed_fiber(db, provides=(), requires=(), want_on=False, control_seq=0, prefix='w1', admitted=False):
     scope, install, fiber = (uuid.uuid4() for _ in range(3))
     root = active_owner(db)
     manifest = dict(requires=[dict(key=k, descriptor={}, contract_version='1') for k in requires],
                     provides=[dict(key=k, descriptor={}, contract_version='1') for k in provides],
                     priority=0, check={})
+    contracts = {}
+    if admitted:
+        manifest['requires'] = list(requires)
+        for item in manifest['provides']:
+            item['descriptor'] = {'capability': 'cap'}
+        if provides:
+            contracts = {'cap': dict(contract_version='1', handler_digest='a' * 64,
+                                     replay=dict(repeat=True, concurrent=False))}
     with contextlib.closing(db.connect('owner')) as owner:
         query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
         query(owner, 'INSERT INTO v24_cordis.scopes(id) VALUES(%s)', (scope,))
         query(owner, "INSERT INTO v24_cordis.installs(id,scope_id,owner_fiber_id,owner_episode_id,"
                      "identity,version,manifest,artifact_digest,contracts,state) "
-                     "VALUES(%s,%s,%s,%s,%s,'1',%s,%s,'{}','installed')",
+                     "VALUES(%s,%s,%s,%s,%s,'1',%s,%s,%s,'installed')",
               (install, scope, root['fiber'], root['episode'], prefix + '-' + install.hex[:8],
-               Json(manifest), 'a' * 64))
+               Json(manifest), 'a' * 64, Json(contracts)))
         query(owner, 'INSERT INTO v24_cordis.fibers(id,install_id,owner_id,owner_episode_id,'
                      'scope_id,want_on,control_seq) VALUES(%s,%s,%s,%s,%s,%s,%s)',
               (fiber, install, root['fiber'], root['episode'], scope, want_on, control_seq))
@@ -306,12 +314,15 @@ def descriptor_digest(db, descriptor):
 
 
 def seed_provider(db, realm='root', key='svc', epoch=1):
-    fiber = seed_fiber(db, prefix='prov')
+    fiber = seed_fiber(db, provides=(key,), want_on=True, prefix='prov', admitted=True)
     episode = seed_episode(db, fiber['fiber'], epoch=epoch, state='active', control_seq=0)
     contribution = uuid.uuid4()
-    descriptor = {'name': key}
+    descriptor = {'capability': 'cap'}
     with contextlib.closing(db.connect('owner')) as owner:
         query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
+        if realm != 'root':
+            query(owner, 'UPDATE v24_cordis.scopes SET realm_overrides=%s WHERE id=%s',
+                  (Json({key: realm}), fiber['scope']))
         query(owner, "INSERT INTO v24_cordis.contributions(id,fiber_id,episode_id,seq,kind,realm,key,"
                      "descriptor,inverse,contract_version) VALUES(%s,%s,%s,0,'service',%s,%s,%s,"
                      "'{\"op\":\"delete_row\"}','1')",

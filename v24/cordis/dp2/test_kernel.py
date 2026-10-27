@@ -27,6 +27,13 @@ from test_support import (Server, TestDB, TABLES, snapshot, query, api, principa
                           seed_provider, seed_parent, seed_child, install_delta, active_owner,
                           assert_helper_budget)
 
+_seed_fiber = seed_fiber
+def seed_fiber(db, **kwargs):
+    # Typed-delta probes still use persisted production-admissible declarations.
+    # The two explicit refusal probes intentionally retain their malformed manifest.
+    kwargs['admitted'] = kwargs.get('prefix') not in ('prod-p1', 'lock')
+    return _seed_fiber(db, **kwargs)
+
 
 def scalar(db, statement, params=()):
     with contextlib.closing(db.connect('owner')) as owner:
@@ -160,11 +167,11 @@ def test_lifecycle(db):
     p2_body = delta(
         domain=[dict(op='contribution_append', id=str(c0), fiber_id=str(f['fiber']),
                      episode_id=str(episode), seq=0, kind='service', realm='root', key='a',
-                     descriptor={}, prev_contribution_id=None,
+                     descriptor={'capability': 'cap'}, prev_contribution_id=None,
                      inverse=dict(op='delete_row'), contract_version='1'),
                 dict(op='contribution_append', id=str(c1), fiber_id=str(f['fiber']),
                      episode_id=str(episode), seq=1, kind='service', realm='root', key='b',
-                     descriptor={}, prev_contribution_id=None,
+                     descriptor={'capability': 'cap'}, prev_contribution_id=None,
                      inverse=dict(op='delete_row'), contract_version='1'),
                 dict(op='episode_progress', episode_id=str(episode), next_index=2, registered_through=1)],
         events=[event('fiber', f['fiber'], 'contributions_appended',
@@ -622,7 +629,7 @@ def test_typed(db):
                              effect=child)
             set_probe(conn, wrong)
             got = api(conn, e, out)
-            bad(got, 'invalid_outcome', 'p1_context')
+            bad(got, 'retry_with_closure', 'write_target')
             conn.rollback()
     finally:
         with contextlib.closing(db.connect('owner')) as owner:
@@ -722,7 +729,8 @@ def test_generation(db):
     with contextlib.closing(db.connect('service')) as conn:
         e, out = command(db, conn, 'service', 'command_reconcile', spayload, key=sk, effect=sc)
         set_probe(conn, p1_body(sf['fiber'], uuid.uuid4()))
-        bad(api(conn, e, out), 'stale_generation', 'continuation_generation')
+        # Valid obsolete NULL-fence input may only settle a no-op, never begin.
+        bad(api(conn, e, out), 'invalid_outcome', 'branch_write_set')
         conn.rollback()
     with contextlib.closing(db.connect('owner')) as owner:
         assert snapshot(owner) == before
@@ -735,9 +743,10 @@ def test_generation(db):
         e, out = command(db, conn, 'service', 'command_reconcile', drift['payload'],
                          key=drift['key'], effect=drift['child'])
         set_probe(conn, p1_body(drift['fiber'], drift['episode']))  # ignored after drift
-        # p2_fixture is a P2 phase; the generation drift is checked before the interpreter.
+        # A forged begin delta cannot override the independently selected Divert.
 
-        sqlstate(conn, 'SELECT v24_cordis.advance(%s,%s)', (e, Json(out)))
+        bad(api(conn, e, out), 'invalid_outcome', 'branch_write_set')
+        conn.rollback()
     with contextlib.closing(db.connect('owner')) as owner:
         assert snapshot(owner) == before
         owner.rollback()
@@ -778,7 +787,7 @@ def test_generation(db):
     with contextlib.closing(db.connect('owner')) as owner:
         assert snapshot(owner) == before
         owner.rollback()
-    print('[CDP2-K7] generation precheck before DML; drift 0A000; failed retry reuses one receipt')
+    print('[CDP2-K7] generation precheck before DML; drift Divert; failed request retry reuses one receipt')
 
 
 def test_terminal(db, ctx):
@@ -847,8 +856,7 @@ def zero_state(db, conn, effect, out, code='0A000'):
 
 
 def test_production(db):
-    # W3 production reconcile on/advance is CDP2-A. This seam still proves install is data-only,
-    # off/dispose remain 0A000, and a DML fiber that fails DP2 manifest admission cannot begin.
+    # W2 production reconcile on/off is a committed P0 control transition; dispose remains unsupported.
     payload = install_payload()
     with contextlib.closing(db.connect('service')) as conn:
         effect, out = command(db, conn, 'service', 'command_install', payload)
@@ -871,11 +879,15 @@ def test_production(db):
     assert scalar(db, "SELECT count(*) FROM v24_cordis.effects WHERE kind<>'command_install'") == 0
     assert rows(db, "SELECT event_kind FROM v24_cordis.events WHERE effect_id=%s",
                 (effect,)) == [('install_created',)]
-    f = seed_fiber(db, prefix='prod-p0')
-    p0 = reconcile_payload(f['fiber'], 'off', 0)
+    f = seed_fiber(db, want_on=True, control_seq=1, prefix='prod-p0')
+    p0 = reconcile_payload(f['fiber'], 'off', 1)
     with contextlib.closing(db.connect('service')) as conn:
         effect, out = command(db, conn, 'service', 'command_reconcile', p0)
-        zero_state(db, conn, effect, out)
+        result = api(conn, effect, out)
+        assert result.get('disposition') == 'committed', (result, out)
+        conn.commit()
+    assert scalar(db, 'SELECT want_on FROM v24_cordis.fibers WHERE id=%s', (f['fiber'],)) is False
+    assert scalar(db, 'SELECT control_seq FROM v24_cordis.fibers WHERE id=%s', (f['fiber'],)) == 2
     cf = seed_fiber(db, provides=('not-admitted',), want_on=True, control_seq=1, prefix='prod-p1')
     parent, _ = seed_parent(db, 'command_reconcile', reconcile_payload(cf['fiber'], 'on', 1),
                             fiber=cf['fiber'])
@@ -908,7 +920,7 @@ def test_production(db):
     with contextlib.closing(db.connect('owner')) as owner:
         assert snapshot(owner) == before
         owner.rollback()
-    print('[CDP2-K4] production install is data-only; off/dispose and non-admitted begin stay 0A000; malformed payload is invalid_args')
+    print('[CDP2-K4] production off commits P0; dispose and non-admitted begin stay 0A000; malformed payload is invalid_args')
 
 
 def test_negatives(db, ctx):
@@ -996,7 +1008,7 @@ def test_negatives(db, ctx):
         bad(api(conn, e, out), 'invalid_outcome', 'p1_binding')
         conn.rollback()
     # P2 contributions must follow the installed provides order.
-    p2 = p2_fixture(db, 'neg-p2', provides=('a',))
+    p2 = p2_fixture(db, 'neg-p2', provides=('neg-p2-a',))
     cid = uuid.uuid4()
     with contextlib.closing(db.connect('service')) as conn:
         e, out = command(db, conn, 'service', 'command_reconcile', p2['payload'], key=p2['key'],
@@ -1043,7 +1055,7 @@ def test_negatives(db, ctx):
         conn.rollback()
         e, out = command(db, conn, 'service', 'command_reconcile', noop)
         set_probe(conn, delta(successors=[successor(ctx['fiber'], 1)]))
-        bad(api(conn, e, out), 'invalid_outcome', 'p0_noop')
+        bad(api(conn, e, out), 'invalid_outcome', 'p0_diagnosis')
         conn.rollback()
     print('[CDP2-K4b] pairing/owner/install/dispose/pin/provide bounds; 513 closure cutoff; P0 no-op event/successor denied')
 

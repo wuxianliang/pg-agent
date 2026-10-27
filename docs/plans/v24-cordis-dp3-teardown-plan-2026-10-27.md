@@ -1,6 +1,6 @@
 # Cordis v2 DP3：失效传播与可逆退役 Deep Plan
 
-> 本文是实施计划，不代表代码已实现或门禁已通过。所有相对路径均以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含此 Cordis 实现。标记为“观察”的内容来自指定工作树的代码或历史文档，“计划合同”是 DP3 待实现行为。
+> 本文描述完整 DP3 计划；已交付范围以 §8 各阶段 result 为准。B0=`ba4f533`、W1=`103ec596` 已发布；本提交交付 W2，门禁实跑于 HEAD `103ec596` 加 W2 未提交改动。用户最新要求：W2 推送 `origin/v24` 后立即暂停，不开始 W3 或后续阶段。所有相对路径均以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含此 Cordis 实现。
 
 ## 1. Goal 与完成边界
 
@@ -18,7 +18,7 @@ DP3 完成的证据必须区分生产命令与构造事实：service/child 的�
 
 本计划的已知起点为 v99 工作树 `v24@9fe6b5b`；DP2 W5 在较早 `d5fd1bc` 基线上的 21 条命令退出 0 是历史记录，不是 DP3 的新验证。B0 重查实际 HEAD、upstream、工作区、工具链、frozen hash/diff 与门禁，不复制历史退出码。DP2 conformance matrix 的 Scope/B0 状态、deviation ledger 的 W4 状态和 DP2 README 有互相矛盾的过期描述；B0 基于提交链和原始记录订正“当前状态”，保留旧阶段事实和原始测试结果，不伪造新证据。参见 DP2 matrix `:7, :185-204`、ledger `:47-64`、`v24/cordis/dp2/README.md:159-179`。B0 已于 2026-10-27 按提交链订正这些当前状态：当前 HEAD 为 `9fe6b5b`，与 `origin/v24` 对齐；2026-10-26 的历史行和退出码保留。新的 21 条退出码只写在 DP3 工件。本段对矛盾的描述保留为计划编写时的起点。
 
-DP2 ledger 中 `origin/v24` 授权只针对 DP2；仓库 `AGENTS.md:7-57` 对后续里程碑写有逐里程碑全绿、工件更新、逐路径 stage、commit、push `origin main` 的纪律。DP3 的首次发布目标存在用户授权冲突，Oracle 不能代为授权。规划当时尚未取得发布授权。2026-10-27 用户明确授权全部 DP3 里程碑逐个 commit 并 push `origin/v24`，不改写 `AGENTS.md`。B0 与 W1 分别发布；本提交是 W1。
+DP2 ledger 中 `origin/v24` 授权只针对 DP2；仓库 `AGENTS.md:7-57` 对后续里程碑写有逐里程碑全绿、工件更新、逐路径 stage、commit、push `origin main` 的纪律。DP3 的首次发布目标存在用户授权冲突，Oracle 不能代为授权。规划当时尚未取得发布授权。2026-10-27 用户明确授权全部 DP3 里程碑逐个 commit 并 push `origin/v24`，不改写 `AGENTS.md`。B0 与 W1 已分别发布为 `ba4f533` 与 `103ec596`；本提交只发布 W2。用户最新指令将后续工作暂停于 W2 推送之后。
 
 ### 2.2 当前调用链与数据关系
 
@@ -362,7 +362,7 @@ B0 在 v99 根独立记录 `pwd -P`、`git rev-parse --show-toplevel`、branch�
 | failure v1 | phase按实际检测点为p2/p3/p4；七键闭集与code/reason/key精确组合见§3.6，P4可定位key；不清空旧代字段，历史由episode/event保存 | 高；无既有生产writer兼容负担，权威消费者合同可推翻；key上限沿用源码128 |
 | finite driver | 测试 driver 用新 request keys、原 key 只 replay；fixture fuel=`16 × (1+F+I+E+C+P)`，每个 productive step 严格降 rank；燃料公式为测试假设，不是生产上限 | 中高；若合法 required fixture 超燃料或 rank 无法下降，报告失败并按证据修正 rank/系数，不缩减必需覆盖，也不取消进展要求 |
 
-发布分支/remote 是**用户级阻塞**而非 Oracle 工程问题：`AGENTS.md` 写 origin main，DP2 的 origin/v24 授权不延伸至 DP3。2026-10-27 用户已明确目标为 `origin/v24` 并授权全部 DP3 里程碑逐个发布。本提交发布 W1。W2–W5 尚未实现。
+发布分支/remote 是**用户级阻塞**而非 Oracle 工程问题：`AGENTS.md` 写 origin main，DP2 的 origin/v24 授权不延伸至 DP3。2026-10-27 用户已明确目标为 `origin/v24` 并授权全部 DP3 里程碑逐个发布。B0/W1 已发布；本提交发布 W2。W3–W5 未实现，W2 推送后暂停。
 
 ## 8. Implementation order
 
@@ -391,6 +391,9 @@ B0 在 v99 根独立记录 `pwd -P`、`git rev-parse --show-toplevel`、branch�
 - **Key files：**40/41/选定teardown SQL、30 triggers、DP2 activation/boundaries、DP3 live。
 - **Dependencies：**W1。
 - **Size：**L。
+- **W2 result (2026-10-27)：**门禁实跑于 v99、分支 `v24`、HEAD `103ec596040506e74a7babdc240312885843d9f0` 加本阶段未提交改动。最终按 §4.1 的21条旧命令，再 CDP3-P、CDP3-L，逐条启动并等待退出；23条全部退出0，总耗时87.36秒。实现 transitive live 与 private `pin_readable`；resolve、owner/install admission、activation consistency 与 reconcile 复用同一 provider live 诊断。真实 P0 on/off/retry 覆盖 CAS、首次 no-op receipt/replay、ready/claimed coalescing、bigint overflow、旧 NULL/non-NULL fence；旧 NULL-fence 槽按原 input 结算零领域写 no-op，不冒用新代，后续合法控制可激活。reloading 控制/target drift Divert 不 withdraw；active 失效 Leave 在同次 advance 精确 withdraw≤256，不 release pin。P2 address/contract、P3 check/contract、P4 可归因 totality 失败提交 exact failure-v1 Raise；P1 缺依赖仍 `dependency_unresolved` 十表零写，保留 input 可重试。typed writer/validator/applier 同步落地；domain validator 独立重算 selector 与 P1 resolver target、完整 closing/P0 delta；所有既存写目标须在 closure，应用后以 VOLATILE fresh SQL 校验。
+- **W2 failure/边界证据：**CDP3-L2 在真实32行已提交 prefix之后，本批第二条 INSERT 的 AFTER trigger 看到累计34行才抛精确 `23505/contributions_service_addr`；窄子事务回滚本批及 iterator，再同一 advance 只提交一条 Raise。domain、iterator、effect settlement、request、event、successor 六边界故障均整笔回滚；其他 unique/FK/CHECK/cancel/timeout 原异常传播。L3/L4/L9 覆盖 failure 七键类型/NULL/五组合、冻结 episode 代次、单向 closing/withdraw/failure guard。L5/L6/L7/L8 覆盖诊断一致性、dense DAG512/513、write closure512/513、601 closed generations与600 terminal parent历史不膨胀、P5全集256/257及无关kind不变、伪造P1 target/旧P2/closing cause拒绝及 suppressed INSERT 后置失败。DP1/DP2旧断言按意图迁移，保留 service/child、1/32/33、basic dispose、多fiber/host六态、ACL/claim/replay成功与拒绝路径。一次 Oracle review 的两项发现已修复并在最终批次验证；初轮 generation selector/validator 不一致及旧 unsupported/诊断断言失败记录见 ledger，不将初轮记为绿色。
+- **W2容量/冻结/范围：**40=1259、41=1119、42=557，合计2935≤5000；5000/5001临时树预算证明仍执行。DDL前缀458≤900、manifest17、十表、唯一DEFINER=`advance`、源码VIEW/EXTENSION均0；新helper没有public EXECUTE。十二份冻结SQL hash与DP2 matrix一致，`57e2c1e`冻结diff、v8相对HEAD diff、`git diff --check`均退出0。四份DP3工件更新；loader未改、manifest已核验。未接通P6 inverse/pin release/close或已激活dispose，`command_barrier`生产仍NULL、`lifecycle_step`仍idle/unwired；fixture release、run、cell/listener/reservation、cycle/历史损坏只证明明确账本边界。本提交仅逐路径暂存W2，保留10份无关dirty docs和24份无关untracked。发布后立即暂停W3–W5。
 
 ### W3 — P6 drain 与 inverse
 
@@ -416,7 +419,7 @@ B0 在 v99 根独立记录 `pwd -P`、`git rev-parse --show-toplevel`、branch�
 - **Dependencies：**W4。
 - **Size：**M。
 
-每个里程碑收尾顺序：全部当前gate串行实跑且全绿 → 更新计划/README/matrix/ledger及loader核验 → `git status` → 按具体路径逐项 `git add`（严禁 `-A`/`.`）→ 检查 staged name-status、完整diff、diff-check和凭据 → 独立commit → 仅推送用户明确授权目标。失败即停，不跳过hook，不 force-push，不重置用户历史，不把多个里程碑合并提交。B0 已按此纪律发布到 `origin/v24`。本提交发布 W1。后续里程碑各自独立提交。
+每个里程碑收尾顺序：全部当前gate串行实跑且全绿 → 更新计划/README/matrix/ledger及loader核验 → `git status` → 按具体路径逐项 `git add`（严禁 `-A`/`.`）→ 检查 staged name-status、完整diff、diff-check和凭据 → 独立commit → 仅推送用户明确授权目标。失败即停，不跳过hook，不 force-push，不重置用户历史，不把多个里程碑合并提交。B0/W1 已按此纪律发布到 `origin/v24`（`ba4f533` / `103ec596`）。本提交仅发布 W2，之后按用户最新指令暂停；W3及后续不得自动开始。
 
 ## 9. References 与保真索引
 
@@ -457,4 +460,4 @@ B0 在 v99 根独立记录 `pwd -P`、`git rev-parse --show-toplevel`、branch�
 
 B0 已于 2026-10-27 重测：40=1130、41=1097、42 不存在、合计 2227，DDL 前缀 414，manifest 16，仍低于 5000，没有触发压缩。W1 当时仍须把 DP1 `test_kernel.py` 与 DP2 `test_boundaries.py` 的单文件 1200 断言迁到合计 5000 通过 / 5001 拒绝；B0 旧 gate 全绿不是那项迁移。21 条既有命令的 B0 退出码在 DP3 matrix 的 B0 节，不在本节复写。2026-10-27 用户明确授权全部 DP3 里程碑逐个 commit 并 push `origin/v24`，不改写 `AGENTS.md`。B0 由前一个提交发布，不实现生产 SQL、不改测试。
 
-W1 已于 2026-10-27 在未提交工作树上完成：40=1170、41=1097、42=16、合计 2283，manifest 17，DDL 414。审查指出的两处 P2 已关闭：共享 `assert_helper_budget` 在临时 40/41/42 树上接受恰好 5000 行、拒绝 5001 行；已提交请求在 `command_barrier` 仍为 deferred 与 blocked_unknown 时重放首次 response 且零写，然后才恢复原函数。22 条命令于该修复后串行重跑，退出码均 0，见 DP3 matrix 的 W1 节，不改写上面的 B0 测量。`lifecycle_step` 的 idle、command deferred 探针和这次 replay 都不是生产 P6，也不是 W3 的屏障满足后首次提交。W2–W5 未实现。本提交按该授权发布 W1。W2–W5 尚未实现。下一步是 W2。
+W1 已于 2026-10-27 在未提交工作树上完成：40=1170、41=1097、42=16、合计 2283，manifest 17，DDL 414。审查指出的两处 P2 已关闭：共享 `assert_helper_budget` 在临时 40/41/42 树上接受恰好 5000 行、拒绝 5001 行；已提交请求在 `command_barrier` 仍为 deferred 与 blocked_unknown 时重放首次 response 且零写，然后才恢复原函数。22 条命令于该修复后串行重跑，退出码均 0，见 DP3 matrix 的 W1 节，不改写上面的 B0 测量。`lifecycle_step` 的 idle、command deferred 探针和这次 replay 都不是生产 P6，也不是 W3 的屏障满足后首次提交。以上为 W1 门禁当时记录，W1 已发布为 `103ec596`。W2 的实现和23条全绿结果见 §8 W2 result 与 DP3 matrix/ledger；本提交独立发布 W2 到 `origin/v24`。用户最新指令要求推送后立即暂停所有计划工作，不进入 W3。W3–W5 尚未实现；P6、inverse、pin release、episode close和已激活dispose继续失败关闭。

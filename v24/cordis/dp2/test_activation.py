@@ -192,7 +192,9 @@ def test_dependency_retry_and_realms(db, root):
     fiber = uuid.UUID(consumer['fiber_id'])
     parent, started, _ = p0(db, fiber)
     effect, outcome = child_call(db, parent, reconcile_payload(fiber, 'advance', 1))
-    expect_raise(db, effect, outcome)
+    with contextlib.closing(db.connect('service')) as conn:
+        no_write(db, conn, effect, outcome, code='dependency_unresolved',
+                 detail={'reason': 'dependency_missing', 'key': 'need'})
     assert one(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (effect,)) == 'ready'
     assert one(db, 'SELECT count(*) FROM v24_cordis.requests WHERE effect_id=%s', (effect,)) == 0
     assert one(db, 'SELECT current_episode_id FROM v24_cordis.fibers WHERE id=%s', (fiber,)) is None
@@ -242,40 +244,26 @@ def test_batch_retry_and_boundaries(db, root):
     assert one(db, 'SELECT count(*) FROM v24_cordis.contributions WHERE fiber_id=%s AND kind=%s',
                (fiber, 'service')) == 32
     second = batched
-    occupant = uuid.uuid4()
-    with contextlib.closing(db.connect('owner')) as conn:
-        query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
-        query(conn, "INSERT INTO v24_cordis.contributions(id,fiber_id,episode_id,seq,kind,realm,key,"
-                    "descriptor,inverse,contract_version) SELECT %s,id,current_episode_id,"
-                    "coalesce((SELECT max(seq)+1 FROM v24_cordis.contributions WHERE fiber_id=f.id),0),"
-                    "'service','root',%s,'{\"capability\":\"cap\"}','{\"op\":\"delete_row\"}','1' "
-                    "FROM v24_cordis.fibers f WHERE f.id=%s",
-              (occupant, keys[32], root['fiber_id']))
-        conn.commit()
+    # A real declared provider occupies the last address. Adding an undeclared
+    # service to the owner itself would invalidate its totality in DP3.
+    competitor, _, _ = install(db, provides=[keys[32]], owner=owner, mode='existing', existing=scope)
+    phases(db, uuid.UUID(competitor['fiber_id']), 1)
     effect, outcome = child_call(db, second, reconcile_payload(fiber, 'advance', 1))
-    expect_raise(db, effect, outcome)
-    assert one(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (effect,)) == 'ready'
-    assert one(db, 'SELECT count(*) FROM v24_cordis.requests WHERE effect_id=%s', (effect,)) == 0
+    with contextlib.closing(db.connect('service')) as conn:
+        result = api(conn, effect, outcome)
+        assert result.get('disposition') == 'committed', (result, outcome)
+        conn.commit()
+    assert one(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (effect,)) == 'succeeded'
+    failure = one(db, 'SELECT failure FROM v24_cordis.fibers WHERE id=%s', (fiber,))
+    assert failure['code'] == 'provide_conflict' and failure['reason'] == 'address_conflict'
     assert one(db, "SELECT (iterator->>'next_index')::int FROM v24_cordis.episodes e "
                    "JOIN v24_cordis.fibers f ON f.current_episode_id=e.id WHERE f.id=%s", (fiber,)) == 32
-    with contextlib.closing(db.connect('owner')) as conn:
-        query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
-        query(conn, "UPDATE v24_cordis.contributions SET withdrawn_at=now(),released_at=now() WHERE id=%s",
-              (occupant,))
-        conn.commit()
-    step, result = commit_child(db, second, reconcile_payload(fiber, 'advance', 1))
-    assert result['disposition'] == 'committed', result
-    assert one(db, 'SELECT count(*) FROM v24_cordis.contributions WHERE fiber_id=%s AND kind=%s',
-               (fiber, 'service')) == 33
-    with contextlib.closing(db.connect('owner')) as conn:
-        query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
-        query(conn, "UPDATE v24_cordis.contributions SET withdrawn_at=now(),released_at=now() "
-                    "WHERE fiber_id=%s AND key=%s", (fiber, keys[0]))
-        conn.commit()
-    effect, outcome = child_call(db, step, reconcile_payload(fiber, 'advance', 1))
-    expect_raise(db, effect, outcome)
+    # The classified address conflict commits Raise atomically. Earlier 32-row
+    # prefix remains, this batch contributes nothing, and the episode closes.
     assert one(db, "SELECT state FROM v24_cordis.episodes e JOIN v24_cordis.fibers f "
-                   "ON f.current_episode_id=e.id WHERE f.id=%s", (fiber,)) == 'reloading'
+                   "ON f.current_episode_id=e.id WHERE f.id=%s", (fiber,)) == 'closing'
+    assert one(db, 'SELECT count(*) FROM v24_cordis.contributions WHERE fiber_id=%s AND kind=%s',
+               (fiber, 'service')) == 32
     with contextlib.closing(db.connect('owner')) as conn:
         before = snapshot(conn)
         conn.rollback()
@@ -294,7 +282,7 @@ def test_batch_retry_and_boundaries(db, root):
     with contextlib.closing(db.connect('owner')) as conn:
         assert snapshot(conn) == before
         conn.rollback()
-    print('[CDP2-A3/A4/A5] failed later batch retries once; totality and address conflicts do not partial-write')
+    print('[CDP2-A3/A4/A5] later conflict commits Raise; 32-row prefix preserved; address uniqueness retained')
 
 
 def test_dag_and_owner(db, root):

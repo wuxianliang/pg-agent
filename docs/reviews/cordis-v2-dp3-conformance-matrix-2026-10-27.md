@@ -4,7 +4,7 @@ B0 executed on 2026-10-27 in worktree `/Users/wxl/Projects/pg-agent/.claude/work
 
 ## Scope
 
-B0 records the live baseline and corrects stale DP2 current-state text. It does not implement teardown. W1 adds the canonical teardown module, the 5000 budget gate, and the non-production command protocol probe. W2–W5 are unstarted. CDP3-L/T/D/B are not claimed.
+B0 (`ba4f533`) records the baseline; W1 (`103ec596`) adds layout/budget/protocol probes. This commit delivers W2 live invalidation and entry into closing. Current evidence is in the W2 section; B0/W1 sections retain their gate-time history. W3–W5 are unimplemented and paused after this W2 publication to `origin/v24`. CDP3-T/D/B are not claimed.
 
 ## Environment
 
@@ -159,4 +159,69 @@ Order 19 then 20 follows the plan: s8 before s7. Command 22 is the only new DP3 
 
 ## W1 not covered
 
-Live propagation, Divert/Raise/Leave, withdraw/release, inverse, production P6 classification, and bounded dispose of an already-activated instance are not implemented. CDP3-L/T/D/B were not added. The idle `lifecycle_step` and the deferred barrier probe are not those behaviors. Commit and push were not performed.
+At the W1 gate-time snapshot, live propagation, Divert/Raise/Leave, withdraw/release, inverse, production P6 classification, and bounded dispose of an already-activated instance were not implemented. CDP3-L/T/D/B were not added. The idle `lifecycle_step` and the deferred barrier probe were not those behaviors. Commit and push had not yet occurred. W1 was subsequently published as `103ec596`.
+
+## W2 (2026-10-27)
+
+Final serial run in the same worktree, branch `v24`, HEAD `103ec596040506e74a7babdc240312885843d9f0` plus W2 uncommitted changes. Every process below exited 0; total elapsed gate time was **87.36 seconds**. The runner awaited each process and stopped on any failure. Raw development evidence was captured in `/tmp/pg-agent-dp3-w2-final-gates.json` and `.log`; the durable command/results record is below. These are new W2 results, not copied B0/W1 exits. This commit publishes only W2; subsequent plan work pauses.
+
+| Requirement | Evidence through real advance unless explicitly marked fixture |
+|---|---|
+| Shared transitive live; resolve/admission/reconcile agree | L1 production M→A→B invalidation; L5 exact require/view/pin keys, epoch/digest/check, scope/owner closure. DP2-I real install/owner admission and dense DAG; DP2-A production service/child successes retained |
+| Old frozen pins readable | L1 old activation/run pins remain readable after provider off/closing/withdraw; owner fixture releases prove unreadable afterward. No production W3 release claim |
+| P0 on/off/retry CAS, no-op receipt/replay, I7 | P2/P5 real controls; ready/claimed coalescing preserves frozen input/actor/identity, one slot; all required bigint increments overflow with zero writes; terminal/lineage refusals retained |
+| Old NULL/non-NULL fence routing | P1/P6 generation/target drift is control classification; obsolete NULL-fence on/off and on/off/on settle empty no-op, clear I7, never begin a new generation; subsequent legal current control reaches active |
+| Reload drift Divert | P1, L4/L8: target/control drift closes as divert without withdrawal, failure, inverse or iterator change; independent domain diagnosis matches interpreter |
+| Active invalidation Leave/P5 | L1/L7: exact visibility set ≤256 withdrawn atomically;257 rejected before writes; child/reservation debts unchanged, no pin release |
+| P1 missing dependency | DP2-A/B: `dependency_unresolved`, ten-table zero writes, no episode/failure/receipt/successor; same retained input succeeds after provider appears |
+| Classified P2/P3/P4 Raise | L3/L4: all five exact failure-v1 combinations, seven keys/types/NULL/ranges, p4 first attributable manifest key; unassignable/empty-provides corruption propagates. DP2-A keeps committed prefix32 after later conflict, plus real batches1/32/33 |
+| Narrow after-write conflict | L2 second INSERT AFTER trigger sees34 rows after committed prefix32; exact23505 + `contributions_service_addr` rolls back current two contributions and iterator, then same advance validates/applies one Raise. Earlier prefix and immutable facts preserved |
+| Atomicity and unknown SQL failures | L2 domain/iterator/effect settlement/request/event/successor six U0007 boundaries roll back whole call; other23505/FK/CHECK/cancel/timeout propagate unchanged |
+| Independent typed validator and fresh applier checks | L8 rejects forged P1 target, stale P2 vs Divert and forged failure diagnosis; production wrong target first proves write closure refusal, direct private validator with expanded closure independently proves `p1_target` refusal. Suppressed INSERT triggers fresh VOLATILE post-write failure |
+| Guards | L9 monotonic closing/outcome/withdraw/failure, exact failure frozen episode seq, typed close/null constructor negatives and deferred active-pin/released-contribution consistency. Existing child CHECK retained |
+| Closure and history | L6 DAG distinct512 succeeds/513 refuses; exact write closure512/513;601 closed episodes and600 terminal parents do not inflate current work. Existing lock ordering/G/replay tests retained |
+| Cumulative compatibility | All21 old commands plus P/L passed. DP1-K now69 committed zero-write assertions; ACL, claim, identity, replay, locks, service/child, basic dispose and six host statuses retained |
+
+One Oracle review identified the old NULL-fence slot being stranded and an insufficient independent P1 target negative. Both were fixed and covered by P6/L8 before the final batch. No second review was requested. Earlier development failures and assertion migrations are recorded in the deviation ledger.
+
+| # | Command | Exit | Seconds | Printed final result |
+|---:|---|---:|---:|---|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0.49 | Cordis canonical loader and five refusal probes |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1.54 | Cordis fixture: transaction/catalog/role family/OID cleanup; PG18.4/psycopg2 2.9.12 |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1.60 | CDP1-E |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 1.68 | CDP1-D,117 zero-write negatives plus positive/COMMIT |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 13.54 | CDP1-K,69 committed zero-write assertions |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3.30 | CDP2-K |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 3.92 | CDP2-I |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3.01 | CDP2-A |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 3.21 | CDP2-B |
+| 10 | `uv run python v24/load.py` | 0 | 0.51 | v24 loader self-check |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1.57 | v24/s1 setup self-check |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1.60 | v24 W2 G1-O owner DDL probes |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2.45 | v24 G1 kernel, commands, claim, locks, host_prepare settlement and ACL |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 1.84 | v24 S2 W1-W6 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5.17 | v24 S3 W1-W7 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 3.77 | v24 S4 W1-W6 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3.16 | v24 S5 W1-W4 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 3.65 | v24 S6 W1-W4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2.36 | v24 S8 W1-W3, G7-A…H + N1–N7 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 6.38 | v24 S7 W1-W2, G6-A…H + N1–N9 + L1–L5 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 9.99 | v24 G8,23 cases |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 2.65 | CDP3-P, P1…P6 including production P0 and obsolete NULL fence |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 9.97 | CDP3-L, L1…L9 |
+
+Order s8 before s7 follows §4.1. No gate was run concurrently.
+
+| W2 invariant | Actual evidence |
+|---|---|
+| Helper physical lines |40=1259,41=1119,42=557,sum2935≤5000; CDP1-K0/CDP2-K0/I0/B prints agree. Actual temporary module trees still prove5000 accepts/5001 rejects |
+| DDL prefix |458≤900, CDP1-D/CDP2-B |
+| Canonical loader |17 exact entries; no loader change in W2; loader/E/B green |
+| Catalog/ACL |10 tables, one SECURITY DEFINER=`advance`; new helpers private, protocol role tests green |
+| Views/extensions |0/0 source CREATE scan, not a new catalog claim |
+| Freeze |All12 SHA-256 values rechecked against DP2 matrix and equal the Frozen SQL table above; full `57e2c1e` frozen diff exit0; v8 vs HEAD diff exit0 |
+| Hygiene/isolation |`git diff --check` exit0; original10 dirty docs+24 unrelated untracked files preserved against34-path SHA-256 snapshot; only exact W2 paths staged |
+
+## W2 not covered / pause boundary
+
+P6 inverse, production pin release/episode close, activated dispose and CDP3-T/D/B remain unimplemented. `command_barrier` production returns NULL and `lifecycle_step` stays idle/unwired; W2 uses the independently validated reconcile selector rather than claiming that stub is a P6 selector. Child inverse CHECK compatibility is unchanged. Owner fixtures for released pins, run/cell/listener/reservation, cycles and damaged/history facts prove only the named ledger/negative boundaries. No production listener registration/dispatch, run settlement, external recovery or automatic invalidation fan-out is claimed. W2 publishes independently to `origin/v24`, then all later plan work pauses per user instruction.

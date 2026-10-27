@@ -1,24 +1,29 @@
 # Cordis v2 DP3
 
-DP3 从 DP2 已结项的内核继续做失效传播与可逆退役。产品行为由 `docs/designs/cordis-plugin-system-2026-10-25.md` 规定；实施计划是 `docs/plans/v24-cordis-dp3-teardown-plan-2026-10-27.md`。本 README 只记录已经实跑的阶段。DP1/DP2 的历史验收仍在各自 README 与 `docs/reviews/cordis-v2-dp1-*`、`docs/reviews/cordis-v2-dp2-*`，不在这里改写。
+DP3 从 DP2 内核继续做失效传播与可逆退役。权威规格是 `docs/designs/cordis-plugin-system-2026-10-25.md`，实施计划是 `docs/plans/v24-cordis-dp3-teardown-plan-2026-10-27.md`。各阶段原始结果保留在 DP3 conformance matrix 与 deviation ledger；DP1/DP2 历史验收不在这里改写。
 
 ## 当前状态
 
-**B0 与 W1 已完成。门禁实跑于未提交 HEAD `9fe6b5b`。W2–W5 尚未实现。本提交按 2026-10-27 用户授权把 W1 发布到 `origin/v24`；B0 是前一个提交。**
+**B0=`ba4f533`、W1=`103ec596` 已发布。本提交交付 W2 到 `origin/v24`；推送后按用户最新指令暂停，不开始 W3–W5。**
 
-- 工作树 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`，分支 `v24`，HEAD 仍是 `9fe6b5b170776907d490fab079fca63cdde6aa28`。当时 W1 尚未提交。本提交发布该结果。
-- B0 于 2026-10-27 按计划 §4.1 串行实跑 21 条既有命令，退出码均为 0。当时 40=1130、41=1097、42 不存在、合计 2227，DDL 414，manifest 16。旧 gate 仍按单文件 1200 通过，5000/5001 迁移没有做。这些数字保留在 matrix 的 B0 节，不被 W1 改写。
-- W1 于同日在该根上串行实跑 22 条命令。审查的两处 P2 关闭后再次逐条启动并等待退出，退出码均为 0：§4.1 的 21 条，然后 `uv run python v24/cordis/dp3/test_protocol.py`。CDP3-L/T/D/B 没有加入。逐条打印见 `docs/reviews/cordis-v2-dp3-conformance-matrix-2026-10-27.md` 的 W1 节。
-- W1 容量用 `splitlines()`：`40_advance.sql` 1170、`41_lifecycle.sql` 1097、`42_teardown.sql` 16，合计 2283≤5000。这次修复没有改这三个文件的行数。共享 `v24/cordis/helper_budget.py` 的 `assert_helper_budget` 在临时目录上被调用，文件恰好是这三名，合计 5000 物理行时返回 5000，合计 5001 时拒绝。DP1 直接调用该证明，不导入 DP2。DP2 的 `assert_helper_budget` 先跑同一证明再检查真实目录。字面整数比较不是该证明。DDL 前缀 414。manifest 17。表 10。仅 `advance` 为 `SECURITY DEFINER`。源码中无 `CREATE VIEW` / `CREATE EXTENSION`。
-- 冻结 diff `git diff --exit-code 57e2c1e -- v24/load.py v24/sql v24/s1 … v24/s12` 退出 0。`git diff --check` 退出 0。
-- `42_teardown.sql` 只有 `command_barrier`（生产返回 NULL）和只读 `lifecycle_step`（精确 `{tag:"idle"}`，`advance` 与 `interpret_command` 不调用）。idle 不是 teardown 选择器，W2/W3 替换该函数体。其余六项 teardown helper 未建。
-- command 私有控制结果在 `validate_and_apply_delta` 之前分流。deferred、`blocked_unknown`、`unsupported` 由替换 `command_barrier` 的非生产探针证明，十表零写，调用方提交后第二连接取得 G。该探针不是生产 P6。
-- replay-first 在屏障仍非 ready 时证明。生产 NULL `command_barrier` 下先提交一笔 admitted existing-scope install（`disposition` committed）。再把函数换成 deferred 与 `blocked_unknown`。同一 request 重放首次 response，十表快照不变，仍是一条 request 与一条 event。然后才恢复原函数。该重放不是生产 P6，也不是 W3 的屏障满足后首次提交。
-- 身份伪造仍是 `effect_id_conflict`。有效身份下的 generation/target/phase 由 `continuation_state` 返回无 `code` 的控制分类，advance 仍在解释器前以 `0A000` 失败关闭。ready input 不可改（`55000`），第二 ready reconcile 被 I7 拒绝（`23505`），已有槽时 `on` 为 `0A000`。没有合并提交。`off`/`retry` 仍 `0A000`。claim 与 I7 保持。
-- 无关的预算文档修订和未跟踪用户文件不进入本提交。
+W2 最终门禁于 2026-10-27 在 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`、分支 `v24`、HEAD `103ec596040506e74a7babdc240312885843d9f0` 加 W2 未提交改动上实跑。计划 §4.1 的 21 条旧命令、CDP3-P、CDP3-L 依次单独启动并等待退出，**23 条全部退出 0，总耗时 87.36 秒**。命令、耗时及结果见 `docs/reviews/cordis-v2-dp3-conformance-matrix-2026-10-27.md` 的 W2 节。
 
-## 未覆盖
+- transitive live 在 resolve、owner/install admission、activation consistency 与 reconcile 共用 provider 诊断；private `pin_readable` 沿冻结 pin/contribution/provider episode 读取，provider off/closing/withdrawn 不使旧未释放 pin 失读。
+- 生产 P0 on/off/retry 实现 CAS、首次 no-op receipt 与精确 replay、ready/claimed I7 coalescing、bigint overflow。旧 NULL/non-NULL fence 不改 input、不追加旧代；过时 NULL-fence 槽结算 no-op 后，后续合法当前代控制可激活。
+- reloading control/target drift 走 Divert，不 withdraw。active 失效走 Leave/P5，同次精确 withdraw 可见贡献全集（≤256），不 release pin。P0 只写控制/retire 事实。
+- P2 address/contract、P3 check/contract、P4 可归因 totality 失败提交 exact failure-v1 Raise；P1 无 episode 缺依赖仍 `dependency_unresolved`、十表零写，可用原 input 重试。
+- typed writer/validator/applier 同步实现；domain validator 独立重算 selector 与 P1 resolver target、完整 P0/closing delta。既存写目标须在 closure，应用后以 VOLATILE fresh SQL 验证。
+- CDP3-L 证明精确 after-write `23505/contributions_service_addr` 回滚当前两行批次和 iterator、保留已提交32行 prefix、同 advance 提交一条 Raise；六写入边界故障整笔回滚，其他 unique/FK/CHECK/cancel/timeout 原异常传播。
+- DAG/写 closure 512/513、P5 256/257、601 closed generations/600 terminal parents 历史剪枝、failure 七键与单向 guard、独立 validator 伪造负例、抑制 INSERT 后置失败均通过。DP1/DP2 按意图迁移，保留真实 service/child、1/32/33、basic dispose、ACL/claim/replay/锁序路径。
 
-W2–W5 未交付：真实 off/on/retry 真值表、drift 转 closing、failure、leave/unload、withdraw/release、inverse、drain，以及已激活实例的有界 dispose。CDP3-L/T/D/B 不存在。`lifecycle_step` 的 idle 与 W1 deferred 探针都不是这些生产行为。CDP1-K 的通过行仍印出固定句“dispose remain 0A000”；同一轮 CDP2-B 已经提交了无活义务的 basic dispose。这两句打印都原样保留，不把前者读成“dispose 仍未实现”。
+## 容量与冻结
 
-DP2 的 `origin/v24` 授权不延伸到 DP3。`AGENTS.md` 仍写推送 `origin main`。2026-10-27 用户明确授权全部 DP3 里程碑逐个 commit 并 push `origin/v24`。本提交发布 W1。
+40=1259、41=1119、42=557，全部 helper 合计 **2935≤5000** 物理行。共享预算函数仍在临时三文件树验证恰好5000通过、5001拒绝。DDL 前缀458≤900，manifest17（loader未改、已核验），十表，仅 `advance` 为 SECURITY DEFINER，新 helper 无 public EXECUTE；源码 VIEW/EXTENSION 均0。十二份 frozen SQL SHA-256 与 DP2 matrix 一致，`57e2c1e` frozen diff、v8 相对 HEAD diff、`git diff --check` 均退出0。
+
+## 历史与证明边界
+
+B0 的21条旧命令与 W1 的22条命令均有各自独立实跑记录。B0 当时 helper2227、DDL414、manifest16；W1 当时 helper2283、DDL414、manifest17。W1 deferred/blocked_unknown/unsupported 与非 ready barrier replay 是 disposable 非生产 probe，调用方提交后第二连接取得 G；它们不证明生产 P6。
+
+W2 的生产 `command_barrier` 仍返回 NULL，`lifecycle_step` 仍返回 idle 且未接线。**P6 inverse、pin release、episode close、已激活实例 dispose 尚未实现，W3–W5 暂停。** CDP3-T/D/B 未新增或运行。旧 pin release、run、cell/listener/reservation、cycle/损坏历史使用 owner fixture，只证明具名账本或拒绝边界，不证明生产注册、dispatch、run settlement、外部恢复或自动扫描。child inverse 的既有 CHECK 未修改。
+
+用户授权本 W2 独立 commit/push `origin/v24`，覆盖 AGENTS.md 的默认分支指令。提交仅包含 W2 精确路径，保留原有10份 dirty docs及24份无关 untracked 文件。

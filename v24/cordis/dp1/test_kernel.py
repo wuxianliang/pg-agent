@@ -195,7 +195,15 @@ def test_vectors_acl(db,other):
             sqlstate(conn,'SELECT * FROM v24_cordis.effects',code='42501')
             sqlstate(conn,"INSERT INTO v24_cordis.scopes(id) VALUES(gen_random_uuid())",code='42501')
             eid,out=command(db,alias,kind='command_reconcile',payload=dict(fiber_id=str(seed['fiber']),action='off',expected_control_seq=0))
-            sqlstate(conn,'SELECT v24_cordis.advance(%s,%s)',(eid,Json(out)))
+            # W2 off-off is an authorized no-op with a durable first receipt.
+            result=api(conn,eid,out)
+            assert result.get('disposition')=='committed' and result['emitted']==[],result
+            conn.commit()
+            with contextlib.closing(db.connect('owner')) as owner:
+                assert query(owner,'SELECT count(*) FROM v24_cordis.requests WHERE effect_id=%s',(eid,))[0][0]==1
+                assert query(owner,'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s',(eid,))[0][0]==0
+                assert query(owner,'SELECT want_on,control_seq FROM v24_cordis.fibers WHERE id=%s',(seed['fiber'],))[0]==(False,0)
+            assert no_write(db,conn,eid,out,disposition='committed')==result
             if alias!='service': no_write(db,conn,seed['effect'],env('claim',{'lease_ms':1000}),'unauthorized')
     with contextlib.closing(db.connect('owner')) as owner:
         query(owner,sql.SQL('GRANT USAGE ON SCHEMA v24_cordis TO {}').format(sql.Identifier(other.roles['service'])))
@@ -518,9 +526,12 @@ def test_committed_probe(production,probe):
             'request_key':'probe','canonical_bytes':'e30=','payload':{'fiber_id':str(uuid.uuid4()),'action':'on','expected_control_seq':0}}}
         got=query(owner,'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',(uuid.uuid4(),uuid.uuid4(),Json(valid),Json([])))[0][0]
         assert got['error']['code']=='not_found_or_denied',got
-        off=json.loads(json.dumps(valid))
-        off['body']['payload']['action']='off'
-        sqlstate(owner,'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',(uuid.uuid4(),uuid.uuid4(),Json(off),Json([])))
+        for action in ('off','retry'):
+            control=json.loads(json.dumps(valid))
+            control['body']['payload']['action']=action
+            got=query(owner,'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',
+                      (uuid.uuid4(),uuid.uuid4(),Json(control),Json([])))[0][0]
+            assert got['error']['code']=='not_found_or_denied',got
     print('[CDP1-K5] disposable COMMIT probe, new-connection command/terminal replay, post-write rollback, barrier and original production hashes')
 
 
@@ -534,6 +545,6 @@ def main():
         test_delta(production)
         test_locks_closure(production)
         test_committed_probe(production,probe)
-    print(f'[passed] CDP1-K ({COUNT} committed zero-write assertions; W3 reconcile on/advance is production; off/retry and dispose remain 0A000)')
+    print(f'[passed] CDP1-K ({COUNT} committed zero-write assertions; reconcile on/off/retry/advance is production through W2; activated teardown/dispose remains later scope)')
 
 if __name__=='__main__': main()
