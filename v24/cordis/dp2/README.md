@@ -4,12 +4,12 @@ DP2 定向扩展 Cordis DP1 协议内核，交付声明式安装、scope 创建�
 
 ## 当前状态
 
-**B0–W5 已结项。W3 `cd93134`，W4 `d5fd1bc`，均已推送 `origin/v24`。W5 在 `d5fd1bc` 上串行重跑 21 条门禁，全部退出 0。不得从 DP2 绿色推断 DP3。**
+**B0–W5 已结项并在 `origin/v24`。W3 `cd93134`，W4 `d5fd1bc`，W5 closeout `92f15a3`，计划状态订正 `9fe6b5b`。2026-10-26 的 W5 重跑发生在 `d5fd1bc`，全部退出 0；那是历史记录。2026-10-27 的当前 HEAD 是 `9fe6b5b`，与 `origin/v24` 左右计数 `0 0`。DP3 B0 在这个 HEAD 上另行串行重跑 21 条命令，退出码见 DP3 matrix，不得把 `d5fd1bc` 的退出码当作这次结果。不得从 DP2 绿色推断 DP3。**
 
 - B0 只做证据与环境核验：固定 worktree/分支/HEAD/upstream、串行实跑既有五条 Cordis DP1 命令、十一条 v24 命令与单列 s9、复核十二个冻结 SQL SHA-256 与冻结 diff，并更新本 README、matrix、ledger 与计划的 B0 证据。B0 未修改生产实现、未修改冻结目录、未新增 SQL 文件或 helper。
 - W1 已结项：reserved successor identity、ready child 执行/重放、P0→P1 generation 复验、command closure、typed delta 与真实 applier、terminal receipt guard；生产 spec-valid lifecycle 解释器仍抛 `0A000`，由 disposable probe 驱动 CDP2-K。W1 的五项 bounded Oracle review 发现已全部修复，最终 18 条 gate 全绿。
 - W2 已在 `v24/cordis/sql/41_lifecycle.sql` 实现 install declaration、contracts/check、root/existing/child scope admission、owner ledger、unique-root / final-state DAG / committed-view guard 与 resolver。`40_advance.sql` 只保留 3 行 command entry seam。CDP2-I 与全量回归本轮均 `EXIT 0`；one bounded review 完成且六项发现修复，W2 按授权在本轮收尾 commit/push。
-- 发布授权（2026-10-26 用户给出）：本计划逐里程碑 commit 并 push `origin/v24`；这是任务特定授权，不改写根与 worktree `AGENTS.md` 的 `origin main` 规则。B0、W1、W2 已据此结项。
+- 发布授权（2026-10-26 用户给出）：本计划逐里程碑 commit 并 push `origin/v24`；这是任务特定授权，不改写根与 worktree `AGENTS.md` 的 `origin main` 规则。B0、W1、W2、W3、W4、W5 已据此结项。该授权不覆盖 DP3。 2026-10-27 用户另行授权全部 DP3 里程碑逐个 commit 并 push `origin/v24`。本提交只含这条 DP2 当前状态订正，不含 DP3 W1。
 
 ## Commands
 
@@ -161,6 +161,8 @@ active-owner fixture 仅用于维护 DML，不计入 CDP2-A 激活证据。生�
 在 `d5fd1bc` 上串行重跑，全部退出 0：Cordis loader、DP1 fixture/environment/CDP1-D/CDP1-K、CDP2-K/I/A/B、v24 loader、s1 fixture/DDL/G1、s2–s6、s8、s7、s9。冻结 diff 退出 0。`40_advance.sql` 1130/1200，`41_lifecycle.sql` 1097，DDL 414/900，manifest 16，十张表，仅 `advance` DEFINER。
 
 仍未覆盖：`off`/`retry`；不把 drift 转成 closing，不写 failure，不自动 retry；leave/unload、withdraw/release、inverse；closing/divert/error；settlement 仍 `0A000`；已激活且有 open episode 或未释放 contribution 的实例不能 basic dispose；无 CAS ownership；continuation 限同一 LOGIN；多 entity 事件留 DP5。
+
+以上是 2026-10-26 在 `d5fd1bc` 上的历史记录，保留不改。2026-10-27 DP3 B0 在 HEAD `9fe6b5b` 重测了容量和 21 条命令：`40_advance.sql` 1130、`41_lifecycle.sql` 1097、无 `42_teardown.sql`、合计 2227，DDL 414，manifest 16。旧 gate 仍按单文件 1200 断言通过，没有执行 5000/5001 迁移。退出码见 DP3 matrix。
 
 ## 边界
 
