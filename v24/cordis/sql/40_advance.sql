@@ -49,6 +49,12 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_value) e WHERE NOT CASE p_kind
    WHEN 'uuid' THEN v24_cordis.json_uuid(e.value) ELSE v24_cordis.json_text(e.value) END),false)
 $$;
+CREATE FUNCTION v24_cordis.json_uuid_set(p_value jsonb,p_max int) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+ SELECT coalesce(jsonb_typeof(p_value)='array' AND jsonb_array_length(p_value) BETWEEN 1 AND p_max
+  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_value) e WHERE NOT v24_cordis.json_uuid(e.value))
+  AND (SELECT count(DISTINCT value) FROM jsonb_array_elements_text(p_value))=jsonb_array_length(p_value),false)
+$$;
 CREATE FUNCTION v24_cordis.event_payload_valid(p_kind text,p_payload jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
  SELECT coalesce(CASE
@@ -85,6 +91,29 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
    AND (p_payload->'failure'='null'::jsonb OR (jsonb_typeof(p_payload->'failure')='object'
     AND v24_cordis.exact_keys(p_payload->'failure',ARRAY['v','control_seq','episode_id','phase','code','reason','key'])))
    AND v24_cordis.json_array_valid(p_payload->'withdrawn_ids','uuid',256)
+  WHEN p_kind='contributions_released' THEN
+   coalesce(v24_cordis.exact_keys(p_payload,ARRAY['episode_id','contribution_ids','seq_from','seq_through']),false)
+   AND v24_cordis.json_uuid(p_payload->'episode_id')
+   AND v24_cordis.json_uuid_set(p_payload->'contribution_ids',32)
+   AND v24_cordis.json_int(p_payload->'seq_from',0,9223372036854775807)
+   AND v24_cordis.json_int(p_payload->'seq_through',0,9223372036854775807)
+  WHEN p_kind='pins_released' THEN
+   coalesce(v24_cordis.exact_keys(p_payload,ARRAY['episode_id','activation_pin_ids','run_pin_ids']),false)
+   AND v24_cordis.json_uuid(p_payload->'episode_id')
+   AND jsonb_typeof(p_payload->'activation_pin_ids')='array'
+   AND jsonb_typeof(p_payload->'run_pin_ids')='array'
+   AND jsonb_array_length(p_payload->'activation_pin_ids')
+     +jsonb_array_length(p_payload->'run_pin_ids') BETWEEN 1 AND 32
+   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_payload->'activation_pin_ids') e
+    WHERE NOT v24_cordis.json_uuid(e.value))
+   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_payload->'run_pin_ids') e
+    WHERE NOT v24_cordis.json_uuid(e.value))
+  WHEN p_kind='episode_closed' THEN
+   coalesce(v24_cordis.exact_keys(p_payload,ARRAY['episode_id','epoch','outcome','control_seq']),false)
+   AND v24_cordis.json_uuid(p_payload->'episode_id')
+   AND v24_cordis.json_int(p_payload->'epoch',1,2147483647)
+   AND p_payload->>'outcome' IN ('divert','error','retire')
+   AND v24_cordis.json_int(p_payload->'control_seq',0,9223372036854775807)
   WHEN p_kind='install_disposed' THEN
    coalesce(v24_cordis.exact_keys(p_payload,ARRAY['fiber_ids']),false)
    AND v24_cordis.json_array_valid(p_payload->'fiber_ids','uuid',512)
@@ -384,7 +413,8 @@ LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE item jsonb; sub jsonb; op text; ordinal int; ordinals int[]:=ARRAY[]::int[]; status text;
  n_scope int:=0; n_install int:=0; n_fiber int:=0; n_begin int:=0; n_service int:=0; n_child int:=0;
  n_progress int:=0; n_control int:=0; n_activate int:=0; n_dispose int:=0; n_retire int:=0;
- n_close_start int:=0; n_withdraw int:=0; i int; keys text[];
+ n_close_start int:=0; n_withdraw int:=0; n_inverse int:=0; n_pin_release int:=0; n_close_ep int:=0;
+ i int; keys text[];
 BEGIN
  IF NOT coalesce(v24_cordis.exact_keys(p_delta,ARRAY['domain','receipt','events','successors']),false)
   OR jsonb_typeof(p_delta->'domain')<>'array' OR jsonb_typeof(p_delta->'events')<>'array'
@@ -574,6 +604,26 @@ BEGIN
     OR jsonb_array_length(item->'contribution_ids')=0 THEN
     RETURN v24_cordis.error_v1('invalid_outcome');
    END IF;
+  ELSIF op='contribution_inverse' THEN
+   n_inverse:=n_inverse+1;
+   IF n_inverse>1 OR NOT coalesce(v24_cordis.exact_keys(item,ARRAY['op','fiber_id','episode_id','contribution_ids']),false)
+    OR NOT v24_cordis.json_uuid(item->'fiber_id') OR NOT v24_cordis.json_uuid(item->'episode_id')
+    OR NOT coalesce(v24_cordis.json_uuid_set(item->'contribution_ids',32),false) THEN
+    RETURN v24_cordis.error_v1('invalid_outcome');
+   END IF;
+  ELSIF op='pins_release' THEN
+   n_pin_release:=n_pin_release+1;
+   IF n_pin_release>1 OR NOT coalesce(v24_cordis.exact_keys(item,ARRAY['op','fiber_id','episode_id','pin_ids']),false)
+    OR NOT v24_cordis.json_uuid(item->'fiber_id') OR NOT v24_cordis.json_uuid(item->'episode_id')
+    OR NOT coalesce(v24_cordis.json_uuid_set(item->'pin_ids',32),false) THEN
+    RETURN v24_cordis.error_v1('invalid_outcome');
+   END IF;
+  ELSIF op='episode_close' THEN
+   n_close_ep:=n_close_ep+1;
+   IF n_close_ep>1 OR NOT coalesce(v24_cordis.exact_keys(item,ARRAY['op','fiber_id','episode_id']),false)
+    OR NOT v24_cordis.json_uuid(item->'fiber_id') OR NOT v24_cordis.json_uuid(item->'episode_id') THEN
+    RETURN v24_cordis.error_v1('invalid_outcome');
+   END IF;
   ELSIF op='episode_progress' THEN
    n_progress:=n_progress+1;
    IF n_progress>1 OR NOT coalesce(v24_cordis.exact_keys(item,ARRAY['op','episode_id','next_index','registered_through']),false)
@@ -679,8 +729,10 @@ BEGIN
    v_branch:='p2';
   ELSIF v_expected->>'kind'='p4' THEN
    v_branch:='p4';
+  ELSIF v_expected->>'kind'='p6' THEN
+   v_branch:='p6';
   END IF;
-  IF v_branch IN ('teardown','noop') THEN
+  IF v_branch IN ('teardown','noop','p6') THEN
    NULL;
   ELSIF v_branch='p1' THEN
    IF EXISTS(SELECT 1 FROM v24_cordis.episodes WHERE fiber_id=f.id AND closed_at IS NULL) THEN
@@ -712,6 +764,7 @@ BEGIN
   WHEN 'p4' THEN ARRAY['episode_activate']
   WHEN 'dispose' THEN ARRAY['basic_dispose']
   WHEN 'teardown' THEN ARRAY['fiber_retire','episode_close_start','contributions_withdraw']
+  WHEN 'p6' THEN ARRAY['contribution_inverse','pins_release','episode_close']
   ELSE ARRAY[]::text[] END;
  FOR v_item IN SELECT value FROM jsonb_array_elements(v_domain) LOOP
   IF NOT (v_item->>'op'=ANY(v_allowed)) THEN
@@ -892,6 +945,11 @@ BEGIN
   IF p_delta->'successors'<>'[]'::jsonb THEN
    RETURN v24_cordis.error_v1('invalid_outcome');
   END IF;
+ ELSIF v_branch='p6' THEN
+  IF p_delta IS DISTINCT FROM v24_cordis.p6_delta(p_effect_id,f.id) THEN
+   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p6_diagnosis'));
+  END IF;
+  RETURN NULL;
  ELSIF v_branch='dispose' THEN
   IF v_dispose IS NULL OR (v_dispose->>'install_id')::uuid<>inst.id OR inst.state<>'installed' THEN
    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','dispose_context'));
@@ -919,6 +977,7 @@ DECLARE err jsonb; response jsonb; body jsonb:=p_outcome->'body'; item jsonb; v_
  bytes bytea; sequence bigint; v_op text; v_actor text; v_cont boolean; v_emitted jsonb:='[]';
  v_sid uuid; v_ord int; v_fiber uuid; v_ep uuid; v_new_fiber uuid; v_new_ep uuid;
  v_constraint text; v_conflict_key text; v_branch jsonb; v_failure_ep v24_cordis.episodes%ROWTYPE;
+ v_cid uuid; v_ok boolean;
 BEGIN
  err:=v24_cordis.validate_delta(p_delta,p_outcome->>'class');
  IF err IS NOT NULL THEN RETURN err; END IF;
@@ -950,7 +1009,8 @@ BEGIN
  BEGIN
  FOREACH v_op IN ARRAY ARRAY['scope_create','install_create','fiber_create','episode_begin',
   'contribution_append','episode_progress','fiber_control','fiber_retire','episode_close_start',
-  'contributions_withdraw','episode_activate','basic_dispose'] LOOP
+  'contributions_withdraw','contribution_inverse','pins_release','episode_close',
+  'episode_activate','basic_dispose'] LOOP
   FOR item IN SELECT value FROM jsonb_array_elements(p_delta->'domain') WITH ORDINALITY x(value,ord)
    WHERE x.value->>'op'=v_op ORDER BY ord LOOP
    IF v_op='scope_create' THEN
@@ -1013,6 +1073,43 @@ BEGIN
    ELSIF v_op='contributions_withdraw' THEN
     UPDATE v24_cordis.contributions SET withdrawn_at=clock_timestamp()
      WHERE id IN (SELECT jsonb_array_elements_text(item->'contribution_ids')::uuid);
+   ELSIF v_op='contribution_inverse' THEN
+    FOR v_cid IN SELECT jsonb_array_elements_text(item->'contribution_ids')::uuid LOOP
+     IF EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.id=v_cid AND c.kind='child'
+      AND NOT (v24_cordis.json_uuid(c.descriptor->'child_fiber_id') AND EXISTS(
+       SELECT 1 FROM v24_cordis.fibers cf WHERE cf.id=(c.descriptor->>'child_fiber_id')::uuid
+        AND cf.disposed_at IS NOT NULL))) THEN
+      RAISE EXCEPTION 'child is not tombstoned' USING ERRCODE='23514'; END IF;
+     UPDATE v24_cordis.contributions SET withdrawn_at=coalesce(withdrawn_at,clock_timestamp()),
+      released_at=clock_timestamp() WHERE id=v_cid;
+     SELECT released_at IS NOT NULL AND withdrawn_at IS NOT NULL INTO v_ok
+      FROM v24_cordis.contributions WHERE id=v_cid;
+     IF v_ok IS DISTINCT FROM true THEN
+      RAISE EXCEPTION 'inverse postcondition' USING ERRCODE='23514'; END IF;
+     IF EXISTS(SELECT 1 FROM v24_cordis.pins WHERE contribution_id=v_cid AND released_at IS NULL) THEN
+      RAISE EXCEPTION 'inverse leaves live pin' USING ERRCODE='23514'; END IF;
+    END LOOP;
+   ELSIF v_op='pins_release' THEN
+    FOR v_cid IN SELECT jsonb_array_elements_text(item->'pin_ids')::uuid LOOP
+     IF NOT EXISTS(SELECT 1 FROM v24_cordis.pins p WHERE p.id=v_cid AND p.released_at IS NULL
+      AND ((p.consumer_fiber_id=(item->>'fiber_id')::uuid
+        AND p.consumer_episode_id=(item->>'episode_id')::uuid)
+       OR (p.consumer_run_id IN (SELECT id FROM v24_cordis.runs
+         WHERE owner_fiber_id=(item->>'fiber_id')::uuid
+          AND owner_episode_id=(item->>'episode_id')::uuid AND ended_at IS NOT NULL)
+        AND NOT EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.run_id=p.consumer_run_id
+         AND (x.kind='host_io' OR x.status IN ('ready','claimed','unknown')))))) THEN
+      RAISE EXCEPTION 'pin release target' USING ERRCODE='23514'; END IF;
+     UPDATE v24_cordis.pins SET released_at=clock_timestamp() WHERE id=v_cid;
+     SELECT released_at IS NOT NULL INTO v_ok FROM v24_cordis.pins WHERE id=v_cid;
+     IF v_ok IS DISTINCT FROM true THEN
+      RAISE EXCEPTION 'pin release postcondition' USING ERRCODE='23514'; END IF;
+    END LOOP;
+   ELSIF v_op='episode_close' THEN
+    UPDATE v24_cordis.episodes SET closed_at=clock_timestamp()
+     WHERE id=(item->>'episode_id')::uuid AND state='closing' AND closed_at IS NULL;
+    UPDATE v24_cordis.fibers SET current_episode_id=NULL,retire_started_at=NULL
+     WHERE id=(item->>'fiber_id')::uuid;
    ELSIF v_op='episode_activate' THEN
     UPDATE v24_cordis.episodes SET state='active' WHERE id=(item->>'episode_id')::uuid;
    ELSIF v_op='basic_dispose' THEN

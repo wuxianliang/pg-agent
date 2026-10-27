@@ -15,9 +15,13 @@ BEGIN
    SELECT refs||coalesce(jsonb_agg(jsonb_build_object('t','fibers','id',value)),'[]'::jsonb) INTO refs
     FROM jsonb_array_elements(item->'fiber_ids');
   END IF;
-  IF item->>'op'='contributions_withdraw' THEN
+  IF item->>'op' IN ('contributions_withdraw','contribution_inverse') THEN
    SELECT refs||coalesce(jsonb_agg(jsonb_build_object('t','contributions','id',value)),'[]'::jsonb) INTO refs
     FROM jsonb_array_elements(item->'contribution_ids');
+  END IF;
+  IF item->>'op'='pins_release' THEN
+   SELECT refs||coalesce(jsonb_agg(jsonb_build_object('t','pins','id',value)),'[]'::jsonb) INTO refs
+    FROM jsonb_array_elements(item->'pin_ids');
   END IF;
   FOR pair IN SELECT * FROM (VALUES
     ('scope_id','scopes'),('install_id','installs'),('parent_id','scopes'),
@@ -95,6 +99,46 @@ BEGIN
   WHEN 'episode_activate' THEN
    SELECT state='active' AND v24_cordis.fiber_live_resolve_ok(fiber_id,id)
     INTO ok FROM v24_cordis.episodes WHERE id=(item->>'episode_id')::uuid;
+  WHEN 'contribution_inverse' THEN
+   SELECT count(*)=jsonb_array_length(item->'contribution_ids') AND coalesce(bool_and(
+    c.released_at IS NOT NULL AND c.withdrawn_at IS NOT NULL
+    AND c.fiber_id=(item->>'fiber_id')::uuid AND c.episode_id=(item->>'episode_id')::uuid
+    AND (c.prev_contribution_id IS NULL OR EXISTS(
+     SELECT 1 FROM v24_cordis.contributions p WHERE p.id=c.prev_contribution_id))),true)
+    INTO ok FROM v24_cordis.contributions c
+    WHERE c.id IN (SELECT jsonb_array_elements_text(item->'contribution_ids')::uuid);
+   IF ok THEN
+    SELECT NOT EXISTS(SELECT 1 FROM v24_cordis.pins p WHERE p.released_at IS NULL
+      AND p.contribution_id IN (SELECT jsonb_array_elements_text(item->'contribution_ids')::uuid)) INTO ok;
+   END IF;
+  WHEN 'pins_release' THEN
+   SELECT count(*)=jsonb_array_length(item->'pin_ids') AND coalesce(bool_and(
+    released_at IS NOT NULL AND ((consumer_fiber_id=(item->>'fiber_id')::uuid
+      AND consumer_episode_id=(item->>'episode_id')::uuid)
+     OR consumer_run_id IN (SELECT id FROM v24_cordis.runs
+      WHERE owner_fiber_id=(item->>'fiber_id')::uuid AND owner_episode_id=(item->>'episode_id')::uuid))),true)
+    INTO ok FROM v24_cordis.pins
+    WHERE id IN (SELECT jsonb_array_elements_text(item->'pin_ids')::uuid);
+  WHEN 'episode_close' THEN
+   SELECT e.closed_at IS NOT NULL AND e.state='closing'
+    AND f.current_episode_id IS NULL AND f.retire_started_at IS NULL
+    AND NOT EXISTS(SELECT 1 FROM v24_cordis.contributions c
+     WHERE c.fiber_id=f.id AND c.episode_id=e.id AND c.released_at IS NULL)
+    AND NOT EXISTS(SELECT 1 FROM v24_cordis.runs r
+     WHERE r.owner_fiber_id=f.id AND r.owner_episode_id=e.id AND r.ended_at IS NULL)
+    AND NOT EXISTS(SELECT 1 FROM v24_cordis.pins p WHERE p.released_at IS NULL AND (
+      (p.consumer_fiber_id=f.id AND p.consumer_episode_id=e.id)
+      OR p.consumer_run_id IN (SELECT id FROM v24_cordis.runs
+        WHERE owner_fiber_id=f.id AND owner_episode_id=e.id)
+      OR p.contribution_id IN (SELECT id FROM v24_cordis.contributions
+        WHERE fiber_id=f.id AND episode_id=e.id)))
+    AND NOT EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.fiber_id=f.id
+      AND c.episode_id=e.id AND c.kind='child'
+      AND NOT (v24_cordis.json_uuid(c.descriptor->'child_fiber_id') AND EXISTS(
+       SELECT 1 FROM v24_cordis.fibers cf WHERE cf.id=(c.descriptor->>'child_fiber_id')::uuid
+        AND cf.disposed_at IS NOT NULL)))
+    INTO ok FROM v24_cordis.episodes e JOIN v24_cordis.fibers f ON f.id=e.fiber_id
+    WHERE e.id=(item->>'episode_id')::uuid AND f.id=(item->>'fiber_id')::uuid;
   ELSE NULL;
   END CASE;
   IF ok IS DISTINCT FROM true THEN RAISE EXCEPTION 'domain postcondition failed' USING ERRCODE='23514'; END IF;
@@ -102,8 +146,21 @@ BEGIN
 END $$;
 CREATE FUNCTION v24_cordis.command_barrier(p_effect_id uuid,p_outcome jsonb,p_closure jsonb) RETURNS jsonb
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE kind text:=p_outcome->'body'->>'kind'; payload jsonb:=p_outcome->'body'->'payload';
+ f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE; plan jsonb;
 BEGIN
- -- NULL means the command may proceed. Production P6 classification is not implemented.
+ -- NULL means the command may proceed. Only a closing P6 advance has a DB barrier here.
+ IF kind IS DISTINCT FROM 'command_reconcile' OR jsonb_typeof(payload)<>'object'
+  OR payload->>'action' IS DISTINCT FROM 'advance' OR NOT v24_cordis.json_uuid(payload->'fiber_id') THEN
+  RETURN NULL; END IF;
+ SELECT * INTO f FROM v24_cordis.fibers WHERE id=(payload->>'fiber_id')::uuid;
+ IF NOT FOUND OR f.current_episode_id IS NULL THEN RETURN NULL; END IF;
+ SELECT * INTO ep FROM v24_cordis.episodes WHERE id=f.current_episode_id AND fiber_id=f.id;
+ IF NOT FOUND OR ep.closed_at IS NOT NULL OR ep.state<>'closing' THEN RETURN NULL; END IF;
+ plan:=v24_cordis.p6_plan(p_effect_id,f.id);
+ IF plan->>'kind'='deferred' THEN RETURN jsonb_build_object('disposition','deferred'); END IF;
+ IF plan->>'kind'='blocked_unknown' THEN RETURN jsonb_build_object('disposition','blocked_unknown'); END IF;
+ IF plan->>'kind'='unsupported' THEN RETURN jsonb_build_object('disposition','unsupported'); END IF;
  RETURN NULL;
 END $$;
 CREATE FUNCTION v24_cordis.lifecycle_step(p_effect_id uuid,p_outcome jsonb,p_closure jsonb) RETURNS jsonb
@@ -424,7 +481,7 @@ BEGIN
  IF f.current_episode_id IS NOT NULL AND (NOT FOUND OR ep.closed_at IS NOT NULL) THEN
   RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','phase_drift'); END IF;
  IF f.current_episode_id IS NOT NULL AND ep.state='closing' THEN
-  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','p6_not_implemented'); END IF;
+  RETURN jsonb_build_object('kind','p6'); END IF;
  IF f.current_episode_id IS NULL THEN
   IF EXISTS(SELECT 1 FROM v24_cordis.episodes WHERE fiber_id=f.id AND closed_at IS NULL) THEN
    RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','phase_drift'); END IF;
@@ -554,4 +611,148 @@ BEGIN
   END LOOP;
   RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','totality'); END IF;
  RETURN jsonb_build_object('kind','p4');
+END $$;
+CREATE FUNCTION v24_cordis.run_pin_release_delta(p_run uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE r v24_cordis.runs%ROWTYPE; pins jsonb;
+BEGIN
+ -- Trusted terminal run facts only: caller proves owner/episode alignment.
+ SELECT * INTO r FROM v24_cordis.runs WHERE id=p_run;
+ IF NOT FOUND OR r.ended_at IS NULL THEN RETURN '[]'::jsonb; END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.run_id=p_run
+  AND (x.kind='host_io' OR x.status IN ('ready','claimed','unknown'))) THEN
+  RETURN '[]'::jsonb; END IF;
+ SELECT coalesce(jsonb_agg(id ORDER BY key,id),'[]'::jsonb) INTO pins FROM (
+  SELECT id,key FROM v24_cordis.pins WHERE consumer_run_id=p_run AND released_at IS NULL
+  ORDER BY key,id LIMIT 32) q;
+ RETURN pins;
+END $$;
+CREATE FUNCTION v24_cordis.p6_plan(p_effect_id uuid,p_fiber uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE;
+ batch jsonb:='[]'::jsonb; batch_ids uuid[]; n_contrib int; run_pins jsonb:='[]'::jsonb;
+ act_pins jsonb:='[]'::jsonb; item jsonb; rv record; remaining int;
+BEGIN
+ SELECT * INTO f FROM v24_cordis.fibers WHERE id=p_fiber;
+ IF NOT FOUND OR f.current_episode_id IS NULL THEN RETURN jsonb_build_object('kind','none'); END IF;
+ SELECT * INTO ep FROM v24_cordis.episodes WHERE id=f.current_episode_id AND fiber_id=f.id;
+ IF NOT FOUND OR ep.closed_at IS NOT NULL OR ep.state<>'closing' THEN
+  RETURN jsonb_build_object('kind','none'); END IF;
+ IF ep.outcome IS NULL THEN RETURN jsonb_build_object('kind','unsupported','reason','closing_outcome'); END IF;
+ SELECT coalesce(jsonb_agg(id ORDER BY seq DESC),'[]'::jsonb) INTO batch FROM (
+  SELECT id,seq FROM v24_cordis.contributions WHERE fiber_id=f.id AND episode_id=ep.id
+   AND released_at IS NULL ORDER BY seq DESC LIMIT 32) q;
+ batch_ids:=ARRAY(SELECT jsonb_array_elements_text(batch)::uuid);
+ SELECT count(*) INTO n_contrib FROM v24_cordis.contributions
+  WHERE fiber_id=f.id AND episode_id=ep.id AND released_at IS NULL;
+ IF EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.kind='host_io' AND (x.fiber_id=f.id
+   OR x.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=f.id))) THEN
+  RETURN jsonb_build_object('kind','unsupported','reason','host_io'); END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.id IS DISTINCT FROM p_effect_id
+   AND x.status='unknown' AND (x.fiber_id=f.id
+   OR x.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=f.id))) THEN
+  RETURN jsonb_build_object('kind','blocked_unknown','reason','effect'); END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.id=ANY(batch_ids)
+   AND NOT ((c.inverse->>'op'='delete_row' AND c.kind IN ('service','listener'))
+    OR (c.inverse->>'op'='dispose_child' AND c.kind='child')
+    OR c.inverse->>'op'='unknown')) THEN
+  RETURN jsonb_build_object('kind','unsupported','reason','inverse'); END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.contributions c
+   WHERE c.id=ANY(batch_ids) AND c.inverse->>'op'='unknown') THEN
+  RETURN jsonb_build_object('kind','blocked_unknown','reason','inverse'); END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.id IS DISTINCT FROM p_effect_id
+   AND x.status IN ('ready','claimed') AND (x.fiber_id=f.id
+   OR x.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=f.id))) THEN
+  RETURN jsonb_build_object('kind','deferred','reason','effect'); END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.runs r WHERE r.owner_fiber_id=f.id AND r.ended_at IS NULL) THEN
+  RETURN jsonb_build_object('kind','deferred','reason','run'); END IF;
+ FOR rv IN SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=f.id
+  AND owner_episode_id=ep.id AND ended_at IS NOT NULL ORDER BY id LOOP
+  FOR item IN SELECT value FROM jsonb_array_elements(v24_cordis.run_pin_release_delta(rv.id)) LOOP
+   run_pins:=run_pins||jsonb_build_array(item);
+   EXIT WHEN jsonb_array_length(run_pins)>=32;
+  END LOOP;
+  EXIT WHEN jsonb_array_length(run_pins)>=32;
+ END LOOP;
+ IF n_contrib>0 THEN
+  IF jsonb_array_length(run_pins)>0 THEN
+   RETURN jsonb_build_object('kind','pins_release','run_pin_ids',run_pins,
+    'activation_pin_ids','[]'::jsonb); END IF;
+  IF EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.fiber_id=f.id
+    AND c.episode_id=ep.id AND c.kind='child'
+    AND NOT (v24_cordis.json_uuid(c.descriptor->'child_fiber_id') AND EXISTS(
+     SELECT 1 FROM v24_cordis.fibers cf WHERE cf.id=(c.descriptor->>'child_fiber_id')::uuid
+      AND cf.disposed_at IS NOT NULL))) THEN
+   RETURN jsonb_build_object('kind','deferred','reason','child'); END IF;
+  IF EXISTS(SELECT 1 FROM v24_cordis.pins p WHERE p.released_at IS NULL
+    AND p.contribution_id=ANY(batch_ids)) THEN
+   RETURN jsonb_build_object('kind','deferred','reason','pin'); END IF;
+  RETURN jsonb_build_object('kind','inverse','contribution_ids',batch);
+ END IF;
+ SELECT coalesce(jsonb_agg(id ORDER BY key,id),'[]'::jsonb) INTO act_pins FROM (
+  SELECT id,key FROM v24_cordis.pins WHERE consumer_fiber_id=f.id
+   AND consumer_episode_id=ep.id AND released_at IS NULL ORDER BY key,id LIMIT 32) q;
+ remaining:=32-jsonb_array_length(run_pins);
+ IF jsonb_array_length(act_pins)>0 AND remaining<jsonb_array_length(act_pins) THEN
+  SELECT coalesce(jsonb_agg(value ORDER BY ord),'[]'::jsonb) INTO act_pins
+   FROM (SELECT value,ord FROM jsonb_array_elements(act_pins) WITH ORDINALITY x(value,ord)
+    WHERE ord<=remaining ORDER BY ord) q;
+ END IF;
+ IF jsonb_array_length(run_pins)>0 OR jsonb_array_length(act_pins)>0 THEN
+  RETURN jsonb_build_object('kind','pins_release','run_pin_ids',run_pins,
+   'activation_pin_ids',act_pins); END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.pins p WHERE p.released_at IS NULL
+  AND p.contribution_id IN (SELECT id FROM v24_cordis.contributions
+   WHERE fiber_id=f.id AND episode_id=ep.id)) THEN
+  RETURN jsonb_build_object('kind','deferred','reason','pin'); END IF;
+ IF EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.fiber_id=f.id AND c.episode_id=ep.id
+  AND c.kind='child' AND NOT (v24_cordis.json_uuid(c.descriptor->'child_fiber_id') AND EXISTS(
+   SELECT 1 FROM v24_cordis.fibers cf WHERE cf.id=(c.descriptor->>'child_fiber_id')::uuid
+    AND cf.disposed_at IS NOT NULL))) THEN
+  RETURN jsonb_build_object('kind','deferred','reason','child'); END IF;
+ RETURN jsonb_build_object('kind','close');
+END $$;
+CREATE FUNCTION v24_cordis.p6_delta(p_effect_id uuid,p_fiber uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE plan jsonb; f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE;
+ ids jsonb; run_ids jsonb; act_ids jsonb; seq_from bigint; seq_through bigint;
+BEGIN
+ plan:=v24_cordis.p6_plan(p_effect_id,p_fiber);
+ SELECT * INTO f FROM v24_cordis.fibers WHERE id=p_fiber;
+ SELECT * INTO ep FROM v24_cordis.episodes WHERE id=f.current_episode_id AND fiber_id=f.id;
+ IF plan->>'kind'='inverse' THEN
+  ids:=plan->'contribution_ids';
+  SELECT max(seq),min(seq) INTO seq_from,seq_through FROM v24_cordis.contributions
+   WHERE id IN (SELECT jsonb_array_elements_text(ids)::uuid);
+  IF seq_from IS NULL THEN RETURN NULL; END IF;
+  RETURN jsonb_build_object('domain',jsonb_build_array(jsonb_build_object('op','contribution_inverse',
+    'fiber_id',to_jsonb(f.id),'episode_id',to_jsonb(ep.id),'contribution_ids',ids)),
+   'receipt',jsonb_build_object('status','succeeded'),
+   'events',jsonb_build_array(jsonb_build_object('entity_type','fiber','entity_id',to_jsonb(f.id),
+    'event_kind','contributions_released','payload',jsonb_build_object('episode_id',to_jsonb(ep.id),
+     'contribution_ids',ids,'seq_from',to_jsonb(seq_from),'seq_through',to_jsonb(seq_through)))),
+   'successors',v24_cordis.reconcile_successor(f.id,f.control_seq));
+ ELSIF plan->>'kind'='pins_release' THEN
+  run_ids:=plan->'run_pin_ids'; act_ids:=plan->'activation_pin_ids';
+  RETURN jsonb_build_object('domain',jsonb_build_array(jsonb_build_object('op','pins_release',
+    'fiber_id',to_jsonb(f.id),'episode_id',to_jsonb(ep.id),'pin_ids',run_ids||act_ids)),
+   'receipt',jsonb_build_object('status','succeeded'),
+   'events',jsonb_build_array(jsonb_build_object('entity_type','fiber','entity_id',to_jsonb(f.id),
+    'event_kind','pins_released','payload',jsonb_build_object('episode_id',to_jsonb(ep.id),
+     'activation_pin_ids',act_ids,'run_pin_ids',run_ids))),
+   'successors',v24_cordis.reconcile_successor(f.id,f.control_seq));
+ ELSIF plan->>'kind'='close' THEN
+  IF ep.id IS NULL OR ep.outcome IS NULL
+   OR NOT v24_cordis.json_int(ep.iterator->'control_seq',0,9223372036854775807) THEN
+   RETURN NULL; END IF;
+  RETURN jsonb_build_object('domain',jsonb_build_array(jsonb_build_object('op','episode_close',
+    'fiber_id',to_jsonb(f.id),'episode_id',to_jsonb(ep.id))),
+   'receipt',jsonb_build_object('status','succeeded'),
+   'events',jsonb_build_array(jsonb_build_object('entity_type','fiber','entity_id',to_jsonb(f.id),
+    'event_kind','episode_closed','payload',jsonb_build_object('episode_id',to_jsonb(ep.id),
+     'epoch',to_jsonb(ep.epoch),'outcome',to_jsonb(ep.outcome),
+     'control_seq',to_jsonb((ep.iterator->>'control_seq')::bigint)))),
+   'successors','[]'::jsonb);
+ END IF;
+ RETURN NULL;
 END $$;

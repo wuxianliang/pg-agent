@@ -885,6 +885,19 @@ BEGIN
    IF built->>'kind' IN ('active_noop','idle_noop') THEN RETURN v24_cordis.empty_success(); END IF;
    IF built->>'kind'='leave' THEN RETURN v24_cordis.closing_delta(f.id,built); END IF;
   END IF;
+  IF ep.id IS NOT NULL AND ep.closed_at IS NULL AND ep.state='closing' THEN
+   -- P6 selects exactly one branch; deferred/blocked/unsupported are classified by the barrier.
+   built:=v24_cordis.p6_plan(p_effect_id,f.id);
+   IF built->>'kind'='blocked_unknown' THEN
+    RETURN v24_cordis.error_v1('blocked_unknown',jsonb_build_object('reason',built->>'reason'));
+   ELSIF built->>'kind'='unsupported' THEN
+    RAISE EXCEPTION '%',built->>'reason' USING ERRCODE='0A000';
+   ELSIF built->>'kind' IN ('inverse','pins_release','close') THEN
+    RETURN v24_cordis.p6_delta(p_effect_id,f.id);
+   ELSE
+    RETURN v24_cordis.empty_success();
+   END IF;
+  END IF;
  END IF;
  built:=v24_cordis.reconcile_branch(f.id,action,(payload->>'expected_control_seq')::bigint);
  IF built->>'kind'='error' THEN
@@ -998,8 +1011,17 @@ BEGIN
    JOIN v24_cordis.fibers f ON f.current_episode_id=e.id WHERE f.id=fid
   UNION ALL SELECT jsonb_build_object('t','contributions','id',c.id) FROM v24_cordis.contributions c
    JOIN v24_cordis.fibers f ON f.current_episode_id=c.episode_id
-   WHERE f.id=fid AND c.fiber_id=fid AND c.kind IN ('service','cell','listener')
-    AND c.withdrawn_at IS NULL AND c.released_at IS NULL AND p_payload->>'action'='advance'
+   WHERE f.id=fid AND c.fiber_id=fid AND c.released_at IS NULL
+    AND p_payload->>'action'='advance'
+  UNION ALL SELECT jsonb_build_object('t','runs','id',rr.id) FROM v24_cordis.runs rr
+   JOIN v24_cordis.fibers f ON f.id=rr.owner_fiber_id
+   WHERE f.id=fid AND rr.owner_episode_id=f.current_episode_id
+    AND p_payload->>'action'='advance'
+  UNION ALL SELECT jsonb_build_object('t','pins','id',pp.id) FROM v24_cordis.pins pp
+   JOIN v24_cordis.runs rr ON rr.id=pp.consumer_run_id
+   JOIN v24_cordis.fibers f ON f.id=rr.owner_fiber_id
+   WHERE f.id=fid AND rr.owner_episode_id=f.current_episode_id AND pp.released_at IS NULL
+    AND p_payload->>'action'='advance'
   UNION ALL SELECT jsonb_build_object('t','effects','id',x.id) FROM v24_cordis.effects x
    WHERE x.fiber_id=fid AND x.kind='command_reconcile' AND x.status IN ('ready','claimed')
   UNION ALL SELECT jsonb_build_object('t','pins','id',p.id) FROM v24_cordis.pins p

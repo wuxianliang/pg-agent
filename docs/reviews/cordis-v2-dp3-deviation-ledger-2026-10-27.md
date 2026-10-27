@@ -55,9 +55,31 @@ Final gates ran on HEAD `103ec596040506e74a7babdc240312885843d9f0` plus W2 chang
 
 One Oracle review was used; its two findings above were fixed before the final23-command serial run. The initial provider exhaustion left an incomplete42 edit; it was inspected and completed with production writer/validator/applier, guards and gates rather than accepted as evidence.
 
+## W3 observations (2026-10-27)
+
+W3 gates ran on HEAD `72af2528` plus W3 changes before staging in v99. The matrix records all 23 commands, each exit 0, total 62.92 seconds. W3 is delivered by this commit to `origin/v24`.
+
+| Item | Plan / risk | W3 treatment and evidence |
+|---|---|---|
+| Child CHECK versus P5 | `14_contributions.sql` requires `withdrawn_at` whenever `released_at` is set; P5 intentionally excludes `child` from `withdrawn_ids` | For `child/dispose_child`, the P6 inverse sets `withdrawn_at` as release bookkeeping in the same write, then `released_at`. The physical row, descriptor, inverse, seq and FKs are retained. P5 visibility claims and `withdrawn_ids` remain child-free. CDP3-T7 proves the sequence and the unchanged child inverse identity. The CHECK was not relaxed |
+| Listener fixture | DP3 has no production listener registrar/dispatch | A listener contribution is inserted by owner fixture, withdrawn by real P5, then released by real P6. The ledger row and address index behave correctly, but no registration or dispatch is claimed. CDP3-T7b |
+| Child inverse precondition | W3 cannot prove production child cleanup | P6 defers while `fibers.disposed_at` is NULL for `descriptor->>'child_fiber_id'`; only an owner-fixture tombstone lets the parent ledger release. W4 owns production child cleanup and permanent-seal acceptance. CDP3-T7 |
+| Successor policy | Plan prefers no P6 successor; fresh `advance` requests are reserved-key-only in the existing protocol | Each committed inverse/pin-release step emits one ordinal-0 `command_reconcile/advance` successor, settled after the current effect and before insertion. Close emits none and starts no episode. The host obtains the first P6 slot through a P0 `off` schedule on the closing fiber. This is a protocol-constrained continuation, not a second scheduler. CDP3-T1/T2/T8/T9 and CDP3-P7 |
+| `lifecycle_step` | §3.2 allows a read-only selector; W1 left it idle | It remains read-only `{tag:"idle"}` and is not called by `advance` or `interpret_command`. Production P6 selection lives in `p6_plan`/`p6_delta`. CDP3-P4 still asserts the layout and the single DEFINER |
+| `command_barrier` | W1 production NULL was not a teardown selector | Production now classifies a closing P6 advance: waitable DB obligations → deferred, unknown debt → blocked_unknown, host_io/settlement → unsupported/0A000, ready → NULL. Non-closing commands keep NULL. CDP3-P7 and CDP3-T3/T4/T5 |
+| Run-end monotonic guard | Plan §6 requires run `ended_at` first value not cleared or rewritten | Added a narrow `runs` branch guard in `30_triggers.sql`; no table/column/function signature change. DP1/DP2 gates stay green |
+| host_io / settlement | DP3 has no production handler; terminal labels are not release proof | Any host_io effect tied to the fiber or its owned runs is a hard `0A000`; settlement remains unimplemented. CDP3-T5 uses an owner-fixture succeeded host_io to prove the refusal is not inferred from status |
+| Barrier precedence | Unsupported/unknown debt is not waitable; live pins/child/effects are waitable | `p6_plan` classifies hard unsupported and unknown debt before deferred barriers; run pins are work only for terminal owned runs; open runs, other ready/claimed effects and live pins on selected contributions defer. CDP3-T3/T4/T5 |
+| Batch selection | Highest unreleased seq DESC must include unsupported/unknown without filtering | The batch is the top 32 of every unreleased contribution kind for the current episode. CDP3-T8 proves 32+1 strict ordering; CDP3-T6 proves a selected unsupported/unknown item refuses the whole call rather than skipping |
+| Address release semantics | Withdraw alone must not free the unique address; release must | CDP3-T10 registers a second fiber after the holder withdrawal but before release (conflict), then after release (success on the holder's old address) |
+| Fresh postconditions | Pre-apply snapshots are not proof | `validate_domain` recomputes the full selected branch through `p6_delta`; the applier re-queries each inverse/pin/close postcondition with fresh VOLATILE SQL. Close additionally rechecks no unreleased contribution, no live own/run pin, no open owned run and no untombstoned child |
+| Closure seed and 512 cap | P6 write targets must be locked; released history must not inflate closure | `reconcile_command_seed` adds all unreleased contributions (including child/withdrawn), owned runs and run pins, retains the 512 cap, and does not pull released history. All old closure gates stay green |
+| Capacity/freeze | Total helper budget ≤5000; no frozen edits | 40=1356, 41=1141, 42=758, sum 3255; DDL 461; manifest 17; tables 10; one DEFINER; public function EXECUTE 0; source VIEW/EXTENSION 0. All 12 frozen hashes match DP2; frozen `57e2c1e` diff and v8 diff exit 0; `git diff --check` exit 0 |
+| Isolation | Preserve pre-existing work | Only W3 implementation/test/artifact paths were edited. The original 10 dirty docs and 24 unrelated untracked files are untouched. No stage/commit/push was performed |
+
 ## Current unclaimed scope
 
-- P6 production drain/inverse/pin release/episode close, activated dispose, CDP3-T/D/B and later milestones are not delivered.
-- W1's disposable barrier/deferred/replay probes remain protocol evidence only. They do not prove production P6 or the W3 first commit after a satisfied barrier.
-- No production listener registration/dispatch, run settlement, external recovery or scanner/fairness claim follows from owner fixtures.
-- This W2 commit is the stopping point after push to origin/v24; no W3 work begins.
+- W4 activated-instance dispose, DP4 settlement, DP5 listener/dispatch/intercept/overlay, DP6 scanner/fairness/external recovery and child cleanup fan-out are not delivered.
+- W1's disposable barrier/deferred/replay probes remain protocol evidence only. W3's CDP3-P7 is the production P6 deferred/first-commit/replay evidence.
+- No production listener registration/dispatch, run settlement, external recovery, scanner/fairness or production child cleanup claim follows from owner fixtures.
+- W3 is delivered by this commit to `origin/v24`.

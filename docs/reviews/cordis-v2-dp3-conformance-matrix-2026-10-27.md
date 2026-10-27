@@ -4,7 +4,7 @@ B0 executed on 2026-10-27 in worktree `/Users/wxl/Projects/pg-agent/.claude/work
 
 ## Scope
 
-B0 (`ba4f533`) records the baseline; W1 (`103ec596`) adds layout/budget/protocol probes. This commit delivers W2 live invalidation and entry into closing. Current evidence is in the W2 section; B0/W1 sections retain their gate-time history. W3–W5 are unimplemented and paused after this W2 publication to `origin/v24`. CDP3-T/D/B are not claimed.
+B0 (`ba4f533`) records the baseline; W1 (`103ec596`) adds layout/budget/protocol probes; W2 (`72af2528`) adds live invalidation and entry into closing. W3 adds production P6 drain, inverse, run/activation pin release and episode close; its evidence is in the W3 section below. B0/W1/W2 sections retain their gate-time history. W3 is delivered by this commit. W4–W5 remain unimplemented; CDP3-D/B are not claimed.
 
 ## Environment
 
@@ -224,4 +224,74 @@ Order s8 before s7 follows §4.1. No gate was run concurrently.
 
 ## W2 not covered / pause boundary
 
-P6 inverse, production pin release/episode close, activated dispose and CDP3-T/D/B remain unimplemented. `command_barrier` production returns NULL and `lifecycle_step` stays idle/unwired; W2 uses the independently validated reconcile selector rather than claiming that stub is a P6 selector. Child inverse CHECK compatibility is unchanged. Owner fixtures for released pins, run/cell/listener/reservation, cycles and damaged/history facts prove only the named ledger/negative boundaries. No production listener registration/dispatch, run settlement, external recovery or automatic invalidation fan-out is claimed. W2 publishes independently to `origin/v24`, then all later plan work pauses per user instruction.
+At W2, P6 inverse, production pin release/episode close, activated dispose and CDP3-T/D/B were unimplemented. `command_barrier` production returned NULL and `lifecycle_step` stayed idle/unwired. Child inverse CHECK compatibility was unchanged. W2 owner fixtures for released pins, run/cell/listener/reservation, cycles and damaged/history facts proved only the named ledger/negative boundaries. No production listener registration/dispatch, run settlement, external recovery or automatic invalidation fan-out was claimed. W2 was published to `origin/v24` as `72af2528`. W3 evidence is below.
+
+## W3 (2026-10-27)
+
+
+Final serial run in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `72af2528` (W2 baseline) plus W3 changes before staging. Every process below exited 0; total elapsed gate time was **62.92 seconds**. Each command was a separate process, awaited before the next; the runner stopped on the first non-zero exit. No command was run concurrently. W3 is delivered by this commit.
+
+| Requirement | Evidence through real `advance` unless explicitly marked fixture |
+|---|---|
+| P6 selector and barrier | `p6_plan` selects exactly one branch; `command_barrier` maps deferred/blocked_unknown/unsupported. CDP3-P7 real deferred is ten-table zero-write, leaves the continuation ready and consumes no request/effect. |
+| First commit after barrier clears | CDP3-P7 ends the open owned run, resubmits the identical effect/outcome, and commits `episode_closed`; the DB acquires G only after the deferred caller commits. |
+| Byte-identical replay | CDP3-P7 compares the same request's stored `response::text` and ten-table snapshot before and after replay; one request and one event remain. |
+| Inverse batch | CDP3-T8: 33 contributions produce 32 (seq 32→1) then 1 (seq 0), strict `seq DESC`, no filtering or skipping. CDP3-T2/T8 keep physical rows and compare descriptor/inverse/seq. |
+| Pin batch | CDP3-T4 releases an ended-run pin before contribution inverse. CDP3-T9: 31 run pins order by run/key/id, activation pins by key/id, combined first batch exactly 32 with run pins first; remaining activation pin is next. |
+| Activation pin without run | CDP3-T3: live consumer activation pin defers provider release; real consumer pin-release unblocks the same provider request. |
+| Run fixture boundary | CDP3-T4: open run defers; `run_pin_release_delta` returns `[]` while open and the pin after `ended_at`; run result stays NULL and no settlement is written. |
+| Effect barriers | CDP3-T5: ready dispatch defers; claimed with expired lease still defers (not completion/cancel); settling it allows close; unknown is `blocked_unknown` zero-write; host_io is `0A000` with an unchanged ten-table snapshot. |
+| Unsupported/unknown inverse | CDP3-T6: cell `restore_prev` and reservation `release_reservation` return SQLSTATE `0A000` with whole-call rollback; `unknown` returns `blocked_unknown` zero-write. P5 withdraws service/cell/listener only; reservation keeps its debt. |
+| Listener inverse | CDP3-T7b: owner-fixture listener is withdrawn by P5; P6 releases the ledger row, keeps descriptor/inverse, and the unique listener address is occupied before release and reusable after. No dispatch or production listener registration is claimed. |
+| Child inverse | CDP3-T7: parent P5 does not withdraw the child contribution; P6 defers until an owner-fixture `disposed_at` tombstone; inverse then sets `withdrawn_at` as release bookkeeping and `released_at`, preserving descriptor/FK and leaving P5 visibility claims unchanged. |
+| History and address | CDP3-T10: released pin and `prev_contribution_id` rows remain queryable; a second registration conflicts after withdraw but before release; the address registers again only after release. |
+| Close | CDP3-T1/T2: empty and non-empty episodes close with `closed_at`, `current_episode_id=NULL`, `retire_started_at=NULL`, unchanged state/outcome/failure/want_on and no new episode. |
+| Lifecycle layout | `lifecycle_step` stays idle and unreferenced by `advance`/`interpret_command`; CDP3-P4 asserts only `advance` is SECURITY DEFINER. The new run `ended_at` guard is additive. |
+
+| # | Command | Exit | Seconds | Printed final result |
+|---:|---|---:|---:|---|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0.05 | Cordis canonical loader and five refusal probes |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 0.62 | Cordis fixture: transaction/catalog/role family/OID cleanup |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 0.69 | CDP1-E |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 0.78 | CDP1-D,117 zero-write negatives plus positive/COMMIT |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 12.49 | CDP1-K,69 committed zero-write assertions |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 2.39 | CDP2-K |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 3.07 | CDP2-I |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 2.17 | CDP2-A |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 2.35 | CDP2-B |
+| 10 | `uv run python v24/load.py` | 0 | 0.06 | v24 loader self-check |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 0.67 | v24/s1 setup self-check |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 0.67 | v24 W2 G1-O owner DDL probes |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 1.57 | v24 G1 kernel, commands, claim, locks, host_prepare settlement and ACL |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 0.93 | v24 S2 W1-W6 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 4.20 | v24 S3 W1-W7 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 2.85 | v24 S4 W1-W6 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 2.26 | v24 S5 W1-W4 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 2.80 | v24 S6 W1-W4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 1.49 | v24 S8 W1-W3, G7-A…H + N1–N7 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 5.29 | v24 S7 W1-W2, G6-A…H + N1–N9 + L1–L5 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 8.91 | v24 G8,23 cases |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 1.98 | CDP3-P, P1…P7 including real P6 deferred/first commit/replay |
+| 23 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 4.63 | CDP3-T, T1…T10 |
+
+Order s8 before s7 follows §4.1. No gate was run concurrently.
+
+| W3 invariant | Actual evidence |
+|---|---|
+| Helper physical lines | 40=1356, 41=1141, 42=758, sum **3255≤5000**; CDP1-K0/CDP2-K0/I0/B prints agree. Temporary 5000/5001 trees still prove the boundary |
+| DDL prefix | 461≤900 |
+| Canonical loader | 17 exact entries; loader unchanged and self-check green |
+| Catalog/ACL | 10 tables, one SECURITY DEFINER (`advance`), public function EXECUTE 0, no new public writer |
+| Views/extensions | 0/0 source CREATE scan and catalog view count 0 |
+| Freeze | All 12 SHA-256 values equal the DP2 matrix; full `57e2c1e` frozen diff exit 0; v8 vs HEAD diff exit 0 |
+| Hygiene/isolation | `git diff --check` exit 0; the original 10 dirty docs and 24 unrelated untracked files remain untouched; W3 changes stay in the worktree |
+
+| W3 not covered / fixture boundary |
+|---|
+| W4 activated dispose, DP4 settlement, DP5 listener/dispatch/intercept/overlay, DP6 scanner/fairness/external recovery and child cleanup fan-out are not implemented. |
+| `host_io` and settlement remain conservative refusals; no terminal label is treated as proof that an external resource was released. |
+| Listener inverse, cell/reservation/unknown inverse, run/pin facts, child tombstone, effect barriers and historical rows are owner fixtures. They prove named ledger/blocking behavior only, not production registration, dispatch, run settlement or child cleanup. |
+| The child `withdrawn_at` write is release bookkeeping forced by the existing CHECK, not a P5 visibility withdrawal. |
+| P6 inverse/pin steps emit an ordinal-0 successor because fresh `advance` requests require a reserved key; the host enters P6 through a P0 `off` schedule. Close emits no successor and starts no episode. |
+| `lifecycle_step` remains read-only idle and unwired. No W4 dispose handoff is claimed. |
+| W3 is delivered by this commit to `origin/v24`. |

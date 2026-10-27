@@ -1,9 +1,11 @@
-"""CDP3-P: W1 command routing. This is not a production P6 gate.
+"""CDP3-P: command routing plus cumulative P0 and production P6 protocol evidence.
 
 Run with: uv run python v24/cordis/dp3/test_protocol.py
-The barrier stand-in is a disposable replacement of command_barrier. It proves
+The early barrier stand-in is a disposable replacement of command_barrier. It proves
 private control routing, ten-table zero writes, and release of G after the caller
-ends the transaction. W2 cumulatively proves production P0 controls.
+ends the transaction. W2 cumulatively proves production P0 controls; W3 adds a real
+closing-episode P6 deferred request, its first commit after the barrier clears, and
+byte-identical replay. The stand-in probe is still not production P6 evidence.
 """
 from __future__ import annotations
 import contextlib
@@ -490,6 +492,77 @@ def test_null_fence_progress(db):
     print('[CDP3-P6] NULL-fence on/off and on/off/on settle obsolete slots as no-op; new legal controls reach active')
 
 
+def test_p6_protocol(db):
+    from test_activation import install, phases, commit_new, child_call, one
+    root = active_owner(db)
+    payload, _, _ = install(db, owner=dict(fiber_id=str(root['fiber']), episode_id=str(root['episode'])),
+                            mode='existing', existing=root['scope'])
+    fiber = uuid.UUID(payload['fiber_id'])
+    phases(db, fiber, 0)
+    control = 1
+    off, result, _ = commit_new(db, 'command_reconcile', reconcile_payload(fiber, 'off', control))
+    assert result.get('disposition') == 'committed' and result['emitted'], result
+    slot, outcome = child_call(db, off, reconcile_payload(fiber, 'advance', control + 1))
+    with contextlib.closing(db.connect('service')) as conn:
+        assert api(conn, slot, outcome)['disposition'] == 'committed'
+        conn.commit()
+    control += 1
+    # A fresh legal off control allocates the one P6 continuation slot for the closing episode.
+    off, result, _ = commit_new(db, 'command_reconcile', reconcile_payload(fiber, 'off', control))
+    assert result.get('disposition') == 'committed' and len(result['emitted']) == 1, result
+    effect, outcome = child_call(db, off, reconcile_payload(fiber, 'advance', control))
+    episode = one(db, 'SELECT current_episode_id FROM v24_cordis.fibers WHERE id=%s', (fiber,))
+    run = uuid.uuid4()
+    with contextlib.closing(db.connect('owner')) as conn:
+        query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
+        query(conn, 'INSERT INTO v24_cordis.runs(id,owner_fiber_id,owner_episode_id,scope_id,'
+                    'spawn_key,remaining_steps) VALUES(%s,%s,%s,%s,%s,0)',
+              (run, fiber, episode, root['scope'], 'p6-protocol-open'))
+        conn.commit()
+    with contextlib.closing(db.connect('owner')) as owner:
+        before = snapshot(owner)
+        owner.rollback()
+    with contextlib.closing(db.connect('service')) as conn:
+        deferred = no_write(db, conn, effect, outcome, disposition='deferred')
+    assert set(deferred) == DEFERRED_KEYS and deferred['claim'] is None, deferred
+    with contextlib.closing(db.connect('owner')) as owner:
+        assert snapshot(owner) == before
+        assert query(owner, 'SELECT pg_try_advisory_xact_lock(24,1)')[0][0] is True
+        owner.rollback()
+    assert scalar(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (effect,)) == 'ready'
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.requests WHERE effect_id=%s', (effect,)) == 0
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s', (effect,)) == 0
+    with contextlib.closing(db.connect('owner')) as conn:
+        query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
+        query(conn, 'UPDATE v24_cordis.runs SET ended_at=clock_timestamp() WHERE id=%s', (run,))
+        conn.commit()
+    with contextlib.closing(db.connect('service')) as conn:
+        committed = api(conn, effect, outcome)
+        assert committed.get('disposition') == 'committed', committed
+        conn.commit()
+    with contextlib.closing(db.connect('owner')) as owner:
+        after_commit = snapshot(owner)
+        response_text = query(owner, 'SELECT response::text FROM v24_cordis.requests WHERE effect_id=%s',
+                              (effect,))[0][0]
+        owner.rollback()
+    with contextlib.closing(db.connect('service')) as conn:
+        replay = api(conn, effect, outcome)
+        assert replay == committed, (replay, committed)
+        conn.commit()
+    with contextlib.closing(db.connect('owner')) as owner:
+        assert snapshot(owner) == after_commit
+        assert query(owner, 'SELECT response::text FROM v24_cordis.requests WHERE effect_id=%s',
+                     (effect,))[0][0] == response_text
+        assert query(owner, 'SELECT count(*) FROM v24_cordis.requests WHERE effect_id=%s',
+                     (effect,))[0][0] == 1
+        assert query(owner, 'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s',
+                     (effect,))[0][0] == 1
+        owner.rollback()
+    assert scalar(db, "SELECT event_kind FROM v24_cordis.events WHERE effect_id=%s", (effect,)) == 'episode_closed'
+    assert scalar(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (effect,)) == 'succeeded'
+    print('[CDP3-P7] real P6 deferred is ten-table zero-write; the same request commits after the barrier clears and replays byte-identically')
+
+
 def main():
     with Server() as server, TestDB(server) as db:
         test_layout(db)
@@ -497,6 +570,7 @@ def main():
         test_preserved(db)
         test_p0_truth_table(db)
         test_null_fence_progress(db)
+        test_p6_protocol(db)
         test_routing(db)
     print('[passed] CDP3-P')
 

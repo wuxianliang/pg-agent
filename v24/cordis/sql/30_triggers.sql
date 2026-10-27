@@ -58,6 +58,9 @@ BEGIN
        IS DISTINCT FROM ROW(OLD.id,OLD.owner_fiber_id,OLD.owner_episode_id,OLD.scope_id,OLD.parent_run_id,OLD.spawn_key) THEN
       RAISE EXCEPTION 'run identity and ownership are immutable' USING ERRCODE='55000';
     END IF;
+    IF OLD.ended_at IS NOT NULL AND NEW.ended_at IS DISTINCT FROM OLD.ended_at THEN
+      RAISE EXCEPTION 'run end tombstone cannot change' USING ERRCODE='55000';
+    END IF;
   ELSIF TG_TABLE_NAME='pins' THEN
     IF ROW(NEW.id,NEW.consumer_fiber_id,NEW.consumer_episode_id,NEW.consumer_run_id,NEW.key,
            NEW.contribution_id,NEW.provider_epoch,NEW.created_at)
