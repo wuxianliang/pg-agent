@@ -242,19 +242,35 @@ def test_lifecycle(db):
         owner.commit()
     dispose = dispose_payload(root['install_id'])
     dispose_effect, dispose_result = run_new(db, 'command_dispose', dispose, delta(
-        domain=[dict(op='basic_dispose', install_id=root['install_id'], fiber_ids=fibers)],
-        events=[event('install', root['install_id'], 'install_disposed', dict(fiber_ids=fibers))]))
+        domain=[dict(op='install_dispose_request', install_id=root['install_id'])],
+        events=[event('install', root['install_id'], 'install_dispose_progress',
+                      dict(phase='requested', fiber_id=None, child_install_id=None,
+                           scheduled_targets=None))]))
     ok(dispose_result)
-    assert scalar(db, 'SELECT count(*) FROM v24_cordis.fibers WHERE install_id=%s '
-                      'AND disposed_at IS NULL', (root['install_id'],)) == 0
+    assert scalar(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s',
+                  (root['install_id'],)) == 'dispose_pending'
+    dispose_effect, dispose_result = run_new(db, 'command_dispose', dispose, delta(
+        domain=[dict(op='fiber_dispose_finish', install_id=root['install_id'], fiber_id=str(second))],
+        events=[event('install', root['install_id'], 'install_dispose_progress',
+                      dict(phase='fiber_disposed', fiber_id=str(second), child_install_id=None,
+                           scheduled_targets=None))]))
+    ok(dispose_result)
+    assert scalar(db, 'SELECT disposed_at IS NOT NULL FROM v24_cordis.fibers WHERE id=%s',
+                  (second,)) is True
     assert scalar(db, "SELECT dispose_requested_at='2020-01-01 00:00:00+00' AND "
                       "disposed_at='2020-01-02 00:00:00+00' FROM v24_cordis.fibers WHERE id=%s",
                   (root['fiber_id'],)) is True
-    assert scalar(db, 'SELECT disposed_at IS NOT NULL FROM v24_cordis.fibers WHERE id=%s',
-                  (second,)) is True
+    dispose_effect, dispose_result = run_new(db, 'command_dispose', dispose, delta(
+        domain=[dict(op='install_dispose_finish', install_id=root['install_id'])],
+        events=[event('install', root['install_id'], 'install_dispose_progress',
+                      dict(phase='completed', fiber_id=None, child_install_id=None,
+                           scheduled_targets=None))]))
+    ok(dispose_result)
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.fibers WHERE install_id=%s '
+                      'AND disposed_at IS NULL', (root['install_id'],)) == 0
     assert scalar(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s',
                   (root['install_id'],)) == 'disposed'
-    print('[CDP2-K2] dispose preserves already-tombstoned timestamps and stamps fresh fibers')
+    print('[CDP2-K2] staged dispose preserves tombstoned timestamps and finishes fresh fibers')
 
     pf = seed_fiber(db, requires=('svc',), prefix='pinned')
     provider = seed_provider(db)
@@ -836,8 +852,11 @@ def test_events(db, ctx):
     dispose = rows(db, "SELECT seq,event_kind,payload FROM v24_cordis.events "
                        "WHERE entity_type='install' AND entity_id=%s ORDER BY seq",
                    (ctx['root']['install_id'],))
-    assert [r[:2] for r in dispose] == [(0, 'install_created'), (1, 'install_disposed')], dispose
-    assert dispose[1][2] == {'fiber_ids': ctx['dispose_fibers']}, dispose[1]
+    assert [r[:2] for r in dispose] == [(0, 'install_created'),
+                                        (1, 'install_dispose_progress'),
+                                        (2, 'install_dispose_progress'),
+                                        (3, 'install_dispose_progress')], dispose
+    assert [r[2]['phase'] for r in dispose[1:]] == ['requested', 'fiber_disposed', 'completed'], dispose
     assert scalar(db, 'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s',
                   (ctx['noop_effect'],)) == 0
     assert scalar(db, 'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s',
@@ -904,7 +923,18 @@ def test_production(db):
     dis = dispose_payload(d['install'])
     with contextlib.closing(db.connect('service')) as conn:
         effect, out = command(db, conn, 'service', 'command_dispose', dis)
-        zero_state(db, conn, effect, out)
+        result = api(conn, effect, out)
+        assert result.get('disposition') == 'committed' and result['emitted'] == [], result
+        conn.commit()
+    assert scalar(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s', (d['install'],)) == 'dispose_pending'
+    with contextlib.closing(db.connect('service')) as conn:
+        effect, out = command(db, conn, 'service', 'command_dispose', dis)
+        result = api(conn, effect, out)
+        assert result.get('disposition') == 'committed', result
+        conn.commit()
+    assert scalar(db, 'SELECT count(*) FROM v24_cordis.fibers WHERE install_id=%s '
+                      'AND disposed_at IS NOT NULL', (d['install'],)) == 0
+    with contextlib.closing(db.connect('service')) as conn:
         bad_dis = {**dis, 'fiber_ids': [str(d['fiber'])]}
         effect, out = command(db, conn, 'service', 'command_dispose', bad_dis)
         bad(api(conn, effect, out), 'invalid_args', 'dispose_payload')
@@ -961,23 +991,20 @@ def test_negatives(db, ctx):
         set_probe(conn, delta(domain=[]))
         bad(api(conn, e, out), 'invalid_args', 'install_payload')
         conn.rollback()
-    # Dispose must name exactly the install's fiber set.
+    # A forged dispose target outside the selected set is rejected; the W4 seed
+    # deliberately omits unselected fibers, so a real but unselected target is a
+    # closure miss while an absent ID reaches the independent validator.
     d = seed_fiber(db, prefix='neg-dispose')
-    second = uuid.uuid4()
-    with contextlib.closing(db.connect('owner')) as owner_conn:
-        query(owner_conn, 'INSERT INTO v24_cordis.fibers(id,install_id,owner_id,owner_episode_id,'
-                          'scope_id) VALUES(%s,%s,%s,%s,%s)',
-              (second, d['install'], d['root']['fiber'], d['root']['episode'], d['scope']))
-        owner_conn.commit()
-    subset = [str(d['fiber'])]
+    forged_fiber = uuid.uuid4()
     dis = dispose_payload(d['install'])
     with contextlib.closing(db.connect('service')) as conn:
         e, out = command(db, conn, 'service', 'command_dispose', dis)
-        set_probe(conn, delta(domain=[dict(op='basic_dispose', install_id=str(d['install']),
-                                           fiber_ids=subset)],
-                              events=[event('install', d['install'], 'install_disposed',
-                                            dict(fiber_ids=subset))]))
-        bad(api(conn, e, out), 'invalid_outcome', 'dispose_set')
+        set_probe(conn, delta(domain=[dict(op='fiber_dispose_finish', install_id=str(d['install']),
+                                           fiber_id=str(forged_fiber))],
+                              events=[event('install', d['install'], 'install_dispose_progress',
+                                            dict(phase='fiber_disposed', fiber_id=str(forged_fiber),
+                                                 child_install_id=None, scheduled_targets=None))]))
+        bad(api(conn, e, out), 'invalid_outcome', 'dispose_diagnosis')
         conn.rollback()
     # P1 provider binding digest is checked against the committed contribution.
     pf = seed_fiber(db, requires=('svc2',), want_on=True, control_seq=1, prefix='neg-pin')
@@ -1026,7 +1053,8 @@ def test_negatives(db, ctx):
             successors=[successor(p2['fiber'], 1)]))
         bad(api(conn, e, out), 'invalid_outcome', 'p2_provide')
         conn.rollback()
-    # 513-or-more dispose closure is refused before any lock or interpreter call.
+    # W4 dispose deliberately does not enumerate the subtree: a 512-fiber tree
+    # still seals in one bounded step because the seed only names the install.
     big = seed_fiber(db, prefix='neg-cap')
     with contextlib.closing(db.connect('owner')) as owner_conn:
         query(owner_conn, 'INSERT INTO v24_cordis.fibers(id,install_id,owner_id,'
@@ -1034,17 +1062,16 @@ def test_negatives(db, ctx):
                           'FROM generate_series(1,511)',
               (big['install'], big['root']['fiber'], big['root']['episode'], big['scope']))
         owner_conn.commit()
-    seed_episode(db, big['fiber'], epoch=1, state='reloading', control_seq=0)
-    with contextlib.closing(db.connect('owner')) as owner_conn:
-        before = snapshot(owner_conn)
-        owner_conn.rollback()
     with contextlib.closing(db.connect('service')) as conn:
         e, out = command(db, conn, 'service', 'command_dispose', {'install_id': str(big['install'])})
-        bad(api(conn, e, out), 'retry_with_closure')
+        set_probe(conn, delta(domain=[dict(op='install_dispose_request', install_id=str(big['install']))],
+                              events=[event('install', big['install'], 'install_dispose_progress',
+                                            dict(phase='requested', fiber_id=None,
+                                                 child_install_id=None, scheduled_targets=None))]))
+        assert api(conn, e, out)['disposition'] == 'committed'
         conn.commit()
-    with contextlib.closing(db.connect('owner')) as owner_conn:
-        assert snapshot(owner_conn) == before
-        owner_conn.rollback()
+    assert scalar(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s',
+                  (big['install'],)) == 'dispose_pending'
     # P0 no-op may not smuggle an event.
     with contextlib.closing(db.connect('service')) as conn:
         noop = reconcile_payload(ctx['fiber'], 'on', 1)

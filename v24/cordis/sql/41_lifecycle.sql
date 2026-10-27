@@ -148,10 +148,43 @@ BEGIN
   SELECT * INTO f FROM v24_cordis.fibers WHERE id=cur;
   IF NOT FOUND OR f.dispose_requested_at IS NOT NULL OR f.disposed_at IS NOT NULL
    OR f.retire_started_at IS NOT NULL
+   OR NOT EXISTS(SELECT 1 FROM v24_cordis.installs WHERE id=f.install_id AND state='installed')
    OR NOT v24_cordis.scope_lineage_open(f.scope_id) THEN RETURN false; END IF;
   cur:=f.owner_id;
  END LOOP;
  RETURN true;
+END $$;
+CREATE FUNCTION v24_cordis.dispose_ancestor_sealed(p_fiber uuid) RETURNS boolean
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE cur uuid:=p_fiber; seen uuid[]:=ARRAY[]::uuid[]; f v24_cordis.fibers%ROWTYPE; i int:=0;
+BEGIN
+ -- Fail closed on malformed/cyclic lineage: the whole owner chain must stay open.
+ WHILE cur IS NOT NULL LOOP
+  i:=i+1;
+  IF i>512 OR cur=ANY(seen) THEN RETURN true; END IF;
+  seen:=array_append(seen,cur);
+  SELECT * INTO f FROM v24_cordis.fibers WHERE id=cur;
+  IF NOT FOUND OR f.dispose_requested_at IS NOT NULL OR f.disposed_at IS NOT NULL THEN RETURN true; END IF;
+  IF EXISTS(SELECT 1 FROM v24_cordis.installs WHERE id=f.install_id
+   AND state IN ('dispose_pending','disposed')) THEN RETURN true; END IF;
+  cur:=f.owner_id;
+ END LOOP;
+ RETURN false;
+END $$;
+CREATE FUNCTION v24_cordis.fiber_in_install_subtree(p_fiber uuid,p_install uuid) RETURNS boolean
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE cur uuid:=p_fiber; seen uuid[]:=ARRAY[]::uuid[]; f v24_cordis.fibers%ROWTYPE; i int:=0;
+BEGIN
+ WHILE cur IS NOT NULL LOOP
+  i:=i+1;
+  IF i>512 OR cur=ANY(seen) THEN RETURN false; END IF;
+  seen:=array_append(seen,cur);
+  SELECT * INTO f FROM v24_cordis.fibers WHERE id=cur;
+  IF NOT FOUND THEN RETURN false; END IF;
+  IF f.install_id=p_install THEN RETURN true; END IF;
+  cur:=f.owner_id;
+ END LOOP;
+ RETURN false;
 END $$;
 CREATE FUNCTION v24_cordis.install_admission(p_payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
@@ -664,6 +697,7 @@ BEGIN
   RETURN jsonb_build_object('code','scope_closed','reason','reconcile_scope'); END IF;
  IF v24_cordis.scope_intercepted(f.scope_id) THEN RETURN v24_cordis.activation_fail('install_intercept'); END IF;
  IF f.dispose_requested_at IS NOT NULL OR f.disposed_at IS NOT NULL
+  OR v24_cordis.dispose_ancestor_sealed(f.id)
   OR (NOT p_control AND f.retire_started_at IS NOT NULL) THEN
   RETURN jsonb_build_object('code','owner_closing','reason','fiber_closed'); END IF;
  IF f.owner_id IS NOT NULL THEN
@@ -1073,6 +1107,40 @@ BEGIN
   FROM (SELECT DISTINCT value x FROM jsonb_array_elements(result)) s);
 EXCEPTION WHEN SQLSTATE 'P0401' THEN RETURN NULL;
 END $$;
+CREATE FUNCTION v24_cordis.dispose_command_seed(p_payload jsonb) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE result jsonb:='[]'::jsonb; iid uuid; plan jsonb; fid uuid; ep uuid; n int;
+BEGIN
+ IF NOT v24_cordis.json_uuid(p_payload->'install_id') THEN RETURN '[]'::jsonb; END IF;
+ iid:=(p_payload->>'install_id')::uuid;
+ result:=result||jsonb_build_array(jsonb_build_object('t','installs','id',iid::text));
+ plan:=v24_cordis.dispose_plan(iid);
+ IF plan->>'kind' IN ('fiber_request','fiber_control','schedule','fiber_finish','wait_slot') THEN
+  fid:=(plan->>'fiber_id')::uuid;
+  result:=result||jsonb_build_array(jsonb_build_object('t','fibers','id',fid::text));
+  SELECT f.current_episode_id INTO ep FROM v24_cordis.fibers f WHERE f.id=fid;
+  result:=result||(SELECT coalesce(jsonb_agg(x),'[]'::jsonb) FROM (
+   SELECT jsonb_build_object('t','episodes','id',e.id) x FROM v24_cordis.episodes e
+    WHERE e.fiber_id=fid
+   UNION ALL SELECT jsonb_build_object('t','contributions','id',c.id)
+    FROM v24_cordis.contributions c WHERE c.fiber_id=fid AND c.released_at IS NULL
+   UNION ALL SELECT jsonb_build_object('t','runs','id',r.id)
+    FROM v24_cordis.runs r WHERE r.owner_fiber_id=fid
+   UNION ALL SELECT jsonb_build_object('t','effects','id',x.id)
+    FROM v24_cordis.effects x WHERE x.fiber_id=fid
+     OR (ep IS NOT NULL AND x.episode_id=ep)
+     OR x.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=fid)
+   UNION ALL SELECT jsonb_build_object('t','pins','id',p.id) FROM v24_cordis.pins p
+    WHERE p.consumer_fiber_id=fid
+     OR p.contribution_id IN (SELECT id FROM v24_cordis.contributions WHERE fiber_id=fid)) q);
+ ELSIF plan->>'kind'='child_install_finish' THEN
+  result:=result||jsonb_build_array(jsonb_build_object('t','installs','id',plan->>'install_id'));
+ END IF;
+ SELECT count(*) INTO n FROM (SELECT DISTINCT value FROM jsonb_array_elements(result)) s;
+ IF n>512 THEN RETURN NULL; END IF;
+ RETURN (SELECT coalesce(jsonb_agg(x ORDER BY x->>'t',x->>'id'),'[]'::jsonb)
+  FROM (SELECT DISTINCT value x FROM jsonb_array_elements(result)) s);
+END $$;
 CREATE FUNCTION v24_cordis.dispose_preflight(p_payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 BEGIN
@@ -1113,23 +1181,20 @@ BEGIN
 END $$;
 CREATE FUNCTION v24_cordis.interpret_dispose(p_effect_id uuid,p_principal uuid,p_outcome jsonb,p_closure jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE inst v24_cordis.installs%ROWTYPE; payload jsonb:=p_outcome->'body'->'payload';
- ids jsonb; reason text;
+DECLARE inst v24_cordis.installs%ROWTYPE; payload jsonb:=p_outcome->'body'->'payload'; plan jsonb;
 BEGIN
  SELECT * INTO inst FROM v24_cordis.installs WHERE id=(payload->>'install_id')::uuid;
  IF NOT FOUND THEN RETURN v24_cordis.error_v1('not_found_or_denied',jsonb_build_object('reason','dispose_install')); END IF;
  IF inst.state='disposed' THEN RETURN v24_cordis.error_v1('already_terminal',jsonb_build_object('reason','dispose_terminal')); END IF;
- IF inst.state<>'installed' THEN RAISE EXCEPTION 'install_state' USING ERRCODE='0A000'; END IF;
- reason:=v24_cordis.dispose_block_reason(inst.id);
- IF reason IS NOT NULL THEN RAISE EXCEPTION '%',reason USING ERRCODE='0A000'; END IF;
- SELECT coalesce(jsonb_agg(id::text ORDER BY id::text),'[]'::jsonb) INTO ids
-  FROM v24_cordis.fibers WHERE install_id=inst.id;
- RETURN jsonb_build_object('domain',jsonb_build_array(jsonb_build_object('op','basic_dispose',
-   'install_id',to_jsonb(inst.id),'fiber_ids',ids)),
-  'receipt',jsonb_build_object('status','succeeded'),
-  'events',jsonb_build_array(jsonb_build_object('entity_type','install','entity_id',to_jsonb(inst.id),
-   'event_kind','install_disposed','payload',jsonb_build_object('fiber_ids',ids))),
-  'successors','[]'::jsonb);
+ IF inst.state NOT IN ('installed','dispose_pending') THEN RAISE EXCEPTION 'install_state' USING ERRCODE='0A000'; END IF;
+ plan:=v24_cordis.dispose_plan(inst.id);
+ IF plan->>'kind'='missing' THEN RETURN v24_cordis.error_v1('not_found_or_denied',jsonb_build_object('reason','dispose_install')); END IF;
+ IF plan->>'kind'='terminal' THEN RETURN v24_cordis.error_v1('already_terminal',jsonb_build_object('reason','dispose_terminal')); END IF;
+ IF plan->>'kind'='unsupported' THEN RAISE EXCEPTION '%',plan->>'reason' USING ERRCODE='0A000'; END IF;
+ IF plan->>'kind'='budget' THEN RETURN v24_cordis.error_v1('budget_exceeded',jsonb_build_object('reason',plan->>'reason')); END IF;
+ IF plan->>'kind'='blocked_unknown' THEN RETURN v24_cordis.error_v1('blocked_unknown',jsonb_build_object('reason',plan->>'reason')); END IF;
+ IF plan->>'kind'='deferred' THEN RETURN v24_cordis.empty_success(); END IF;
+ RETURN v24_cordis.dispose_delta(inst.id);
 END $$;
 
 

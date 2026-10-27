@@ -30,11 +30,44 @@ def dispose(db, install_id):
     return effect, result, outcome
 
 
-def refuse(db, install_id):
+def dispose_attempt(db, install_id):
+    """One staged dispose request: a deferred response or an unsupported 0A000."""
     with contextlib.closing(db.connect('service')) as conn:
         effect, outcome = command(db, conn, 'service', 'command_dispose', dispose_payload(install_id))
-        expect_raise(db, effect, outcome)
-    assert one(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s', (install_id,)) == 'installed'
+        try:
+            result = api(conn, effect, outcome)
+        except psycopg2.Error as exc:
+            conn.rollback()
+            assert exc.pgcode == '0A000', (exc.pgcode, str(exc))
+            return dict(error=dict(code='0A000'))
+        conn.commit()
+    return result
+
+
+def drive_dispose(db, install_id, limit=12):
+    """Fresh same-LOGIN requests: seal, one bounded step each, then the final tombstone."""
+    last = None
+    for _ in range(limit):
+        effect, result, outcome = dispose(db, install_id)
+        assert result.get('disposition') == 'committed', result
+        last = (effect, result, outcome)
+        if one(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s', (install_id,)) == 'disposed':
+            return last
+    raise AssertionError('dispose did not converge')
+
+
+def assert_not_tombstoned(db, install_id):
+    assert one(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s', (install_id,)) != 'disposed'
+    assert one(db, 'SELECT count(*) FROM v24_cordis.fibers WHERE install_id=%s AND disposed_at IS NOT NULL',
+               (install_id,)) == 0
+
+
+def refuse(db, install_id):
+    """Seal once, then prove the obligation prevents the next step from tombstoning."""
+    dispose(db, install_id)
+    result = dispose_attempt(db, install_id)
+    assert result.get('disposition') in ('committed', 'deferred') or result.get('error', {}).get('code') == '0A000', result
+    assert one(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s', (install_id,)) == 'dispose_pending'
     assert one(db, 'SELECT count(*) FROM v24_cordis.fibers WHERE install_id=%s AND disposed_at IS NOT NULL',
                (install_id,)) == 0
 
@@ -65,8 +98,7 @@ def test_clean_dispose(db):
     child = child_install(db, owner, scope)
     before_owner = one(db, 'SELECT count(*) FROM v24_cordis.contributions WHERE fiber_id=%s AND kind=%s',
                        (root_fiber, 'child'))
-    effect, result, outcome = dispose(db, child['install_id'])
-    assert result['disposition'] == 'committed' and result['emitted'] == [], result
+    effect, result, outcome = drive_dispose(db, child['install_id'])
     assert one(db, 'SELECT state FROM v24_cordis.installs WHERE id=%s', (child['install_id'],)) == 'disposed'
     assert one(db, 'SELECT disposed_at IS NOT NULL AND dispose_requested_at IS NOT NULL AND NOT want_on '
                    'FROM v24_cordis.fibers WHERE id=%s', (child['fiber_id'],)) is True
@@ -79,9 +111,12 @@ def test_clean_dispose(db):
     assert one(db, 'SELECT released_at IS NULL AND withdrawn_at IS NULL FROM v24_cordis.contributions '
                    'WHERE fiber_id=%s AND kind=%s AND descriptor->>%s=%s',
                (root_fiber, 'child', 'child_fiber_id', child['fiber_id'])) is True
-    event = rows(db, "SELECT event_kind,payload FROM v24_cordis.events WHERE entity_id=%s AND event_kind=%s",
-                 (child['install_id'], 'install_disposed'))
-    assert event == [('install_disposed', {'fiber_ids': [child['fiber_id']]})]
+    event = rows(db, "SELECT event_kind,payload->>'phase' FROM v24_cordis.events "
+                     "WHERE entity_id=%s AND event_kind=%s ORDER BY seq",
+                 (child['install_id'], 'install_dispose_progress'))
+    assert event == [('install_dispose_progress', 'requested'),
+                     ('install_dispose_progress', 'fiber_disposed'),
+                     ('install_dispose_progress', 'completed')], event
     with contextlib.closing(db.connect('service')) as conn:
         replay = api(conn, effect, outcome)
         conn.commit()
@@ -89,7 +124,7 @@ def test_clean_dispose(db):
     with contextlib.closing(db.connect('service')) as conn:
         effect2, out2 = command(db, conn, 'service', 'command_dispose', dispose_payload(child['install_id']))
         no_write(db, conn, effect2, out2, 'already_terminal')
-    print('[CDP2-B2/B3] clean child dispose keeps history; replay exact; second request already_terminal')
+    print('[CDP2-B2/B3] clean child dispose is sealed, bounded, keeps history, replays exact, then already_terminal')
     return root_payload, owner, scope
 
 
@@ -143,6 +178,7 @@ def test_obligations(db, owner, scope):
     episode = uuid.uuid4()
     owned = uuid.uuid4()
     owned_fiber = uuid.uuid4()
+    owned_episode = uuid.uuid4()
     dml(db, [("INSERT INTO v24_cordis.episodes(id,fiber_id,epoch,state,committed_view,iterator,closed_at) "
               "VALUES(%s,%s,1,'active','{}','{\"v\":1,\"next_index\":0,\"registered_through\":-1,\"control_seq\":0}',now())",
               (episode, child['fiber_id'])),
@@ -150,9 +186,12 @@ def test_obligations(db, owner, scope):
               "manifest,artifact_digest,contracts,state) VALUES(%s,%s,%s,%s,%s,'1',%s,%s,'{}','installed')",
               (owned, scope, child['fiber_id'], episode, 'owned-' + owned.hex[:8],
                Json(dict(requires=[], provides=[], priority=0, check={})), 'a' * 64)),
-             ("INSERT INTO v24_cordis.fibers(id,install_id,owner_id,owner_episode_id,scope_id,"
-              "dispose_requested_at,disposed_at) VALUES(%s,%s,%s,%s,%s,now(),now())",
-              (owned_fiber, owned, child['fiber_id'], episode, scope))])
+             ("INSERT INTO v24_cordis.fibers(id,install_id,owner_id,owner_episode_id,scope_id,current_episode_id) "
+              "VALUES(%s,%s,%s,%s,%s,%s)",
+              (owned_fiber, owned, child['fiber_id'], episode, scope, owned_episode)),
+             ("INSERT INTO v24_cordis.episodes(id,fiber_id,epoch,state,committed_view,iterator) "
+              "VALUES(%s,%s,1,'reloading','{}','{\"v\":1,\"next_index\":0,\"registered_through\":-1,\"control_seq\":0}')",
+              (owned_episode, owned_fiber))])
     refuse(db, child['install_id'])
     cases.append('child_install')
     for kind in ('dispatch', 'listener_call', 'model_call', 'tool_call', 'run_start', 'command_reconcile'):
@@ -204,16 +243,16 @@ def test_multi_and_bounds(db, owner, scope):
               'VALUES(%s,%s,%s,%s,%s)',
               (second, child['install_id'], owner['fiber_id'], owner['episode_id'], scope))])
     dml(db, [('UPDATE v24_cordis.fibers SET want_on=true WHERE id=%s', (second,))])
-    refuse(db, child['install_id'])
-    dml(db, [('UPDATE v24_cordis.fibers SET want_on=false WHERE id=%s', (second,))])
-    effect, result, _ = dispose(db, child['install_id'])
+    effect, result, _ = drive_dispose(db, child['install_id'])
     assert result['disposition'] == 'committed', result
     ids = sorted([child['fiber_id'], str(second)])
     assert one(db, 'SELECT count(*) FROM v24_cordis.fibers WHERE install_id=%s AND disposed_at IS NOT NULL',
                (child['install_id'],)) == 2
-    payload = rows(db, "SELECT payload FROM v24_cordis.events WHERE effect_id=%s AND event_kind=%s",
-                   (effect, 'install_disposed'))[0][0]
-    assert payload['fiber_ids'] == ids, payload
+    payload = rows(db, "SELECT payload FROM v24_cordis.events WHERE entity_id=%s "
+                       "AND event_kind='install_dispose_progress' AND payload->>'phase'='fiber_disposed' "
+                       "ORDER BY seq", (child['install_id'],))
+    disposed_ids = sorted(p['fiber_id'] for p, in payload)
+    assert disposed_ids == ids, payload
     root = Path(__file__).resolve().parents[1]
     sql_files = sorted(p.name for p in (root / 'sql').glob('*.sql'))
     assert len(sql_files) == 17, sql_files

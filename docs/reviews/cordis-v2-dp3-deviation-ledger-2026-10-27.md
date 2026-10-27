@@ -77,9 +77,30 @@ W3 gates ran on HEAD `72af2528` plus W3 changes before staging in v99. The matri
 | Capacity/freeze | Total helper budget ≤5000; no frozen edits | 40=1356, 41=1141, 42=758, sum 3255; DDL 461; manifest 17; tables 10; one DEFINER; public function EXECUTE 0; source VIEW/EXTENSION 0. All 12 frozen hashes match DP2; frozen `57e2c1e` diff and v8 diff exit 0; `git diff --check` exit 0 |
 | Isolation | Preserve pre-existing work | Only W3 implementation/test/artifact paths were edited. The original 10 dirty docs and 24 unrelated untracked files are untouched. No stage/commit/push was performed |
 
+## W4 observations (2026-10-27)
+
+W4 gates ran on HEAD `284d7f2` plus W4 changes before staging in v99. The matrix records all 24 commands, each exit 0, total 95 seconds. W4 is delivered by this commit to `origin/v24`.
+
+| Item | Plan / risk | W4 treatment and evidence |
+|---|---|---|
+| Staged dispose versus DP2 basic path | Old `interpret_dispose` wrote `basic_dispose` for every obligation-free install in one call | Production now seals first (`install_dispose_request`), then advances exactly one fiber/child-install object per fresh same-LOGIN request. `basic_dispose` is no longer emitted by the production interpreter; it remains structurally accepted only for non-production probe deltas so DP2 kernel tests keep their legacy validator coverage. CDP2-B/K and CDP3-D cover the staged path |
+| `basic_dispose` compatibility | Keeping the old op could bypass child-first/parent-last if reachable | The op is unreachable from production `interpret_dispose`; new production validation exact-compares to `dispose_delta`. The legacy branch is used only when a probe supplies `basic_dispose`. DP2 `test_boundaries.py` and `test_kernel.py` were migrated to staged deltas for the real success path |
+| Successor identity | A dispose parent must not occupy a successor, and a different LOGIN must not take over | Only the selected fiber's ordinal-0 `command_reconcile/advance` is emitted. `continuation_state` accepts a dispose parent only when the target install is sealed and the selected fiber is in its owner subtree; actor equality is still required. CDP3-D1/D3 |
+| Event cardinality | W3 kept `domain empty ⇔ events empty`; successor-only dispose needs a local exception | With domain writes, exactly one domain event. With no domain write and a new successor, exactly one `install_dispose_progress(work_scheduled)`. Domain+schedule still one domain event. Replay/coalescing/no-op/deferred/error add none. This is the documented local event assumption. CDP3-D1 |
+| Closure seed | W3 `command_dispose` seed enumerated the whole subtree and could exceed 512 on a large tree | `dispose_command_seed` now names only the target install, the selected fiber/episode, its effects/contributions/pins/runs and necessary lineage. `dispose_subtree` is used for read-only selection, not closure enumeration. A 512-fiber tree still seals in one bounded step (CDP2-K4b) |
+| Parent-last | Parent install must not tombstone before child/consumer | `dispose_plan` selects deepest descendants first, then child-install tombstones, then own fibers, then the parent tombstone. `install_dispose_finish` postchecks `dispose_block_reason` empty and all own fibers tombstoned. CDP3-D1 |
+| Permanent seal | W3 child inverse accepted only tombstone | The whole owner lineage now fails admission/resolve/retry/register while any ancestor install is `dispose_pending`/`disposed` or fiber dispose flag is set. No revival after tombstone. CDP3-D2 |
+| host_io / unknown | Terminal labels must not imply external release | Any host_io effect in the sealed subtree returns `unsupported/0A000` for all six statuses. Non-host unknown returns `blocked_unknown`. Open runs and non-reconcile ready/claimed effects defer. CDP3-D4/D5/D6 |
+| Deferred and G | Dispose must not wait while holding G | deferred writes no table rows; after the caller commits, a second connection takes G. An ended run lets a new request progress. CDP3-D5 |
+| Rank driver | Local success must not be reported as completion | Fuel is `16×(1+F+I+E+C+P)`. Each domain step lowers M; schedule-only lowers U; coalescing leaves `(M,U)` unchanged. The driver stops on deferred/unsupported and does not count replay/coalescing. CDP3-D1 |
+| Validator trust | The validator must not trust interpreter output | `dispose_delta` recomputes target/phase/successor/event. Forged target, phase and successor-only event all return `invalid_outcome` with zero write. CDP3-D7 |
+| DP2 test adaptation | Behavior change must not delete real success coverage | `test_boundaries.py` now drives clean and multi-fiber staged disposal to completion and still proves each obligation plus all six host_io states prevent tombstoning. `test_kernel.py` uses staged probe deltas and keeps the tombstone-preservation assertion. DP2 docs remain a parallel dirty workspace and were not staged |
+| Capacity/freeze | Helper budget ≤5000; no frozen edits | 40=1407, 41=1206, 42=966, sum 3579; DDL 461; manifest 17; tables 10; one DEFINER; public function EXECUTE 0; source VIEW/EXTENSION 0. All 12 frozen hashes match DP2; frozen `57e2c1e` diff, v8 diff and `git diff --check` exit 0 |
+| Isolation | Preserve pre-existing work | Only W4 implementation/test/artifact paths are edited and staged. The original 10 dirty docs and 24 unrelated untracked files remain |
+
 ## Current unclaimed scope
 
-- W4 activated-instance dispose, DP4 settlement, DP5 listener/dispatch/intercept/overlay, DP6 scanner/fairness/external recovery and child cleanup fan-out are not delivered.
+- W5/CDP3-B closeout, DP4 settlement, DP5 listener/dispatch/intercept/overlay, DP6 scanner/fairness/external recovery and unbounded child cleanup fan-out are not delivered.
 - W1's disposable barrier/deferred/replay probes remain protocol evidence only. W3's CDP3-P7 is the production P6 deferred/first-commit/replay evidence.
-- No production listener registration/dispatch, run settlement, external recovery, scanner/fairness or production child cleanup claim follows from owner fixtures.
-- W3 is delivered by this commit to `origin/v24`.
+- No production listener registration/dispatch, run settlement, external recovery or scanner/fairness claim follows from owner fixtures. W4 child cleanup is bounded to a real dispose controller driving real child-fiber reconciles; external consumers remain barriers, not production fan-out.
+- W3 remains delivered at `284d7f2`. W4 is delivered by this commit to `origin/v24`.

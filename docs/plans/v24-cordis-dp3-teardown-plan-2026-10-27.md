@@ -1,6 +1,6 @@
 # Cordis v2 DP3：失效传播与可逆退役 Deep Plan
 
-> 本文描述完整 DP3 计划；已交付范围以 §8 各阶段 result 为准。B0=`ba4f533`、W1=`103ec596`、W2=`72af2528` 已发布。W3 已于 2026-10-27 在 W2 基线上实现并通过 23 条串行门禁；本提交发布 W3 到 origin/v24。W4–W5 仍未实现。所有相对路径均以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含此 Cordis 实现。
+> 本文描述完整 DP3 计划；已交付范围以 §8 各阶段 result 为准。B0=`ba4f533`、W1=`103ec596`、W2=`72af2528`、W3=`284d7f2` 已发布。W4 已于 2026-10-27 在 W3 基线上实现并通过 24 条串行门禁；本提交发布 W4 到 origin/v24。W5 仍未实现。所有相对路径均以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含此 Cordis 实现。
 
 ## 1. Goal 与完成边界
 
@@ -362,7 +362,7 @@ B0 在 v99 根独立记录 `pwd -P`、`git rev-parse --show-toplevel`、branch�
 | failure v1 | phase按实际检测点为p2/p3/p4；七键闭集与code/reason/key精确组合见§3.6，P4可定位key；不清空旧代字段，历史由episode/event保存 | 高；无既有生产writer兼容负担，权威消费者合同可推翻；key上限沿用源码128 |
 | finite driver | 测试 driver 用新 request keys、原 key 只 replay；fixture fuel=`16 × (1+F+I+E+C+P)`，每个 productive step 严格降 rank；燃料公式为测试假设，不是生产上限 | 中高；若合法 required fixture 超燃料或 rank 无法下降，报告失败并按证据修正 rank/系数，不缩减必需覆盖，也不取消进展要求 |
 
-发布分支/remote 是**用户级阻塞**而非 Oracle 工程问题：`AGENTS.md` 写 origin main，DP2 的 origin/v24 授权不延伸至 DP3。2026-10-27 用户已明确目标为 `origin/v24` 并授权全部 DP3 里程碑逐个发布。B0/W1/W2 已发布。W3 已实现且 23 条门禁全绿，本提交发布；W4–W5 未实现。
+发布分支/remote 是**用户级阻塞**而非 Oracle 工程问题：`AGENTS.md` 写 origin main，DP2 的 origin/v24 授权不延伸至 DP3。2026-10-27 用户已明确目标为 `origin/v24` 并授权全部 DP3 里程碑逐个发布。B0/W1/W2/W3 已发布。W4 已实现且 24 条门禁全绿，本提交发布；W5 未实现。
 
 ## 8. Implementation order
 
@@ -422,6 +422,17 @@ B0 在 v99 根独立记录 `pwd -P`、`git rev-parse --show-toplevel`、branch�
 - **Key files：**40/41/42、DP2 boundaries、DP3 dispose。
 - **Dependencies：**W3。
 - **Size：**L。
+- **W4 result (2026-10-27)：**v99、分支 `v24`、HEAD `284d7f2d420f6c9a73b1326bb7b4497ee8fa498e` 加 W4 改动（提交前）。按 §4.1 的 21 条旧命令，再 CDP3-P、CDP3-T、CDP3-D，**24 条逐条串行启动并等待退出，全部退出 0，总耗时 95 秒**。
+  - 首次 `command_dispose({install_id})` 只写 `install_dispose_request`：把目标 install 置 `dispose_pending` 并产生 `install_dispose_progress(phase=requested)`，不清理 fiber。`dispose_ancestor_sealed` 让整个 owner lineage 的 activation/resolve/retry/register 在看得到的 ancestry 上失败关闭；`fiber_lineage_open`、`live_node_fault`、`activation_admission`、`install_admission` 复用该检查。
+  - 后续每次 dispose request 只选一个对象：最深 descendant fiber 优先，其次 child-install 墓碑，再本 install fiber，最后父 install 墓碑。所选 fiber 有 open episode 时先发 `fiber_dispose_request`（`want_on=false`，必要时 `control_seq+1`）并附唯一个 ordinal 0 `command_reconcile/advance`；否则只 schedule 同 fiber reconcile（successor-only `work_scheduled` 事件，domain 为空）；无 episode 但 `want_on=true` 时只写 control 不发 successor；槽已存在时合并为无事件 no-op。
+  - typed ops 为 `install_dispose_request`、`fiber_dispose_request`、`fiber_dispose_finish`、`install_dispose_finish`；`install_dispose_progress` payload 严格四键，phase 仅 `requested/fiber_requested/fiber_disposed/work_scheduled/completed`，`scheduled_targets` 长度≤1，无目标为 JSON null。有领域写时恰一条领域事件；successor-only schedule 恰一条 `work_scheduled`；domain+successor 仍只一条领域事件；coalescing/replay/deferred/error 零事件。
+  - `continuation_state` 扩展 dispose parent 分支：只接受成功、同 LOGIN、目标 install 已 seal 且 selected fiber 位于该 install owner subtree 的 ordinal 0 reconcile；不要求 parent.fiber_id=child.fiber_id。validator 通过 `dispose_delta` 独立重算 target/phase/successor/event，伪造 interpreter 输出零写拒绝（CDP3-D7）。
+  - applier 用 fresh VOLATILE SQL 校验后置条件；`fiber_dispose_request/finish` 只写 fiber 控制/墓碑，`install_dispose_finish` 要求 `dispose_block_reason` 清空且该 install 全部 fiber 已墓碑。父 install 墓碑只能在 child install 与自身全部义务清空后发生。
+  - `dispose_plan` 在写入前对整棵 sealed subtree 保守检查：任意 host_io（六态）→ `unsupported/0A000`，非 host unknown → `blocked_unknown`，非 reconcile ready/claimed effect 或 open run → deferred。dispose 不持 G 等待；CDP3-D5 证明 deferred 十表零写、调用方提交后第二连接取得 G、run 结束后新 request 继续。
+  - `dispose_command_seed` 只纳入 target install、本次选中 fiber/episode/effects/contributions/pins/runs 及必要 lineage，不再枚举整棵子树；512 上限与锁后复验保留。W3 的 `reconcile_command_seed` 未改。
+  - CDP3-D 覆盖真实 activated parent/child 的 child-first、parent-last、唯一 successor、原 request replay、fresh request 合并、dispose seal 后 register/on/retry/resolve 零写拒绝、不同 LOGIN 拒绝、host_io 六态保守阻塞、tombstone 不复活，以及燃料 `16×(1+F+I+E+C+P)` 内的 `(M,U)` rank driver（productive step 降 M，schedule-only 降 U，coalescing 不计数，无阻塞）。
+  - DP2 `test_boundaries.py` 与 `test_kernel.py` 按意图迁移到 staged dispose：clean/multi-fiber 真实收敛、各义务与六态 host_io 仍阻断、production 不再有 `basic_dispose` 写出（旧 op 仅保留给非生产 probe 的 validator 兼容，不进入生产 interpreter）。
+- **W4容量/冻结/范围：**40=1407、41=1206、42=966，合计 **3579≤5000**；临时 5000/5001 预算证明仍执行。DDL 前缀 461≤900、manifest 17、十表、唯一 DEFINER=`advance`、public function EXECUTE 0、源码 VIEW/EXTENSION 均 0。十二份 frozen SQL SHA-256 与 DP2 matrix 一致；`57e2c1e` frozen diff、v8 相对 HEAD diff、`git diff --check` 均退出 0。未实现 W5/CDP3-B、DP4 settlement、DP5 listener/dispatch/intercept/overlay、DP6 scanner/fairness/external recovery；child cleanup 由父 controller 通过真实 `command_reconcile`/dispose advance 驱动，外部 consumer 仍为 owner fixture/阻塞边界。本提交发布 W4 到 origin/v24。
 
 ### W5 — 最终边界与收尾
 
@@ -431,7 +442,7 @@ B0 在 v99 根独立记录 `pwd -P`、`git rev-parse --show-toplevel`、branch�
 - **Dependencies：**W4。
 - **Size：**M。
 
-每个里程碑收尾顺序：全部当前gate串行实跑且全绿 → 更新计划/README/matrix/ledger及loader核验 → `git status` → 按具体路径逐项 `git add`（严禁 `-A`/`.`）→ 检查 staged name-status、完整diff、diff-check和凭据 → 独立commit → 仅推送用户明确授权目标。失败即停，不跳过hook，不 force-push，不重置用户历史，不把多个里程碑合并提交。B0/W1/W2 已按此纪律发布到 `origin/v24`（`ba4f533` / `103ec596` / `72af2528`）。W3 已由本提交发布到 origin/v24；W4–W5 不得自动开始。
+每个里程碑收尾顺序：全部当前gate串行实跑且全绿 → 更新计划/README/matrix/ledger及loader核验 → `git status` → 按具体路径逐项 `git add`（严禁 `-A`/`.`）→ 检查 staged name-status、完整diff、diff-check和凭据 → 独立commit → 仅推送用户明确授权目标。失败即停，不跳过hook，不 force-push，不重置用户历史，不把多个里程碑合并提交。B0/W1/W2/W3 已按此纪律发布到 `origin/v24`（`ba4f533` / `103ec596` / `72af2528` / `284d7f2`）。W4 已由本提交发布到 origin/v24；W5 不得自动开始。
 
 ## 9. References 与保真索引
 
@@ -472,4 +483,4 @@ B0 在 v99 根独立记录 `pwd -P`、`git rev-parse --show-toplevel`、branch�
 
 B0 已于 2026-10-27 重测：40=1130、41=1097、42 不存在、合计 2227，DDL 前缀 414，manifest 16，仍低于 5000，没有触发压缩。W1 当时仍须把 DP1 `test_kernel.py` 与 DP2 `test_boundaries.py` 的单文件 1200 断言迁到合计 5000 通过 / 5001 拒绝；B0 旧 gate 全绿不是那项迁移。21 条既有命令的 B0 退出码在 DP3 matrix 的 B0 节，不在本节复写。2026-10-27 用户明确授权全部 DP3 里程碑逐个 commit 并 push `origin/v24`，不改写 `AGENTS.md`。B0 由前一个提交发布，不实现生产 SQL、不改测试。
 
-W1 已于 2026-10-27 在未提交工作树上完成：40=1170、41=1097、42=16、合计 2283，manifest 17，DDL 414。审查指出的两处 P2 已关闭：共享 `assert_helper_budget` 在临时 40/41/42 树上接受恰好 5000 行、拒绝 5001 行；已提交请求在 `command_barrier` 仍为 deferred 与 blocked_unknown 时重放首次 response 且零写，然后才恢复原函数。22 条命令于该修复后串行重跑，退出码均 0，见 DP3 matrix 的 W1 节，不改写上面的 B0 测量。`lifecycle_step` 的 idle、command deferred 探针和这次 replay 都不是生产 P6，也不是 W3 的屏障满足后首次提交。以上为 W1 门禁当时记录，W1 已发布为 `103ec596`。W2 的实现和23条全绿结果见 §8 W2 result 与 DP3 matrix/ledger；W2 已独立发布到 `origin/v24`。W3 已于 2026-10-27 实现：P6 drain、inverse、run/activation pin release、episode close 和真实 deferred/首次提交/replay 均有生产路径证据，见 §8 W3 result 与 DP3 matrix/ledger。本提交发布 W3 到 origin/v24；W4–W5（已激活实例有界 dispose、closeout）仍未实现。
+W1 已于 2026-10-27 在未提交工作树上完成：40=1170、41=1097、42=16、合计 2283，manifest 17，DDL 414。审查指出的两处 P2 已关闭：共享 `assert_helper_budget` 在临时 40/41/42 树上接受恰好 5000 行、拒绝 5001 行；已提交请求在 `command_barrier` 仍为 deferred 与 blocked_unknown 时重放首次 response 且零写，然后才恢复原函数。22 条命令于该修复后串行重跑，退出码均 0，见 DP3 matrix 的 W1 节，不改写上面的 B0 测量。`lifecycle_step` 的 idle、command deferred 探针和这次 replay 都不是生产 P6，也不是 W3 的屏障满足后首次提交。以上为 W1 门禁当时记录，W1 已发布为 `103ec596`。W2 的实现和23条全绿结果见 §8 W2 result 与 DP3 matrix/ledger；W2 已独立发布到 `origin/v24`。W3 已于 2026-10-27 实现：P6 drain、inverse、run/activation pin release、episode close 和真实 deferred/首次提交/replay 均有生产路径证据，见 §8 W3 result 与 DP3 matrix/ledger。W4 已于 2026-10-27 实现：seal-only 首步、单对象 bounded dispose、child-first/parent-last、dispose-parent successor whitelist、successor-only 单事件、host_io 保守阻塞、deferred 零写与燃料内 rank 收敛，24 条门禁全绿，见 §8 W4 result 与 DP3 matrix/ledger。本提交发布 W4 到 origin/v24；W5（最终 closeout）仍未实现。

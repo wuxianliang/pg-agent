@@ -4,7 +4,7 @@ B0 executed on 2026-10-27 in worktree `/Users/wxl/Projects/pg-agent/.claude/work
 
 ## Scope
 
-B0 (`ba4f533`) records the baseline; W1 (`103ec596`) adds layout/budget/protocol probes; W2 (`72af2528`) adds live invalidation and entry into closing. W3 adds production P6 drain, inverse, run/activation pin release and episode close; its evidence is in the W3 section below. B0/W1/W2 sections retain their gate-time history. W3 is delivered by this commit. W4–W5 remain unimplemented; CDP3-D/B are not claimed.
+B0 (`ba4f533`) records the baseline; W1 (`103ec596`) adds layout/budget/protocol probes; W2 (`72af2528`) adds live invalidation and entry into closing. W3 (`284d7f2`) adds production P6 drain, inverse, run/activation pin release and episode close. W4 adds bounded dispose for activated installs; its evidence is in the W4 section below. B0/W1/W2/W3 sections retain their gate-time history. W4 is delivered by this commit. W5 remains unimplemented; CDP3-B is not claimed.
 
 ## Environment
 
@@ -295,3 +295,70 @@ Order s8 before s7 follows §4.1. No gate was run concurrently.
 | P6 inverse/pin steps emit an ordinal-0 successor because fresh `advance` requests require a reserved key; the host enters P6 through a P0 `off` schedule. Close emits no successor and starts no episode. |
 | `lifecycle_step` remains read-only idle and unwired. No W4 dispose handoff is claimed. |
 | W3 is delivered by this commit to `origin/v24`. |
+
+## W4 (2026-10-27)
+
+Same worktree and branch `v24`, HEAD `284d7f2d420f6c9a73b1326bb7b4497ee8fa498e` plus W4 changes before staging. The 21 legacy commands and CDP3-P/T/D were launched one process at a time; **all 24 exited 0, total 95 seconds**. This commit publishes W4 to `origin/v24`.
+
+| # | Command | Exit | Duration (s) | Evidence |
+|---:|---|---:|---:|---|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 1 | canonical loader, 17 entries |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1 | fixture/role family/OID cleanup |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 2 | CDP1-E |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 2 | CDP1-D, DDL 461 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 13 | CDP1-K, 5000/5001 budget proof |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 4 | CDP2-K, staged dispose probe path |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4 | CDP2-I, ancestor seal admission |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 4 | CDP2-A |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 3 | CDP2-B, staged clean/multi-fiber dispose, obligations/host six states |
+| 10 | `uv run python v24/load.py` | 0 | 1 | v24 loader self-check |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 2 | v24/s1 setup |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1 | G1-O owner DDL probes |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 3 | G1 kernel/commands/ACL |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 2 | S2 W1-W6 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5 | S3 W1-W7 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 4 | S4 W1-W6 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 4 | S5 W1-W4 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 4 | S6 W1-W4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 3 | S8 W1-W3 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 6 | S7 W1-W2 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 11 | G8, 23 cases |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3 | CDP3-P, unchanged W1-W3 protocol |
+| 23 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 7 | CDP3-T, unchanged W3 teardown |
+| 24 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 5 | CDP3-D1…D7 |
+
+Order s8 before s7 follows §4.1. No gate was run concurrently. The earlier split runs that found and fixed DP2 kernel/install adaptations are not counted as green; the table above is the final continuous sequence.
+
+| W4 invariant | Actual evidence |
+|---|---|
+| Seal and admission | First `command_dispose` writes only `install_dispose_request` + `requested`; `dispose_ancestor_sealed` blocks descendant install/on/retry/resolve before cleanup. CDP3-D2 |
+| Bounded object steps | Deepest descendant fiber → child-install tombstone → own fiber → parent install tombstone; one successor maximum, ordinal 0. CDP3-D1 |
+| Parent controller | Parent does not occupy a successor; every later step uses a fresh same-LOGIN `command_dispose` key, and the original key replays byte-identically. CDP3-D1 |
+| Successor whitelist | `continuation_state` accepts a dispose parent only when the target install is sealed and the selected fiber is in its owner subtree; different LOGIN gets `effect_id_conflict`. CDP3-D3 |
+| Event cardinality | Domain write → one domain event; successor-only → one `work_scheduled`; domain+successor → one domain event; replay/coalescing → zero events. CDP3-D1 |
+| Independent validator | Forged target, phase and successor-only event are rejected by `dispose_delta` recomputation with zero write. CDP3-D7 |
+| Parent-last | Child install completion event precedes the parent fiber tombstone and parent install `completed`. CDP3-D1 |
+| Deferred/no lock wait | Open run → v1 deferred, ten-table snapshot unchanged; caller commit frees G for a second connection; ended run then progresses. CDP3-D5 |
+| host_io | ready/claimed/unknown/succeeded/failed/cancelled all remain `0A000`; terminal labels are not release proof. CDP3-D4 |
+| Unknown debt | Non-host `unknown` effect → `blocked_unknown` with zero write. CDP3-D6 |
+| Rank driver | Fuel `16×(1+F+I+E+C+P)`; every domain step lowers M, successor-only schedule lowers U, coalescing unchanged, no deferred/unsupported in the main fixture. CDP3-D1 |
+| No revival | Post-tombstone on/retry/register remain refused; installations stay `disposed`. CDP3-D2 |
+
+| W4 capacity / freeze / scope | Observed |
+|---|---|
+| Helper physical lines | 40=1407, 41=1206, 42=966, sum **3579≤5000**; temporary 5000/5001 proof still runs |
+| DDL prefix | 461≤900 |
+| Manifest / tables | 17 exact entries; 10 tables |
+| DEFINER / ACL | one `SECURITY DEFINER` (`advance`); public function EXECUTE 0; new helpers private |
+| Views/extensions | source CREATE scan 0/0; catalog view count 0 |
+| Freeze | all 12 SHA-256 values equal the DP2 matrix; full `57e2c1e` frozen diff exit 0; v8 vs HEAD diff exit 0 |
+| Hygiene/isolation | `git diff --check` exit 0; pre-existing 10 dirty docs and 24 unrelated untracked files preserved; only W4 paths staged |
+
+| W4 not covered / fixture boundary |
+|---|
+| W5/CDP3-B closeout, DP4 settlement, DP5 listener/dispatch/intercept/overlay, DP6 scanner/fairness/external recovery and unbounded child fan-out are not implemented. |
+| `host_io` and settlement remain conservative refusals; no terminal label is treated as proof of external release. |
+| Open runs, unknown effects and external consumer pins are blocking fixtures in CDP3-D5/D6; they prove the bounded barrier, not a production run loop or external recovery. |
+| `basic_dispose` remains accepted only for non-production probe deltas; the production interpreter never emits it. Staged dispose is the only production path. |
+| `lifecycle_step` remains read-only idle and unwired; production dispose selection lives in `dispose_plan`/`dispose_delta`. |
+| W4 is delivered by this commit to `origin/v24`. |
