@@ -401,3 +401,18 @@ One `mode=review` call covered B0..W5 with a `4b34bf2..working tree` artifact (1
 ### W5 acceptance correction (2026-10-28)
 
 Creation now independently requires the current active/live owner and `run_bindings_valid`; `live_ok IS NOT TRUE` rejects NULL as well as false. X7 adds a real off/closing transition followed by the stale nonempty creation delta: `advance` returns `invalid_outcome` and all ten tables are unchanged. This is negative case 20, in addition to the legal failure-refusal positive. The final 31-command log above replaces the earlier run because SQL changed during that run; `348b9b8` remains in history and the correction is a separate local commit.
+
+
+## Review fix (2026-10-28)
+
+Oracle review export `prompt-exports/oracle-review-2026-10-28-173620-new-chat-c89fc8-8a3d.md` (primary lane failed on the provider input limit; Oracle 2 completed) identified P1-1/P1-2/P2. The fix is confined to `sql/43_loop.sql` (560 lines) plus the DP4 gates/docs. `run_progress`, `run_seal_result`, and `run_settle_facts` are canonical builders; `validate_run_domain` re-derives and exact-compares the full expected delta (state, event, seal result, successors) instead of only checking fields, and enforces the unknown `{kind}` contract. `run_start` creation also gets the full expected delta comparison.
+
+| Review invariant | Actual evidence |
+|---|---|
+| P1-1 full state/event/result | X6 event missing/run_id/effect_id/effect_kind/step/remaining/phase/sealed/reason, state origin/step/batch, seal output/reason/dropped, all `invalid_outcome` with `run_state_delta`; X7 run_start event mutations with `run_start_delta`; full expected-delta comparison in `validate_run_domain` |
+| P1-2 successors | X6 successor contract version/digest, descriptor digest, args, call_id, key, ordinal; X1b continuation ordinal=0/contract version/digest/digests; all `run_state_delta` zero-write; canonical builder in `run_settle_facts` |
+| P2 unknown | T8a/T8b model/tool wrong kind, extra key, non-object, legal unknown; T8c run_start unknown; all zero-write except legal model/tool unknown, which commits with no domain/event/successor |
+| Capacity | 40=1549, 41=1211, 42=1000, 43=560, sum **4320≤5000**; DDL **461≤900**; 43 **560≤560**; no line squeezing or file moves; duplicate settlement/event/successor code merged into builders |
+| Gates | 31/31 serial independent processes exit 0, 176s, `/tmp/dp4-review-fix-gates-commit-20261028.log` |
+
+External parallel work: during this task the worktree gained uncommitted edits to `41_lifecycle.sql`, `helper_budget.py`, `dp1/test_kernel.py`, `dp2/test_install.py`, `dp2/test_kernel.py`, `dp2/test_support.py`, `dp3/test_boundaries.py`, and `dp4/test_closeout.py`. They are not part of this fix. They were preserved; the 31-gate run temporarily restored them to HEAD to verify the exact commit tree and restored them byte-identically afterwards (SHA-256 compared). The commit stages only the review-fix paths.

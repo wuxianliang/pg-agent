@@ -40,3 +40,16 @@ W5 acceptance correction (2026-10-28): success receipts now independently recomp
 ## Publication
 
 Per plan §3.10 decision 8, DP4 makes one local commit per milestone and does not push. A push requires the user to name the remote and branch first. `AGENTS.md`'s default `origin main` is not used for this branch.
+
+
+## Review fix (2026-10-28)
+
+Oracle review export `prompt-exports/oracle-review-2026-10-28-173620-new-chat-c89fc8-8a3d.md` (the primary lane failed on the provider input limit; Oracle 2 completed) reported two P1s and one P2. They are fixed in `sql/43_loop.sql` without changing the public surface or moving functions:
+
+- **P1-1**: `validate_run_domain` no longer trusts a planner-shaped delta. For non-unknown model/tool settlements it re-derives the complete settlement facts (old state, receipt, remaining budget, live siblings, tool pins, reducer intents), then compares the full expected `domain` (state/budget/seal result/pin release), the exact `run_progress` event, receipt, and successors against the submitted delta. `run_start` creation now also compares the full expected delta, including the ordinal-0 `run_progress` event and receipt. `run_seal.result` is rebuilt from the reducer intent and receipt (`reason/output/dropped_tool_calls`). Missing, extra, or field-mismatched facts are `invalid_outcome` zero-write.
+- **P1-2**: successor construction is a canonical builder in `run_settle_facts`; the validator compares every model/tool successor exactly. This covers provider `contract` (version/digest), contribution `descriptor_digest`, receipt `args`, `call_id`, `pin_id`/`key`, ordinals, and the continuation's `ordinal=0` plus `digests`. A forged pin/key/capability/digest/args/call_id/ordinal no longer reaches claim or execution.
+- **P2**: model/tool unknown receipts must be exactly `{kind}` and `kind` must equal the effect kind; wrong kind, extra keys, and non-object bodies are rejected before persistence. `run_start` still rejects every unknown receipt. The validator enforces the same unknown contract so a forged planner cannot bypass it.
+
+Regression coverage was added to `test_boundaries.py` (X6 event/state/seal/successor mutations; X7 run_start event mutations; X1b continuation ordinal=0/contract/digests) and `test_loop.py` (T8a model unknown, T8b tool unknown, T8c run_start unknown). Each forged case asserts `invalid_outcome` with a specific `run_state_delta`/`run_start_delta` reason and an unchanged ten-table snapshot; the legal unknown positives assert empty domain/events/successors and unchanged step/budget/pin.
+
+Final commit-tree verification: all 31 commands ran serially in independent processes and exited 0 (176s, log `/tmp/dp4-review-fix-gates-commit-20261028.log`). 40=1549, 41=1211, 42=1000, 43=560, sum **4320≤5000**; DDL **461≤900**; 43 **560≤560**; manifest 18; 10 tables; one `SECURITY DEFINER` (`advance`); public EXECUTE 0; 5000/5001 helper-tree boundary. Parallel uncommitted changes to `41_lifecycle.sql`, `helper_budget.py`, and several dp1/dp2/dp3/test_closeout files appeared in the worktree during this task; they are preserved, not staged, and not part of this commit. The 31-gate run temporarily restored them to HEAD to verify the commit tree and restored them byte-identically afterwards. Local commit only; no push; `main` untouched.

@@ -137,6 +137,20 @@ def test_x1b_custom_model_key(db):
             with contextlib.closing(db.connect('service')) as conn:
                 query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))
                 no_write(db, conn, tool, tool_out, 'invalid_outcome')
+        for label, mutate in (
+                ('ordinal', lambda f: f['successors'][0].__setitem__('ordinal', 1)),
+                ('contract_version', lambda f: f['successors'][0]['input']['contract'].__setitem__(
+                    'contract_version', '2')),
+                ('contract_digest', lambda f: f['successors'][0]['input']['contract'].__setitem__(
+                    'handler_digest', 'd' * 64)),
+                ('digests', lambda f: f['successors'][0]['input']['digests'].__setitem__(
+                    'toolset', '0' * 64))):
+            forged = json.loads(json.dumps(delta))
+            mutate(forged)
+            with contextlib.closing(db.connect('service')) as conn:
+                query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))
+                no_write(db, conn, tool, tool_out, 'invalid_outcome',
+                         detail={'reason': 'run_state_delta'})
     finally:
         replace_function(db, original)
     tr = settle(db, tool, tool_body(), tc['claim'])
@@ -245,10 +259,69 @@ def test_validator(db):
         bad = json.loads(json.dumps(tool_delta))
         bad['successors'][0]['input']['pin_id'] = str(uuid.uuid4())
         cases.append(('successor', bad, tool_out))
+        bad = json.loads(json.dumps(final_delta))
+        bad['events'] = []
+        cases.append(('event_missing', bad, final_out))
+        for field, value in (('run_id', str(uuid.uuid4())), ('effect_id', str(uuid.uuid4())),
+                             ('effect_kind', 'tool_call'), ('step', 0),
+                             ('remaining_steps', 63), ('phase', 'tools'),
+                             ('sealed', False), ('reason', 'budget_exhausted')):
+            bad = json.loads(json.dumps(final_delta))
+            bad['events'][0]['payload'][field] = value
+            cases.append(('event_' + field, bad, final_out))
+        bad = json.loads(json.dumps(tool_delta))
+        bad['domain'][0]['state']['origin'] = str(uuid.uuid4())
+        cases.append(('state_origin', bad, tool_out))
+        bad = json.loads(json.dumps(tool_delta))
+        bad['domain'][0]['state']['step'] = 2
+        cases.append(('state_step', bad, tool_out))
+        bad = json.loads(json.dumps(tool_delta))
+        bad['domain'][0]['state']['batch'][0]['call_id'] = 'forged'
+        cases.append(('state_batch', bad, tool_out))
+        bad = json.loads(json.dumps(final_delta))
+        bad['domain'][2]['result']['output'] = {'forged': True}
+        cases.append(('seal_output', bad, final_out))
+        bad = json.loads(json.dumps(final_delta))
+        bad['domain'][2]['result']['reason'] = 'budget_exhausted'
+        cases.append(('seal_reason', bad, final_out))
+        bad = json.loads(json.dumps(final_delta))
+        bad['domain'][2]['result']['dropped_tool_calls'] = 1
+        cases.append(('seal_dropped', bad, final_out))
+        bad = json.loads(json.dumps(final_delta))
+        bad['receipt']['status'] = 'failed'
+        cases.append(('receipt_status', bad, final_out))
+        for label, path, value in (
+                ('contract_version', ('contract', 'contract_version'), '2'),
+                ('contract_digest', ('contract', 'handler_digest'), 'd' * 64),
+                ('descriptor', ('descriptor_digest',), '0' * 64),
+                ('args', ('args',), {'forged': True}),
+                ('call_id', ('call_id',), 'c-forged'),
+                ('key', ('key',), 'tool2'),
+                ('ordinal', ('ordinal',), 1)):
+            bad = json.loads(json.dumps(tool_delta))
+            if label == 'ordinal':
+                bad['successors'][0]['ordinal'] = value
+            else:
+                node = bad['successors'][0]['input']
+                for key in path[:-1]:
+                    node = node[key]
+                node[path[-1]] = value
+            cases.append(('successor_' + label, bad, tool_out))
+        proof = {'event_missing', 'event_run_id', 'event_effect_id', 'event_effect_kind',
+                 'event_step', 'event_remaining', 'event_phase', 'event_sealed', 'event_reason',
+                 'state_origin', 'state_step', 'state_batch', 'seal_output', 'seal_reason',
+                 'seal_dropped', 'successor_contract_version',
+                 'successor_contract_digest', 'successor_descriptor', 'successor_args',
+                 'successor_call_id', 'successor_key', 'successor_ordinal'}
         for label, forged, outcome in cases:
             with contextlib.closing(db.connect('service')) as conn:
                 query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))
-                no_write(db, conn, x['model_effect'], outcome, 'invalid_outcome')
+                detail = {'reason': 'run_state_delta'} if label in proof else None
+                try:
+                    no_write(db, conn, x['model_effect'], outcome, 'invalid_outcome',
+                             detail=detail)
+                except AssertionError as exc:
+                    raise AssertionError(f'{label}: {exc}') from exc
     finally:
         replace_function(db, original)
     print('[CDP4-X6] advance rejects forged budget/seal/pins/successor planners independently with zero write')
@@ -293,6 +366,20 @@ def test_run_start_forged(db):
         'handler_digest', 'd' * 64))
     case('successor_extra', lambda d: d['successors'].append(dict(
         d['successors'][0], ordinal=1)))
+    case('event_missing', lambda d: d.__setitem__('events', []))
+    case('event_run_id', lambda d: d['events'][0]['payload'].__setitem__(
+        'run_id', str(uuid.uuid4())))
+    case('event_effect_id', lambda d: d['events'][0]['payload'].__setitem__(
+        'effect_id', str(uuid.uuid4())))
+    case('event_effect_kind', lambda d: d['events'][0]['payload'].__setitem__(
+        'effect_kind', 'tool_call'))
+    case('event_step', lambda d: d['events'][0]['payload'].__setitem__('step', 1))
+    case('event_remaining', lambda d: d['events'][0]['payload'].__setitem__(
+        'remaining_steps', 3))
+    case('event_phase', lambda d: d['events'][0]['payload'].__setitem__('phase', 'tools'))
+    case('event_sealed', lambda d: d['events'][0]['payload'].__setitem__('sealed', True))
+    case('event_reason', lambda d: d['events'][0]['payload'].__setitem__('reason', 'final'))
+    case('receipt', lambda d: d['receipt'].__setitem__('status', 'failed'))
     for label in ('owner_closing', 'start_failed', 'replay_right_missing'):
         cases.append(('empty_' + label, {
             'domain': [], 'receipt': {'status': 'succeeded'},
@@ -305,10 +392,16 @@ def test_run_start_forged(db):
     replace_function(db, """CREATE OR REPLACE FUNCTION v24_cordis.run_delta(p_effect_id uuid,p_outcome jsonb)
       RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT current_setting('dp4.forged')::jsonb $$""")
     try:
+        proof = {'event_missing', 'event_run_id', 'event_effect_id', 'event_effect_kind',
+                 'event_step', 'event_remaining', 'event_phase', 'event_sealed', 'event_reason'}
         for label, forged in cases:
             with contextlib.closing(db.connect('service')) as conn:
                 query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))
-                no_write(db, conn, rs, out, 'invalid_outcome')
+                detail = {'reason': 'run_start_delta'} if label in proof else None
+                try:
+                    no_write(db, conn, rs, out, 'invalid_outcome', detail=detail)
+                except AssertionError as exc:
+                    raise AssertionError(f'{label}: {exc}') from exc
         assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (rs,)) == 'claimed'
         assert q1(db, 'SELECT count(*) FROM v24_cordis.runs') == 0
         # A genuine off command closes the owner while run_start remains claimed.

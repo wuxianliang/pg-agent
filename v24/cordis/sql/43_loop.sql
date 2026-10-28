@@ -179,6 +179,103 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_bindings) b WHERE b->'contract' IS NULL
    OR b->>'capability' NOT IN ('model_call','tool_call')),false)
 $$;
+CREATE FUNCTION v24_cordis.run_progress(p_run uuid,p_eff uuid,p_kind text,p_step int,p_budget int,
+ p_phase text,p_sealed boolean,p_reason text) RETURNS jsonb
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+ SELECT jsonb_build_object('entity_type','run','entity_id',to_jsonb(p_run),'event_kind','run_progress',
+  'payload',jsonb_build_object('run_id',to_jsonb(p_run),'effect_id',to_jsonb(p_eff),
+   'effect_kind',p_kind,'step',p_step,'remaining_steps',p_budget,'phase',p_phase,
+   'sealed',p_sealed,'reason',CASE WHEN p_reason IS NULL THEN 'null'::jsonb ELSE to_jsonb(p_reason) END))
+$$;
+CREATE FUNCTION v24_cordis.run_seal_result(p_body jsonb,p_intent jsonb) RETURNS jsonb
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+ SELECT jsonb_build_object('v',1,'reason',p_intent->>'reason',
+  'output',CASE p_intent->>'reason' WHEN 'final' THEN p_body->'result'
+   WHEN 'model_failed' THEN p_body->'error' ELSE '{}'::jsonb END,
+  'dropped_tool_calls',(p_intent->>'dropped_tool_calls')::int)
+$$;
+CREATE FUNCTION v24_cordis.run_settle_facts(p_eff v24_cordis.effects,p_r v24_cordis.runs,p_outcome jsonb) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE body jsonb:=p_outcome->'body'; pin_id uuid; pin_key text; pin_contrib uuid; pin_released timestamptz;
+ newr int; live int:=0; fact jsonb; red jsonb; it jsonb; out jsonb:='[]'::jsonb; desc_ jsonb; c jsonb;
+BEGIN
+ IF p_outcome->>'class' NOT IN ('success','failure') THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ IF p_eff.kind='tool_call' AND (p_r.state->>'phase'<>'tools' OR NOT EXISTS(
+  SELECT 1 FROM jsonb_array_elements(p_r.state->'batch') bs WHERE bs->>'ordinal'=p_eff.ordinal::text
+   AND bs->>'key'=p_eff.input->>'key' AND bs->>'call_id'=p_eff.input->>'call_id')) THEN
+  RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ IF NOT coalesce(CASE p_eff.kind
+  WHEN 'model_call' THEN v24_cordis.exact_keys(p_eff.input,
+   ARRAY['v','run_id','pin_id','key','digests','contract'])
+  ELSE v24_cordis.exact_keys(p_eff.input,
+   ARRAY['v','run_id','pin_id','key','descriptor_digest','call_id','args','contract']) END,false)
+  OR p_eff.input->'v'<>'1'::jsonb OR NOT v24_cordis.json_uuid(p_eff.input->'run_id')
+  OR (p_eff.input->>'run_id')::uuid<>p_r.id OR NOT v24_cordis.json_uuid(p_eff.input->'pin_id')
+  OR NOT v24_cordis.json_text(p_eff.input->'key')
+  OR (p_eff.kind='tool_call' AND (NOT v24_cordis.json_hex64(p_eff.input->'descriptor_digest')
+   OR NOT v24_cordis.json_text(p_eff.input->'call_id') OR jsonb_typeof(p_eff.input->'args')<>'object'))
+  OR NOT coalesce(v24_cordis.exact_keys(p_eff.input->'contract',
+   ARRAY['contract_version','handler_digest']),false)
+  OR NOT v24_cordis.run_state_valid(p_r.state) THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ SELECT p.id,p.key,p.contribution_id,p.released_at,mc.descriptor INTO pin_id,pin_key,pin_contrib,pin_released,desc_
+  FROM v24_cordis.pins p JOIN v24_cordis.contributions mc ON mc.id=p.contribution_id
+  WHERE p.id=(p_eff.input->>'pin_id')::uuid AND p.consumer_run_id=p_r.id AND p.key=p_eff.input->>'key';
+ IF NOT FOUND THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ IF pin_released IS NOT NULL OR NOT v24_cordis.pin_readable(pin_id) THEN
+  RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
+ IF p_eff.kind='model_call' THEN
+  IF p_eff.input->'digests' IS DISTINCT FROM v24_cordis.run_digests(p_r.id)
+   OR NOT v24_cordis.model_receipt_valid(p_outcome->>'class',body) THEN
+   RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ ELSE
+  IF desc_->>'capability'<>'tool_call'
+   OR encode(sha256(convert_to(desc_::text,'UTF8')),'hex')<>p_eff.input->>'descriptor_digest' THEN
+   RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
+  IF NOT v24_cordis.tool_receipt_valid(p_outcome->>'class',body) THEN
+   RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+  SELECT count(*) INTO live FROM v24_cordis.effects x WHERE x.parent_id=p_eff.parent_id
+   AND x.kind='tool_call' AND x.status IN ('ready','claimed') AND x.id<>p_eff.id;
+ END IF;
+ IF p_r.remaining_steps<1 THEN RETURN v24_cordis.error_v1('budget_exceeded'); END IF;
+ newr:=p_r.remaining_steps-1;
+ fact:=jsonb_build_object('v',1,'effect_kind',p_eff.kind,'class',p_outcome->>'class',
+  'receipt',body,'remaining_steps',newr,'tools',(SELECT coalesce(jsonb_agg(jsonb_build_object(
+   'key',p.key,'pin_id',p.id) ORDER BY p.key),'[]'::jsonb) FROM v24_cordis.pins p
+    JOIN v24_cordis.contributions mc ON mc.id=p.contribution_id WHERE p.consumer_run_id=p_r.id
+     AND p.released_at IS NULL AND mc.descriptor->>'capability'='tool_call'),'live_siblings',live,
+  'unknown_in_run',EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.run_id=p_r.id AND x.status='unknown'));
+ red:=v24_cordis.reduce_chat_tool(p_r.state,fact);
+ IF red ? 'invalid' THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ FOR it IN SELECT value FROM jsonb_array_elements(red->'intents') LOOP
+  IF it->>'type' NOT IN ('emit_tool','emit_model') THEN CONTINUE; END IF;
+  SELECT p.id,p.key,p.contribution_id,mc.descriptor INTO pin_id,pin_key,pin_contrib,desc_ FROM v24_cordis.pins p
+   JOIN v24_cordis.contributions mc ON mc.id=p.contribution_id
+   WHERE p.consumer_run_id=p_r.id AND p.released_at IS NULL AND mc.released_at IS NULL
+    AND mc.descriptor->>'capability'=CASE WHEN it->>'type'='emit_tool' THEN 'tool_call' ELSE 'model_call' END
+    AND (it->>'type'<>'emit_tool' OR p.key=it->>'key')
+    AND (it->>'type'<>'emit_model' OR v24_cordis.pin_readable(p.id));
+  IF NOT FOUND THEN RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
+  SELECT i.contracts->(CASE WHEN it->>'type'='emit_tool' THEN 'tool_call' ELSE 'model_call' END) INTO c
+   FROM v24_cordis.contributions cc JOIN v24_cordis.fibers f ON f.id=cc.fiber_id
+   JOIN v24_cordis.installs i ON i.id=f.install_id WHERE cc.id=pin_contrib;
+  IF c IS NULL THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+  IF it->>'type'='emit_tool' THEN
+   out:=out||jsonb_build_array(jsonb_build_object('ordinal',(it->>'ordinal')::int,'kind','tool_call',
+    'input',jsonb_build_object('v',1,'run_id',to_jsonb(p_r.id),'pin_id',to_jsonb(pin_id),'key',pin_key,
+     'descriptor_digest',encode(sha256(convert_to(desc_::text,'UTF8')),'hex'),
+     'call_id',it->>'call_id','args',it->'args','contract',jsonb_build_object(
+      'contract_version',c->>'contract_version','handler_digest',c->>'handler_digest'))));
+  ELSE
+   out:=jsonb_build_array(jsonb_build_object('ordinal',0,'kind','model_call','input',
+    jsonb_build_object('v',1,'run_id',to_jsonb(p_r.id),'pin_id',to_jsonb(pin_id),'key',pin_key,
+     'digests',v24_cordis.run_digests(p_r.id),'contract',jsonb_build_object(
+      'contract_version',c->>'contract_version','handler_digest',c->>'handler_digest'))));
+  END IF;
+ END LOOP;
+ RETURN jsonb_build_object('newr',newr,'state',red->'state','intents',red->'intents',
+  'successors',out,'status',CASE p_outcome->>'class' WHEN 'success' THEN 'succeeded' ELSE 'failed' END);
+END $$;
+
 CREATE FUNCTION v24_cordis.claim_contract(p_eff v24_cordis.effects) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE c jsonb;
@@ -227,11 +324,10 @@ END $$;
 CREATE FUNCTION v24_cordis.run_delta(p_effect_id uuid,p_outcome jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE eff v24_cordis.effects%ROWTYPE; r v24_cordis.runs%ROWTYPE; i v24_cordis.installs%ROWTYPE;
- fact jsonb; red jsonb; intents jsonb; newstate jsonb; result jsonb; succs jsonb:='[]'::jsonb; it jsonb;
- body jsonb:=p_outcome->'body'; newr int; tools jsonb; ev jsonb; tpin v24_cordis.pins%ROWTYPE;
- cc v24_cordis.contributions%ROWTYPE; live int; f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE;
- inst v24_cordis.installs%ROWTYPE; bindings jsonb; b jsonb; model jsonb; runid uuid; steps int; pins jsonb;
- contract jsonb; state jsonb; reason text; status text; live_ok boolean:=false;
+ fact jsonb; newstate jsonb; result jsonb; it jsonb; body jsonb:=p_outcome->'body'; newr int; ev jsonb;
+ f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE; inst v24_cordis.installs%ROWTYPE;
+ bindings jsonb; model jsonb; runid uuid; steps int; pins jsonb; contract jsonb; state jsonb;
+ reason text; live_ok boolean:=false;
 BEGIN
  SELECT * INTO eff FROM v24_cordis.effects WHERE id=p_effect_id;
  IF NOT FOUND THEN RETURN v24_cordis.error_v1('not_found_or_denied'); END IF;
@@ -241,71 +337,16 @@ BEGIN
   IF NOT FOUND THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
   IF r.ended_at IS NOT NULL OR r.result IS NOT NULL THEN RETURN v24_cordis.error_v1('already_terminal'); END IF;
   IF p_outcome->>'class'='unknown' THEN
+   IF NOT (coalesce(v24_cordis.exact_keys(body,ARRAY['kind']),false)
+    AND body->>'kind' IS NOT DISTINCT FROM eff.kind) THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
    RETURN jsonb_build_object('domain','[]'::jsonb,'receipt',jsonb_build_object('status','unknown'),
     'events','[]'::jsonb,'successors','[]'::jsonb);
   END IF;
-  IF p_outcome->>'class' NOT IN ('success','failure') THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
-  IF eff.kind='tool_call' AND (r.state->>'phase'<>'tools'
-   OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(r.state->'batch') bs
-    WHERE bs->>'ordinal'=eff.ordinal::text AND bs->>'key'=eff.input->>'key'
-     AND bs->>'call_id'=eff.input->>'call_id')) THEN
-   RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
-  IF NOT coalesce(CASE eff.kind
-   WHEN 'model_call' THEN v24_cordis.exact_keys(eff.input,
-    ARRAY['v','run_id','pin_id','key','digests','contract'])
-   ELSE v24_cordis.exact_keys(eff.input,
-    ARRAY['v','run_id','pin_id','key','descriptor_digest','call_id','args','contract']) END,false)
-   OR eff.input->'v'<>'1'::jsonb OR NOT v24_cordis.json_uuid(eff.input->'run_id')
-   OR (eff.input->>'run_id')::uuid<>r.id OR NOT v24_cordis.json_uuid(eff.input->'pin_id')
-   OR NOT v24_cordis.json_text(eff.input->'key')
-   OR (eff.kind='tool_call' AND (NOT v24_cordis.json_hex64(eff.input->'descriptor_digest')
-    OR NOT v24_cordis.json_text(eff.input->'call_id') OR jsonb_typeof(eff.input->'args')<>'object'))
-   OR NOT coalesce(v24_cordis.exact_keys(eff.input->'contract',
-    ARRAY['contract_version','handler_digest']),false)
-   OR NOT v24_cordis.run_state_valid(r.state) THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
-  SELECT * INTO tpin FROM v24_cordis.pins WHERE id=(eff.input->>'pin_id')::uuid
-   AND consumer_run_id=r.id AND key=eff.input->>'key';
-  IF NOT FOUND THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
-  IF tpin.released_at IS NOT NULL OR NOT v24_cordis.pin_readable(tpin.id) THEN
-   RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
-  IF eff.kind='model_call' THEN
-   IF eff.input->'digests' IS DISTINCT FROM v24_cordis.run_digests(r.id) THEN
-    RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
-   IF NOT v24_cordis.model_receipt_valid(p_outcome->>'class',body) THEN
-    RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
-   live:=0;
-  ELSE
-   SELECT * INTO cc FROM v24_cordis.contributions WHERE id=tpin.contribution_id;
-   IF NOT FOUND OR cc.released_at IS NOT NULL OR cc.descriptor->>'capability'<>'tool_call'
-    OR encode(sha256(convert_to(cc.descriptor::text,'UTF8')),'hex')<>eff.input->>'descriptor_digest' THEN
-    RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
-   IF NOT v24_cordis.tool_receipt_valid(p_outcome->>'class',body) THEN
-    RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
-   SELECT count(*) INTO live FROM v24_cordis.effects x WHERE x.parent_id=eff.parent_id
-    AND x.kind='tool_call' AND x.status IN ('ready','claimed') AND x.id<>eff.id;
-  END IF;
-  IF r.remaining_steps<1 THEN RETURN v24_cordis.error_v1('budget_exceeded'); END IF;
-  newr:=r.remaining_steps-1;
-  SELECT coalesce(jsonb_agg(jsonb_build_object('key',p.key,'pin_id',p.id) ORDER BY p.key),'[]'::jsonb)
-   INTO tools FROM v24_cordis.pins p JOIN v24_cordis.contributions mc
-    ON mc.id=p.contribution_id WHERE p.consumer_run_id=r.id AND p.released_at IS NULL
-     AND mc.descriptor->>'capability'='tool_call';
-  fact:=jsonb_build_object('v',1,'effect_kind',eff.kind,'class',p_outcome->>'class',
-   'receipt',body,'remaining_steps',newr,'tools',tools,'live_siblings',live,
-   'unknown_in_run',EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.run_id=r.id AND x.status='unknown'));
-  red:=v24_cordis.reduce_chat_tool(r.state,fact);
-  IF red ? 'invalid' THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
-  newstate:=red->'state'; intents:=red->'intents';
-  IF intents @> '[{"type":"close_run"}]'::jsonb THEN
-   it:=intents->0;
-   result:=jsonb_build_object('v',1,'reason',it->>'reason',
-    'output',CASE it->>'reason' WHEN 'final' THEN body->'result'
-     WHEN 'model_failed' THEN body->'error' ELSE '{}'::jsonb END,
-    'dropped_tool_calls',(it->>'dropped_tool_calls')::int);
-   ev:=jsonb_build_object('entity_type','run','entity_id',to_jsonb(r.id),'event_kind','run_progress',
-    'payload',jsonb_build_object('run_id',to_jsonb(r.id),'effect_id',to_jsonb(eff.id),
-     'effect_kind',eff.kind,'step',(newstate->>'step')::int,'remaining_steps',newr,
-     'phase',newstate->>'phase','sealed',true,'reason',it->>'reason'));
+  fact:=v24_cordis.run_settle_facts(eff,r,p_outcome);
+  IF fact ? 'error' THEN RETURN fact; END IF;
+  newr:=(fact->>'newr')::int; newstate:=fact->'state';
+  IF fact->'intents' @> '[{"type":"close_run"}]'::jsonb THEN
+   it:=fact->'intents'->0; result:=v24_cordis.run_seal_result(body,it);
    RETURN jsonb_build_object('domain',jsonb_build_array(
      jsonb_build_object('op','run_state','run_id',to_jsonb(r.id),'state',newstate),
      jsonb_build_object('op','run_budget','run_id',to_jsonb(r.id),'remaining_steps',newr),
@@ -314,50 +355,16 @@ BEGIN
       'episode_id',to_jsonb(r.owner_episode_id),
       'pin_ids',(SELECT coalesce(jsonb_agg(p.id ORDER BY p.key,p.id),'[]'::jsonb)
        FROM v24_cordis.pins p WHERE p.consumer_run_id=r.id AND p.released_at IS NULL))),
-    'receipt',jsonb_build_object('status',CASE p_outcome->>'class' WHEN 'success' THEN 'succeeded' ELSE 'failed' END),
-    'events',jsonb_build_array(ev),'successors','[]'::jsonb);
+    'receipt',jsonb_build_object('status',fact->>'status'),
+    'events',jsonb_build_array(v24_cordis.run_progress(r.id,eff.id,eff.kind,(newstate->>'step')::int,
+     newr,newstate->>'phase',true,it->>'reason')),'successors','[]'::jsonb);
   END IF;
-  FOR it IN SELECT value FROM jsonb_array_elements(intents) LOOP
-   IF it->>'type'='emit_tool' THEN
-    SELECT p.* INTO tpin FROM v24_cordis.pins p JOIN v24_cordis.contributions mc
-     ON mc.id=p.contribution_id WHERE p.consumer_run_id=r.id AND p.key=it->>'key'
-      AND p.released_at IS NULL AND mc.released_at IS NULL AND mc.descriptor->>'capability'='tool_call';
-    IF NOT FOUND THEN RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
-    SELECT * INTO cc FROM v24_cordis.contributions WHERE id=tpin.contribution_id;
-    SELECT * INTO i FROM v24_cordis.installs
-     WHERE id=(SELECT install_id FROM v24_cordis.fibers WHERE id=cc.fiber_id);
-    IF NOT FOUND OR i.contracts->'tool_call' IS NULL THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
-    succs:=succs||jsonb_build_array(jsonb_build_object('ordinal',(it->>'ordinal')::int,'kind','tool_call',
-     'input',jsonb_build_object('v',1,'run_id',to_jsonb(r.id),'pin_id',to_jsonb(tpin.id),'key',tpin.key,
-      'descriptor_digest',encode(sha256(convert_to(cc.descriptor::text,'UTF8')),'hex'),
-      'call_id',it->>'call_id','args',it->'args',
-      'contract',jsonb_build_object('contract_version',i.contracts->'tool_call'->>'contract_version',
-       'handler_digest',i.contracts->'tool_call'->>'handler_digest'))));
-   ELSIF it->>'type'='emit_model' THEN
-    SELECT p.* INTO tpin FROM v24_cordis.pins p JOIN v24_cordis.contributions mc
-     ON mc.id=p.contribution_id WHERE p.consumer_run_id=r.id AND p.released_at IS NULL
-      AND mc.released_at IS NULL AND mc.descriptor->>'capability'='model_call' AND v24_cordis.pin_readable(p.id);
-    IF NOT FOUND THEN RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
-    SELECT * INTO cc FROM v24_cordis.contributions WHERE id=tpin.contribution_id;
-    SELECT * INTO i FROM v24_cordis.installs WHERE id=(SELECT install_id FROM v24_cordis.fibers
-     WHERE id=cc.fiber_id);
-    contract:=i.contracts->'model_call';
-    IF contract IS NULL THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
-    succs:=jsonb_build_array(jsonb_build_object('ordinal',0,'kind','model_call','input',
-     jsonb_build_object('v',1,'run_id',to_jsonb(r.id),'pin_id',to_jsonb(tpin.id),'key',tpin.key,
-      'digests',v24_cordis.run_digests(r.id),'contract',jsonb_build_object(
-       'contract_version',contract->>'contract_version','handler_digest',contract->>'handler_digest'))));
-   END IF;
-  END LOOP;
-  ev:=jsonb_build_object('entity_type','run','entity_id',to_jsonb(r.id),'event_kind','run_progress',
-   'payload',jsonb_build_object('run_id',to_jsonb(r.id),'effect_id',to_jsonb(eff.id),
-    'effect_kind',eff.kind,'step',(newstate->>'step')::int,'remaining_steps',newr,
-    'phase',newstate->>'phase','sealed',false,'reason','null'::jsonb));
   RETURN jsonb_build_object('domain',jsonb_build_array(
     jsonb_build_object('op','run_state','run_id',to_jsonb(r.id),'state',newstate),
     jsonb_build_object('op','run_budget','run_id',to_jsonb(r.id),'remaining_steps',newr)),
-   'receipt',jsonb_build_object('status',CASE p_outcome->>'class' WHEN 'success' THEN 'succeeded' ELSE 'failed' END),
-   'events',jsonb_build_array(ev),'successors',succs);
+   'receipt',jsonb_build_object('status',fact->>'status'),
+   'events',jsonb_build_array(v24_cordis.run_progress(r.id,eff.id,eff.kind,(newstate->>'step')::int,
+    newr,newstate->>'phase',false,NULL)),'successors',fact->'successors');
  END IF;
  IF eff.kind<>'run_start' THEN
   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_settlement_unimplemented'));
@@ -377,10 +384,10 @@ BEGIN
   OR eff.episode_id IS DISTINCT FROM (eff.input->>'episode_id')::uuid THEN
   RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
  IF p_outcome->>'class'='failure' THEN
-  ev:=jsonb_build_object('entity_type','run','entity_id',to_jsonb(eff.id),'event_kind','run_refused',
-   'payload',jsonb_build_object('run_id','null'::jsonb,'effect_id',to_jsonb(eff.id),'reason','start_failed'));
   RETURN jsonb_build_object('domain','[]'::jsonb,'receipt',jsonb_build_object('status','failed'),
-   'events',jsonb_build_array(ev),'successors','[]'::jsonb);
+   'events',jsonb_build_array(jsonb_build_object('entity_type','run','entity_id',to_jsonb(eff.id),
+    'event_kind','run_refused','payload',jsonb_build_object('run_id','null'::jsonb,
+     'effect_id',to_jsonb(eff.id),'reason','start_failed'))),'successors','[]'::jsonb);
  END IF;
  SELECT * INTO f FROM v24_cordis.fibers WHERE id=eff.fiber_id;
  SELECT * INTO ep FROM v24_cordis.episodes WHERE id=eff.episode_id AND fiber_id=eff.fiber_id;
@@ -403,10 +410,10 @@ BEGIN
   END IF;
  END IF;
  IF reason IS NOT NULL THEN
-  ev:=jsonb_build_object('entity_type','run','entity_id',to_jsonb(eff.id),'event_kind','run_refused',
-   'payload',jsonb_build_object('run_id','null'::jsonb,'effect_id',to_jsonb(eff.id),'reason',reason));
   RETURN jsonb_build_object('domain','[]'::jsonb,'receipt',jsonb_build_object('status','succeeded'),
-   'events',jsonb_build_array(ev),'successors','[]'::jsonb);
+   'events',jsonb_build_array(jsonb_build_object('entity_type','run','entity_id',to_jsonb(eff.id),
+    'event_kind','run_refused','payload',jsonb_build_object('run_id','null'::jsonb,
+     'effect_id',to_jsonb(eff.id),'reason',reason))),'successors','[]'::jsonb);
  END IF;
  SELECT x INTO model FROM jsonb_array_elements(bindings) x WHERE x->>'capability'='model_call' LIMIT 1;
  runid:=v24_cordis.run_id_for(eff.id); steps:=(p_outcome->'body'->>'steps')::int;
@@ -418,10 +425,7 @@ BEGIN
   'batch','[]'::jsonb,'final',false);
  contract:=jsonb_build_object('contract_version',model->'contract'->>'contract_version',
   'handler_digest',model->'contract'->>'handler_digest');
- ev:=jsonb_build_object('entity_type','run','entity_id',to_jsonb(runid),'event_kind','run_progress',
-  'payload',jsonb_build_object('run_id',to_jsonb(runid),'effect_id',to_jsonb(eff.id),
-   'effect_kind','run_start','step',0,'remaining_steps',steps,'phase','model',
-   'sealed',false,'reason','null'::jsonb));
+ ev:=v24_cordis.run_progress(runid,eff.id,'run_start',0,steps,'model',false,NULL);
  RETURN jsonb_build_object('domain',jsonb_build_array(
    jsonb_build_object('op','run_create','id',to_jsonb(runid),'owner_fiber_id',to_jsonb(f.id),
     'owner_episode_id',to_jsonb(ep.id),'scope_id',to_jsonb(f.scope_id),'state',state,
@@ -436,16 +440,15 @@ BEGIN
 END $$;
 CREATE FUNCTION v24_cordis.validate_run_domain(p_effect_id uuid,p_principal uuid,p_outcome jsonb,p_delta jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE eff v24_cordis.effects%ROWTYPE; r v24_cordis.runs%ROWTYPE; expect jsonb; d jsonb;
+DECLARE eff v24_cordis.effects%ROWTYPE; r v24_cordis.runs%ROWTYPE; expect jsonb;
  f v24_cordis.fibers%ROWTYPE; bindings jsonb; model jsonb; runid uuid; reason text;
- live_ok boolean; n_seal int;
+ live_ok boolean; n_seal int; fact jsonb; newstate jsonb; intents jsonb; newr int; pins jsonb; state jsonb;
 BEGIN
  SELECT * INTO eff FROM v24_cordis.effects WHERE id=p_effect_id;
  IF NOT FOUND THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
  expect:=v24_cordis.run_delta(p_effect_id,p_outcome);
  IF expect IS NULL OR expect ? 'error' OR p_delta IS DISTINCT FROM expect THEN
   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_delta')); END IF;
- d:=p_delta->'domain';
  IF eff.kind='run_start' THEN
   SELECT * INTO f FROM v24_cordis.fibers WHERE id=eff.fiber_id;
   IF NOT FOUND OR NOT EXISTS(SELECT 1 FROM v24_cordis.installs i
@@ -458,39 +461,38 @@ BEGIN
    WHERE e.id=eff.episode_id AND e.fiber_id=eff.fiber_id AND e.state='active' AND e.closed_at IS NULL)
     AND v24_cordis.fiber_live_resolve_ok(f.id,eff.episode_id);
   END IF;
-  IF d<>'[]'::jsonb THEN
+  IF p_delta->'domain'<>'[]'::jsonb THEN
    SELECT b INTO model FROM jsonb_array_elements(bindings) b WHERE b->>'capability'='model_call';
-   IF p_outcome->>'class'<>'success' OR jsonb_array_length(d)<>2
-    OR NOT coalesce(v24_cordis.json_int(p_outcome->'body'->'steps',1,64),false)
+   IF NOT coalesce(v24_cordis.json_int(p_outcome->'body'->'steps',1,64),false)
     OR live_ok IS NOT TRUE OR NOT v24_cordis.run_bindings_valid(bindings)
     OR EXISTS(SELECT 1 FROM jsonb_array_elements(bindings) b WHERE b->'contract'->'replay'
-     IS DISTINCT FROM '{"repeat":true,"concurrent":true}'::jsonb)
-    OR d->0->'id' IS DISTINCT FROM to_jsonb(runid) OR d->1->'run_id' IS DISTINCT FROM to_jsonb(runid)
-    OR d->0->'owner_fiber_id' IS DISTINCT FROM to_jsonb(eff.fiber_id)
-    OR d->0->'owner_episode_id' IS DISTINCT FROM to_jsonb(eff.episode_id)
-    OR d->0->'scope_id' IS DISTINCT FROM to_jsonb(f.scope_id)
-    OR d->0->'state' IS DISTINCT FROM jsonb_build_object('v',1,'origin',to_jsonb(eff.id),
-     'step',0,'phase','model','batch','[]'::jsonb,'final',false)
-    OR d->0->'remaining_steps' IS DISTINCT FROM to_jsonb((p_outcome->'body'->>'steps')::int)
-    OR d->1->'pins' IS DISTINCT FROM (SELECT jsonb_agg(jsonb_build_object('id',
-      v24_cordis.run_pin_id_for(runid,b->>'key'),'key',b->>'key','contribution_id',
-      b->'contribution_id','provider_episode_id',b->'provider_episode_id','provider_epoch',
-      b->'provider_epoch') ORDER BY b->>'key') FROM jsonb_array_elements(bindings) b)
-    OR p_delta->'successors' IS DISTINCT FROM jsonb_build_array(jsonb_build_object('ordinal',0,
-      'kind','model_call','input',jsonb_build_object('v',1,'run_id',to_jsonb(runid),
-      'pin_id',v24_cordis.run_pin_id_for(runid,model->>'key'),'key',model->>'key',
-      'digests',v24_cordis.run_digests_of(bindings),'contract',jsonb_build_object(
-      'contract_version',model->'contract'->>'contract_version',
-      'handler_digest',model->'contract'->>'handler_digest')))) THEN
+     IS DISTINCT FROM '{"repeat":true,"concurrent":true}'::jsonb) THEN
+    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_start_delta')); END IF;
+   state:=jsonb_build_object('v',1,'origin',eff.id,'step',0,'phase','model','batch','[]'::jsonb,'final',false);
+   pins:=(SELECT jsonb_agg(jsonb_build_object('id',v24_cordis.run_pin_id_for(runid,b->>'key'),
+     'key',b->>'key','contribution_id',b->'contribution_id','provider_episode_id',
+     b->'provider_episode_id','provider_epoch',b->'provider_epoch') ORDER BY b->>'key')
+    FROM jsonb_array_elements(bindings) b);
+   IF p_delta IS DISTINCT FROM jsonb_build_object('domain',jsonb_build_array(
+     jsonb_build_object('op','run_create','id',to_jsonb(runid),'owner_fiber_id',to_jsonb(eff.fiber_id),
+      'owner_episode_id',to_jsonb(eff.episode_id),'scope_id',to_jsonb(f.scope_id),'state',state,
+      'remaining_steps',(p_outcome->'body'->>'steps')::int),
+     jsonb_build_object('op','run_pin_bind','run_id',to_jsonb(runid),'pins',pins)),
+    'receipt',jsonb_build_object('status','succeeded'),
+    'events',jsonb_build_array(v24_cordis.run_progress(runid,eff.id,'run_start',0,
+     (p_outcome->'body'->>'steps')::int,'model',false,NULL)),
+    'successors',jsonb_build_array(jsonb_build_object('ordinal',0,'kind','model_call','input',
+     jsonb_build_object('v',1,'run_id',to_jsonb(runid),'pin_id',v24_cordis.run_pin_id_for(runid,model->>'key'),
+      'key',model->>'key','digests',v24_cordis.run_digests_of(bindings),'contract',jsonb_build_object(
+       'contract_version',model->'contract'->>'contract_version',
+       'handler_digest',model->'contract'->>'handler_digest'))))) THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_start_delta')); END IF;
   ELSE
-   IF p_outcome->>'class'<>'success' THEN reason:='start_failed';
-   ELSE
-    reason:=CASE WHEN NOT live_ok THEN 'owner_closing'
-     WHEN NOT v24_cordis.run_bindings_valid(bindings) THEN NULL
-     WHEN EXISTS(SELECT 1 FROM jsonb_array_elements(bindings) b WHERE b->'contract'->'replay'
-      IS DISTINCT FROM '{"repeat":true,"concurrent":true}'::jsonb) THEN 'replay_right_missing' END;
-   END IF;
+   reason:=CASE WHEN p_outcome->>'class'<>'success' THEN 'start_failed'
+    WHEN NOT live_ok THEN 'owner_closing'
+    WHEN NOT v24_cordis.run_bindings_valid(bindings) THEN NULL
+    WHEN EXISTS(SELECT 1 FROM jsonb_array_elements(bindings) b WHERE b->'contract'->'replay'
+     IS DISTINCT FROM '{"repeat":true,"concurrent":true}'::jsonb) THEN 'replay_right_missing' END;
    IF reason IS NULL OR p_delta IS DISTINCT FROM jsonb_build_object('domain','[]'::jsonb,
     'receipt',jsonb_build_object('status',CASE p_outcome->>'class' WHEN 'success' THEN 'succeeded'
      ELSE 'failed' END),'events',jsonb_build_array(jsonb_build_object('entity_type','run',
@@ -499,41 +501,39 @@ BEGIN
     'successors','[]'::jsonb) THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_start_refusal')); END IF;
   END IF;
- ELSIF eff.kind IN ('model_call','tool_call') AND p_outcome->>'class'<>'unknown' THEN
+ ELSIF eff.kind IN ('model_call','tool_call') THEN
   SELECT * INTO r FROM v24_cordis.runs WHERE id=eff.run_id;
   IF NOT FOUND THEN RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_state')); END IF;
-  n_seal:=jsonb_array_length(d)-2;
-  IF n_seal NOT IN (0,2)
-   OR d->0->'run_id' IS DISTINCT FROM to_jsonb(r.id) OR d->1->'run_id' IS DISTINCT FROM to_jsonb(r.id)
-   OR d->1->'remaining_steps' IS DISTINCT FROM to_jsonb(r.remaining_steps-1)
-   OR d->0->'state'->'step' IS DISTINCT FROM to_jsonb((r.state->>'step')::int+1)
-   OR ((d->0->'state'->>'phase')='sealed') IS DISTINCT FROM (n_seal=2) THEN
-   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_state_delta')); END IF;
-  IF n_seal=2 THEN
-   IF d->2->'run_id' IS DISTINCT FROM to_jsonb(r.id)
-    OR d->2->'effect_id' IS DISTINCT FROM to_jsonb(p_effect_id)
-    OR d->3->'fiber_id' IS DISTINCT FROM to_jsonb(r.owner_fiber_id)
-    OR d->3->'episode_id' IS DISTINCT FROM to_jsonb(r.owner_episode_id)
-    OR d->3->'pin_ids' IS DISTINCT FROM (SELECT coalesce(jsonb_agg(to_jsonb(p.id) ORDER BY p.key,p.id),
-     '[]'::jsonb) FROM v24_cordis.pins p WHERE p.consumer_run_id=r.id AND p.released_at IS NULL)
-    OR p_delta->'successors'<>'[]'::jsonb THEN
-    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_seal_delta')); END IF;
+  IF p_outcome->>'class'='unknown' THEN
+   IF NOT coalesce(v24_cordis.exact_keys(p_outcome->'body',ARRAY['kind']),false)
+    OR p_outcome->'body'->>'kind' IS DISTINCT FROM eff.kind
+    OR p_delta IS DISTINCT FROM jsonb_build_object('domain','[]'::jsonb,
+     'receipt',jsonb_build_object('status','unknown'),'events','[]'::jsonb,'successors','[]'::jsonb) THEN
+    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_unknown')); END IF;
+  ELSE
+   fact:=v24_cordis.run_settle_facts(eff,r,p_outcome);
+   IF fact ? 'error' THEN RETURN v24_cordis.error_v1('invalid_outcome',
+    jsonb_build_object('reason','run_facts')); END IF;
+   newstate:=fact->'state'; intents:=fact->'intents'; newr:=(fact->>'newr')::int;
+   n_seal:=CASE WHEN intents @> '[{"type":"close_run"}]'::jsonb THEN 2 ELSE 0 END;
+   expect:=jsonb_build_object('domain',jsonb_build_array(
+     jsonb_build_object('op','run_state','run_id',to_jsonb(r.id),'state',newstate),
+     jsonb_build_object('op','run_budget','run_id',to_jsonb(r.id),'remaining_steps',newr))
+    || CASE WHEN n_seal=2 THEN jsonb_build_array(
+     jsonb_build_object('op','run_seal','run_id',to_jsonb(r.id),'effect_id',to_jsonb(p_effect_id),
+      'result',v24_cordis.run_seal_result(p_outcome->'body',intents->0)),
+     jsonb_build_object('op','pins_release','fiber_id',to_jsonb(r.owner_fiber_id),
+      'episode_id',to_jsonb(r.owner_episode_id),'pin_ids',(SELECT coalesce(jsonb_agg(p.id ORDER BY p.key,p.id),
+       '[]'::jsonb) FROM v24_cordis.pins p WHERE p.consumer_run_id=r.id AND p.released_at IS NULL)))
+     ELSE '[]'::jsonb END,
+    'receipt',jsonb_build_object('status',fact->>'status'),
+    'events',jsonb_build_array(v24_cordis.run_progress(r.id,eff.id,eff.kind,(newstate->>'step')::int,
+     newr,newstate->>'phase',n_seal=2,CASE WHEN n_seal=2 THEN intents->0->>'reason' END)),
+    'successors',fact->'successors');
+   IF p_delta IS DISTINCT FROM expect THEN
+    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_state_delta')); END IF;
   END IF;
-  IF jsonb_array_length(p_delta->'successors')>16
-   OR EXISTS(SELECT 1 FROM jsonb_array_elements(p_delta->'successors') x WHERE
-    x->'input'->'run_id' IS DISTINCT FROM to_jsonb(r.id)
-    OR x->>'kind'<>CASE eff.kind WHEN 'model_call' THEN 'tool_call' ELSE 'model_call' END
-    OR NOT EXISTS(SELECT 1 FROM v24_cordis.pins p WHERE p.id=(x->'input'->>'pin_id')::uuid
-     AND p.consumer_run_id=r.id AND p.key=x->'input'->>'key' AND p.released_at IS NULL
-     AND (eff.kind='model_call' OR EXISTS(SELECT 1 FROM v24_cordis.contributions mc
-      WHERE mc.id=p.contribution_id AND mc.descriptor->>'capability'='model_call')))
-    OR (eff.kind='model_call' AND NOT (d->0->'state'->'batch' @> jsonb_build_array(
-     jsonb_build_object('ordinal',(x->>'ordinal')::int,'key',x->'input'->>'key',
-     'call_id',x->'input'->>'call_id'))))
-    OR (eff.kind='tool_call' AND x->'input'->'digests' IS DISTINCT FROM v24_cordis.run_digests(r.id))) THEN
-   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_successor')); END IF;
- END IF;
- RETURN NULL;
+ END IF; RETURN NULL;
 END $$;
 CREATE FUNCTION v24_cordis.settlement_seed(p_effect_id uuid) RETURNS jsonb
 LANGUAGE sql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$

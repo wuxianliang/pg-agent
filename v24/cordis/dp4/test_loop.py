@@ -7,7 +7,8 @@ import uuid
 
 from psycopg2.extras import Json
 from dp4_support import (Server, TestDB, snapshot, query, api, env, claim, settle,
-                         prepare_run, model_body, tool_call, tool_body, q1, rows, no_write)
+                         prepare_run, model_body, tool_call, tool_body, q1, rows, no_write,
+                         provider, agent)
 
 
 def _snap(db):
@@ -392,6 +393,81 @@ def test_t7_no_replay(db):
     print('[CDP4-T7c] provider without concurrent replay right is blocked on reclaim (owner fixture)')
 
 
+def test_t8_model_unknown(db):
+    x = prepare_run(db, 2)
+    c = claim(db, x['model_effect'])
+    before = _snap(db)
+    for label, body in (('wrong_kind', {'kind': 'tool_call'}),
+                        ('extra_key', {'kind': 'model_call', 'extra': True})):
+        with contextlib.closing(db.connect('service')) as conn:
+            no_write(db, conn, x['model_effect'], env('unknown', body, c['claim']),
+                     'invalid_outcome')
+        assert _snap(db) == before
+        assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s',
+                  (x['model_effect'],)) == 'claimed'
+    with contextlib.closing(db.connect('service')) as conn:
+        no_write(db, conn, x['model_effect'], env('unknown', [], c['claim']), 'invalid_args')
+    assert _snap(db) == before
+    state, budget = _batch(db, x['run_id']), _budget(db, x['run_id'])
+    u = settle(db, x['model_effect'], {'kind': 'model_call'}, c['claim'], 'unknown')
+    assert u['disposition'] == 'committed' and u['emitted'] == [], u
+    assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s',
+              (x['model_effect'],)) == 'unknown'
+    assert _batch(db, x['run_id']) == state and _budget(db, x['run_id']) == budget
+    assert q1(db, 'SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s',
+              (x['model_effect'],)) == 0
+    assert q1(db, "SELECT count(*) FROM v24_cordis.effects WHERE run_id=%s AND kind='tool_call'",
+              (x['run_id'],)) == 0
+    print('[CDP4-T8a] model unknown exact {kind}; wrong kind/extra/non-object rejected zero-write; '
+          'legal unknown has no domain/event/successor')
+
+
+def test_t8_tool_unknown(db):
+    x, tools = prepare_tools(db, 1, 3)
+    tc = claim(db, tools[0][0])
+    before = _snap(db)
+    for label, body in (('wrong_kind', {'kind': 'model_call'}),
+                        ('extra_key', {'kind': 'tool_call', 'extra': True})):
+        with contextlib.closing(db.connect('service')) as conn:
+            no_write(db, conn, tools[0][0], env('unknown', body, tc['claim']),
+                     'invalid_outcome')
+        assert _snap(db) == before
+        assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s',
+                  (tools[0][0],)) == 'claimed'
+    step, budget = _batch(db, x['run_id']), _budget(db, x['run_id'])
+    u = settle(db, tools[0][0], {'kind': 'tool_call'}, tc['claim'], 'unknown')
+    assert u['disposition'] == 'committed' and u['emitted'] == [], u
+    assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s',
+              (tools[0][0],)) == 'unknown'
+    st = _batch(db, x['run_id'])
+    assert st == step and st['phase'] == 'tools' and st['step'] == 1, st
+    assert _budget(db, x['run_id']) == budget
+    assert _continuation(db, x['run_id']) == []
+    assert q1(db, 'SELECT ended_at IS NULL AND result IS NULL FROM v24_cordis.runs WHERE id=%s',
+              (x['run_id'],)) is True
+    assert q1(db, 'SELECT released_at IS NULL FROM v24_cordis.pins WHERE consumer_run_id=%s',
+              (x['run_id'],)) is True
+    print('[CDP4-T8b] tool unknown exact {kind}; wrong kind/extra rejected zero-write; legal '
+          'unknown keeps batch/budget/pin and emits no continuation')
+
+
+def test_t8_run_start_unknown(db):
+    provider(db, 'model_call', 'model')
+    provider(db, 'tool_call', 'tool')
+    chat = agent(db)
+    rs = uuid.UUID(chat['p4_result']['emitted'][0])
+    rc = claim(db, rs)
+    before = _snap(db)
+    for body in ({'kind': 'run_start'}, {'kind': 'model_call'},
+                 {'kind': 'run_start', 'extra': True}):
+        with contextlib.closing(db.connect('service')) as conn:
+            no_write(db, conn, rs, env('unknown', body, rc['claim']), 'invalid_outcome')
+        assert _snap(db) == before
+        assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (rs,)) == 'claimed'
+        assert q1(db, 'SELECT count(*) FROM v24_cordis.runs') == 0
+    print('[CDP4-T8c] run_start still rejects every unknown receipt with zero write')
+
+
 def main():
     with Server() as server:
         with TestDB(server) as db: test_t1_t2(db)
@@ -406,6 +482,9 @@ def main():
         with TestDB(server) as db: test_t7_replay(db)
         with TestDB(server) as db: test_t7_reclaim(db)
         with TestDB(server) as db: test_t7_no_replay(db)
+        with TestDB(server) as db: test_t8_model_unknown(db)
+        with TestDB(server) as db: test_t8_tool_unknown(db)
+        with TestDB(server) as db: test_t8_run_start_unknown(db)
     print('[passed] CDP4-T')
 
 
