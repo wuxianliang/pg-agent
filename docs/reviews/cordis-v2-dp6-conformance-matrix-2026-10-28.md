@@ -1,6 +1,6 @@
 # Cordis v2 DP6 Conformance Matrix
 
-B0 (admission audit) executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `fad3a55800d8ccb9548ec720886e07ad8fcc2c13`. **This matrix now records B0, W1, W2, W3 and W4.** B0 created no DP6 runtime/SQL/test scaffold; W1 implemented the fair scanner, `ensure`, observer ACL and `CDP6-S` gate; W2 implemented the external-effect executor, receipt journal, `run_start` source binding, dispatch recovery and `CDP6-R` gate; W3 implemented the unknown/inverse debt diagnostics and dispose convergence; W4 implemented the drain-based switch driver, the reuse-declaration rollback and the HMR trigger with `CDP6-H`. **W5 remains the future closeout milestone.** The B0 verdict below is preserved as history; the operative W1–W4 evidence is in the corresponding implementation sections. B0's original capacity verdict was **blocked at admission** (helper tree exactly 5500/5500, no proven semantics-preserving reclaim, 380–560 estimated new helper lines). The user's same-day authorization (`授权无视容量预算要求`) waives the three line-count budgets. The B0 verdict below is preserved as history; W1 semantic admission was subsequently resolved by Oracle (both lanes admitted `ensure` with corrections), and the corrected W1 implementation/CDP6-S evidence is in §W1 implementation. W4's reuse admission was proven against the existing ABI rather than a new design; the root-install refusal is recorded in the W4 section.
+B0 (admission audit) executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `fad3a55800d8ccb9548ec720886e07ad8fcc2c13`. **This matrix now records B0, W1, W2, W3, W4 and W5.** B0 created no DP6 runtime/SQL/test scaffold; W1 implemented the fair scanner, `ensure`, observer ACL and `CDP6-S` gate; W2 implemented the external-effect executor, receipt journal, `run_start` source binding, dispatch recovery and `CDP6-R` gate; W3 implemented the unknown/inverse debt diagnostics and dispose convergence; W4 implemented the drain-based switch driver, the reuse-declaration rollback and the HMR trigger with `CDP6-H`; W5 implemented the final whole-boundary `CDP6-B` gate and the DP6 closeout. **All five DP6 milestones are delivered and gated by the final 40-command serial run; the documented non-claims (terminal unknown, multi-host, seamless HMR, root rollback, external exactly-once) remain open boundaries, not completed features.** The B0 verdict below is preserved as history; the operative W1–W5 evidence is in the corresponding implementation sections. B0's original capacity verdict was **blocked at admission** (helper tree exactly 5500/5500, no proven semantics-preserving reclaim, 380–560 estimated new helper lines). The user's same-day authorization (`授权无视容量预算要求`) waives the three line-count budgets. The B0 verdict below is preserved as history; W1 semantic admission was subsequently resolved by Oracle (both lanes admitted `ensure` with corrections), and the corrected W1 implementation/CDP6-S evidence is in §W1 implementation. W4's reuse admission was proven against the existing ABI rather than a new design; the root-install refusal is recorded in the W4 section. W5 changed only the new boundary gate and the closeout artifacts.
 
 Authority: `docs/plans/v24-cordis-dp6-recovery-maintenance-plan-2026-10-28.md` (B0 §3.1–3.4, §4.3.1, §4.4–4.7, §5, §9.1), `docs/designs/cordis-plugin-system-2026-10-25.md` §10.1 (including the 2026-10-28 authorization paragraph), and the user's 2026-10-28 authorization. DP1–DP5 historical Results and artifacts were read only.
 
@@ -17,7 +17,7 @@ User authorization, verbatim: **「授权无视容量预算要求」**.
 | New finite line cap | **none set**; the authorization does not substitute a different number |
 | W1 semantic admission | **resolved (W1)** — Oracle group `D2EED4FF-ECCC-44C2-803A-7CA520DFC462` admitted `ensure` with corrections; see §W1 semantic admission, the Oracle design record, and §W1 implementation. Reuse/rollback was later implemented in W4 for non-root installs; the root case is a gated refusal |
 
-The original blocked-at-admission analysis below is preserved as historical evidence (it is why the authorization was requested and why W1 begins from `R=0`). At B0 the operative result was: capacity admission passes by explicit authorization; B0 baseline + capacity done; W1 semantic admission pending; W1–W5 not started; `ensure`/reuse not implemented. W1 later resolved the semantic admission and implemented `ensure`/the scanner; W4 later implemented non-root reuse/rollback and the drain switch; the root case is refused, and W5 remains unimplemented.
+The original blocked-at-admission analysis below is preserved as historical evidence (it is why the authorization was requested and why W1 begins from `R=0`). At B0 the operative result was: capacity admission passes by explicit authorization; B0 baseline + capacity done; W1 semantic admission pending; W1–W5 not started; `ensure`/reuse not implemented. W1 later resolved the semantic admission and implemented `ensure`/the scanner; W4 later implemented non-root reuse/rollback and the drain switch; W5 added the final boundary gate/closeout; the root case is refused. All W1–W5 milestones are now delivered, while the residual non-claims in §Not covered remain open.
 
 ## Milestone status
 
@@ -28,11 +28,12 @@ The original blocked-at-admission analysis below is preserved as historical evid
 | W2 `CDP6-R` | **complete** (external executor, receipt journal, `run_start` source, dispatch recovery; `test_recovery.py` and final 37-command serial run) |
 | W3 `CDP6-U/D` | **complete** (unknown/inverse debt diagnostics, sealed-subtree inverse barrier, zero-write in-flight slot, `test_dispose.py` and final 38-command serial run) |
 | W4 `CDP6-H` | **complete** (drain switch, reuse-declaration rollback, HMR trigger; `test_upgrade.py`, 14 H labels and final 39-command serial run from start HEAD `d58a6ee`) |
-| W5 `CDP6-B` | not started |
+| W5 `CDP6-B` | **complete** (whole-boundary gate, observer/original ACL, three interpreters, terminal/replay/slot, closure/successor/protocol bounds, frozen surfaces; `test_boundaries.py` and final 40-command serial run from start HEAD `ea2a18c`) |
 
 W1 gate `v24/cordis/dp6/test_scanner.py`, W2 gate `v24/cordis/dp6/test_recovery.py`, W3 gate
-`v24/cordis/dp6/test_dispose.py` and W4 gate `v24/cordis/dp6/test_upgrade.py` exist and passed. The
-remaining DP6 command name (`test_boundaries.py`) is still not implemented/not run.
+`v24/cordis/dp6/test_dispose.py`, W4 gate `v24/cordis/dp6/test_upgrade.py` and W5 gate
+`v24/cordis/dp6/test_boundaries.py` exist and passed. The final serial run executed all 40 commands
+(35 inherited + five DP6 gates) with 40/40 exit 0; `test_boundaries.py` is command 40.
 
 ## Environment
 
@@ -1084,6 +1085,151 @@ matrix, the DP6 deviation ledger and the DP6 plan Result. The design file, DP1�
 user's other paths are not staged. Per the parent instruction, this session did **not** commit or
 push; the parent validates and publishes W4. W5 is the next fresh pair agent's milestone.
 
+## W5 implementation and gate evidence
+
+W5 started at HEAD `ea2a18ca235d69a24b188311e247b8fd137a3d0e` on branch `v24`; `origin/v24` was
+the same SHA and the main checkout was not touched. W5 added only `v24/cordis/dp6/test_boundaries.py`
+and updated this matrix, the deviation ledger, the DP6 README and the DP6 plan Result. No SQL,
+loader, permission, manifest, driver, frozen surface or prior milestone gate was changed.
+
+### Implemented surfaces
+
+| Surface | File | Contract |
+|---|---|---|
+| whole-boundary gate | `v24/cordis/dp6/test_boundaries.py` | `CDP6-B` B1–B6 against the current catalog and real protocol |
+| closeout artifacts | DP6 README, this matrix, deviation ledger, DP6 plan Result | measured counts, 40-command record, residual debts and non-claims |
+
+### CDP6-B assertions passed
+
+- `[CDP6-B1]` 19-entry canonical loader manifest and all refusal probes (missing/duplicate/
+  out-of-order/unregistered/symlink active/symlink inactive/directory), measured helper
+  `5818`/DDL `465`/bookkeeping `22` with no cap and the retained missing-`44` negative; ten tables,
+  zero views/materialized views/extensions, exactly three command kinds, exactly three lifecycle
+  interpreters mapped from `interpret_command`, 24 closed protocol errors, one `advance` DEFINER,
+  PUBLIC EXECUTE 0, one G lock. Holding G and cancelling the waiter with `57014` proves `advance`
+  serialises on `24,1`; after release the same call is `not_found_or_denied` and the ten-table
+  snapshot is byte-equal.
+- `[CDP6-B2]` the observer LOGIN is NOLOGIN-group/LOGIN-member with exactly one membership; its
+  exact eight-table column whitelist is read from `pg_attribute`/`has_column_privilege`; all
+  non-whitelisted columns, table SELECT, DML, TRUNCATE, TEMP, CREATE, `advance` EXECUTE and all
+  protocol `role_allowed` classes are refused. The original admin/service/operator LOGINs have no
+  table or column privilege, only `advance` EXECUTE, schema USAGE (not CREATE), the correct single
+  group membership and no owner membership; every direct INSERT/SELECT/UPDATE/DELETE/TRUNCATE and
+  `SET ROLE owner` is `42501`, with a ten-table byte-equal snapshot.
+- `[CDP6-B3]` real `command_install`, `command_reconcile` and `command_dispose` commits prove the
+  three interpreters end to end (three reconcile steps, three dispose steps to `disposed`); the
+  distinct command kinds are exactly three; a fourth `command_unknown` is `invalid_args` with
+  ten-table zero write.
+- `[CDP6-B4]` a real ready reconcile successor exists; `ensure` on that open slot is
+  `stale_generation/ensure_slot_present` zero-write; consuming and replaying the identical bytes
+  returns the cached response exactly and writes nothing; different bytes are `request_conflict`
+  zero-write and a foreign LOGIN is `effect_id_conflict` zero-write; terminal effect/request UPDATEs
+  are `55000`; a second ready reconcile slot is `23505`.
+- `[CDP6-B5]` real `valid_body` 200/201 keys and 32/33 depth; `validate_delta` 16/17 and duplicate
+  ordinal; real 512/513 `discover_closure` and delta-write closure; a 15-listener activation commits
+  16 effects while 16 listeners/17 successors is `invalid_outcome/budget` with zero dispatch/child
+  rows.
+- `[CDP6-B6]` twelve frozen `v24/sql` SHA-256 values, frozen `v24/load.py` + `v24/s1`–`s12` equal to
+  `57e2c1e`, `git diff --check` exit 0, and the frozen v24 loader's 12-entry self-check plus its five
+  refusal probes.
+
+### Attempt history
+
+Two gate-local expectation bugs were found while authoring and fixed before the final run: (1)
+`SELECT *` succeeds for the observer on `fibers`/`effects` because every column is explicitly
+granted, so the negative was narrowed to the partial tables (plus `requests`); (2) a multi-column
+`one()` helper returns only its first column, so multi-column assertions use `rows(...)[0]`. No SQL,
+driver, frozen file or inherited gate was changed to accommodate either fix. The gate was then
+strengthened with the six IMMUTABLE pure-helper checks, and the final 40/40 run below is that
+post-strengthening run; the pre-strengthening 40/40 evidence is preserved at
+`/tmp/dp6_w5/gates-pre-purity.tsv`.
+
+### 40-command serial gate evidence (2026-10-29)
+
+One `uv run python` process per command, launched only after the previous exited; no concurrency, no
+joined commands, no skip, stop on first non-zero. **40/40 exit 0; per-command sum 284.449 s; wall
+284.5 s.** Logs: `/tmp/dp6_w5/gates/gate-01..40.log`; summary `/tmp/dp6_w5/gates.tsv`. The 39
+inherited commands retain the W4 order (including s8-before-s7); `test_boundaries.py` is appended as
+command 40.
+
+| # | Command | Exit | Seconds |
+|---:|---|---:|---:|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0.491 |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1.501 |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1.588 |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 1.662 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 13.348 |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3.416 |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4.232 |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3.295 |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 3.584 |
+| 10 | `uv run python v24/load.py` | 0 | 0.509 |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1.563 |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1.575 |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2.422 |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 1.813 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5.050 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 3.706 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3.098 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 3.662 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2.323 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 6.116 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 10.354 |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 2.947 |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 10.165 |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 5.917 |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 5.629 |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 6.370 |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 6.389 |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 5.367 |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 11.561 |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 8.658 |
+| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 17.881 |
+| 32 | `uv run python v24/cordis/dp5/test_resolution.py` | 0 | 8.163 |
+| 33 | `uv run python v24/cordis/dp5/test_listeners.py` | 0 | 5.145 |
+| 34 | `uv run python v24/cordis/dp5/test_dispatch.py` | 0 | 11.477 |
+| 35 | `uv run python v24/cordis/dp5/test_boundaries.py` | 0 | 5.374 |
+| 36 | `uv run python v24/cordis/dp6/test_scanner.py` | 0 | 14.660 |
+| 37 | `uv run python v24/cordis/dp6/test_recovery.py` | 0 | 43.731 |
+| 38 | `uv run python v24/cordis/dp6/test_dispose.py` | 0 | 15.157 |
+| 39 | `uv run python v24/cordis/dp6/test_upgrade.py` | 0 | 21.087 |
+| 40 | `uv run python v24/cordis/dp6/test_boundaries.py` | 0 | 3.463 |
+
+### Measured W5 baseline
+
+```text
+40_advance.sql  1692
+41_lifecycle.sql 1685
+42_teardown.sql 1119
+43_loop.sql      700
+44_events.sql    622
+40-49 total     5818      (report-only; 2026-10-28 authorization, no cap)
+domain DDL       465      (report-only; bookkeeping 18+19 = 22 separate)
+manifest 19 / tables 10 / pg_proc 172 (164 private helpers + 8 trigger guards)
+one DEFINER advance / public EXECUTE 0 / command kinds 3 / protocol errors 24
+lifecycle interpreters 3 / one G lock / closure 512 / successor 16
+dp6/driver.py 1868 / dp6/test_boundaries.py 690   (report-only; no cap)
+```
+
+The twelve frozen `v24/sql` SHA-256 values, the frozen `v24/load.py`/`v24/s1`–`s12` diff against
+`57e2c1e` and `git diff --check` all exit 0. Every gate database was a disposable pgembed instance;
+all handlers were Fake or absent; no real provider socket or network call was used.
+
+### W4 Oracle review record (honest)
+
+No persisted W4 Oracle review result exists. The W4 review attempt ended without a result/export
+(controller failure), so W4 acceptance is the direct admission proof plus its 39-command run, **not**
+a review pass; this matrix does not claim otherwise. W5 launched no duplicate review. No genuine
+W5 design blocker was encountered (the gate found only two test-local expectation bugs), so no
+scoped Oracle design was opened.
+
+### W5 publication and staging
+
+Only the W5 files are staged: `v24/cordis/dp6/test_boundaries.py`, `v24/cordis/dp6/README.md`, this
+matrix, the DP6 deviation ledger and the DP6 plan Result. The design file, DP1–DP5 files and the
+other 10 modified + 26 untracked user paths are not staged. Per the parent instruction, this session
+did **not** commit or push; the parent validates and publishes W5.
+
 ## Staging and DP5 handoff
 
 **Mixed-file staging warning.** `docs/designs/cordis-plugin-system-2026-10-25.md` already carries user modifications. Stage only the §10.1 authorization hunk (`git add -p` or an equivalent patch), then inspect `git diff --cached -- docs/designs/cordis-plugin-system-2026-10-25.md`; never `git add` the whole file. The DP6 plan is untracked and contains only the planning file plus the B0 Result/addendum. No commit/push was performed.
@@ -1158,24 +1304,29 @@ b047be95cd539ccac45f3e128fb88a979ecd63abc81314e80341ddc2ce2d4fa4  ?? docs/review
 
 ## Not covered
 
-- **W1, W2, W3 and W4 are implemented and gated.** `ensure`, the fair scanner, observer ACL/fixture,
-  `CDP6-S`, the external executor, receipt journal, `run_start` source binding, dispatch recovery,
-  `CDP6-R`, the unknown/inverse debt diagnostics, the sealed-subtree inverse barrier, `CDP6-U/D`, the
-  drain-based switch, the reuse-declaration rollback, the HMR trigger and `CDP6-H` are covered above;
-  `test_scanner.py`, `test_recovery.py`, `test_dispose.py` and `test_upgrade.py` passed in the final
-  39-command serial run.
-- **W5 is the remaining milestone.** `CDP6-B`, the final DP1–DP6 closeout, the whole-boundary matrix
-  and any W5 publication are not implemented. `test_boundaries.py` is not implemented and not run.
+- **W1–W5 are implemented and gated.** `ensure`, the fair scanner, observer ACL/fixture, `CDP6-S`,
+  the external executor, receipt journal, `run_start` source binding, dispatch recovery, `CDP6-R`,
+  the unknown/inverse debt diagnostics, the sealed-subtree inverse barrier, `CDP6-U/D`, the
+  drain-based switch, the reuse-declaration rollback, the HMR trigger, `CDP6-H`, the whole-boundary
+  `CDP6-B` and the final closeout are covered above; `test_scanner.py`, `test_recovery.py`,
+  `test_dispose.py`, `test_upgrade.py` and `test_boundaries.py` passed in the final 40-command serial
+  run.
+- **W5 is a boundary/closeout gate, not a feature claim.** It adds no runtime behavior; the open
+  items below remain open.
 - Reuse-declaration rollback is implemented for **non-root** installs. A root install cannot be
   reused (a second ownerless fiber violates the single-root invariant), so root rollback is a gated
   refusal (`install_reuse_root` / `switch_target_install_exists`), not a claimed capability.
 - DP6 does not resolve terminal unknown: unknown effect outcomes and inverse-unknown contributions
   stay debt/`blocked_unknown`; the manual-reconciliation ABI remains a design gate (CDP6-U6);
   `host_io` remains unsupported/`0A000`; no real adapter is used.
-- No persisted W2, W3 or W4 Oracle review/design result exists. W4 hit no true design blocker: the
-  reuse contract was proven against the existing payload/closure/validator/postcondition/owner/I7/
-  address/dispose facts, and the root limit is an explicit refusal. A second opinion remains a new
-  review, not a recovered artifact.
+- No persisted W2, W3 or W4 Oracle review/design result exists. The W4 review attempt ended without
+  a result/export (controller failure); W4 acceptance is the direct admission proof plus its
+  39-command run, **not** a review pass. W4 hit no true design blocker: the reuse contract was
+  proven against the existing payload/closure/validator/postcondition/owner/I7/address/dispose facts,
+  and the root limit is an explicit refusal. A second opinion remains a new review, not a recovered
+  artifact.
+- DP6 does not claim multi-host correctness, database-enforced global fairness, external
+  exactly-once, seamless in-process HMR or automatic debt resolution.
 - No real provider socket, no network, no external adapter; all gate DBs were disposable pgembed
   instances and all handlers were Fake or absent.
-- W5 will be handled by the next fresh pair agent; this W4 publication does not claim it.
+- W5 did not commit or push; the parent validates and publishes it normally.

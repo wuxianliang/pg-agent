@@ -1,13 +1,15 @@
 # Cordis v2 DP6 — fair maintenance, crash recovery and receipt journal
 
 Status 2026-10-29: **W1 fair scanner, W2 external-effect crash recovery, W3 unknown debt / dispose
-convergence and W4 drain-based upgrade/rollback + HMR trigger are implemented and gated; the final
-39-command serial run is recorded in the conformance matrix. W5 remains the future closeout
-milestone.** This directory contains the single-host maintenance scanner, the `ensure` wake-up
-command, the independent observer ACL, the W2 claim/receipt/journal executor, the W3 debt
-diagnostics and dispose convergence evidence, the W4 switch driver/HMR trigger, and the
-`CDP6-S`/`CDP6-R`/`CDP6-U-D`/`CDP6-H` gates. It does not contain the final boundary closeout;
-that is W5.
+convergence, W4 drain-based upgrade/rollback + HMR trigger and W5 final boundary closeout are
+implemented and gated. The final 40-command serial run (39 inherited + `test_boundaries.py`) is
+recorded in the conformance matrix; `CDP6-B` passes.** This directory contains the single-host
+maintenance scanner, the `ensure` wake-up command, the independent observer ACL, the W2
+claim/receipt/journal executor, the W3 debt diagnostics and dispose convergence evidence, the W4
+switch driver/HMR trigger, the W5 whole-boundary gate, and the
+`CDP6-S`/`CDP6-R`/`CDP6-U-D`/`CDP6-H`/`CDP6-B` gates. "W5 complete" means the documented boundaries
+and frozen surfaces are verified; it does **not** claim terminal-unknown resolution, multi-host
+correctness or seamless in-process HMR (see Known limitations).
 
 - Plan: `docs/plans/v24-cordis-dp6-recovery-maintenance-plan-2026-10-28.md`
 - Conformance matrix: `docs/reviews/cordis-v2-dp6-conformance-matrix-2026-10-28.md`
@@ -69,6 +71,16 @@ W4 changed `40_advance.sql` (+7) and `41_lifecycle.sql` (+204); `42`/`43`/`44`, 
 permission file and manifest are untouched. No command kind, table, column, protocol error code,
 second scheduler, second writer or second interpreter was added. `advance` remains the only
 `SECURITY DEFINER` writer and the only domain writer.
+
+## W5 deliverables
+
+| Surface | File | Contract |
+|---|---|---|
+| final boundary gate | `v24/cordis/dp6/test_boundaries.py` | `CDP6-B` B1–B6: canonical 19-file manifest and loader negatives; ten tables/no VIEW/EXTENSION; three command kinds and the three lifecycle interpreters; 24 errors; one `advance` DEFINER with PUBLIC EXECUTE 0; one G lock; exact observer column ACL and the original admin/service/operator ACL; real install/reconcile/dispose commits; immutable terminal/request rows, unique ready successor slot and replay-first; closure 512/513, successor 16/17, body keys 200/201 and depth 32/33; frozen `v24/load.py`, `v24/sql/**`, `v24/s1`–`s12` and the `57e2c1e` diff |
+| closeout artifacts | this README, DP6 matrix, deviation ledger, DP6 plan Result | measured line counts, 40-command evidence, residual debts and honest non-claims |
+
+W5 changed no SQL, loader, permission file, manifest, driver or frozen surface. It added no table,
+column, command kind, protocol error code, interpreter, scheduler or writer.
 
 ## Unknown-debt contract
 
@@ -465,6 +477,42 @@ generation with the window/dispatch children never mixed (`H8`); and HMR ticks s
 identical stable request, replaying on a repeat tick, blocking descriptor corruption/mismatch and
 exposing no download/ESM path (`H9`).
 
+## CDP6-B gate
+
+```bash
+uv run python v24/cordis/dp6/test_boundaries.py
+```
+
+The gate is the W5 closeout and re-proves the inherited boundaries against the current catalog and
+real protocol, not by copying constants:
+
+- `[CDP6-B1]` the 19-entry canonical Cordis manifest, its missing/duplicate/out-of-order/
+  unregistered/symlink/directory refusals, the measured helper/DDL counts (no cap), ten tables with
+  zero views/materialized views/extensions, exactly three command kinds, exactly three lifecycle
+  interpreters (`interpret_install`/`interpret_reconcile`/`interpret_dispose`) mapped from
+  `interpret_command`, 24 closed protocol errors, exactly one `SECURITY DEFINER` (`advance`),
+  PUBLIC EXECUTE 0 and one G lock. Real contention proves `advance` waits on `24,1` and writes
+  nothing when cancelled.
+- `[CDP6-B2]` the observer LOGIN owns no schema/table/function and has exactly the eight-table
+  column whitelist; table SELECT, all column privileges outside the whitelist, DML/TRUNCATE, TEMP,
+  CREATE, `advance` EXECUTE and protocol roles are refused. The original admin/service/operator
+  LOGINs have no table or column privilege at all, only `advance` EXECUTE, no owner membership, and
+  every direct DML is `42501` with a ten-table byte-equal snapshot.
+- `[CDP6-B3]` real `command_install`, `command_reconcile` and `command_dispose` commits prove all
+  three interpreters; a fourth `command_unknown` is `invalid_args` with ten-table zero write.
+- `[CDP6-B4]` one ready reconcile successor; `ensure` on the open slot is
+  `stale_generation/ensure_slot_present` zero-write; consuming the successor and replaying the
+  identical bytes returns the cached response with no new row; conflicting bytes and a foreign
+  LOGIN are zero-write `request_conflict`/`effect_id_conflict`; terminal effect and request UPDATEs
+  are `55000`; a second ready reconcile slot is `23505`.
+- `[CDP6-B5]` body keys 200/201 and depth 32/33; structural successors 16/17 and duplicate ordinal;
+  real `discover_closure` 512/513 and delta-write closure 512/513; a 15-listener activation commits
+  16 effects while 16 listeners/17 successors is `invalid_outcome/budget` with no dispatch or child
+  row.
+- `[CDP6-B6]` the twelve frozen `v24/sql` hashes, the frozen `v24/load.py` + `v24/s1`–`s12` diff
+  against `57e2c1e`, `git diff --check`, and the frozen v24 loader's 12-entry self-check and five
+  refusal probes.
+
 ## Verified W3 baseline
 
 Measured at the W3 gate (physical lines, `str.splitlines()`, same count as the gates):
@@ -519,10 +567,42 @@ was launched because the reuse admission was proven against the existing ABI (pa
 validator, postcondition, owner/episode, I7, unique address, dispose); the root-install limitation
 is recorded as a gated refusal, not worked around.
 
+## Verified W5 final baseline
+
+Measured at the W5 gate on 2026-10-29, start HEAD `ea2a18ca235d69a24b188311e247b8fd137a3d0e`
+(branch `v24`, `origin/v24` same SHA). The W5 change is test/docs only; the SQL and runtime
+measurements are unchanged from W4:
+
+```text
+40_advance.sql  1692
+41_lifecycle.sql 1685
+42_teardown.sql 1119
+43_loop.sql      700
+44_events.sql    622
+40-49 total     5818      (report-only; 2026-10-28 authorization, no cap)
+domain DDL       465      (report-only; bookkeeping 18+19 = 22 separate)
+manifest 19 / tables 10 / pg_proc 172 (164 private helpers + 8 trigger guards)
+one DEFINER advance / public EXECUTE 0 / command kinds 3 / protocol errors 24
+lifecycle interpreters 3 / one G lock / closure 512 / successor 16
+dp6/driver.py 1868 / dp6/test_boundaries.py 690   (report-only; no cap)
+```
+
+The final 40-command serial evidence (35 inherited + `dp6/test_scanner.py` + `test_recovery.py` +
+`test_dispose.py` + `test_upgrade.py` + `test_boundaries.py`) is in the conformance matrix:
+**40/40 exit 0, per-command sum 284.449 s, wall 284.5 s**, one `uv run python` process per command,
+stop-on-first-nonzero, no skip and no concurrency. Logs are `/tmp/dp6_w5/gates/gate-01..40.log`;
+summary `/tmp/dp6_w5/gates.tsv`. Every database was a disposable pgembed instance; all handlers were
+Fake or absent; no real provider socket or network call was used. No W5 design blocker was met, so
+no scoped Oracle design was opened.
+
 ## Known limitations / non-claims
 
-- W4 is not W5 evidence: the final `CDP6-B` boundary matrix, a whole-DP6 closeout and any W5
-  publication remain future work.
+- W5 is a boundary/closeout gate, not a new runtime capability: it added no SQL, driver, table,
+  column, command kind, error code, interpreter, scheduler or writer. It verifies the documented
+  surfaces but does not make any blocked/debt state disappear.
+- No persisted W4 Oracle review result exists. The W4 review attempt ended without a result/export
+  (controller failure); W4 acceptance is the direct admission proof plus the 39-command run, **not**
+  a review pass. W5 did not launch a duplicate review and does not claim one.
 - Root-install rollback is structurally unsupported: a second ownerless fiber violates the
   single-root invariant, so `install_reuse_root` / `switch_target_install_exists` is a gated refusal.
   Non-root child installs are fully supported.
@@ -535,10 +615,12 @@ is recorded as a gated refusal, not worked around.
 - A switch whose source drain is blocked (unknown debt, missing replay right, live pin/run/child)
   stays `draining`/`blocked`; the operator must resolve the obligation or start an explicit
   rollback. There is no timeout-based escalation.
-- W4 did not change the observer ACL, the 24 error codes, the three command kinds, the ten tables or
-  the dispose planner.
-- W3's 38-command evidence is historical; the W4 39-command run supersedes it. `CDP6-B` and the W5
-  closeout remain unimplemented.
+- W3's 38-command and W4's 39-command evidence are historical; the W5 40-command run supersedes
+  them. `CDP6-B` and the W5 closeout are implemented and passed, without weakening the inherited
+  boundary gates.
+- DP6 does not claim multi-host correctness, global fairness enforced by the database, external
+  exactly-once, automatic terminal-unknown resolution, seamless version switching or an artifact
+  store. The HMR boundary remains a host-side trigger, not an in-process module swap.
 - Automatic terminal-unknown resolution is a design gate, not a W3 deliverable: an out-of-band
   compensation has no approved ABI, so the debt stays blocked (CDP6-U6).
 - Below a debt, `blocks` names the obligation classes touched by raw facts; it is a diagnostic

@@ -608,3 +608,73 @@ EXTENSION、3 command kinds、24 错误码、closure 512/successor 16/I7/唯一�
 `test_upgrade.py`、DP6 README、matrix、ledger）与本 Result；设计稿、DP1–DP5 与用户既有 10 modified
 + 26 untracked 路径不 stage。按父级本轮指令，**本会话尚未 commit/push**；父级验收后按仓库规则普通
 提交并 push `origin/v24`（不 force、不 `--no-verify`）。W5 由下一位 fresh pair agent 负责。
+
+### W5 Result（2026-10-29，最终边界、CDP6-B 与 DP6 收尾）
+
+**结论：W5 Done-when 与 CDP6-B 已实现；最终 40/40 gate 串行 exit 0；DP6 计划的 W1–W5 五个里程碑
+均已交付并各自通过当时继承 gate。** 起点 HEAD `ea2a18ca235d69a24b188311e247b8fd137a3d0e`，分支
+`v24`，`origin/v24` 同 SHA；main checkout 未触碰。本会话仅新增
+`v24/cordis/dp6/test_boundaries.py`（690 行）并更新 DP6 README、matrix、ledger 与本 Result；未改
+SQL、loader、permission、manifest、driver、设计稿或冻结面，未新增表/列/command kind/错误码/
+解释器/第二调度器/第二 writer。
+
+**CDP6-B 实现与证据：**
+
+- **B1**：19 项 canonical manifest 与缺失/重复/乱序/未注册/符号链接/目录负例；helper 5818、DDL
+  465、簿记 22（只报告、无上限）；十表、无 view/materialized view/extension；3 command kind；3 个
+  lifecycle interpreter（`interpret_install`/`interpret_reconcile`/`interpret_dispose`）由
+  `interpret_command` 唯一映射；6 个 IMMUTABLE 只读 helper 的纯度与无执行/RAISE/网络/文件/COPY token；24 错误码闭合；唯一 `advance` SECURITY DEFINER、PUBLIC EXECUTE 0；
+  唯一 G（`24,1`）——真实持锁使并发 `advance` 以 `57014` 取消，释放后同一调用返回
+  `not_found_or_denied`，十表字节相等。
+- **B2**：observer LOGIN 仅一个 NOLOGIN 组 membership；八表列白名单逐列与 catalog 相等；表级
+  SELECT、白名单外列、DML/TRUNCATE、TEMP、CREATE、`advance` EXECUTE、协议角色全部 42501；原
+  admin/service/operator 无任何表/列权限、仅 `advance` EXECUTE、无 owner membership，所有直接
+  DML/`SET ROLE owner` 均 42501 且十表零写。
+- **B3**：真实 `command_install`/`command_reconcile`/`command_dispose` 各提交成功，三解释器全部
+  活路径；第四 kind `command_unknown` 为 `invalid_args` 且十表零写。
+- **B4**：唯一 ready reconcile 后继；开放 slot 上 `ensure` 为
+  `stale_generation/ensure_slot_present` 零写；消费后继后相同字节 replay 返回缓存响应且零写；
+  不同字节/外部 LOGIN 分别 `request_conflict`/`effect_id_conflict` 零写；terminal effect/request
+  UPDATE 均 55000；第二个 ready 后继 `23505`。
+- **B5**：真实 body 200/201 keys、32/33 depth；`validate_delta` 16/17 与重复 ordinal；真实
+  `discover_closure` 512/513 与 delta-write closure；15 listeners 提交 16 effects，16 listeners/
+  17 successors 为 `invalid_outcome/budget` 且无 dispatch/child 行。
+- **B6**：十二个冻结 `v24/sql` SHA-256、冻结 `v24/load.py`/`v24/sql/**`/`v24/s1`–`s12` 对
+  `57e2c1e` diff、`git diff --check` 均 exit 0；冻结 v24 loader 12 项 self-check 与五个拒绝探针
+  通过。
+
+**实跑：**`uv run python v24/cordis/dp6/test_boundaries.py` 作为独立进程 exit 0（3.463 s，B1–B6 标签）；
+随后 40 条命令（35 继承 + `test_scanner.py` + `test_recovery.py` + `test_dispose.py` +
+`test_upgrade.py` + `test_boundaries.py`）逐条独立 `uv run python` 串行，**40/40 exit 0**；
+per-command 合计 **284.449 s**，wall **284.5 s**；日志 `/tmp/dp6_w5/gates/gate-01..40.log`，汇总
+`/tmp/dp6_w5/gates.tsv`。无 skip、无并发、无真实 provider socket，全部 DB 为 disposable pgembed。
+**Attempt history：**首次自测只暴露两个 gate 局部期望错误（observer 对全列授权表的 `SELECT *`
+应成功；多列 `one()` 只返回首列），均在测试内修正，未改产品/SQL/冻结/继承 gate；最终 40/40 干净。
+
+**实测：**40=**1692**、41=**1685**、42=**1119**、43=**700**、44=**622**，total **5818**
+（report-only，无替代上限）；领域 DDL **465**；簿记 18+19=**22** 分列；manifest 19、tables 10、
+`pg_proc` **172**（164 private helpers + 8 trigger guards）、唯一 DEFINER `advance`、public
+EXECUTE 0、无 VIEW/EXTENSION、3 command kinds、24 错误码、3 lifecycle interpreters、唯一 G、
+closure 512、successor 16。`driver.py` **1868**、`test_boundaries.py` **690**（report-only）。
+`git diff --check` exit 0；冻结面 diff 对 `57e2c1e` exit 0。
+
+**W4 Oracle review 诚实记录：**未发现任何已落盘的 W4 Oracle review/design 结果；该次 review 尝试
+在产生结果/export 前因控制器失效而终止，故 **不能称为 review passed**。W4 的验收依据是文档级
+admission proof 与 39 条实跑；W5 未重复启动 review，也未把“尝试过”写成“已审查通过”。
+
+**剩余限制（W5 不解决、不冒称完成）：**
+
+- terminal unknown 与 inverse-unknown 债务仍按设计 §6.2/§12.2 保留为 `blocked_unknown`；人工对账
+  ABI 仍是设计闸门（DP6-D16/D40），W5 未新增状态列/表/命令或改写终态事实。
+- 多宿主正确性、数据库强制的全局公平、外部 exactly-once、无缝进程内 HMR 均**未实现**且不在
+  DP6 声称范围内；HMR 仍只是宿主侧预部署 descriptor 触发同一 version switch。
+- root install rollback 仍因单 root 不变量被拒绝；非 root child install 完整支持。`host_io` 仍
+  unsupported/`0A000`；无真实 adapter。
+- `>256` withdraw closure 的 coalesced dispose refresh 仍每 pass 写一条空 receipt（DP6-D44）；
+  owner/pin/mixed 环在 committed 状态不可达，未新增防御 guard（DP6-D43/D45）。
+
+**发布状态：**仅暂存 W5 的 5 个文件/工件（`v24/cordis/dp6/test_boundaries.py`、DP6 README、
+matrix、ledger 与本 Result）。启动时工作区为 10 modified + 26 untracked，均为用户既有路径；DP6
+plan 是 HEAD 已跟踪的里程碑工件，随本 Result 一并暂存。上述 10 modified + 26 untracked 用户路径
+不 stage。设计稿、DP1–DP5 与冻结面不 stage。按父级本轮指令，**本会话不 commit/push**；父级验收后
+按仓库规则普通提交并 push `origin/v24`（不 force、不 `--no-verify`）。
