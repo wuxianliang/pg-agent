@@ -53,10 +53,13 @@ BEGIN
   CASE item->>'op'
   WHEN 'scope_create' THEN
    SELECT parent_id IS NOT DISTINCT FROM (item->>'parent_id')::uuid
-    AND realm_overrides=item->'realm_overrides' INTO ok FROM v24_cordis.scopes WHERE id=(item->>'id')::uuid;
+    AND realm_overrides=item->'realm_overrides'
+    AND intercept=coalesce(item->'intercept','{}'::jsonb) INTO ok
+    FROM v24_cordis.scopes WHERE id=(item->>'id')::uuid;
   WHEN 'install_create' THEN
    SELECT state='installed' AND scope_id=(item->>'scope_id')::uuid
-    AND manifest=item->'manifest' AND contracts=item->'contracts' INTO ok
+    AND manifest=item->'manifest' AND contracts=item->'contracts'
+    AND overlay=item->'overlay' INTO ok
     FROM v24_cordis.installs WHERE id=(item->>'id')::uuid;
   WHEN 'fiber_create' THEN
    SELECT install_id=(item->>'install_id')::uuid AND scope_id=(item->>'scope_id')::uuid
@@ -260,7 +263,7 @@ BEGIN
   seen:=array_append(seen,node);
   SELECT * INTO s FROM v24_cordis.scopes WHERE id=node;
   IF NOT FOUND OR s.closed_at IS NOT NULL THEN RETURN 'scope'; END IF;
-  IF s.intercept<>'{}'::jsonb THEN RETURN 'intercept'; END IF;
+  IF NOT v24_cordis.scope_intercept_valid(s.intercept) THEN RETURN 'intercept'; END IF;
   node:=s.parent_id;
  END LOOP;
  IF cardinality(seen)=0 THEN RETURN 'scope'; END IF;
@@ -286,7 +289,7 @@ BEGIN
  fault:=v24_cordis.lineage_fault(f.owner_id);
  IF fault IS NOT NULL THEN RETURN fault; END IF;
  IF v24_cordis.dispose_ancestor_sealed(f.owner_id) THEN RETURN 'lineage'; END IF;
- IF i.overlay<>'{}'::jsonb THEN RETURN 'overlay'; END IF;
+ IF v24_cordis.install_overlay_valid(i.manifest,i.overlay) IS NOT NULL THEN RETURN 'overlay'; END IF;
  fault:=v24_cordis.scope_live_fault(f.scope_id);
  IF fault IS NOT NULL THEN RETURN fault; END IF;
  IF v24_cordis.activation_total(f.id) IS NOT NULL THEN RETURN 'totality'; END IF;
@@ -307,7 +310,7 @@ CREATE FUNCTION v24_cordis.fiber_live_state(p_fiber uuid,p_episode uuid) RETURNS
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE sf uuid[]:=ARRAY[p_fiber]; se uuid[]:=ARRAY[p_episode]; st int[]:=ARRAY[0];
  gray jsonb:='{}'::jsonb; seen jsonb:='{}'::jsonb; node uuid; ep uuid; stage int; token text;
- n int:=0; fault text; pin record; view jsonb; digest text; have int; want int;
+ n int:=0; fault text; pin record; view jsonb; digest text; have int; want int; eff jsonb;
 BEGIN
  IF p_fiber IS NULL OR p_episode IS NULL THEN
   RETURN jsonb_build_object('live',false,'reason','missing','visited_count',0,'closure_overflow',false,'cycle',false);
@@ -358,8 +361,11 @@ BEGIN
     OR pin.epoch IS DISTINCT FROM pin.provider_epoch OR NOT (view ? pin.key) THEN
     RETURN jsonb_build_object('live',false,'reason',CASE WHEN pin.withdrawn_at IS NOT NULL THEN 'pin_withdrawn' ELSE 'pin_mismatch' END,
      'visited_count',n,'closure_overflow',false,'cycle',false); END IF;
-   digest:=encode(sha256(convert_to(v24_cordis.canonical_json(pin.descriptor),'UTF8')),'hex');
-   IF pin.contribution_id::text IS DISTINCT FROM view->pin.key->>'contribution_id'
+   eff:=v24_cordis.descriptor_effective(pin.consumer_scope,pin.realm,pin.key,
+    pin.descriptor,pin.contract_version);
+   digest:=eff->>'descriptor_digest';
+   IF NOT coalesce((eff->>'available')::boolean,false)
+    OR pin.contribution_id::text IS DISTINCT FROM view->pin.key->>'contribution_id'
     OR pin.provider_epoch IS DISTINCT FROM (view->pin.key->>'provider_epoch')::int
     OR pin.contract_version IS DISTINCT FROM view->pin.key->>'contract_version'
     OR digest IS DISTINCT FROM view->pin.key->>'descriptor_digest'
@@ -368,7 +374,8 @@ BEGIN
     RETURN jsonb_build_object('live',false,'reason','pin_mismatch','visited_count',n,'closure_overflow',false,'cycle',false);
    END IF;
    IF NOT v24_cordis.check_policy_ok(coalesce((SELECT i.manifest->'check'->pin.key FROM v24_cordis.fibers f
-     JOIN v24_cordis.installs i ON i.id=f.install_id WHERE f.id=node),'null'::jsonb),pin.descriptor) THEN
+     JOIN v24_cordis.installs i ON i.id=f.install_id WHERE f.id=node),'null'::jsonb),
+     eff->'descriptor') THEN
     RETURN jsonb_build_object('live',false,'reason','check_failed','visited_count',n,'closure_overflow',false,'cycle',false);
    END IF;
    sf:=array_append(sf,pin.fiber_id); se:=array_append(se,pin.episode_id); st:=array_append(st,0);

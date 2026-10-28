@@ -96,6 +96,10 @@ BEGIN
     IF NEW.id IS DISTINCT FROM OLD.id OR NEW.parent_id IS DISTINCT FROM OLD.parent_id THEN
       RAISE EXCEPTION 'scope identity and parent are immutable' USING ERRCODE='55000';
     END IF;
+    IF NEW.realm_overrides IS DISTINCT FROM OLD.realm_overrides
+     OR NEW.intercept IS DISTINCT FROM OLD.intercept THEN
+      RAISE EXCEPTION 'scope routing rules are immutable' USING ERRCODE='55000';
+    END IF;
     IF OLD.closed_at IS NOT NULL AND NEW.closed_at IS DISTINCT FROM OLD.closed_at THEN
       RAISE EXCEPTION 'scope close tombstone cannot change' USING ERRCODE='55000';
     END IF;

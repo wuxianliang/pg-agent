@@ -40,10 +40,19 @@ $$;
 CREATE FUNCTION v24_cordis.run_digests(p_run uuid) RETURNS jsonb
 LANGUAGE sql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
  SELECT v24_cordis.run_digests_of(coalesce(jsonb_agg(jsonb_build_object(
-  'key',p.key,'descriptor_digest',encode(sha256(convert_to(c.descriptor::text,'UTF8')),'hex'))
-  ORDER BY p.key),'[]'::jsonb))
- FROM v24_cordis.pins p JOIN v24_cordis.contributions c ON c.id=p.contribution_id
- WHERE p.consumer_run_id=p_run AND p.released_at IS NULL
+  'key',p.key,'descriptor_digest',e.value->>'descriptor_digest') ORDER BY p.key),'[]'::jsonb))
+ FROM v24_cordis.runs r
+ JOIN v24_cordis.episodes ep ON ep.id=r.owner_episode_id
+ JOIN v24_cordis.pins p ON p.consumer_run_id=r.id AND p.released_at IS NULL
+ JOIN v24_cordis.contributions c ON c.id=p.contribution_id
+ CROSS JOIN LATERAL v24_cordis.descriptor_effective(r.scope_id,
+  coalesce(v24_cordis.service_realm(r.scope_id,p.key),'root'),p.key,
+  c.descriptor,c.contract_version) x(eff)
+ CROSS JOIN LATERAL jsonb_each(ep.committed_view) e
+ WHERE r.id=p_run AND e.key=p.key AND c.released_at IS NULL
+  AND c.contract_version=e.value->>'contract_version'
+  AND x.eff->>'available'='true'
+  AND x.eff->>'descriptor_digest'=e.value->>'descriptor_digest'
 $$;
 CREATE FUNCTION v24_cordis.run_id_for(p_effect uuid) RETURNS uuid
 LANGUAGE sql IMMUTABLE STRICT SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
@@ -159,18 +168,25 @@ LANGUAGE sql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
  SELECT coalesce(jsonb_agg(jsonb_build_object(
   'key',e.key,'contribution_id',c.id,'provider_fiber_id',c.fiber_id,
   'provider_episode_id',c.episode_id,'provider_epoch',pe.epoch,
-  'descriptor_digest',encode(sha256(convert_to(c.descriptor::text,'UTF8')),'hex'),
-  'capability',c.descriptor->>'capability','contract_version',c.contract_version,
-  'contract',i.contracts->(c.descriptor->>'capability')) ORDER BY e.key),'[]'::jsonb)
- FROM v24_cordis.episodes ep CROSS JOIN LATERAL jsonb_each(ep.committed_view) e
+  'descriptor_digest',e.value->>'descriptor_digest',
+  'capability',x.eff->'descriptor'->>'capability','contract_version',c.contract_version,
+  'contract',i.contracts->(x.eff->'descriptor'->>'capability')) ORDER BY e.key),'[]'::jsonb)
+ FROM v24_cordis.episodes ep
+ JOIN v24_cordis.fibers cf ON cf.id=ep.fiber_id
+ CROSS JOIN LATERAL jsonb_each(ep.committed_view) e
  JOIN v24_cordis.contributions c ON c.id=(e.value->>'contribution_id')::uuid
  JOIN v24_cordis.episodes pe ON pe.id=c.episode_id
  JOIN v24_cordis.fibers pf ON pf.id=c.fiber_id
  JOIN v24_cordis.installs i ON i.id=pf.install_id
+ CROSS JOIN LATERAL v24_cordis.descriptor_effective(cf.scope_id,
+  coalesce(v24_cordis.service_realm(cf.scope_id,e.key),'root'),e.key,
+  c.descriptor,c.contract_version) x(eff)
  WHERE ep.id=p_episode AND ep.closed_at IS NULL
-  AND c.descriptor->>'capability' IN ('model_call','tool_call')
-  AND c.contract_version=e.value->>'contract_version'
-  AND c.released_at IS NULL AND i.contracts ? (c.descriptor->>'capability')
+  AND c.released_at IS NULL AND c.contract_version=e.value->>'contract_version'
+  AND x.eff->>'available'='true'
+  AND x.eff->>'descriptor_digest'=e.value->>'descriptor_digest'
+  AND x.eff->'descriptor'->>'capability' IN ('model_call','tool_call')
+  AND i.contracts ? (x.eff->'descriptor'->>'capability')
 $$;
 CREATE FUNCTION v24_cordis.run_bindings_valid(p_bindings jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
@@ -179,6 +195,60 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_bindings) b WHERE b->'contract' IS NULL
    OR b->>'capability' NOT IN ('model_call','tool_call')),false)
 $$;
+CREATE FUNCTION v24_cordis.run_binding_desc(p_run uuid,p_pin uuid,p_key text) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE r v24_cordis.runs%ROWTYPE; c v24_cordis.contributions%ROWTYPE; frozen text; frozen_cv text; eff jsonb;
+BEGIN
+ SELECT * INTO r FROM v24_cordis.runs WHERE id=p_run;
+ IF NOT FOUND THEN RETURN jsonb_build_object('available',false,'reason','run'); END IF;
+ SELECT ct.* INTO c FROM v24_cordis.pins p JOIN v24_cordis.contributions ct
+  ON ct.id=p.contribution_id
+  WHERE p.id=p_pin AND p.consumer_run_id=p_run AND p.key=p_key AND ct.key=p_key
+   AND p.released_at IS NULL AND ct.released_at IS NULL;
+ IF NOT FOUND THEN RETURN jsonb_build_object('available',false,'reason','pin'); END IF;
+ SELECT e.value->>'descriptor_digest',e.value->>'contract_version' INTO frozen,frozen_cv
+  FROM v24_cordis.episodes ep CROSS JOIN LATERAL jsonb_each(ep.committed_view) e
+  WHERE ep.id=r.owner_episode_id AND e.key=p_key;
+ IF frozen IS NULL THEN RETURN jsonb_build_object('available',false,'reason','view'); END IF;
+ eff:=v24_cordis.descriptor_effective(r.scope_id,
+  coalesce(v24_cordis.service_realm(r.scope_id,p_key),'root'),p_key,
+  c.descriptor,c.contract_version);
+ IF NOT coalesce((eff->>'available')::boolean,false)
+  OR c.contract_version IS DISTINCT FROM frozen_cv
+  OR eff->>'descriptor_digest' IS DISTINCT FROM frozen THEN
+  RETURN jsonb_build_object('available',false,'reason','effective'); END IF;
+ RETURN jsonb_build_object('available',true,'descriptor',eff->'descriptor',
+  'descriptor_digest',frozen,'contract_version',c.contract_version,
+  'capability',eff->'descriptor'->>'capability');
+END $$;
+CREATE FUNCTION v24_cordis.claim_execution(p_eff v24_cordis.effects) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE b jsonb; overlay jsonb; rule jsonb; r v24_cordis.runs%ROWTYPE; k text;
+BEGIN
+ IF p_eff.kind NOT IN ('model_call','tool_call') OR p_eff.run_id IS NULL THEN RETURN NULL; END IF;
+ SELECT * INTO r FROM v24_cordis.runs WHERE id=p_eff.run_id;
+ IF NOT FOUND THEN RETURN jsonb_build_object('invalid',true); END IF;
+ k:=p_eff.input->>'key';
+ SELECT i.overlay INTO overlay FROM v24_cordis.pins p
+  JOIN v24_cordis.contributions c ON c.id=p.contribution_id
+  JOIN v24_cordis.fibers f ON f.id=c.fiber_id
+  JOIN v24_cordis.installs i ON i.id=f.install_id
+  WHERE p.id=(p_eff.input->>'pin_id')::uuid AND p.consumer_run_id=p_eff.run_id;
+ IF NOT FOUND THEN RETURN jsonb_build_object('invalid',true); END IF;
+ rule:=v24_cordis.intercept_for(r.scope_id,
+  coalesce(v24_cordis.service_realm(r.scope_id,k),'root'),k);
+ IF (jsonb_typeof(overlay->'services')='object' AND overlay->'services' ? k)
+  OR rule->>'action' IN ('replace','reject','invalid') THEN
+  b:=v24_cordis.run_binding_desc(p_eff.run_id,(p_eff.input->>'pin_id')::uuid,k);
+  IF NOT coalesce((b->>'available')::boolean,false) THEN
+   RETURN jsonb_build_object('dependency',true); END IF;
+  IF b->>'capability' IS DISTINCT FROM p_eff.kind THEN
+   RETURN jsonb_build_object('invalid',true); END IF;
+  RETURN jsonb_build_object('execution',jsonb_build_object('descriptor',b->'descriptor',
+   'descriptor_digest',b->'descriptor_digest'));
+ END IF;
+ RETURN NULL;
+END $$;
 CREATE FUNCTION v24_cordis.run_progress(p_run uuid,p_eff uuid,p_kind text,p_step int,p_budget int,
  p_phase text,p_sealed boolean,p_reason text) RETURNS jsonb
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
@@ -215,7 +285,7 @@ $$;
 -- trusts the submitted delta or asks run_delta for its expected values.
 CREATE FUNCTION v24_cordis.run_successor_binding(p_run uuid,p_key text,p_cap text) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE pin_id uuid; pin_key text; pin_contrib uuid; pin_desc jsonb; contract jsonb;
+DECLARE pin_id uuid; pin_key text; pin_contrib uuid; pin_desc jsonb; contract jsonb; b jsonb;
 BEGIN
  SELECT p.id,p.key,p.contribution_id,mc.descriptor
   INTO pin_id,pin_key,pin_contrib,pin_desc
@@ -229,8 +299,12 @@ BEGIN
   FROM v24_cordis.contributions cc JOIN v24_cordis.fibers f ON f.id=cc.fiber_id
   JOIN v24_cordis.installs i ON i.id=f.install_id WHERE cc.id=pin_contrib;
  IF contract IS NULL THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ b:=v24_cordis.run_binding_desc(p_run,pin_id,pin_key);
+ IF NOT coalesce((b->>'available')::boolean,false)
+  OR b->>'capability' IS DISTINCT FROM p_cap THEN
+  RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
  RETURN jsonb_build_object('pin_id',to_jsonb(pin_id),'key',pin_key,
-  'descriptor_digest',encode(sha256(convert_to(pin_desc::text,'UTF8')),'hex'),
+  'descriptor_digest',b->>'descriptor_digest',
   'contract',jsonb_build_object('contract_version',contract->>'contract_version',
    'handler_digest',contract->>'handler_digest'));
 END $$;
@@ -260,7 +334,7 @@ END $$;
 CREATE FUNCTION v24_cordis.run_settle_facts(p_eff v24_cordis.effects,p_r v24_cordis.runs,p_outcome jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE body jsonb:=p_outcome->'body'; pin_id uuid; pin_key text; pin_contrib uuid; pin_released timestamptz;
- newr int; live int:=0; fact jsonb; red jsonb; desc_ jsonb;
+ newr int; live int:=0; fact jsonb; red jsonb; desc_ jsonb; b jsonb;
 BEGIN
  IF p_outcome->>'class' NOT IN ('success','failure') THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
  IF p_eff.kind='tool_call' AND (p_r.state->>'phase'<>'tools' OR NOT EXISTS(
@@ -292,8 +366,10 @@ BEGIN
    OR NOT v24_cordis.model_receipt_valid(p_outcome->>'class',body) THEN
    RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
  ELSE
+  b:=v24_cordis.run_binding_desc(p_r.id,pin_id,p_eff.input->>'key');
   IF desc_->>'capability'<>'tool_call'
-   OR encode(sha256(convert_to(desc_::text,'UTF8')),'hex')<>p_eff.input->>'descriptor_digest' THEN
+   OR NOT coalesce((b->>'available')::boolean,false)
+   OR b->>'descriptor_digest'<>p_eff.input->>'descriptor_digest' THEN
    RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
   IF NOT v24_cordis.tool_receipt_valid(p_outcome->>'class',body) THEN
    RETURN v24_cordis.error_v1('invalid_outcome'); END IF;

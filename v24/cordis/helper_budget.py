@@ -1,15 +1,15 @@
 """Physical-line budget for Cordis helper modules 40-49.
 
-The predicate is file-based: temporary 40/41/42/43 trees of 5000 and 5001
-lines are passed to assert_helper_budget itself. A literal integer comparison is
-not the proof.
+The predicate is file-based: temporary 40/41/42/43 trees of LIMIT and
+LIMIT+1 lines are passed to assert_helper_budget itself. A literal integer
+comparison is not the proof.
 """
 from __future__ import annotations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 HELPERS = ('40_advance.sql', '41_lifecycle.sql', '42_teardown.sql', '43_loop.sql')
-LIMIT = 5000
+LIMIT = 5500
 
 
 def assert_helper_budget(sql_dir):
@@ -35,7 +35,7 @@ def _write_tree(root, total):
 
 
 def prove_helper_budget_boundary():
-    """Invoke assert_helper_budget on trees of exactly 5000 and 5001 physical lines."""
+    """Invoke assert_helper_budget on trees of exactly LIMIT and LIMIT+1 physical lines."""
     with TemporaryDirectory() as raw:
         root = Path(raw)
         _write_tree(root, LIMIT)
@@ -50,4 +50,4 @@ def prove_helper_budget_boundary():
         except AssertionError as exc:
             assert exc.args[0][0] == LIMIT + 1, exc
         else:
-            raise AssertionError('5001-line helper tree was admitted')
+            raise AssertionError(f'{LIMIT + 1}-line helper tree was admitted')

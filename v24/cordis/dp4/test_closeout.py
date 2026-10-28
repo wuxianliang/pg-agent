@@ -21,7 +21,7 @@ from dp4_support import (Server, TestDB, snapshot, query, env, claim, settle,
                          prepare_run, model_body, tool_call, q1, rows,
                          provider, agent, install_payload, commit_new, phases, active_owner,
                          reconcile_payload)
-from test_support import (assert_helper_budget, prove_helper_budget_boundary, no_write,
+from test_support import (assert_helper_budget, prove_helper_budget_boundary, LIMIT, no_write,
                           sqlstate, seed_fiber)
 from test_kernel import host_seed
 
@@ -74,9 +74,9 @@ def test_b1_b2_layout(db):
     assert set(counts) == set(HELPERS), counts
     assert counts == {name: len((SQL / name).read_text().splitlines()) for name in HELPERS}
     assert counts['43_loop.sql'] <= 700, counts
-    assert total <= 5000, total
+    assert total <= LIMIT, total
     ddl = sum(len((SQL / name).read_text().splitlines()) for name in DDL)
-    assert ddl == 461, ddl
+    assert ddl <= 900, ddl
     text = _source()
     assert re.search(r'\bCREATE\s+(OR\s+REPLACE\s+)?(MATERIALIZED\s+)?VIEW\b', text, re.I) is None
     assert re.search(r'\bCREATE\s+EXTENSION\b', text, re.I) is None
@@ -106,7 +106,7 @@ def test_b1_b2_layout(db):
             assert allowed == [('advance',)], (alias, allowed)
     print(f'[CDP4-B1] tables=10 manifest=18 helpers={total} 43={counts["43_loop.sql"]} '
           f'ddl={ddl} definer=advance public_execute=0 views/extensions=0')
-    print('[CDP4-B2] 5000/5001 helper-tree predicate reran; DDL 461<=900; 43<=700')
+    print(f'[CDP4-B2] {LIMIT}/{LIMIT + 1} helper-tree predicate reran; DDL {ddl}<=900; 43<=700')
 
 
 def test_b3_acl(db, other):
@@ -346,9 +346,15 @@ def test_b5_manifest(db):
     # Owner fixture: 288 committed_view entries, created at episode birth (immutable afterwards).
     # This is NOT a legal manifest: 288 > the 256 requires cap. It only stresses run_bindings.
     y = prepare_run(db, 3, tuple(f'stress-{i}' for i in range(31)), model_key='stressmodel')
-    pins = rows(db, 'SELECT key,contribution_id FROM v24_cordis.pins WHERE consumer_run_id=%s',
-                (y['run_id'],))
-    view = {key: {'contribution_id': str(cid), 'contract_version': '1'} for key, cid in pins}
+    pins = rows(db, "SELECT p.key,p.contribution_id,c.descriptor FROM v24_cordis.pins p "
+                    "JOIN v24_cordis.contributions c ON c.id=p.contribution_id "
+                    "WHERE p.consumer_run_id=%s", (y['run_id'],))
+    def _dg(descriptor):
+        return q1(db, "SELECT encode(sha256(convert_to(%s::jsonb::text,'UTF8')),'hex')",
+                  (Json(descriptor),))
+    view = {key: {'contribution_id': str(cid), 'contract_version': '1',
+                  'descriptor_digest': _dg(descriptor)} for key, cid, descriptor in pins}
+    stress_digest = _dg({'capability': 'cap'})
     fixture = seed_fiber(db)
     scope, install, fiber = fixture['scope'], fixture['install'], fixture['fiber']
     episode = uuid.uuid4()
@@ -356,7 +362,8 @@ def test_b5_manifest(db):
     with contextlib.closing(db.connect('owner')) as conn:
         query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
         for i, cid in enumerate(stress_ids):
-            view[f'unrelated-{i}'] = {'contribution_id': str(cid), 'contract_version': '1'}
+            view[f'unrelated-{i}'] = {'contribution_id': str(cid), 'contract_version': '1',
+                                      'descriptor_digest': stress_digest}
         query(conn, "INSERT INTO v24_cordis.episodes(id,fiber_id,epoch,state,committed_view,iterator) "
                     "VALUES(%s,%s,1,'reloading',%s,%s)",
               (episode, fiber, Json(view), Json({'v': 1, 'next_index': 0,

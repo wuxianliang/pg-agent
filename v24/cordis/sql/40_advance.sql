@@ -515,10 +515,13 @@ BEGIN
   op:=item->>'op';
   IF op='scope_create' THEN
    n_scope:=n_scope+1;
-   IF n_scope>1 OR NOT coalesce(v24_cordis.exact_keys(item,ARRAY['op','id','parent_id','realm_overrides']),false)
+   IF n_scope>1 OR NOT coalesce(
+     v24_cordis.exact_keys(item,ARRAY['op','id','parent_id','realm_overrides'])
+     OR v24_cordis.exact_keys(item,ARRAY['op','id','parent_id','realm_overrides','intercept']),false)
     OR NOT v24_cordis.json_uuid(item->'id')
     OR NOT (item->'parent_id'='null'::jsonb OR v24_cordis.json_uuid(item->'parent_id'))
-    OR jsonb_typeof(item->'realm_overrides')<>'object' THEN
+    OR jsonb_typeof(item->'realm_overrides')<>'object'
+    OR (item ? 'intercept' AND NOT v24_cordis.scope_intercept_valid(item->'intercept')) THEN
     RETURN v24_cordis.error_v1('invalid_outcome');
    END IF;
    IF EXISTS(SELECT 1 FROM jsonb_each(item->'realm_overrides') e
@@ -535,7 +538,7 @@ BEGIN
     OR NOT v24_cordis.json_text(item->'identity') OR NOT v24_cordis.json_text(item->'version')
     OR jsonb_typeof(item->'manifest')<>'object' OR NOT v24_cordis.json_hex64(item->'artifact_digest')
     OR jsonb_typeof(item->'contracts')<>'object' OR jsonb_typeof(item->'overlay')<>'object'
-    OR item->'overlay'<>'{}'::jsonb
+    OR v24_cordis.install_overlay_valid(item->'manifest',item->'overlay') IS NOT NULL
     OR NOT (item->'policy_ref'='null'::jsonb
          OR (jsonb_typeof(item->'policy_ref')='string' AND length(item->'policy_ref'#>>'{}') BETWEEN 1 AND 128)) THEN
     RETURN v24_cordis.error_v1('invalid_outcome');
@@ -784,6 +787,7 @@ DECLARE v_kind text; v_payload jsonb; v_action text; v_branch text; v_domain jso
  v_plan jsonb; v_progress jsonb; v_retire jsonb; v_close_start jsonb; v_withdraw jsonb; v_ev jsonb; v_pin jsonb; v_bind jsonb; v_scope_id uuid; v_install_id uuid; v_fiber_id uuid; v_episode_id uuid; v_epoch int; v_count int;
  v_contrib_ids jsonb:='[]'; v_pin_ids jsonb:='[]'; v_require_keys jsonb:='[]'; v_first bigint; v_last bigint; v_ctl bigint; v_maxbig bigint;
  v_prov_epoch int; v_prov_fiber uuid; v_prov_ep uuid; v_prov_cv text; v_prov_digest text; v_expected jsonb;
+ v_eff jsonb; v_realm text;
  v_resolved record;
 BEGIN
  IF p_principal IS DISTINCT FROM v24_cordis.principal_id(session_user) THEN
@@ -982,18 +986,24 @@ BEGIN
     OR NOT v24_cordis.check_policy_ok(coalesce(inst.manifest->'check'->v_req_key,'null'::jsonb),v_resolved.descriptor) THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p1_target'));
    END IF;
-   SELECT e.epoch,c.fiber_id,c.episode_id,c.contract_version,
-     encode(sha256(convert_to(v24_cordis.canonical_json(c.descriptor),'UTF8')),'hex')
-    INTO v_prov_epoch,v_prov_fiber,v_prov_ep,v_prov_cv,v_prov_digest
+   SELECT e.epoch,c.fiber_id,c.episode_id,c.contract_version,c.descriptor
+    INTO v_prov_epoch,v_prov_fiber,v_prov_ep,v_prov_cv,v_eff
     FROM v24_cordis.contributions c JOIN v24_cordis.episodes e ON e.id=c.episode_id
     WHERE c.id=(v_pin->>'contribution_id')::uuid;
-   IF NOT FOUND OR (v_pin->>'provider_episode_id')::uuid<>v_prov_ep
+   IF NOT FOUND THEN
+    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p1_binding'));
+   END IF;
+   v_realm:=v24_cordis.service_realm(f.scope_id,v_req_key);
+   v_prov_digest:=v24_cordis.descriptor_effective(f.scope_id,coalesce(v_realm,'root'),
+    v_req_key,v_eff,v_prov_cv)->>'descriptor_digest';
+   IF (v_pin->>'provider_episode_id')::uuid<>v_prov_ep
     OR (v_pin->>'provider_epoch')::int<>v_prov_epoch
     OR (v_bind->>'contribution_id')::uuid<>((v_pin->>'contribution_id')::uuid)
     OR (v_bind->>'provider_fiber_id')::uuid<>v_prov_fiber
     OR (v_bind->>'provider_episode_id')::uuid<>v_prov_ep
     OR (v_bind->>'provider_epoch')::int<>v_prov_epoch
-    OR v_bind->>'descriptor_digest'<>v_prov_digest
+    OR v_resolved.descriptor_digest IS DISTINCT FROM v_bind->>'descriptor_digest'
+    OR v_bind->>'descriptor_digest' IS DISTINCT FROM v_prov_digest
     OR v_bind->>'contract_version'<>v_prov_cv THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p1_binding'));
    END IF;
@@ -1036,8 +1046,10 @@ BEGIN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p2_seq'));
    END IF;
    v_prov:=v_provides->(v_old_next+v_count-1);
-   IF v_prov IS NULL OR v_item->>'key' IS DISTINCT FROM v_prov->>'key'
-    OR v_item->'descriptor' IS DISTINCT FROM v_prov->'descriptor'
+   IF v_prov IS NOT NULL THEN
+    v_eff:=v24_cordis.overlay_apply(inst.manifest,inst.overlay,v_prov); END IF;
+   IF v_prov IS NULL OR v_eff IS NULL OR v_item->>'key' IS DISTINCT FROM v_prov->>'key'
+    OR v_item->'descriptor' IS DISTINCT FROM v_eff
     OR v_item->>'contract_version' IS DISTINCT FROM v_prov->>'contract_version'
     OR v_item->>'realm' IS DISTINCT FROM v24_cordis.service_realm(f.scope_id,v_item->>'key') THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p2_provide'));
@@ -1155,7 +1167,7 @@ BEGIN
     INSERT INTO v24_cordis.scopes(id,parent_id,realm_overrides,intercept)
      VALUES((item->>'id')::uuid,
       CASE WHEN item->'parent_id'='null'::jsonb THEN NULL ELSE (item->>'parent_id')::uuid END,
-      item->'realm_overrides','{}'::jsonb);
+      item->'realm_overrides',coalesce(item->'intercept','{}'::jsonb));
    ELSIF v_op='install_create' THEN
     INSERT INTO v24_cordis.installs(id,scope_id,owner_fiber_id,owner_episode_id,identity,version,
       manifest,artifact_digest,contracts,policy_ref,overlay,state)
@@ -1355,7 +1367,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,v24_cordis,pg_temp 
 DECLARE cls text; body jsonb; token jsonb; kind text; principal uuid; bytes bytea; canonical bytea;
  req v24_cordis.requests%ROWTYPE; eff v24_cordis.effects%ROWTYPE; closure jsonb; seed jsonb;
  delta jsonb; contract jsonb; binding jsonb; reclaim boolean; error_code text; lease int; allowed boolean;
- reserved boolean; cont boolean; action text; state jsonb; preflight jsonb;
+ reserved boolean; cont boolean; action text; state jsonb; preflight jsonb; execution jsonb;
 BEGIN
  -- No business relation reads or explicit locks before all pure preflight checks.
  IF p_effect_id IS NULL OR p_outcome IS NULL OR jsonb_typeof(p_outcome)<>'object'
@@ -1507,12 +1519,18 @@ BEGIN
   IF NOT v24_cordis.barrier_ready(p_effect_id,closure) THEN
    RETURN jsonb_build_object('v',1,'disposition','deferred','effect_id',p_effect_id,'emitted','[]'::jsonb,'revision',0,'claim',NULL);
   END IF;
+  execution:=v24_cordis.claim_execution(eff);
+  IF execution ? 'dependency' THEN
+   RETURN v24_cordis.error_v1('dependency_unresolved',jsonb_build_object('reason','claim_execution'));
+  ELSIF execution ? 'invalid' THEN
+   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','claim_execution'));
+  END IF;
   IF eff.attempt=9223372036854775807 OR eff.fence=9223372036854775807 THEN RETURN v24_cordis.error_v1('budget_exceeded'); END IF;
   UPDATE v24_cordis.effects SET status='claimed',attempt=attempt+1,fence=fence+1,claim_owner=session_user,
    lease_until=clock_timestamp()+lease*interval '1 millisecond' WHERE id=p_effect_id RETURNING * INTO eff;
   RETURN jsonb_build_object('v',1,'disposition','claimed','effect_id',p_effect_id,'emitted','[]'::jsonb,'revision',0,
    'claim',jsonb_build_object('attempt',eff.attempt,'fence',eff.fence,'owner',eff.claim_owner),
-   'input',eff.input);
+   'input',eff.input)||coalesce(execution,'{}'::jsonb);
  ELSIF cls<>'command' THEN
   SELECT * INTO eff FROM v24_cordis.effects WHERE id=p_effect_id;
   IF eff.status<>'claimed' OR eff.attempt<>(token->>'attempt')::bigint OR eff.fence<>(token->>'fence')::bigint

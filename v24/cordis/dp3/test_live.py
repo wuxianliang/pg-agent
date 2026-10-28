@@ -360,18 +360,15 @@ def test_classified_and_divert(db, root):
     # Target drift after a real prefix never appends, withdraws or rewrites iterator.
     payload, effect, outcome = reloading(db, root, [f'divert-{i}' for i in range(33)],
                                          prefix=1, requires=['p3-source'])
-    mutate(db, 'UPDATE v24_cordis.scopes SET realm_overrides=%s WHERE id=%s',
-           (Json({'p3-source': 'absent'}), root['scope']['id']))
-    try:
-        applied(db, effect, outcome)
-        assert one(db, 'SELECT outcome FROM v24_cordis.episodes WHERE id=(SELECT current_episode_id '
-                       'FROM v24_cordis.fibers WHERE id=%s)', (payload['fiber_id'],)) == 'divert'
-        assert one(db, 'SELECT count(*) FROM v24_cordis.contributions WHERE fiber_id=%s AND withdrawn_at IS NULL '
-                       'AND released_at IS NULL', (payload['fiber_id'],)) == 32
-        assert one(db, "SELECT (iterator->>'next_index')::int FROM v24_cordis.episodes WHERE id=(SELECT current_episode_id "
-                       'FROM v24_cordis.fibers WHERE id=%s)', (payload['fiber_id'],)) == 32
-    finally:
-        mutate(db, "UPDATE v24_cordis.scopes SET realm_overrides='{}' WHERE id=%s", (root['scope']['id'],))
+    mutate(db, "UPDATE v24_cordis.contributions SET withdrawn_at=clock_timestamp() "
+               "WHERE fiber_id=%s AND kind='service' AND released_at IS NULL", (provider['fiber_id'],))
+    applied(db, effect, outcome)
+    assert one(db, 'SELECT outcome FROM v24_cordis.episodes WHERE id=(SELECT current_episode_id '
+                   'FROM v24_cordis.fibers WHERE id=%s)', (payload['fiber_id'],)) == 'divert'
+    assert one(db, 'SELECT count(*) FROM v24_cordis.contributions WHERE fiber_id=%s AND withdrawn_at IS NULL '
+                   'AND released_at IS NULL', (payload['fiber_id'],)) == 32
+    assert one(db, "SELECT (iterator->>'next_index')::int FROM v24_cordis.episodes WHERE id=(SELECT current_episode_id "
+                   'FROM v24_cordis.fibers WHERE id=%s)', (payload['fiber_id'],)) == 32
     print('[CDP3-L4] P2/P3/P4 exact classified Raise; unassignable totality damage propagates; target drift Divert preserves prefix')
 
 

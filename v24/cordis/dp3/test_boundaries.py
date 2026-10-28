@@ -29,7 +29,7 @@ from psycopg2.extras import Json
 from test_support import (Server, TestDB, snapshot, query, api, command, no_write, env,
                           reconcile_payload, dispose_payload, sqlstate, install_probe,
                           set_probe, replace_function, assert_helper_budget,
-                          prove_helper_budget_boundary, seed_parent, seed_child, derive,
+                          prove_helper_budget_boundary, LIMIT, seed_parent, seed_child, derive,
                           successor_key, delta, event)
 from test_activation import (one, rows, install, phases, commit_new, child_call,
                              declaration, p0)
@@ -78,7 +78,7 @@ def test_layout_and_acl(db):
     total, counts = assert_helper_budget(SQL)
     assert set(counts) == set(HELPERS), counts
     assert counts == {name: len((SQL / name).read_text().splitlines()) for name in HELPERS}
-    assert total == sum(counts.values()) <= 5000
+    assert total == sum(counts.values()) <= LIMIT
     ddl = sum(len((SQL / name).read_text().splitlines()) for name in DDL)
     assert ddl <= 900, ddl
     text = source_sql()
@@ -117,7 +117,7 @@ def test_layout_and_acl(db):
     print(f'[CDP3-B1] tables=10 manifest={len(names)} helpers={total} '
           f'40={counts["40_advance.sql"]} 41={counts["41_lifecycle.sql"]} '
           f'42={counts["42_teardown.sql"]} ddl={ddl} definer=advance public_execute=0, '
-          'views/extensions=0, 5000/5001 boundary proven')
+          f'views/extensions=0, {LIMIT}/{LIMIT + 1} boundary proven')
 
 
 def test_service_child_production(db, root):
@@ -253,19 +253,15 @@ def test_settlement_and_unwired(db, root):
     mutate(db, 'INSERT INTO v24_cordis.scopes(id,intercept) VALUES(%s,%s)',
            (intercepted, Json({'boundary': {'v': 1}})))
     payload = declaration(mode='existing', existing=intercepted)
-    before = snap(db)
     with contextlib.closing(db.connect('service')) as conn:
         effect, outcome = command(db, conn, 'service', 'command_install', payload)
-        sqlstate(conn, 'SELECT v24_cordis.advance(%s,%s)', (effect, Json(outcome)))
-    assert snap(db) == before
+        no_write(db, conn, effect, outcome, code='invalid_args')
 
     payload = declaration(mode='existing', existing=root['scope']['id'])
     payload['overlay'] = {'boundary': {'v': 1}}
-    before = snap(db)
     with contextlib.closing(db.connect('service')) as conn:
         effect, outcome = command(db, conn, 'service', 'command_install', payload)
-        sqlstate(conn, 'SELECT v24_cordis.advance(%s,%s)', (effect, Json(outcome)))
-    assert snap(db) == before
+        no_write(db, conn, effect, outcome, code='invalid_args')
 
     for kind in ('dispatch', 'run_start'):
         payload = declaration(mode='existing', existing=root['scope']['id'])
@@ -279,7 +275,7 @@ def test_settlement_and_unwired(db, root):
     with contextlib.closing(db.connect('owner')) as conn:
         body = query(conn, "SELECT pg_get_functiondef('v24_cordis.run_pin_release_delta(uuid)'::regprocedure)")[0][0]
         assert re.search(r'\b(INSERT|UPDATE|DELETE)\b', body, re.I) is None
-    print('[CDP3-B6] host_io settlement is 0A000; dispatch/intercept/overlay are unwired; run DML exists only behind the typed applier; no recovery')
+    print('[CDP3-B6] host_io settlement is 0A000; malformed intercept/overlay are invalid_args; run DML exists only behind the typed applier; no recovery')
 
 
 def test_limits_history_and_batch(db, root):

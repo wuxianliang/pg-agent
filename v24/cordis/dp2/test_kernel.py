@@ -25,7 +25,7 @@ from test_support import (Server, TestDB, TABLES, snapshot, query, api, principa
                           dispose_payload, sqlstate, no_write, install_probe, set_probe,
                           set_probe_raise, delta, successor, event, seed_fiber, seed_episode,
                           seed_provider, seed_parent, seed_child, install_delta, active_owner,
-                          assert_helper_budget)
+                          assert_helper_budget, LIMIT)
 
 _seed_fiber = seed_fiber
 def seed_fiber(db, **kwargs):
@@ -1098,7 +1098,7 @@ def main():
     from pathlib import Path
     sql_dir = Path(__file__).resolve().parents[1] / 'sql'
     total, counts = assert_helper_budget(sql_dir)
-    print(f'[CDP2-K0] helper budget {total}<=5000 {counts}; predicate admits a 5000-line tree and rejects 5001')
+    print(f'[CDP2-K0] helper budget {total}<={LIMIT} {counts}; predicate admits a {LIMIT}-line tree and rejects {LIMIT + 1}')
     ddl = [f for f in sql_dir.glob('*.sql') if 10 <= int(f.name[:2]) <= 17
            or f.name in ('20_relations.sql', '30_triggers.sql')]
     assert len(ddl) == 10 and sum(len(f.read_text().splitlines()) for f in ddl) <= 900

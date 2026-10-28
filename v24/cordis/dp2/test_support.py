@@ -16,7 +16,7 @@ CORDIS = Path(__file__).resolve().parents[1]
 DP1 = CORDIS / 'dp1'
 sys.path.insert(0, str(CORDIS))
 sys.path.insert(0, str(DP1))
-from helper_budget import assert_helper_budget as _assert_helper_budget  # noqa: E402
+from helper_budget import LIMIT, assert_helper_budget as _assert_helper_budget  # noqa: E402
 from helper_budget import prove_helper_budget_boundary  # noqa: E402
 from setup_db import Server, TestDB, TABLES  # noqa: E402
 from test_ddl import snapshot  # noqa: E402
@@ -260,7 +260,8 @@ def install_delta(db, payload):
              child_contribution_id=(str(child) if child else None)))])
 
 
-def seed_fiber(db, provides=(), requires=(), want_on=False, control_seq=0, prefix='w1', admitted=False):
+def seed_fiber(db, provides=(), requires=(), want_on=False, control_seq=0, prefix='w1', admitted=False,
+               realm_overrides=None):
     scope, install, fiber = (uuid.uuid4() for _ in range(3))
     root = active_owner(db)
     manifest = dict(requires=[dict(key=k, descriptor={}, contract_version='1') for k in requires],
@@ -276,7 +277,8 @@ def seed_fiber(db, provides=(), requires=(), want_on=False, control_seq=0, prefi
                                      replay=dict(repeat=True, concurrent=False))}
     with contextlib.closing(db.connect('owner')) as owner:
         query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
-        query(owner, 'INSERT INTO v24_cordis.scopes(id) VALUES(%s)', (scope,))
+        query(owner, 'INSERT INTO v24_cordis.scopes(id,realm_overrides) VALUES(%s,%s)',
+              (scope, Json(realm_overrides or {})))
         query(owner, "INSERT INTO v24_cordis.installs(id,scope_id,owner_fiber_id,owner_episode_id,"
                      "identity,version,manifest,artifact_digest,contracts,state) "
                      "VALUES(%s,%s,%s,%s,%s,'1',%s,%s,%s,'installed')",
@@ -314,15 +316,13 @@ def descriptor_digest(db, descriptor):
 
 
 def seed_provider(db, realm='root', key='svc', epoch=1):
-    fiber = seed_fiber(db, provides=(key,), want_on=True, prefix='prov', admitted=True)
+    fiber = seed_fiber(db, provides=(key,), want_on=True, prefix='prov', admitted=True,
+                       realm_overrides={key: realm} if realm != 'root' else None)
     episode = seed_episode(db, fiber['fiber'], epoch=epoch, state='active', control_seq=0)
     contribution = uuid.uuid4()
     descriptor = {'capability': 'cap'}
     with contextlib.closing(db.connect('owner')) as owner:
         query(owner, 'SELECT pg_advisory_xact_lock(24,1)')
-        if realm != 'root':
-            query(owner, 'UPDATE v24_cordis.scopes SET realm_overrides=%s WHERE id=%s',
-                  (Json({key: realm}), fiber['scope']))
         query(owner, "INSERT INTO v24_cordis.contributions(id,fiber_id,episode_id,seq,kind,realm,key,"
                      "descriptor,inverse,contract_version) VALUES(%s,%s,%s,0,'service',%s,%s,%s,"
                      "'{\"op\":\"delete_row\"}','1')",
@@ -372,6 +372,6 @@ def execute(db, effect, outcome, alias='service'):
 
 
 def assert_helper_budget(sql_dir):
-    """Real helper tree, after the same predicate accepts 5000 lines and rejects 5001."""
+    """Real helper tree, after the same predicate accepts LIMIT lines and rejects LIMIT+1."""
     prove_helper_budget_boundary()
     return _assert_helper_budget(sql_dir)

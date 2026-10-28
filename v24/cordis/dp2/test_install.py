@@ -18,7 +18,7 @@ from psycopg2.extras import Json
 from test_support import (Server, TestDB, TABLES, snapshot, query, api, command, no_write,
                           install_payload, seed_fiber, seed_episode, seed_provider,
                           install_delta, active_owner, install_probe, set_probe,
-                          replace_function, sqlstate, descriptor_digest, assert_helper_budget)
+                          replace_function, sqlstate, descriptor_digest, assert_helper_budget, LIMIT)
 
 REPLAYS = ({'repeat': True, 'concurrent': True}, {'repeat': True, 'concurrent': False},
            {'repeat': False, 'concurrent': True}, {'repeat': False, 'concurrent': False})
@@ -321,12 +321,12 @@ def test_admission(db):
     duplicate_scope = install_payload()
     duplicate_scope['scope']['id'] = str(scope_id_holder[0])
     bad(db, duplicate_scope, 'invalid_args', 'scope_id')
-    # Unsupported overlay/intercept are 0A000, not silently ignored.
+    # W1 accepts well-formed overlay/intercept; malformed declarations stay invalid_args.
     overlay = install_payload(mode='existing', existing_scope=scope_id_holder[0], owner=owner)
     overlay['overlay'] = {'x': 'y'}
     with contextlib.closing(db.connect('service')) as conn:
         effect, out = command(db, conn, 'service', 'command_install', overlay)
-        sqlstate(conn, 'SELECT v24_cordis.advance(%s,%s)', (effect, Json(out)), code='0A000')
+        no_write(db, conn, effect, out, code='invalid_args')
     with contextlib.closing(db.connect('owner')) as conn:
         query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
         query(conn, 'INSERT INTO v24_cordis.scopes(id,intercept) VALUES(%s,%s)',
@@ -336,7 +336,7 @@ def test_admission(db):
     intercept = install_payload(mode='existing', existing_scope=intercept_id, owner=owner)
     with contextlib.closing(db.connect('service')) as conn:
         effect, out = command(db, conn, 'service', 'command_install', intercept)
-        sqlstate(conn, 'SELECT v24_cordis.advance(%s,%s)', (effect, Json(out)), code='0A000')
+        no_write(db, conn, effect, out, code='invalid_args')
     print('[CDP2-I3] owner ledger seq/descriptor/inverse/progress; scope/owner/UUID/identity/0A000 negatives')
 
 
@@ -485,11 +485,13 @@ def test_resolver(db):
     assert len(resolved(b, [f'k{i}' for i in range(257)])) == 0
     assert resolved(b, [None]) == []
     assert len(resolved(b, ['svc', 'missing'])) == 2
-    # The nearest override wins; there is no fallback across realms.
-    query_owner(db, 'UPDATE v24_cordis.scopes SET realm_overrides=%s WHERE id=%s',
-                (Json({'svc': 'missing-realm'}), b))
-    assert resolved(b, ['svc'])[0][8] is False
-    query_owner(db, 'UPDATE v24_cordis.scopes SET realm_overrides=%s WHERE id=%s', (Json({}), b))
+    # The nearest override wins; there is no fallback across realms. Scope rules
+    # are immutable after creation, so the override is fixed at INSERT.
+    missing_scope = uuid.uuid4()
+    query_owner(db, 'INSERT INTO v24_cordis.scopes(id,parent_id,realm_overrides) VALUES(%s,%s,%s)',
+                (missing_scope, b, Json({'svc': 'missing-realm'})))
+    assert resolved(missing_scope, ['svc'])[0][8] is False
+    assert resolved(b, ['svc'])[0][8] is True
     # Unavailable providers make the key unavailable.
     want = extra['svc-want']
     query_owner(db, 'UPDATE v24_cordis.fibers SET want_on=false WHERE id=%s', (want['fiber'],))
@@ -711,7 +713,7 @@ def main():
     assert (sql_dir / '41_lifecycle.sql').is_file()
     assert (sql_dir / '42_teardown.sql').is_file()
     total, counts = assert_helper_budget(sql_dir)
-    print(f'[CDP2-I0] helper budget {total}<=5000 {counts}; predicate admits a 5000-line tree and rejects 5001')
+    print(f'[CDP2-I0] helper budget {total}<={LIMIT} {counts}; predicate admits a {LIMIT}-line tree and rejects {LIMIT + 1}')
     ddl = [f for f in sql_dir.glob('*.sql') if 10 <= int(f.name[:2]) <= 17
            or f.name in ('20_relations.sql', '30_triggers.sql')]
     assert len(ddl) == 10 and sum(len(f.read_text().splitlines()) for f in ddl) <= 900
