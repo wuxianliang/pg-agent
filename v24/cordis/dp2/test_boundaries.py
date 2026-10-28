@@ -255,7 +255,7 @@ def test_multi_and_bounds(db, owner, scope):
     assert disposed_ids == ids, payload
     root = Path(__file__).resolve().parents[1]
     sql_files = sorted(p.name for p in (root / 'sql').glob('*.sql'))
-    assert len(sql_files) == 17, sql_files
+    assert len(sql_files) == 18, sql_files
     total, counts = assert_helper_budget(root / 'sql')
     prefix = sum(len((root / 'sql' / name).read_text().splitlines()) for name in (
         '10_installs.sql', '11_scopes.sql', '12_fibers.sql', '13_episodes.sql', '14_contributions.sql',
@@ -264,9 +264,9 @@ def test_multi_and_bounds(db, owner, scope):
     assert one(db, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                    "WHERE n.nspname='v24_cordis' AND c.relkind='r'") == 10
     assert one(db, "SELECT count(*) FROM pg_proc WHERE pronamespace='v24_cordis'::regnamespace AND prosecdef") == 1
-    print(f'[CDP2-B4/B5] multi-fiber dispose; tables=10 manifest=17 helpers={total} '
+    print(f'[CDP2-B4/B5] multi-fiber dispose; tables=10 manifest=18 helpers={total} '
           f'40={counts["40_advance.sql"]} 41={counts["41_lifecycle.sql"]} '
-          f'42={counts["42_teardown.sql"]} ddl={prefix}')
+          f'42={counts["42_teardown.sql"]} 43={counts["43_loop.sql"]} ddl={prefix}')
 
 
 def test_w2_classification(db, owner, scope):

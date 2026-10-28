@@ -17,6 +17,7 @@ from psycopg2 import sql
 from psycopg2.extras import Json, register_uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from helper_budget import assert_helper_budget, prove_helper_budget_boundary
+from load import CANONICAL_ORDER
 from setup_db import Server, TestDB, TABLES
 from test_ddl import snapshot
 register_uuid()
@@ -536,6 +537,7 @@ def test_committed_probe(production,probe):
 
 
 def main():
+    assert len(CANONICAL_ORDER) == 18 and len(list((Path(__file__).resolve().parents[1] / 'sql').glob('*.sql'))) == 18
     prove_helper_budget_boundary()
     total,counts=assert_helper_budget(Path(__file__).resolve().parents[1]/'sql')
     print(f'[CDP1-K0] helper budget {total}<=5000 {counts}; predicate admits a 5000-line tree and rejects 5001')

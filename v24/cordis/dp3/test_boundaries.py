@@ -40,7 +40,7 @@ from test_dispose import dispose_request, effect_events
 
 CORDIS = Path(__file__).resolve().parents[1]
 SQL = CORDIS / 'sql'
-HELPERS = ('40_advance.sql', '41_lifecycle.sql', '42_teardown.sql')
+HELPERS = ('40_advance.sql', '41_lifecycle.sql', '42_teardown.sql', '43_loop.sql')
 DDL = ('10_installs.sql', '11_scopes.sql', '12_fibers.sql', '13_episodes.sql',
        '14_contributions.sql', '15_pins.sql', '16_runs.sql', '17_effects.sql',
        '20_relations.sql', '30_triggers.sql')
@@ -64,15 +64,15 @@ def domain_snapshot(db):
 
 def test_layout_and_acl(db):
     names = sorted(p.name for p in SQL.glob('*.sql'))
-    assert len(names) == 17, names
+    assert len(names) == 18, names
     spec = importlib.util.spec_from_file_location('cordis_boundary_loader', CORDIS / 'load.py')
     loader = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(loader)
     assert tuple(loader.SQL_LOAD_ORDER) == tuple(loader.CANONICAL_ORDER)
-    assert len(loader.CANONICAL_ORDER) == 17
+    assert len(loader.CANONICAL_ORDER) == 18
     assert set(names) == set(loader.CANONICAL_ORDER)
     assert loader.CANONICAL_ORDER.index('42_teardown.sql') < loader.CANONICAL_ORDER.index(
-        '50_permissions.sql')
+        '43_loop.sql') < loader.CANONICAL_ORDER.index('50_permissions.sql')
     loader.self_check_manifest()
     prove_helper_budget_boundary()
     total, counts = assert_helper_budget(SQL)
@@ -746,7 +746,7 @@ def test_iterator_loader_guards(db, root):
     spec = importlib.util.spec_from_file_location('cordis_boundary_loader2', CORDIS / 'load.py')
     loader = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(loader)
-    assert loader.SQL_LOAD_ORDER == loader.CANONICAL_ORDER and len(loader.SQL_LOAD_ORDER) == 17
+    assert loader.SQL_LOAD_ORDER == loader.CANONICAL_ORDER and len(loader.SQL_LOAD_ORDER) == 18
     with contextlib.closing(db.connect('owner')) as conn:
         conn.autocommit = True
         try:
