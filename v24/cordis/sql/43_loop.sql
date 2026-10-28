@@ -225,6 +225,14 @@ CREATE FUNCTION v24_cordis.claim_execution(p_eff v24_cordis.effects) RETURNS jso
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE b jsonb; overlay jsonb; rule jsonb; r v24_cordis.runs%ROWTYPE; k text;
 BEGIN
+ IF p_eff.kind='listener_call' THEN
+  IF p_eff.parent_id IS NULL OR p_eff.input->'descriptor'->'exec'->>'type'<>'host'
+   OR NOT EXISTS(SELECT 1 FROM v24_cordis.effects d WHERE d.id=p_eff.parent_id
+    AND d.kind='dispatch' AND (d.input->'listeners'->(p_eff.ordinal))->>'contribution_id'
+     =p_eff.input->>'contribution_id') THEN RETURN jsonb_build_object('invalid',true); END IF;
+  RETURN jsonb_build_object('execution',jsonb_build_object('descriptor',p_eff.input->'descriptor',
+   'descriptor_digest',p_eff.input->>'descriptor_digest'));
+ END IF;
  IF p_eff.kind NOT IN ('model_call','tool_call') OR p_eff.run_id IS NULL THEN RETURN NULL; END IF;
  SELECT * INTO r FROM v24_cordis.runs WHERE id=p_eff.run_id;
  IF NOT FOUND THEN RETURN jsonb_build_object('invalid',true); END IF;
@@ -397,6 +405,18 @@ BEGIN
  IF p_eff.kind IN ('host_io','run_start') THEN
   SELECT i.contracts->p_eff.kind INTO c FROM v24_cordis.fibers f
    JOIN v24_cordis.installs i ON i.id=f.install_id WHERE f.id=p_eff.fiber_id;
+  RETURN c;
+ END IF;
+ IF p_eff.kind='listener_call' AND p_eff.parent_id IS NOT NULL
+  AND p_eff.input->'descriptor'->'exec'->>'type'='host'
+  AND v24_cordis.json_uuid(p_eff.input->'provider_fiber_id') THEN
+  SELECT i.contracts->'listener_call' INTO c FROM v24_cordis.effects d
+   JOIN v24_cordis.effects p ON p.id=d.parent_id AND p.kind='dispatch'
+   JOIN v24_cordis.fibers f ON f.id=(d.input->>'provider_fiber_id')::uuid
+   JOIN v24_cordis.installs i ON i.id=f.install_id
+   WHERE d.id=p_eff.id AND d.input->'contract'->>'contract_version'
+     =i.contracts->'listener_call'->>'contract_version'
+    AND d.input->'contract'->>'handler_digest'=i.contracts->'listener_call'->>'handler_digest';
   RETURN c;
  END IF;
  IF p_eff.kind IN ('model_call','tool_call') THEN
@@ -652,8 +672,20 @@ LANGUAGE sql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
  rp AS (SELECT p.id AS pin,c.id AS contrib,c.episode_id AS ep FROM eff
    JOIN v24_cordis.pins p ON p.consumer_run_id=eff.run_id AND p.released_at IS NULL
    JOIN v24_cordis.contributions c ON c.id=p.contribution_id
-   WHERE eff.kind IN ('model_call','tool_call') AND eff.run_id IS NOT NULL), seed AS (
+   WHERE eff.kind IN ('model_call','tool_call') AND eff.run_id IS NOT NULL),
+ lc AS (SELECT d.id AS disp,jsonb_array_elements(d.input->'listeners') AS item
+   FROM eff JOIN v24_cordis.effects d ON d.id=eff.parent_id AND d.kind='dispatch'
+   WHERE eff.kind='listener_call'), seed AS (
   SELECT 'effects'::text AS t,p_effect_id::text AS id
+  UNION ALL SELECT 'effects',eff.parent_id::text FROM eff WHERE eff.kind='listener_call'
+  UNION ALL SELECT 'effects',x.id::text FROM eff JOIN v24_cordis.effects x
+   ON x.parent_id=eff.parent_id AND x.kind='listener_call' WHERE eff.kind='listener_call'
+  UNION ALL SELECT 'contributions',item->>'contribution_id' FROM lc
+  UNION ALL SELECT 'fibers',item->>'provider_fiber_id' FROM lc
+  UNION ALL SELECT 'episodes',item->>'provider_episode_id' FROM lc
+  UNION ALL SELECT 'pins',p.id::text FROM lc JOIN v24_cordis.pins p
+   ON p.consumer_fiber_id=(item->>'provider_fiber_id')::uuid
+    AND p.consumer_episode_id=(item->>'provider_episode_id')::uuid AND p.released_at IS NULL
   UNION ALL SELECT 'contributions',b->>'contribution_id' FROM rb
   UNION ALL SELECT 'fibers',b->>'provider_fiber_id' FROM rb
   UNION ALL SELECT 'episodes',b->>'provider_episode_id' FROM rb

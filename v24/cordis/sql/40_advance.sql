@@ -141,6 +141,14 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
    coalesce(v24_cordis.exact_keys(p_payload,ARRAY['run_id','effect_id','reason']),false)
    AND p_payload->'run_id'='null'::jsonb AND v24_cordis.json_uuid(p_payload->'effect_id')
    AND p_payload->>'reason' IN ('owner_closing','start_failed','replay_right_missing')
+  WHEN p_kind='dispatch_progress' THEN
+   coalesce(v24_cordis.exact_keys(p_payload,ARRAY['dispatch_id','effect_id','ordinal','mode',
+    'joined','sealed','bailed']),false)
+   AND v24_cordis.json_uuid(p_payload->'dispatch_id') AND v24_cordis.json_uuid(p_payload->'effect_id')
+   AND v24_cordis.json_int(p_payload->'ordinal',0,15)
+   AND p_payload->>'mode' IN ('emit','parallel','serial','bail','waterfall')
+   AND v24_cordis.json_int(p_payload->'joined',0,16)
+   AND jsonb_typeof(p_payload->'sealed')='boolean' AND jsonb_typeof(p_payload->'bailed')='boolean'
   WHEN p_kind='receipt' THEN jsonb_typeof(p_payload)='object'
   ELSE false END,false)
 $$;
@@ -174,7 +182,8 @@ BEGIN
   IF pg_has_role(p_login,(family||'_'||alias)::name,'USAGE') THEN
    RETURN (p_class='command' AND p_kind IN ('command_install','command_reconcile','command_dispose') AND p_action='admit_and_apply')
       OR (alias='service' AND p_class IN ('claim','success','failure','unknown')
-       AND p_kind IN ('host_io','run_start','model_call','tool_call') AND p_action=p_class);
+       AND p_kind IN ('host_io','run_start','model_call','tool_call','listener_call')
+     AND p_action=p_class);
   END IF;
  END LOOP;
  RETURN false;
@@ -424,6 +433,8 @@ BEGIN
  SELECT kind INTO k FROM v24_cordis.effects WHERE id=p_effect_id;
  IF k IN ('run_start','model_call','tool_call') THEN
   RETURN v24_cordis.run_delta(p_effect_id,p_outcome);
+ ELSIF k='listener_call' THEN
+  RETURN v24_cordis.event_delta(p_effect_id,p_outcome);
  END IF;
  RAISE EXCEPTION 'DP1 lifecycle settlement is not implemented' USING ERRCODE='0A000';
 END $$;
@@ -491,6 +502,13 @@ BEGIN
     OR NOT coalesce(v24_cordis.exact_keys(item->'input'->'contract',ARRAY['contract_version','handler_digest']),false)
     OR NOT v24_cordis.json_text(item->'input'->'contract'->'contract_version')
     OR NOT v24_cordis.json_hex64(item->'input'->'contract'->'handler_digest') THEN
+    RETURN v24_cordis.error_v1('invalid_outcome');
+   END IF;
+  ELSIF item->>'kind'='dispatch' THEN
+   IF NOT coalesce(v24_cordis.exact_keys(item->'input',ARRAY['v','dispatch_id','event','mode',
+     'params','bail','listeners']),false)
+    OR item->'input'->'v'<>'1'::jsonb OR NOT v24_cordis.json_uuid(item->'input'->'dispatch_id')
+    OR item->'input'->>'event'<>'fiber.activated' OR jsonb_typeof(item->'input'->'listeners')<>'array' THEN
     RETURN v24_cordis.error_v1('invalid_outcome');
    END IF;
   ELSIF item->>'kind'='tool_call' THEN
@@ -776,13 +794,15 @@ BEGIN
     OR NOT v24_cordis.json_uuid(item->'install_id') THEN
     RETURN v24_cordis.error_v1('invalid_outcome');
    END IF;
+  ELSIF op IN ('dispatch_open','listener_append','listener_settle','dispatch_settle') THEN
+   NULL;
   ELSE
    RETURN v24_cordis.error_v1('invalid_outcome');
   END IF;
  END LOOP;
  IF n_service>0 AND n_child>0 THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
  IF NOT p_structure_only AND p_class<>'command'
-  AND coalesce(p_kind,'') NOT IN ('run_start','model_call','tool_call')
+  AND coalesce(p_kind,'') NOT IN ('run_start','model_call','tool_call','listener_call')
   AND (p_delta->'domain'<>'[]'::jsonb OR p_delta->'successors'<>'[]'::jsonb) THEN
   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','settlement_has_no_domain'));
  END IF;
@@ -796,7 +816,7 @@ DECLARE v_kind text; v_payload jsonb; v_action text; v_branch text; v_domain jso
  v_plan jsonb; v_progress jsonb; v_retire jsonb; v_close_start jsonb; v_withdraw jsonb; v_ev jsonb; v_pin jsonb; v_bind jsonb; v_scope_id uuid; v_install_id uuid; v_fiber_id uuid; v_episode_id uuid; v_epoch int; v_count int;
  v_contrib_ids jsonb:='[]'; v_pin_ids jsonb:='[]'; v_require_keys jsonb:='[]'; v_first bigint; v_last bigint; v_ctl bigint; v_maxbig bigint;
  v_prov_epoch int; v_prov_fiber uuid; v_prov_ep uuid; v_prov_cv text; v_prov_digest text; v_expected jsonb;
- v_eff jsonb; v_realm text;
+ v_eff jsonb; v_realm text; v_err jsonb;
  v_resolved record;
 BEGIN
  IF p_principal IS DISTINCT FROM v24_cordis.principal_id(session_user) THEN
@@ -824,6 +844,8 @@ BEGIN
     OR NOT v24_cordis.json_hex64(v_item->'input'->'contract'->'handler_digest') THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','successor_kind'));
    END IF;
+  ELSIF v_item->>'kind'='dispatch' THEN
+   NULL;
   ELSE
    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','successor_kind'));
   END IF;
@@ -906,7 +928,7 @@ BEGIN
   WHEN 'p0' THEN ARRAY['fiber_control','fiber_retire']
   WHEN 'p1' THEN ARRAY['episode_begin']
   WHEN 'p2' THEN ARRAY['contribution_append','episode_progress']
-  WHEN 'p4' THEN ARRAY['episode_activate']
+  WHEN 'p4' THEN ARRAY['episode_activate','dispatch_open','listener_append','listener_settle','dispatch_settle']
   WHEN 'dispose' THEN ARRAY['install_dispose_request','fiber_dispose_request',
    'fiber_dispose_finish','install_dispose_finish']
   WHEN 'teardown' THEN ARRAY['fiber_retire','episode_close_start','contributions_withdraw']
@@ -1117,9 +1139,8 @@ BEGIN
    OR (v_ev->'payload'->>'epoch')::int IS DISTINCT FROM ep.epoch THEN
    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','event_shape'));
   END IF;
-  IF p_delta->'successors' IS DISTINCT FROM v24_cordis.run_start_successor(f.id) THEN
-   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p4_successor'));
-  END IF;
+  v_err:=v24_cordis.validate_activation_event(p_effect_id,f.id,p_delta,session_user);
+  IF v_err IS NOT NULL THEN RETURN v_err; END IF;
  ELSIF v_branch='p6' THEN
   IF p_delta IS DISTINCT FROM v24_cordis.p6_delta(p_effect_id,f.id) THEN
    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p6_diagnosis'));
@@ -1144,6 +1165,7 @@ DECLARE err jsonb; response jsonb; body jsonb:=p_outcome->'body'; item jsonb; v_
  v_sid uuid; v_ord int; v_fiber uuid; v_ep uuid; v_new_fiber uuid; v_new_ep uuid;
  v_constraint text; v_conflict_key text; v_branch jsonb; v_failure_ep v24_cordis.episodes%ROWTYPE;
  v_cid uuid; v_ok boolean; v_kind text; v_run v24_cordis.runs%ROWTYPE;
+ v_ready jsonb; v_dispatch_actor text; v_child uuid; v_event boolean:=false; v_n int; v_dispatch uuid;
 BEGIN
  SELECT EXISTS(SELECT 1 FROM v24_cordis.effects WHERE id=p_effect_id) INTO v_cont;
  IF v_cont THEN
@@ -1156,6 +1178,9 @@ BEGIN
  IF v_kind IN ('run_start','model_call','tool_call') THEN
   err:=v24_cordis.validate_run_domain(p_effect_id,p_principal,p_outcome,p_delta);
   IF err IS NOT NULL THEN RETURN err; END IF;
+ ELSIF v_kind='listener_call' THEN
+  err:=v24_cordis.validate_event_domain(p_effect_id,p_principal,p_outcome,p_delta,p_closure);
+  IF err IS NOT NULL THEN RETURN err; END IF;
  ELSIF p_outcome->>'class'='command' THEN
   err:=v24_cordis.validate_domain(p_effect_id,p_principal,p_outcome,p_delta,p_closure,p_address_conflict);
   IF err IS NOT NULL THEN RETURN err; END IF;
@@ -1164,10 +1189,21 @@ BEGIN
   SELECT (x->>'fiber')::uuid,(x->>'episode')::uuid INTO v_new_fiber,v_new_ep
    FROM (SELECT v24_cordis.command_binding(body) x) q;
  END IF;
+ v_event:=EXISTS(SELECT 1 FROM jsonb_array_elements(p_delta->'domain') x
+  WHERE x.value->>'op' IN ('dispatch_open','listener_append','listener_settle','dispatch_settle'));
  FOR item IN SELECT value FROM jsonb_array_elements(p_delta->'successors') x
   ORDER BY (x.value->>'ordinal')::int LOOP
   v_sid:=v24_cordis.successor_effect_id(v_actor,p_effect_id,(item->>'ordinal')::int,item->>'kind');
   v_emitted:=v_emitted||jsonb_build_array(v_sid::text);
+ END LOOP;
+ FOR item IN SELECT value FROM jsonb_array_elements(p_delta->'domain') WITH ORDINALITY x(value,ord)
+  WHERE x.value->>'op'='listener_append' ORDER BY ord LOOP
+  v_dispatch_actor:=v_actor;
+  IF v_kind='listener_call' THEN
+   SELECT request_actor INTO v_dispatch_actor FROM v24_cordis.effects
+    WHERE id=(item->>'dispatch_id')::uuid; END IF;
+  v_emitted:=v_emitted||jsonb_build_array(v24_cordis.successor_effect_id(v_dispatch_actor,
+   (item->>'dispatch_id')::uuid,(item->>'ordinal')::int,'listener_call')::text);
  END LOOP;
  response:=jsonb_build_object('v',1,'disposition','committed','effect_id',p_effect_id,
   'emitted',v_emitted,'revision',0,'claim',NULL);
@@ -1343,9 +1379,6 @@ BEGIN
     VALUES(p_effect_id,body->>'kind','succeeded',v_new_fiber,v_new_ep,body->'payload',session_user,
      p_outcome-'receipt_key',clock_timestamp());
   END IF;
-  bytes:=convert_to(v24_cordis.canonical_json(body->'payload'),'UTF8');
-  INSERT INTO v24_cordis.requests(principal_id,request_key,kind,request_bytes,request_digest,effect_id,response)
-   VALUES(p_principal,body->>'request_key',body->>'kind',bytes,sha256(bytes),p_effect_id,response);
  ELSE
   UPDATE v24_cordis.effects SET status=p_delta->'receipt'->>'status',outcome=p_outcome-'receipt_key',
    claim_owner=NULL,lease_until=NULL,settled_at=clock_timestamp() WHERE id=p_effect_id;
@@ -1378,10 +1411,67 @@ BEGIN
     VALUES(v24_cordis.successor_effect_id(v_actor,p_effect_id,v_ord,item->>'kind'),
      p_effect_id,v_ord,v_run.owner_fiber_id,v_run.owner_episode_id,v_run.id,
      item->>'kind','ready',item->'input',v_actor);
+  ELSIF item->>'kind'='dispatch' THEN
+   SELECT fiber_id,episode_id INTO v_fiber,v_ep FROM v24_cordis.effects WHERE id=p_effect_id;
+   v_dispatch:=(item->'input'->>'dispatch_id')::uuid;
+   IF v_dispatch<>v24_cordis.successor_effect_id(v_actor,p_effect_id,v_ord,'dispatch') THEN
+    RAISE EXCEPTION 'dispatch successor identity' USING ERRCODE='23514'; END IF;
+   INSERT INTO v24_cordis.effects(id,parent_id,ordinal,fiber_id,episode_id,kind,status,input,request_actor)
+    VALUES(v_dispatch,p_effect_id,v_ord,v_fiber,v_ep,'dispatch','ready',item->'input',v_actor);
   ELSE
    RAISE EXCEPTION 'unsupported lifecycle successor kind' USING ERRCODE='0A000';
   END IF;
  END LOOP;
+ FOREACH v_op IN ARRAY ARRAY['dispatch_open','listener_append','listener_settle','dispatch_settle'] LOOP
+  FOR item IN SELECT value FROM jsonb_array_elements(p_delta->'domain') WITH ORDINALITY x(value,ord)
+   WHERE x.value->>'op'=v_op ORDER BY ord LOOP
+   IF v_op='dispatch_open' THEN
+    IF NOT EXISTS(SELECT 1 FROM v24_cordis.effects WHERE id=(item->>'dispatch_id')::uuid
+     AND kind='dispatch') THEN RAISE EXCEPTION 'dispatch open target' USING ERRCODE='23514'; END IF;
+   ELSIF v_op='listener_append' THEN
+    SELECT request_actor INTO v_dispatch_actor FROM v24_cordis.effects
+     WHERE id=(item->>'dispatch_id')::uuid AND kind='dispatch';
+    IF NOT FOUND THEN RAISE EXCEPTION 'listener append parent' USING ERRCODE='23514'; END IF;
+    v_child:=v24_cordis.successor_effect_id(v_dispatch_actor,(item->>'dispatch_id')::uuid,
+     (item->>'ordinal')::int,'listener_call');
+    INSERT INTO v24_cordis.effects(id,parent_id,ordinal,fiber_id,episode_id,kind,status,input,request_actor)
+     VALUES(v_child,(item->>'dispatch_id')::uuid,(item->>'ordinal')::int,
+      (item->'input'->>'provider_fiber_id')::uuid,(item->'input'->>'provider_episode_id')::uuid,
+      'listener_call','ready',item->'input',v_dispatch_actor);
+   ELSIF v_op='listener_settle' THEN
+    UPDATE v24_cordis.effects SET status=CASE item->'outcome'->>'class'
+      WHEN 'success' THEN 'succeeded' ELSE 'failed' END,outcome=item->'outcome',
+      claim_owner=NULL,lease_until=NULL,settled_at=clock_timestamp()
+     WHERE id=(item->>'effect_id')::uuid AND kind='listener_call' AND status='ready'
+      AND attempt=0 AND fence=0 AND claim_owner IS NULL AND lease_until IS NULL;
+    IF NOT FOUND THEN RAISE EXCEPTION 'listener settle target' USING ERRCODE='23514'; END IF;
+   ELSE
+    UPDATE v24_cordis.effects SET status='succeeded',outcome=jsonb_build_object('v',1,
+      'class','success','claim','null'::jsonb,'body',jsonb_build_object('kind','dispatch',
+      'result',item->'result')),claim_owner=NULL,lease_until=NULL,settled_at=clock_timestamp()
+     WHERE id=(item->>'dispatch_id')::uuid AND kind='dispatch' AND status='ready'
+      AND attempt=0 AND fence=0;
+    IF NOT FOUND THEN RAISE EXCEPTION 'dispatch settle target' USING ERRCODE='23514'; END IF;
+   END IF;
+  END LOOP;
+ END LOOP;
+ PERFORM v24_cordis.event_apply_postconditions(p_delta);
+ IF v_event OR v_kind='listener_call' THEN
+  SELECT count(*) INTO v_n FROM v24_cordis.effects
+   WHERE id IN (SELECT jsonb_array_elements_text(v_emitted)::uuid);
+  IF v_n<>jsonb_array_length(v_emitted) THEN
+   RAISE EXCEPTION 'emitted set mismatch' USING ERRCODE='23514'; END IF;
+  SELECT coalesce(jsonb_agg(jsonb_build_object('effect_id',x.id,'kind',x.kind) ORDER BY x.id),'[]')
+   INTO v_ready FROM v24_cordis.effects x
+   WHERE x.id IN (SELECT jsonb_array_elements_text(v_emitted)::uuid) AND x.kind='listener_call'
+    AND x.status='ready' AND x.input->'descriptor'->'exec'->>'type'='host';
+  response:=response||jsonb_build_object('ready_effects',v_ready);
+ END IF;
+ IF p_outcome->>'class'='command' THEN
+  bytes:=convert_to(v24_cordis.canonical_json(body->'payload'),'UTF8');
+  INSERT INTO v24_cordis.requests(principal_id,request_key,kind,request_bytes,request_digest,effect_id,response)
+   VALUES(p_principal,body->>'request_key',body->>'kind',bytes,sha256(bytes),p_effect_id,response);
+ END IF;
  RETURN response;
 END $$;
 CREATE FUNCTION v24_cordis.advance(p_effect_id uuid,p_outcome jsonb) RETURNS jsonb
@@ -1488,8 +1578,14 @@ BEGIN
   IF NOT FOUND THEN RETURN v24_cordis.error_v1('not_found_or_denied'); END IF;
   kind:=eff.kind;
   IF NOT v24_cordis.role_allowed(session_user,cls,kind,cls) THEN RETURN v24_cordis.error_v1('unauthorized'); END IF;
+  IF eff.kind='dispatch' OR (eff.kind='listener_call'
+   AND eff.input->'descriptor'->'exec'->>'type' IS DISTINCT FROM 'host') THEN
+   RETURN v24_cordis.error_v1('unauthorized'); END IF;
   IF eff.status IN ('succeeded','failed','unknown','cancelled') THEN
    IF cls<>'claim' AND eff.outcome IS NOT NULL AND eff.outcome-'receipt_key'=p_outcome-'receipt_key' THEN
+    IF eff.kind='listener_call' THEN
+     RETURN jsonb_build_object('v',1,'disposition','replay','effect_id',p_effect_id,'emitted','[]'::jsonb,
+      'revision',0,'claim',NULL,'ready_effects','[]'::jsonb); END IF;
     RETURN jsonb_build_object('v',1,'disposition','replay','effect_id',p_effect_id,'emitted','[]'::jsonb,'revision',0,'claim',NULL);
    END IF;
    RETURN v24_cordis.error_v1('receipt_conflict');

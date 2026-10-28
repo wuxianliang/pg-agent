@@ -49,6 +49,8 @@ LANGUAGE plpgsql VOLATILE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE item jsonb; ok boolean;
 BEGIN
  FOR item IN SELECT value FROM jsonb_array_elements(p_delta->'domain') LOOP
+  IF item->>'op' IN ('dispatch_open','listener_append','listener_settle','dispatch_settle') THEN
+   CONTINUE; END IF;
   ok:=true;
   CASE item->>'op'
   WHEN 'scope_create' THEN
@@ -719,7 +721,10 @@ BEGIN
   RETURN jsonb_build_object('kind','unsupported','reason','host_io'); END IF;
  IF EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.id IS DISTINCT FROM p_effect_id
    AND x.status='unknown' AND (x.fiber_id=f.id
-   OR x.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=f.id))) THEN
+   OR x.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=f.id)))
+  OR EXISTS(SELECT 1 FROM v24_cordis.effects x JOIN v24_cordis.effects p ON p.id=x.parent_id
+   WHERE x.kind='listener_call' AND x.status='unknown' AND p.kind='dispatch'
+    AND p.fiber_id=f.id AND p.episode_id=ep.id AND p.input->>'mode'<>'emit') THEN
   RETURN jsonb_build_object('kind','blocked_unknown','reason','effect'); END IF;
  IF EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.id=ANY(batch_ids)
    AND NOT ((c.inverse->>'op'='delete_row' AND c.kind IN ('service','listener'))

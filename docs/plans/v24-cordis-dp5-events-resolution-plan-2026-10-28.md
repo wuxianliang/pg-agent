@@ -1,6 +1,6 @@
 # Cordis v2 DP5：事件派发与描述符解析 Deep Plan
 
-> 状态：规划完成；B0 已于 2026-10-28 在 DP4 HEAD `ba66776` 上完成重裁并通过容量准入；W1/W2 已在该 HEAD 上实施并分别通过 32/32、33/33 命令（W2 为 31 继承 + `CDP5-R` + `CDP5-E`）并本地提交；W3 未启动。本文相对路径以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含 Cordis。DP1–DP4 已完成；DP4 W5 及两次收尾补正已本地提交，DP5 在 B0 重裁后接续。本文把 W1/W2 写成有实跑证据的已交付里程碑，W3+ 仍只写实施合同。
+> 状态：规划完成；B0 已于 2026-10-28 在 DP4 HEAD `ba66776` 上完成重裁并通过容量准入；W1/W2 已在该 HEAD 上实施并分别通过 32/32、33/33 命令（W2 为 31 继承 + `CDP5-R` + `CDP5-E`）并本地提交；W3 已在 W2 HEAD `20599f6` 上实施，交付 `44_events.sql`、原子 producer/execution 闭环与 `CDP5-D`，34/34 命令串行通过并本地提交。W4/W5 未启动。本文相对路径以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含 Cordis。DP1–DP4 已完成；DP4 W5 及两次收尾补正已本地提交，DP5 在 B0 重裁后接续。本文把 W1/W2/W3 写成有实跑证据的已交付里程碑，W4+ 仍只写实施合同。
 >
 > 文中“现状”是规划快照，不是执行时 HEAD；“拟新增”是实施合同，不代表代码已存在。执行前重新记录 HEAD、工作区和所有引用符号，禁止把另一个会话的未提交工作作为 DP5 已完成事实。
 
@@ -326,6 +326,8 @@ helper预计净增790–1020行；5500上限相对B0实测4338提供1162行余�
 
 **W2 实测（2026-10-28）：**40=1589、41=1473、42=1015、43=668，合计**4745≤5500**，`R=755`；DDL 仍 465≤900；私有函数144；manifest18；十表；唯一DEFINER `advance`、public EXECUTE 0。W2净增149行且未新增helper文件/loader项/44。R=755只是W3准入值，不是W3–W5容量证明。
 
+**W3 实测（2026-10-28）：**40=1685、41=1473、42=1020、43=700、44=622，合计**5500≤5500**，`R=0`；DDL 仍465≤900；私有函数162；manifest19；十表；唯一DEFINER `advance`、public EXECUTE 0。W3净增755行（其中44=622，40/42/43净增133），新增44与loader19，并把budget谓词扩为五文件树；实测临时五文件树5500通过/5501拒绝。没有删模式、validator、limit或测试来满足预算；最终树恰在上限。
+
 ## 6. Gate与verification specification
 
 ### 6.1 共用纪律
@@ -497,7 +499,23 @@ Goal/Done when/Key files/Dependencies/Size见§3。先只读确认DP4 W5已交�
 
 增加44并同步loader19、HELPERS五文件、三处manifest gate；一次交付p4producer/快照/closure、四typed op/virtual receipt、in_db cascade、host claim/receipt、ready_effects/execution通道、父子ID、请求response缓存一致性、source/provider fence、全部validator与postcondition及D。仅此时以证据替换旧“listener不可claim”，dispatch/in_db仍不可claim。重跑全部旧gate与已交付E/D/R、预算和冻结，再收尾工件commit+push。
 
-Result：未执行。
+**Result（2026-10-28，implemented, verified and locally committed）：**在 worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`、分支 `v24`、HEAD `20599f6` 上完成 W3。新增 `v24/cordis/sql/44_events.sql`（622 行）并插入 canonical order 43 后 50 前；`v24/cordis/load.py` 18→19、`helper_budget.HELPERS` 四→五、五文件临时树 5500/5501；DP1 environment/kernel、DP2 boundaries、DP3 boundaries、DP4 closeout 的 manifest/budget 断言精确更新。
+
+实现：
+
+- `44_events.sql` 新增 `event_policy`/`listener_exec`/`listener_facts`/`listener_contract`/`listener_available`/`listener_call_input`/`dispatch_fold`/`dispatch_progress`/`activation_scope_chain`/`activation_candidates`/`activation_candidate_refs`/`activation_event_plan`/`activation_successors`/`listener_call_readable`/`event_delta`/`validate_event_domain`/`validate_activation_event`/`event_apply_postconditions`。
+- `41_lifecycle.sql` 的 p4 分支用 `activation_event_plan` 生成 run_start+flat dispatch successors 与 typed ops，并在 `validate_domain` p4 调用 `validate_activation_event`；`reconcile_command_seed` 只对 p4 追加候选 scope/provider refs。
+- `40_advance.sql` 支持 dispatch successor、`ready_effects`/`execution`、四 typed op 的 applier 与 event-stage postcondition；command request cache 移到事件阶段与 response-set 校验之后；`interpret_settlement` 路由 `listener_call`；`role_allowed` 仅对 host `listener_call` 开放 service claim/success/failure/unknown，dispatch/in_db 外部执行拒绝为 `unauthorized`；`event_payload_valid` 增 `dispatch_progress`。
+- `42_teardown.sql` 的 `assert_delta_applied` 跳过 event ops（由 event-stage postcondition 接管），`p6_plan` 增 source 跨 provider non-emit unknown 屏障。
+- `43_loop.sql` 的 `claim_contract`/`claim_execution`/`settlement_seed` 增 host `listener_call` 分支；settlement seed 精确纳入 parent/siblings/snapshot refs/provider installs/pins，其他 kind 保持 DP4 字节。
+- 五模式：emit 只 `generated`；parallel 乱序 receipt 且 unknown 不 seal；serial/bail 只创建一个活动 next，仅 success 且 `value.bail` 为 JSON boolean true 短路；waterfall 传递 acc/error，不恢复同步 next 控制权；未知 receipt 合法且不 event/续链/seal；未创建项 released/withdrawn 生成内部 `listener_unavailable` failure。
+- 独立验证：`validate_activation_event` 重算 producer 并比对 successors/ops、逐项重验 append descriptor/contract 与 in_db settle；`validate_event_domain` 重算 `event_delta` 做字节比对，再独立检查 provider readability、append/settle/exec/result/event payload；`event_apply_postconditions` 检查落库行；`dispatch_fold` 对 parallel/emit 扫描全部 ordinal、对 sequential 只走连续前缀。
+
+测试：`v24/cordis/dp5/test_dispatch.py` 交付 D1–D12：emit 延迟 host/source 退出 fence；parallel 乱序+双连接竞争最后 receipt；serial JSON true/string true/forged ordinal/unavailable；bail first-hit/null/failure；waterfall const/append/acc/failure/invalid_acc；tamper unauthorized/forged/released-provider；unknown/p6 blocked_unknown；command byte replay/host replay empty/post-event rollback；host claim execution/closing drain/stale token；scope 链/父子/兄弟排除与同 priority/seq UUID 排序；15/16+dispatch 与 run_start+14/15、closure 512/513。W2 `test_listeners.py` 的旧“无 producer”断言按 W3 生产事实更新（E2 4 emitted、E5 17-created budget、E7 真实 dispatch/listener effects），注册/撤销断言未削弱。
+
+实跑：31 条继承命令逐条独立进程串行后依次跑 `CDP5-R`/`CDP5-E`/`CDP5-D`，**34/34 exit 0，173 秒**（`/tmp/dp5-w3-gates/gates.tsv`、`gate-01..34.log`）。helper 实测 **5500≤5500**，`R=0`；DDL 465≤900；manifest 19；十表；私有函数 162；唯一 `SECURITY DEFINER` 为 `advance`，public EXECUTE 0；十二份冻结 `v24/sql` SHA-256、`v24/load.py` 与 `v24/s1`–`s12` 未变，`git diff --check` exit 0。DP1-K0 临时五文件树 5500 通过/5501 拒绝。发布目标仍未由用户点名：W3 只做本地提交，不 push、不推断 `origin/main` 或 `origin/v24`。
+
+边界：W3 只交付 p4 `fiber.activated` producer；其他 event 可注册但无 producer。waterfall 仍无同步 next 控制权；emit 只保证生成；`sync_reads=false` 不证明 host 外部独立性；unknown 外部对账仍归 DP6。W4 R5–R7 与 W5 `CDP5-B`/全量收尾未执行。
 
 ### W4 — refinement与偏差
 
@@ -552,4 +570,4 @@ Result：未执行。
 
 没有留给实现者临场选择的核心算法问题。以下是显式交接条件：DP4 HEAD `ba66776` 的实际接口与31条gate已由B0接收；5500/900准入已在`R=1162`实测通过；用户核准的远程/分支目标仍未解决，发布留给orchestration。scope向祖先路由与仅fiber.activated producer是可被用户覆盖的Oracle保守假设。任何新证据推翻已裁决合同，先更新计划/预算/测试，不能在实现中悄悄扩大或缩减。
 
-推荐下一步`rp-build`按B0开始；若使用`rp-orchestrate`，共享40–43与同名gate DB的实现/测试仍串行，不能把四typed op与producer拆成独立不完整里程碑。本文仅完成计划，所有Result均未执行。
+推荐下一步`rp-build`进入 W4（R5–R7 与 refinement 偏差），随后 W5 全量 `CDP5-B` 收尾；共享 40–44 与同名 gate DB 的实现/测试仍串行，不能把四 typed op 与 producer 拆成独立不完整里程碑。截至 2026-10-28，B0-revised、W1、W2、W3 已有实跑 Result；W4/W5 仍未执行。

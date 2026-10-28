@@ -1,6 +1,6 @@
 # Cordis v2 DP5 Conformance Matrix
 
-B0 re-adjudication executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, at HEAD `ba66776` plus the user's uncommitted `41_lifecycle.sql` refactor and `helper_budget.py` 5500 cap. W1 was then implemented on the same HEAD and verified by the inherited 31 commands plus `CDP5-R`; W2 was implemented on W1 HEAD `c3ddd94` and verified by the 31 inherited commands plus `CDP5-R` and `CDP5-E`. This matrix records B0, W1 and W2: DP4 handoff inspection, the current `43_loop.sql` stability check, the relaxed 5500 capacity contract, the 31-command pre-DP5 regression, the admission decision, the W1 overlay/intercept/effective-descriptor implementation, the W2 listener registration/withdrawal implementation, and the 33-command W2 regression. W3+ does not exist.
+B0 re-adjudication executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, at HEAD `ba66776` plus the user's uncommitted `41_lifecycle.sql` refactor and `helper_budget.py` 5500 cap. W1 was then implemented on the same HEAD and verified by the inherited 31 commands plus `CDP5-R`; W2 was implemented on W1 HEAD `c3ddd94` and verified by the 31 inherited commands plus `CDP5-R` and `CDP5-E`. This matrix records B0, W1, W2 and W3: DP4 handoff inspection, the current `43_loop.sql` stability check, the relaxed 5500 capacity contract, the 31-command pre-DP5 regression, the admission decision, the W1 overlay/intercept/effective-descriptor implementation, the W2 listener registration/withdrawal implementation, the 33-command W2 regression, and the W3 atomic event producer/execution closure with the 34-command serial regression. W4–W5 do not exist yet.
 
 The prior blocked-at-5000 B0 record is retained in the plan §9 as history; it is superseded by this re-adjudication. DP1–DP4 historical acceptance records are not rewritten.
 
@@ -598,3 +598,110 @@ B0 did not commit and did not push. W1 is committed locally on `v24` after the 3
 - No `CDP5-D/B` script or database gate, and no R5–R7 (W4). Only `test_resolution.py` (R1–R4/R8) and `test_listeners.py` (E1–E7) exist and were run; E7's effect rows are owner fixtures.
 - No DP6 scanner/recovery/unknown-reconciliation work; no claim that G4 is complete.
 - No push for B0, W1 or W2. Capacity and the W1/W2 local commits are proven; remote publication is unresolved.
+
+
+## W3 implementation (2026-10-28, HEAD `20599f6` plus W3)
+
+W3 is a local, verified milestone. It adds `v24/cordis/sql/44_events.sql`, registers it after `43_loop.sql` and before `50_permissions.sql`, expands the shared helper budget predicate to a five-file tree, and updates only the manifest/budget assertions required by the 19-entry manifest.
+
+### W3 environment
+
+| Item | Observed value |
+|---|---|
+| `pwd -P` | `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` |
+| branch / upstream | `v24` / `origin/v24` |
+| HEAD at W3 start | `20599f6`, subject `v24: implement Cordis DP5 W2 listener registration and withdrawal` |
+| W3 changed helpers | `40_advance.sql`, `41_lifecycle.sql`, `42_teardown.sql`, `43_loop.sql`, new `44_events.sql` |
+| loader / budget | `v24/cordis/load.py` 18→19; `helper_budget.HELPERS` four→five; limit unchanged 5500 |
+| manifest/budget assertions | DP1 environment/kernel, DP2 boundaries, DP3 boundaries, DP4 closeout |
+| new gate | `v24/cordis/dp5/test_dispatch.py` (D1–D12) |
+| frozen `v24/sql` / `v24/s1`–`s12` | `git diff --exit-code 57e2c1e -- ...` exit 0; `git diff --check` exit 0 |
+
+### W3 capacity
+
+Measured on the final tree with the shared predicate:
+
+| Item | Value |
+|---|---|
+| `40_advance.sql` | 1685 |
+| `41_lifecycle.sql` | 1473 |
+| `42_teardown.sql` | 1020 |
+| `43_loop.sql` | 700 |
+| `44_events.sql` | 622 |
+| helper total | **5500** |
+| `R = 5500 − total` | **0** |
+| DDL prefix | **465≤900** |
+| manifest | **19** |
+| domain tables | **10** |
+| private functions | **162** |
+| unique `SECURITY DEFINER` | **`advance`** |
+| public EXECUTE | **0** |
+| no VIEW / EXTENSION | **yes** |
+
+`[CDP1-K0] helper budget 5500<=5500` admits a temporary five-file tree of exactly 5500 physical lines and rejects 5501. No mode, validator, limit or test was removed; the total is exactly at the user-authorized cap.
+
+### W3 34-command serial regression
+
+One `uv run python` process at a time, no concurrency, no joined commands, stopping on the first non-zero exit; s8 before s7. **34/34 exit 0, 173 s.** Summary `/tmp/dp5-w3-gates/gates.tsv`; per-command logs `/tmp/dp5-w3-gates/gate-01..34.log`.
+
+| # | Command | Exit | Seconds |
+|---:|---|---:|---:|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 1 |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1 |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 2 |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 1 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 14 |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3 |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 5 |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3 |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 3 |
+| 10 | `uv run python v24/load.py` | 0 | 1 |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1 |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 2 |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2 |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 2 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 4 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 6 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 10 |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3 |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 10 |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 6 |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 6 |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 6 |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 6 |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 6 |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 11 |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 9 |
+| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 14 |
+| 32 | `uv run python v24/cordis/dp5/test_resolution.py` | 0 | 4 |
+| 33 | `uv run python v24/cordis/dp5/test_listeners.py` | 0 | 5 |
+| 34 | `uv run python v24/cordis/dp5/test_dispatch.py` | 0 | 12 |
+
+### W3 evidence
+
+| Item | Evidence |
+|---|---|
+| Producer | Only p4 `fiber.activated`; source/ancestor scope + source virtual episode; descendants/siblings excluded; flat dispatch successors after the retained run_start; mode group order; no p4 delta change when no listener matches |
+| Snapshot/IDs | `priority DESC, seq, fiber_id, episode_id, contribution_id`; dispatch ID from p4 effect+ordinal; child ID from dispatch+ordinal; parent owner source, child owner provider, `run_id=NULL` |
+| Typed ops | `dispatch_open`, `listener_append`, `listener_settle`, `dispatch_settle` in the domain after flat successors; no dispatch cursor/acc/state column; request cache inserted only after the event phase |
+| Virtual receipts | Planner and independent validator overlay the current receipt over DB siblings; unknown not joined; D2 concurrent last receipt; D3/D4/D5 folds |
+| in_db | `IMMUTABLE` const/acc/append/fail; same-advance terminal children; no claim/lease; `invalid_acc` legal failure; replay does not re-evaluate |
+| Host path | `ready_effects` only for created claimable host children; claim `execution:{descriptor,descriptor_digest}`; success/failure/unknown receipt; same-LOGIN service path; D10 drain after provider closing |
+| Modes | emit D1/D9; parallel D2; serial D3; bail D4; waterfall D5; D3b unavailable |
+| Fences | D7 unknown source/provider P6; D6 released provider dependency_unresolved; D10 closing provider drain; emit source exit while provider child fenced |
+| Validation/apply | D3 forged planner zero-write; D6 forged receipt/provider; D8 post-event rollback; `event_apply_postconditions`; independent `validate_event_domain`/`validate_activation_event` |
+| Limits | D12 created 16/17, run_start 16/17, closure 512/513; input body/key/depth guard |
+| Replay | D8 command cache byte-identical incl. emitted/ready_effects; host replay both arrays empty; no duplicate rows |
+
+W3 does **not** claim W4's independent Python five-mode reference/purity/host ledger (R5–R7), W5's `CDP5-B` and final closeout, any producer other than p4 `fiber.activated`, scanner/recovery, external unknown reconciliation, or any push. The W2 script's old "no dispatch producer" assertions were revised for the W3 producer as recorded in the ledger; registration/revocation assertions were not weakened.
+
+## W3 not covered
+
+- W4: independent Python synchronisation reference for all five modes, pure dependency closure/read-table probe, P7.1/P7.3 host assumptions, emit/waterfall named deviations, mixed-generation regression, no-config DP4 digest evidence, R5–R7.
+- W5: `CDP5-B` all-boundary gate, full old+new serial closeout, final frozen/hash/ACL/manifest record, push-ready result.
+- DP6: scanner/fair recovery, external unknown reconciliation, upgrade/HMR, cancel/steer/respond, spawn/child runs, multi-host, cell/reservation production writers, realm ACL, `thisArg`, synchronous disposer chains.
+- Publication: W3 is local only; the target remains unresolved.

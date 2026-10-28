@@ -28,7 +28,7 @@ from test_kernel import host_seed
 CORDIS = Path(__file__).resolve().parents[1]
 ROOT = Path(__file__).resolve().parents[3]
 SQL = CORDIS / 'sql'
-HELPERS = ('40_advance.sql', '41_lifecycle.sql', '42_teardown.sql', '43_loop.sql')
+HELPERS = ('40_advance.sql', '41_lifecycle.sql', '42_teardown.sql', '43_loop.sql', '44_events.sql')
 DDL = ('10_installs.sql', '11_scopes.sql', '12_fibers.sql', '13_episodes.sql',
        '14_contributions.sql', '15_pins.sql', '16_runs.sql', '17_effects.sql',
        '20_relations.sql', '30_triggers.sql')
@@ -59,15 +59,15 @@ def _source():
 
 def test_b1_b2_layout(db):
     names = sorted(p.name for p in SQL.glob('*.sql'))
-    assert len(names) == 18, names
+    assert len(names) == 19, names
     spec = importlib.util.spec_from_file_location('cordis_dp4_loader', CORDIS / 'load.py')
     loader = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(loader)
     assert tuple(loader.SQL_LOAD_ORDER) == tuple(loader.CANONICAL_ORDER)
-    assert len(loader.CANONICAL_ORDER) == 18
+    assert len(loader.CANONICAL_ORDER) == 19
     assert set(names) == set(loader.CANONICAL_ORDER)
     assert loader.CANONICAL_ORDER.index('42_teardown.sql') < loader.CANONICAL_ORDER.index(
-        '43_loop.sql') < loader.CANONICAL_ORDER.index('50_permissions.sql')
+        '43_loop.sql') < loader.CANONICAL_ORDER.index('44_events.sql') < loader.CANONICAL_ORDER.index('50_permissions.sql')
     loader.self_check_manifest()
     prove_helper_budget_boundary()
     total, counts = assert_helper_budget(SQL)
@@ -104,7 +104,7 @@ def test_b1_b2_layout(db):
                                   "AND has_function_privilege(%s,p.oid,'EXECUTE') ORDER BY p.proname",
                             (db.roles[alias],))
             assert allowed == [('advance',)], (alias, allowed)
-    print(f'[CDP4-B1] tables=10 manifest=18 helpers={total} 43={counts["43_loop.sql"]} '
+    print(f'[CDP4-B1] tables=10 manifest=19 helpers={total} 43={counts["43_loop.sql"]} '
           f'ddl={ddl} definer=advance public_execute=0 views/extensions=0')
     print(f'[CDP4-B2] {LIMIT}/{LIMIT + 1} helper-tree predicate reran; DDL {ddl}<=900; 43<=700')
 

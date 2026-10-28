@@ -489,14 +489,16 @@ def test_committed_probe(production,probe):
             no_write(probe,conn,*command(probe,key='durable',payload={'x':1}),'request_conflict')
             blocker.rollback()
     finally: replace_function(probe,'discover_closure',definitions['discover_closure'])
-    # Post-effect/request fault: an events trigger proves both rows already exist, then raises.
+    # W3 B1: the command effect exists before events, while the request cache is
+    # deliberately written after the event phase. The trigger proves that order,
+    # then raises so the whole effect/event/cache transaction must roll back.
     with contextlib.closing(probe.connect('owner')) as owner:
         query(owner,sql.SQL('SET ROLE {}').format(sql.Identifier(probe.groups['owner'])))
         query(owner,"""CREATE FUNCTION v24_cordis.probe_fault() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN IF NOT EXISTS(SELECT 1 FROM v24_cordis.effects WHERE id=NEW.effect_id)
-          OR NOT EXISTS(SELECT 1 FROM v24_cordis.requests WHERE effect_id=NEW.effect_id) THEN
+          OR EXISTS(SELECT 1 FROM v24_cordis.requests WHERE effect_id=NEW.effect_id) THEN
           RAISE EXCEPTION 'wrong injection point' USING ERRCODE='U0002'; END IF;
-          RAISE EXCEPTION 'post effect/request fault' USING ERRCODE='U0001'; END $$;
+          RAISE EXCEPTION 'post effect/pre-cache fault' USING ERRCODE='U0001'; END $$;
         CREATE TRIGGER probe_fault BEFORE INSERT ON v24_cordis.events FOR EACH ROW EXECUTE FUNCTION v24_cordis.probe_fault();""")
         owner.commit(); before=snapshot(owner); owner.rollback()
         fault_payload=install_payload()
@@ -542,7 +544,7 @@ def test_committed_probe(production,probe):
 
 
 def main():
-    assert len(CANONICAL_ORDER) == 18 and len(list((Path(__file__).resolve().parents[1] / 'sql').glob('*.sql'))) == 18
+    assert len(CANONICAL_ORDER) == 19 and len(list((Path(__file__).resolve().parents[1] / 'sql').glob('*.sql'))) == 19
     prove_helper_budget_boundary()
     total,counts=assert_helper_budget(Path(__file__).resolve().parents[1]/'sql')
     print(f'[CDP1-K0] helper budget {total}<={LIMIT} {counts}; predicate admits a {LIMIT}-line tree and rejects {LIMIT + 1}')

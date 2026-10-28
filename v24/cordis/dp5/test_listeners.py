@@ -2,9 +2,9 @@
 
 Run with: uv run python v24/cordis/dp5/test_listeners.py
 
-E1-E7 are the W2 registration/revocation subset. Ordering/unavailable/real
-drain are W3 D evidence and are not claimed here; no dispatch producer,
-listener_call execution, host receipt or event planner is exercised.
+E1-E7 are the W2 registration/revocation subset. W3 now provides the p4
+producer and the D1-D12 event closure; this script still does not claim
+ordering/unavailable/real-drain evidence, which lives in test_dispatch.py.
 """
 from __future__ import annotations
 import contextlib
@@ -67,7 +67,6 @@ def activate_plan(db, fiber, total, control=0):
     parent, result = commit_child(db, parent,
                                   reconcile_payload(fiber, 'advance', control + 1))
     assert result.get('disposition') == 'committed', result
-    assert result['emitted'] == [], result
     assert one(db, 'SELECT state FROM v24_cordis.episodes e JOIN v24_cordis.fibers f '
                    'ON f.current_episode_id=e.id WHERE f.id=%s', (fiber,)) == 'active'
     return parent, batches, result
@@ -198,7 +197,8 @@ def test_e2_cross_batch(db, scope, owner):
     fiber = uuid.UUID(payload['fiber_id'])
     _, batches, final = activate_plan(db, fiber, 33)
     assert batches == [32, 1], batches
-    assert final['emitted'] == [], final
+    assert len(final['emitted']) == 4, final
+    assert final['ready_effects'] == [], final
     seqs = rows(db, 'SELECT seq,kind FROM v24_cordis.contributions WHERE fiber_id=%s '
                     'ORDER BY seq', (fiber,))
     assert [x[0] for x in seqs] == list(range(33))
@@ -411,9 +411,22 @@ def test_e5_declaration_bounds(db, scope, owner):
     valid = [listener(f'e5-{i:02d}', exec={'type': 'in_db', 'op': 'acc'})
              for i in range(16)]
     payload = declaration_with(owner, scope, listeners=valid)
-    create(db, payload)
+    effect, result, _ = commit_new(db, 'command_install', payload)
+    assert result.get('disposition') == 'committed', result
     plan = registration_plan(db, payload)
     assert len(plan) == 16 and all(x['kind'] == 'listener' for x in plan)
+    fiber = uuid.UUID(payload['fiber_id'])
+    parent, _, _ = p0(db, fiber, 0)
+    parent, begun = commit_child(db, parent, reconcile_payload(fiber, 'advance', 1))
+    assert begun.get('disposition') == 'committed', begun
+    parent, batch = commit_child(db, parent, reconcile_payload(fiber, 'advance', 1))
+    assert batch.get('disposition') == 'committed', batch
+    _, overflow = commit_child(db, parent, reconcile_payload(fiber, 'advance', 1))
+    assert overflow.get('error', {}).get('code') == 'invalid_outcome', overflow
+    assert one(db, 'SELECT state FROM v24_cordis.episodes e JOIN v24_cordis.fibers f '
+                   'ON f.current_episode_id=e.id WHERE f.id=%s', (fiber,)) == 'reloading'
+    assert one(db, "SELECT count(*) FROM v24_cordis.effects WHERE kind='dispatch' "
+                   'AND fiber_id=%s', (fiber,)) == 0
 
     seventeen = declaration_with(owner, scope,
                                  listeners=[listener(f'e5x-{i:02d}') for i in range(17)])
@@ -423,7 +436,7 @@ def test_e5_declaration_bounds(db, scope, owner):
                                     contracts={'listener_call': dict(HOST)})
     create(db, host_payload)
     assert registration_plan(db, host_payload)[0]['descriptor']['exec']['type'] == 'host'
-    print('  E5 16 declared listeners and a contracted host listener register; 17 reject invalid_args')
+    print('  E5 16 declared listeners register but p4 rejects the 17-created budget; 17 reject invalid_args')
 
     def reject(label, mutate):
         item = listener('bad')
@@ -530,8 +543,12 @@ def test_e7_no_pin_and_fixture_barrier(db, scope, owner):
                (listener_ids,)) == 0
     assert one(db, 'SELECT count(*) FROM v24_cordis.runs WHERE owner_fiber_id=%s',
                (fiber,)) == 0
+    # W3 supersedes the W2 no-producer assertion: activation now emits a dispatch
+    # and its in_db children. The registration/revocation evidence is unchanged.
     assert one(db, "SELECT count(*) FROM v24_cordis.effects WHERE fiber_id=%s "
-                   "AND kind IN ('dispatch','listener_call')", (fiber,)) == 0
+                   "AND kind='dispatch'", (fiber,)) == 1
+    assert one(db, "SELECT count(*) FROM v24_cordis.effects WHERE fiber_id=%s "
+                   "AND kind='listener_call'", (fiber,)) >= 1
     # Owner fixtures: W2 has no dispatch producer. These provider-owned rows prove
     # the existing P6 barrier facts without claiming a real listener drain.
     for index, (status, expected) in enumerate((('ready', 'deferred'),
@@ -583,7 +600,7 @@ def main():
         test_e6_withdraw_and_release(db, scope, owner)
         test_e7_no_pin_and_fixture_barrier(db, scope, owner)
     print('[passed] CDP5-E (W2: E1-E7 registration/revocation subset; '
-          'ordering/unavailable/real drain deferred to W3 D)')
+          'ordering/unavailable/real drain are W3 D evidence)')
 
 
 if __name__ == '__main__':

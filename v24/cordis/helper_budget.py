@@ -1,6 +1,6 @@
 """Physical-line budget for Cordis helper modules 40-49.
 
-The predicate is file-based: temporary 40/41/42/43 trees of LIMIT and
+The predicate is file-based: temporary 40-44 trees of LIMIT and
 LIMIT+1 lines are passed to assert_helper_budget itself. A literal integer
 comparison is not the proof.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-HELPERS = ('40_advance.sql', '41_lifecycle.sql', '42_teardown.sql', '43_loop.sql')
+HELPERS = ('40_advance.sql', '41_lifecycle.sql', '42_teardown.sql', '43_loop.sql', '44_events.sql')
 LIMIT = 5500
 
 
@@ -29,7 +29,7 @@ def assert_helper_budget(sql_dir):
 
 def _write_tree(root, total):
     # Four named modules so the required-file check is the same one used on the real tree.
-    shares = (total - 3, 1, 1, 1)
+    shares = (total - 4, 1, 1, 1, 1)
     for name, lines in zip(HELPERS, shares):
         (root / name).write_text('x\n' * lines)
 

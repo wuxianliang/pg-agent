@@ -1165,7 +1165,7 @@ DECLARE payload jsonb:=p_outcome->'body'->'payload'; action text:=payload->>'act
  f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE; inst v24_cordis.installs%ROWTYPE;
  err jsonb; built jsonb; v_epoch bigint; v_episode uuid; v_next int; v_len int; v_batch int; v_i int;
  v_reg bigint; v_seq int; item jsonb; v_key text; v_realm text; v_desc jsonb; seen text[]:=ARRAY[]::text[];
-  v_plan jsonb; v_kind text;
+  v_plan jsonb; v_kind text; v_plan_event jsonb;
   v_domain jsonb:='[]'::jsonb; v_ids jsonb:='[]'::jsonb; v_first int; v_last int; cid uuid;
 BEGIN
  IF action NOT IN ('on','off','retry','advance') THEN RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','reconcile_action')); END IF;
@@ -1230,7 +1230,6 @@ BEGIN
     'event_kind','fiber_target_requested','payload',jsonb_build_object('want_on',true,'control_seq',to_jsonb(f.control_seq+1)))),
    'successors',v24_cordis.reconcile_successor(f.id,f.control_seq+1));
  END IF;
-
  SELECT * INTO inst FROM v24_cordis.installs WHERE id=f.install_id;
  IF f.current_episode_id IS NULL THEN
   IF EXISTS(SELECT 1 FROM v24_cordis.episodes WHERE fiber_id=f.id AND closed_at IS NULL) THEN
@@ -1298,11 +1297,15 @@ BEGIN
  END IF;
  err:=v24_cordis.activation_bubble(v24_cordis.activation_total(f.id));
  IF err IS NOT NULL THEN RETURN err; END IF;
- RETURN jsonb_build_object('domain',jsonb_build_array(jsonb_build_object('op','episode_activate','episode_id',to_jsonb(ep.id))),
+ v_plan_event:=v24_cordis.activation_event_plan(f.id,p_effect_id,session_user);
+ IF v_plan_event ? 'error' THEN RETURN v24_cordis.error_v1('invalid_outcome',
+  jsonb_build_object('reason',v_plan_event->>'error')); END IF;
+ RETURN jsonb_build_object('domain',jsonb_build_array(jsonb_build_object('op','episode_activate',
+   'episode_id',to_jsonb(ep.id)))||(v_plan_event->'ops'),
   'receipt',jsonb_build_object('status','succeeded'),
   'events',jsonb_build_array(jsonb_build_object('entity_type','fiber','entity_id',to_jsonb(f.id),
    'event_kind','episode_activated','payload',jsonb_build_object('episode_id',to_jsonb(ep.id),'epoch',to_jsonb(ep.epoch)))),
-  'successors',v24_cordis.run_start_successor(f.id));
+  'successors',v_plan_event->'successors');
 END $$;
 CREATE FUNCTION v24_cordis.reconcile_preflight(p_payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
@@ -1315,7 +1318,7 @@ END $$;
 CREATE FUNCTION v24_cordis.reconcile_command_seed(p_payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE result jsonb:='[]'::jsonb; fid uuid; n int; k text; v_realm text; scope uuid;
- reqs jsonb; provs jsonb; v_have boolean:=false; r record; item jsonb; sub jsonb;
+ reqs jsonb; provs jsonb; v_have boolean:=false; r record; item jsonb; sub jsonb; v_branch jsonb;
 BEGIN
  IF NOT v24_cordis.reconcile_payload_valid(p_payload) THEN RETURN '[]'::jsonb; END IF;
  fid:=(p_payload->>'fiber_id')::uuid;
@@ -1380,6 +1383,10 @@ BEGIN
     IF jsonb_array_length(result)>512 THEN RETURN NULL; END IF;
    END LOOP;
   END LOOP;
+ END IF;
+ IF p_payload->>'action'='advance' THEN
+  v_branch:=v24_cordis.reconcile_branch(fid,'advance',(p_payload->>'expected_control_seq')::bigint);
+  IF v_branch->>'kind'='p4' THEN result:=result||v24_cordis.activation_candidate_refs(fid); END IF;
  END IF;
  SELECT count(*) INTO n FROM (SELECT DISTINCT value FROM jsonb_array_elements(result)) s;
  IF n>512 THEN RETURN NULL; END IF;
@@ -1463,11 +1470,4 @@ BEGIN
  IF plan->>'kind'='deferred' THEN RETURN v24_cordis.empty_success(); END IF;
  RETURN v24_cordis.dispose_delta(inst.id);
 END $$;
-
-
-
-
-
-
-
 
