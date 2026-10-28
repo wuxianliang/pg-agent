@@ -330,54 +330,54 @@ The DDL count is still **461**: the W1 `state` CHECK is an inline predicate on t
 
 ## W5 / CDP4-B (2026-10-27)
 
-Same worktree and branch `v24`, W4 `faccab4` plus W5 changes before staging. The 26 legacy commands plus `CDP4-R`, `CDP4-M`, `CDP4-T`, `CDP4-X` and `CDP4-B` were launched one process at a time; all 31 exited 0, total 164.0 seconds. Log: `/tmp/dp4-w5-gates-rerun.log`.
+Same worktree and branch `v24`, W5 `348b9b8` plus the final acceptance correction. The 26 legacy commands plus `CDP4-R`, `CDP4-M`, `CDP4-T`, `CDP4-X` and `CDP4-B` were launched one process at a time; all 31 exited 0, total 147.0 seconds. Log: `/tmp/dp4-w5-gates-verified.log`.
 
 | # | Command | Exit | Duration (s) | Evidence |
 |---:|---|---:|---:|---|
-| 1 | `uv run python v24/cordis/load.py` | 0 | 1 | canonical loader, 18 entries |
-| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 2 | fixture/role/OID cleanup |
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0 | canonical loader, 18 entries |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1 | fixture/role/OID cleanup |
 | 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1 | CDP1-E, exact 18-entry manifest |
-| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 2 | CDP1-D, `DDL lines 461` |
-| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 15 | CDP1-K; helper 4320, 5000/5001 |
-| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 4 | CDP2-K |
-| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 5 | CDP2-I |
-| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 4 | CDP2-A |
-| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 4 | CDP2-B, `helpers=4320 40=1549 41=1211 42=1000 43=560 ddl=461` |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 0 | CDP1-D, `DDL lines 461` |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 22 | CDP1-K; helper 4320, 5000/5001 |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3 | CDP2-K |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 3 | CDP2-I |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3 | CDP2-A |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 3 | CDP2-B, `helpers=4320 40=1549 41=1211 42=1000 43=560 ddl=461` |
 | 10 | `uv run python v24/load.py` | 0 | 0 | v24 loader |
-| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 2 | v24/s1 setup |
-| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 2 | G1-O |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1 | v24/s1 setup |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 0 | G1-O |
 | 13 | `uv run python v24/s1/test_g1.py` | 0 | 2 | G1 kernel/commands/ACL |
-| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 2 | S2 W1-W6 |
-| 15 | `uv run python v24/s3/test_g2.py` | 0 | 6 | S3 W1-W7 |
-| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 5 | S4 W1-W6 |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 1 | S2 W1-W6 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 4 | S3 W1-W7 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 3 | S4 W1-W6 |
 | 17 | `uv run python v24/s5/test_g4.py` | 0 | 3 | S5 W1-W4 |
-| 18 | `uv run python v24/s6/test_g5.py` | 0 | 5 | S6 W1-W4 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 3 | S6 W1-W4 |
 | 19 | `uv run python v24/s8/test_g7.py` | 0 | 2 | S8 W1-W3 |
-| 20 | `uv run python v24/s7/test_g6.py` | 0 | 7 | S7 W1-W2 |
-| 21 | `uv run python v24/s9/test_g8.py` | 0 | 11 | G8, 23 cases |
-| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 4 | CDP3-P |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 6 | S7 W1-W2 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 10 | G8, 23 cases |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3 | CDP3-P |
 | 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 11 | CDP3-L |
-| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 6 | CDP3-T |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 7 | CDP3-T |
 | 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 6 | CDP3-D |
-| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 7 | CDP3-B1…B13; `tables=10 manifest=18 helpers=4320 ddl=461 definer=advance` |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 6 | CDP3-B1…B13; `tables=10 manifest=18 helpers=4320 ddl=461 definer=advance` |
 | 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 6 | CDP4-R1…R7 + real-advance R4 |
-| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 6 | CDP4-M1…M5 + strengthened M4 closure |
-| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 10 | CDP4-T1…T7 + T4b-model/T4c advance |
-| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 8 | CDP4-X1…X7/M6/e7→e13; 19 forged run_start negatives + positive refusal |
-| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 15 | CDP4-B1…B6; B5b seed=97 closure=137 |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 4 | CDP4-M1…M5 + strengthened M4 closure |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 11 | CDP4-T1…T7 + T4b-model/T4c advance |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 8 | CDP4-X1…X7/M6/e7→e13; 20 forged run_start negatives + positive refusal |
+| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 14 | CDP4-B1…B6; B5b seed=97 closure=137 |
 
 | W5 invariant | Actual evidence |
 |---|---|
 | B1 layout | Ten tables, manifest 18, only `advance` is `SECURITY DEFINER`, public EXECUTE 0, public DML 0, no source VIEW/EXTENSION; all three aliases can execute only `advance`. CDP4-B1 |
 | B2 budget | The temporary four-file tree predicate admits exactly 5000 and rejects 5001; real 40=1549, 41=1211, 42=1000, 43=560, sum **4320≤5000**; DDL **461≤900**; 43 **560≤560**. CDP4-B1/B2 |
-| B3 ACL | Service claims and settles host_io (settlement is the interpreter's documented `0A000`), and claims/settles run_start/model/tool; admin and operator are `unauthorized` for run_start/model/tool claim and settlement; a real foreign-family LOGIN with explicit schema/EXECUTE grants is `unauthorized`. CDP4-B3 |
+| B3 ACL | Service claims host_io (settlement is the interpreter's documented `0A000`), and claims/settles run_start/model/tool; admin and operator are `unauthorized` for run_start/model/tool claim and settlement; a real foreign-family LOGIN with explicit schema/EXECUTE grants is `unauthorized`. CDP4-B3 |
 | B4 write surface | `runs` is written only in `run_create` (INSERT), `run_state`/`run_budget`/`run_seal` (three UPDATEs); `pins` only in `run_pin_bind` inside the five `ELSIF v_op='run_` branches; the one pins UPDATE is in `pins_release`. `host_io` six effect states are `0A000` (private interpreter for terminal states plus production `advance` for claimed), `dispatch`/`listener_call` are unclaimable, no scanner/sweep/recover function exists, and `run_pin_release_delta` has no DML. A real brain-model run rejects `tool_calls key='brain'` as `invalid_outcome` zero-write. CDP4-B4 |
 | B5 limits | Successor 16/17, batch 16/17, run pins 32/33 and closure 512/513 behave as specified; 600 historical effects leave `settlement_seed` and its closure small; host_io seed is exactly `[{t:effects,id:<effect>}]`. CDP4-B5 |
 | B5 manifest | `manifest_shape_valid` accepts 256 and rejects 257. The shape-legal 224 unrelated + 32 model/tool production attempt is `retry_with_closure` at activation because each resolved require expands to contribution+fiber+episode (224×3) before the 32 bindings; this is recorded, not claimed as executable. The 288-entry committed_view is an owner-injected fixture created at episode birth, is not a legal manifest (288 requires rejected), and filters to 32 run bindings; a ready run_start effect on that episode gives `settlement_seed=97` and `discover_closure=137` (both non-NULL and <512), proving only the 32 model/tool bindings are expanded. CDP4-B5a/B5b |
 | B6 frozen | Twelve `v24/sql` SHA-256 hashes match; `v24/load.py` is unchanged since B0; the twelve DP2-frozen files have no diff from `57e2c1e`; `git diff --check` is clean. CDP4-B6 |
 | R4 actual advance | `interpret_command` is replaced and the p4 effect is submitted through `advance` for two, ordinal-1, bad-input, non-chat_tool and existing-run cases; each is `invalid_outcome` with an unchanged ten-table snapshot. CDP4-R4 |
 | T4c actual advance | Model-pin/tool-key is rejected at claim; tool-pin/`nope` and tool-pin/`model` are claimed and then rejected by settlement; all zero-write. CDP4-T4c |
-| X6/X1b actual advance | `run_delta` is replaced; forged budget/seal/pins/successor and brain key/capability spoofs are submitted through `advance`, rejected independently, with unchanged snapshots. X7 now forges run_start initial state/budget, the pin set (missing/extra/wrong contribution/epoch), model successor run/pin/key/capability/digests/contract/ordinal/uniqueness and empty-domain owner_closing/start_failed/replay_right_missing (19 negatives), all `invalid_outcome` with unchanged snapshots; a legal failure refusal still commits. CDP4-X6/X1b/X7 |
+| X6/X1b actual advance | `run_delta` is replaced; forged budget/seal/pins/successor and brain key/capability spoofs are submitted through `advance`, rejected independently, with unchanged snapshots. X7 now forges run_start initial state/budget, the pin set (missing/extra/wrong contribution/epoch), model successor run/pin/key/capability/digests/contract/ordinal/uniqueness and empty-domain owner_closing/start_failed/replay_right_missing (20 negatives), all `invalid_outcome` with unchanged snapshots; a legal failure refusal still commits. CDP4-X6/X1b/X7 |
 | Tool fact capability | `run_delta.tools` joins contributions and filters `descriptor.capability='tool_call'`; a brain model pin is no longer accepted as a tool key. CDP4-B4 |
 | Purity closure | `reduce_chat_tool` closure contains non-catalog `exact_keys/json_int/json_text/model_receipt_valid/tool_receipt_valid`, each with a non-null `prosqlbody`; relation dependency count is 0; a reading BEGIN ATOMIC probe is detected. 40 `exact_keys/json_text/json_int` converted to BEGIN ATOMIC. CDP4-M4 |
 | Terminal claim | API claim of a terminal effect is replay-first `receipt_conflict`; direct DML reopen is `55000`. Plan §3.6/§4.4 and the ledger now state this split. CDP4-X1 |
@@ -386,7 +386,7 @@ Same worktree and branch `v24`, W4 `faccab4` plus W5 changes before staging. The
 
 One `mode=review` call covered B0..W5 with a `4b34bf2..working tree` artifact (18 tracked files, +3174/−66) plus the untracked `test_closeout.py` in selection. Direct findings applied: run-settlement domain length/cardinality check; released model pin now `dependency_unresolved` with T4b-model; T4c batch keys isolated; 288 committed_view assembled before episode insert; B2 explicit 5000/5001 proof; plan terminal-claim/DDL 461 correction; model-pin capability/key rules retained; complete run_start independent re-derivation (initial state/budget, pin projection, model successor, empty-domain refusal) now implemented. No new review was run.
 
-**No residual boundary**: the run_start independent re-derivation requested by the single review is implemented in `validate_run_domain` (initial state/remaining budget, the full pin projection from `run_bindings`, the unique model successor's run/pin/key/digests/contract, and the empty-domain refusal reason/receipt/event) and exercised by X7's 19 forged-planner negatives plus a legal `start_failed` positive. 43 is **560≤560**; the checks were paid for by merging duplicated uniqueness scans and duplicated settlement predicates, not by line squeezing or moving functions to another file.
+**No residual boundary**: the run_start independent re-derivation requested by the single review is implemented in `validate_run_domain` (initial state/remaining budget, the full pin projection from `run_bindings`, the unique model successor's run/pin/key/digests/contract, and the empty-domain refusal reason/receipt/event) and exercised by X7's 20 forged-planner negatives plus a legal `start_failed` positive. 43 is **560≤560**; the checks were paid for by merging duplicated uniqueness scans and duplicated settlement predicates, not by line squeezing or moving functions to another file.
 
 ### Capacity and DDL
 
@@ -397,3 +397,7 @@ One `mode=review` call covered B0..W5 with a `4b34bf2..working tree` artifact (1
 ### W5 not covered
 
 - Push target selection; W5 is a local commit only.
+
+### W5 acceptance correction (2026-10-28)
+
+Creation now independently requires the current active/live owner and `run_bindings_valid`; `live_ok IS NOT TRUE` rejects NULL as well as false. X7 adds a real off/closing transition followed by the stale nonempty creation delta: `advance` returns `invalid_outcome` and all ten tables are unchanged. This is negative case 20, in addition to the legal failure-refusal positive. The final 31-command log above replaces the earlier run because SQL changed during that run; `348b9b8` remains in history and the correction is a separate local commit.

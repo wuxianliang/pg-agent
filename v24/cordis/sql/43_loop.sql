@@ -462,7 +462,7 @@ BEGIN
    SELECT b INTO model FROM jsonb_array_elements(bindings) b WHERE b->>'capability'='model_call';
    IF p_outcome->>'class'<>'success' OR jsonb_array_length(d)<>2
     OR NOT coalesce(v24_cordis.json_int(p_outcome->'body'->'steps',1,64),false)
-    OR NOT live_ok OR NOT v24_cordis.run_bindings_valid(bindings)
+    OR live_ok IS NOT TRUE OR NOT v24_cordis.run_bindings_valid(bindings)
     OR EXISTS(SELECT 1 FROM jsonb_array_elements(bindings) b WHERE b->'contract'->'replay'
      IS DISTINCT FROM '{"repeat":true,"concurrent":true}'::jsonb)
     OR d->0->'id' IS DISTINCT FROM to_jsonb(runid) OR d->1->'run_id' IS DISTINCT FROM to_jsonb(runid)

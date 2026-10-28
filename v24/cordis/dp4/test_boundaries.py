@@ -311,6 +311,14 @@ def test_run_start_forged(db):
                 no_write(db, conn, rs, out, 'invalid_outcome')
         assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (rs,)) == 'claimed'
         assert q1(db, 'SELECT count(*) FROM v24_cordis.runs') == 0
+        # A genuine off command closes the owner while run_start remains claimed.
+        # The stale planner result must not force run creation after that transition.
+        _enter_closing(db, chat['fiber'])
+        with contextlib.closing(db.connect('service')) as conn:
+            query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(delta),))
+            no_write(db, conn, rs, out, 'invalid_outcome')
+        assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (rs,)) == 'claimed'
+        assert q1(db, 'SELECT count(*) FROM v24_cordis.runs') == 0
         # A real failure refusal is still accepted: the validator recomputes start_failed,
         # so empty domain is not rejected wholesale.
         fail = env('failure', {'v': 1, 'error': {'code': 'boom'}}, tc['claim'])
@@ -334,7 +342,8 @@ def test_run_start_forged(db):
     finally:
         replace_function(db, original)
     print('[CDP4-X7] advance rejects forged run_start state/budget/pins/successor and empty-domain '
-          'refusals as invalid_outcome with zero write; a real failure refusal still commits')
+          'refusals plus forced creation after off/closing as invalid_outcome with zero write; '
+          'a real failure refusal still commits')
 
 
 
