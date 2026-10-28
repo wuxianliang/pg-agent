@@ -1,6 +1,6 @@
 # Cordis v2 DP5：事件派发与描述符解析 Deep Plan
 
-> 状态：规划完成；B0 已于 2026-10-28 在 DP4 HEAD `ba66776` 上完成重裁并通过容量准入；W1 已在该 HEAD 上实施、通过 32/32 命令（31 继承 + `CDP5-R`）并本地提交；W2 未启动。本文相对路径以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含 Cordis。DP1–DP4 已完成；DP4 W5 及两次收尾补正已本地提交，DP5 在 B0 重裁后接续。本文把 W1 写成有实跑证据的已交付里程碑，W2+ 仍只写实施合同。
+> 状态：规划完成；B0 已于 2026-10-28 在 DP4 HEAD `ba66776` 上完成重裁并通过容量准入；W1/W2 已在该 HEAD 上实施并分别通过 32/32、33/33 命令（W2 为 31 继承 + `CDP5-R` + `CDP5-E`）并本地提交；W3 未启动。本文相对路径以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含 Cordis。DP1–DP4 已完成；DP4 W5 及两次收尾补正已本地提交，DP5 在 B0 重裁后接续。本文把 W1/W2 写成有实跑证据的已交付里程碑，W3+ 仍只写实施合同。
 >
 > 文中“现状”是规划快照，不是执行时 HEAD；“拟新增”是实施合同，不代表代码已存在。执行前重新记录 HEAD、工作区和所有引用符号，禁止把另一个会话的未提交工作作为 DP5 已完成事实。
 
@@ -324,6 +324,8 @@ helper预计净增790–1020行；5500上限相对B0实测4338提供1162行余�
 
 **W1 实测（2026-10-28）：**40=1567、41=1354、42=1007、43=668，合计**4596≤5500**，`R=904`；DDL 465≤900；私有函数138；manifest18；十表；唯一DEFINER `advance`、public EXECUTE 0。W1净增258行，R仍≥900，但这只是下一里程碑的准入值，不是W2–W5容量证明。
 
+**W2 实测（2026-10-28）：**40=1589、41=1473、42=1015、43=668，合计**4745≤5500**，`R=755`；DDL 仍 465≤900；私有函数144；manifest18；十表；唯一DEFINER `advance`、public EXECUTE 0。W2净增149行且未新增helper文件/loader项/44。R=755只是W3准入值，不是W3–W5容量证明。
+
 ## 6. Gate与verification specification
 
 ### 6.1 共用纪律
@@ -475,13 +477,21 @@ Goal/Done when/Key files/Dependencies/Size见§3。先只读确认DP4 W5已交�
 
 实跑：W1 脚本单独 exit 0；31 条继承命令逐条独立进程串行重跑后再跑 `CDP5-R`，**32/32 exit 0，总耗时 155 秒**（逐条 `/tmp/dp5-w1/gates.tsv`、分命令 `/tmp/dp5-w1/gate-01..32.log`）。helper 实测 40=1567、41=1354、42=1007、43=668，合计 **4596≤5500**，`R=5500−4596=904`；DDL 前缀 **465≤900**，manifest 18，十表，私有函数 **138**，唯一 `SECURITY DEFINER` 为 `advance`，public EXECUTE 0。十二份冻结 `v24/sql` SHA-256、`v24/load.py` 与 `v24/s1`–`s12` 未变。
 
-边界：W1 的 listeners overlay 命名空间被形状接受但非空目标仍拒绝，因为 W2 才有 listener 声明；W2 必须替换为声明内校验并补跨命名空间同名用例。R4 用 withdrawn contribution（不是 retired fiber）证明旧 pin 排空，因为 DP4 的 run liveness 仍拥有 provider-fiber 关闭语义。发布目标仍未由用户点名：W1 只做本地提交，不 push、不推断 `origin/main` 或 `origin/v24`。
+边界：W1 的 listeners overlay 命名空间被形状接受但非空目标仍拒绝，因为 W2 才有 listener 声明；W2 已替换为声明内校验并补跨命名空间同名用例（见 W2 Result）。R4 用 withdrawn contribution（不是 retired fiber）证明旧 pin 排空，因为 DP4 的 run liveness 仍拥有 provider-fiber 关闭语义。发布目标仍未由用户点名：W1 只做本地提交，不 push、不推断 `origin/main` 或 `origin/v24`。
 
 ### W2 — listener注册与撤销
 
 交付八键listeners、registration_plan、跨32批iterator、P4 totality、delete_row撤销与E注册子集。此阶段仍拒dispatch/listener外部执行，不产生生产dispatch；针对既有provider-owned effect的P6屏障测试可fixture构造，明确不执行listener claim/settlement、不是事件producer或drain生产证据；跨episode排序、snapshot unavailable和真实drain都在W3 D交付。完整旧gate及当时E注册子集全绿后更新工件并提交推送；跨episode排序、真实drain与未生成unavailable保留到W3 D，不得以skip冒充通过。
 
-Result：未执行。
+**Result（2026-10-28，implemented, verified and locally committed）：**在 worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`、分支 `v24`、HEAD `c3ddd94` 上完成 W2；未新建 `44_events.sql`，未改 `v24/cordis/load.py`（18 entries）或 `helper_budget.py`，未实现 dispatch producer、listener_call 执行、host receipt 或 event planner。
+
+实现：`41_lifecycle.sql` 新增 `listener_exec_valid`/`listener_desc_shape`/`listener_desc_valid`/`listener_decl_valid`/`listener_patch_ok`/`registration_plan`；`manifest_shape_valid` 接受可选 `listeners` 第五键（0–16，精确八键，`listener_id` 内唯一，host 合同/版本、in_db 版本、`sync_reads=false`）；`overlay_apply`/`install_overlay_valid` 改为声明内 listener overlay 校验（仅 priority/filter、保护身份）；`activation_total` 与 `interpret_reconcile` 的 P2/P4 改为统一 `registration_plan`，跨32项 iterator/seq/registered_through 连续。`40_advance.sql` 的 `contribution_append` 结构校验允许 listener（realm/key/prev NULL、`delete_row`、每批 service+listener≤32），P2/P4 独立 validator 逐项重算 plan。`42_teardown.sql` 的 P2/P4 诊断同样使用 plan；P5 `withdraw_ids` 与 P6 listener inverse 沿用既有生产路径。
+
+测试：`v24/cordis/dp5/test_listeners.py` 交付 E1–E7 注册/撤销子集：legacy/listeners=[] 兼容、双命名空间 overlay、跨32批与 target Divert、重复/碰撞/新episode复用、构造 delta 零写拒绝、16/17 与非法声明边界、生产 P5/P6 LIFO release、无 listener pin/run 与 fixture P6 barrier。E1–E7 不声称跨episode排序、未生成 unavailable 或真实 drain；这些是 W3 D 证据。E7 的 ready/claimed/unknown effect 明确标为 owner fixture。
+
+实跑：31条继承命令逐条独立进程串行重跑后跑 `CDP5-R`/`CDP5-E`，**33/33 exit 0**（167 秒；逐条 `/tmp/dp5-w2-final2/gates.tsv`、分命令 `/tmp/dp5-w2-final2/gate-01..33.log`）。helper 实测 40=1589、41=1473、42=1015、43=668，合计 **4745≤5500**，`R=755`；DDL 465≤900，manifest 18，十表，私有函数 144，唯一 `SECURITY DEFINER` 为 `advance`，public EXECUTE 0。十二份冻结 `v24/sql` SHA-256、`v24/load.py` 与 `v24/s1`–`s12` 未变。
+
+边界：W2 只做注册/撤销；dispatch producer、listener_call 执行、宿主机 receipt、event planner 与 `44_events.sql` 均未启动。发布目标仍未由用户点名：W2 只做本地提交，不 push、不推断 `origin/main` 或 `origin/v24`。
 
 ### W3 — 生产与执行原子闭环
 

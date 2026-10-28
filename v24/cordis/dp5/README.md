@@ -4,82 +4,137 @@ DP5 delivers the event surface and effective-descriptor resolution on the DP1–
 
 ## Current status
 
-**W1 is implemented, verified and locally committed on top of `ba66776`. The inherited 31-command sequence plus `CDP5-R` passes. W2 has not been started; listener registration, dispatch production, `44_events.sql`, the loader 19-entry change and the event planner do not exist yet.**
+**W1 and W2 are implemented, verified and locally committed. W2 is committed on top of W1 `c3ddd94`. W3 has not been started: dispatch production, `listener_call` execution, host receipts, the event planner and `44_events.sql` do not exist.**
 
-W1 delivers:
+W2 delivers listener registration and revocation only:
 
-- exact overlay ABI (`{}` legacy identity, or `{v,services,listeners}` with a services patch map and an empty listeners map in W1);
-- recursive object merge, whole replacement for array/scalar/null, semantic descriptor depth ≤4, protected identity fields and unknown-target rejection;
-- exact intercept ABI (`{}` or `{v,rules}`), bounded 1–16 unique `(realm,key)` rules, `reject`/`replace`, digest/depth validation, and resolve-time capability/contract compatibility;
-- nearest-scope rule selection after realm resolution, with no stacking and no fallback after reject;
-- effective descriptors in `resolve`, P1/P2 validation, `activation_total`, committed view, check policy, run bindings, run digests, tool successors, settlement and claim;
-- `execution:{descriptor,descriptor_digest}` on configured model/tool claims; the empty-config claim response is byte-compatible with DP4;
-- old-run drain from the pinned contribution and frozen committed-view descriptor digest/contract version without requiring a currently available provider;
-- the `30_triggers.sql` scope guard freezing `realm_overrides`/`intercept` (SQLSTATE 55000) plus the existing close-tombstone rule.
+- optional manifest fifth key `listeners`, length 0–16, each item an exact eight-key declaration
+  `{listener_id,event,mode,priority,filter,exec,contract_version,sync_reads}`;
+- `in_db` execs `const`/`acc`/`append`/`fail` with fixed `in_db_v1`; `host` exec requires
+  `contracts.listener_call` and inherits its contract version/handler/replay rights;
+- `sync_reads` must be the JSON literal `false`; mode, filter, priority, event and listener id are bounded;
+- `registration_plan(install)` is the unified `provides ++ listeners` sequence with kind/original index,
+  overlay-applied descriptor and independent `contract_version`;
+- one P2 iterator/seq/`registered_through` stream across services and listeners, at most 32 appends per batch,
+  including a provider whose combined declaration crosses 32 items;
+- P4 totality checks every plan item's kind/seq/descriptor/contract/realm-address/inverse and quantity, not just `provides`;
+- listener contributions use `realm/key/prev = NULL`, `inverse = {op:"delete_row"}`, and the existing
+  `(fiber,episode,event,listener_id)` unique index as the final defence;
+- listener overlay targets are now declared-listener validation: only `priority`/`filter` may change, identity
+  fields and `exec`/`contract_version`/`sync_reads` are protected, and service/listener namespaces are independent;
+- the existing P5 withdrawal and P6 LIFO `delete_row` release now have production listener evidence; rows remain as
+  withdrawn/released tombstones and the inverse is immutable.
 
-W1 does **not** deliver listener registration, listener overlay application, dispatch production, `44_events.sql`, the loader 19-entry change, typed event ops, or `CDP5-E/D/B`. The listeners map is shape-required but must be empty: without W2 listener declarations, any listener target is an unknown declaration and is rejected `invalid_args`; W2 replaces that rejection with declared-listener validation. R5–R7 remain W4 work.
+W2 does **not** deliver:
+
+- dispatch producer, event planner, `dispatch`/`listener_call` execution, host receipts, `ready_effects`, virtual
+  receipts or typed event ops (`CDP5-D`, W3);
+- snapshot ordering across episodes, not-yet-created snapshot `unavailable`, or a real listener drain; those remain
+  W3 D evidence;
+- `44_events.sql`, the loader 19-entry change, or the five-file budget tree;
+- `CDP5-B` (W5) or R5–R7 (W4).
 
 ## Capacity
 
-The user's uncommitted `41_lifecycle.sql` refactor (one `fiber_chain` walker replacing four PL/pgSQL walkers) and the 5500 helper cap remain the baseline. W1 adds W1 behavior and tests; it does not lower the cap or move helpers outside 40–49.
+W2 adds no helper file and does not change the loader or the 5500 cap. W2 measured 40–49 at **4745**, so
+`R = 5500 − 4745 = 755`.
 
-| Item | B0 | W1 actual |
-|---|---:|---:|
-| `40_advance.sql` | 1549 | **1567** |
-| `41_lifecycle.sql` | 1197 | **1354** |
-| `42_teardown.sql` | 1000 | **1007** |
-| `43_loop.sql` | 592 | **668** |
-| Helper total | 4338 | **4596** |
-| `R = 5500 − total` | 1162 | **904** |
-| DDL prefix | 461 | **465** |
-| Manifest entries | 18 | **18** |
-| Private functions | 129 | **138** |
-| Domain tables | 10 | **10** |
-| `SECURITY DEFINER` / public EXECUTE | `advance` / 0 | `advance` / 0 |
+| Item | B0 | W1 actual | W2 actual |
+|---|---:|---:|---:|
+| `40_advance.sql` | 1549 | 1567 | **1589** |
+| `41_lifecycle.sql` | 1197 | 1354 | **1473** |
+| `42_teardown.sql` | 1000 | 1007 | **1015** |
+| `43_loop.sql` | 592 | 668 | **668** |
+| Helper total | 4338 | 4596 | **4745** |
+| `R = 5500 − total` | 1162 | 904 | **755** |
+| DDL prefix | 461 | 465 | **465** |
+| Manifest entries | 18 | 18 | **18** |
+| Private functions | 129 | 138 | **144** |
+| Domain tables | 10 | 10 | **10** |
+| `SECURITY DEFINER` / public EXECUTE | `advance` / 0 | `advance` / 0 | **`advance` / 0** |
 
-W1 consumed 258 helper lines (4338→4596); `R=904` remains above the plan's 900 admission floor for the next milestone, but it is not a W2/W3 capacity proof. Every later milestone must still measure and stay ≤5500; if the remaining work cannot fit, the plan's §1/§5 re-adjudication rule applies rather than deleting a validator or mode.
+W2 consumed 149 helper lines (4596→4745): 40 +22, 41 +119, 42 +8, 43 unchanged. No mode, validator, limit or
+test was removed to fit. The remaining `R=755` is a measurement, not a W3 capacity proof. `44_events.sql` was not
+created; `v24/cordis/load.py` remains 18 entries; the twelve frozen `v24/sql` hashes and `v24/s1`–`s12` are unchanged.
 
-DDL grew 461→465 solely from the four-line `scopes` UPDATE guard; the DDL ceiling remains 900. The twelve frozen `v24/sql` hashes, `v24/load.py` (18 entries), and `v24/s1`–`s12` are untouched. `44_events.sql` was not created.
+## W2 verification
 
-## W1 verification
-
-The inherited 31 commands were rerun in the B0 order (s8 before s7), followed by `CDP5-R`; **32/32 exited 0 in 155 s**, one process at a time. Summary `/tmp/dp5-w1/gates.tsv`; per-command logs `/tmp/dp5-w1/gate-01..32.log`. The delivered gate on its own is:
+The inherited 31 commands were rerun in the B0 order (s8 before s7), followed by the W1 `CDP5-R` script and the new
+`CDP5-E` script. Each command ran as a separate process, serially; **33/33 exited 0 in 167 s**.
+Summary: `/tmp/dp5-w2-final2/gates.tsv`; per-command logs `/tmp/dp5-w2-final2/gate-01..33.log`.
 
 ```bash
-uv run python v24/cordis/dp5/test_resolution.py
+uv run python v24/cordis/dp5/test_listeners.py
 ```
 
-The script is independent, serial, no-network, and uses the existing `dp1/setup_db.py`, `dp2/test_support.py` and `dp4/dp4_support.py` fixtures. It prints:
+The W2 gate is independent, serial, no-network, and reuses the existing `dp1/setup_db.py`, `dp2/test_support.py`,
+`dp3/test_teardown.py` and `dp4/dp4_support.py` fixtures. It prints:
 
 ```text
-[CDP5-R1] overlay recursive merge, array/scalar/null replacement, protected identity, unknown target, dual namespace, depth 4/5 and wrapper boundary
-[CDP5-R2] nearest replace/reject, realm-first matching, depth 4/5, forged digest and resolve-time contract rejection; production scope_create path
-[CDP5-R3] check view/run input/toolset/claim execution all use the effective descriptor; empty configuration keeps the legacy claim shape
-[CDP5-R3b] no-config run keeps the DP4 claim shape and raw digest/toolset
-[CDP5-R4] withdrawn provider pins still drain with the frozen effective config; frozen contract drift and released pins reject without rebinding
-[CDP5-R8] scope realm/intercept UPDATE guard, close tombstone, install overlay immutability and private helper ACL
-[passed] CDP5-R (W1: R1-R4/R8; R5-R7 deferred to W4)
+[CDP5-E1] legacy four-key and listeners=[] register identically; optional fifth key, unknown keys and declared-listener overlay validation
+[CDP5-E2] service+listener total 33 crosses two batches; seq/iterator/plan are continuous; P4 totality activates; a target change after batch one Diverts with no mixed registration
+[CDP5-E3] duplicate listener_id and same-episode event/id collision reject; a new episode reuses the same listener_id over the retained released row
+[CDP5-E4] forged listener realm/key/prev/inverse/contract/seq/descriptor and missing/extra appends are invalid_outcome with zero write; the unmodified plan commits
+[CDP5-E5] 16/17 boundary and invalid mode/filter/exec/contract/sync_reads/identity declarations all reject invalid_args with zero write
+[CDP5-E6] production P5 withdraws all listener rows; P6 releases in strict LIFO batches 32..1 then 0..0 and retains the historical listener rows/descriptors/inverse
+[CDP5-E7] listeners create no pin/run; fixture provider-owned ready/claimed block P6 as deferred and unknown blocks it as blocked_unknown
+[passed] CDP5-E (W2: E1-E7 registration/revocation subset; ordering/unavailable/real drain deferred to W3 D)
 ```
 
-Coverage is deliberately limited to the delivered W1 surface. R2's listener namespace case asserts the W1 rejection; W2 must replace it with a declared-listener patch success and a cross-namespace duplicate-name case. R4 uses a withdrawn provider contribution (not a retired provider fiber) because DP4's run-liveness check still owns provider-fiber closure; the pinned/frozen effective config is the W1 object under test. R8's handler/replay evidence is produced in R3: a replace descriptor carrying fake `handler_digest`/`replay` fields cannot change `claim_contract`, which still reads `installs.contracts`.
+Coverage is deliberately limited to registration/withdrawal:
+
+| Item | W2 evidence | Not claimed |
+|---|---|---|
+| E1 | legacy four-key and `listeners=[]` produce the same contribution projection; unknown fifth keys rejected; declared listener overlay patches only `priority`/`filter`; cross-namespace same name | listener ordering |
+| E2 | 30 services + 3 listeners = 33; batches 32/1; continuous seq/iterator; P4 activates; target change after batch one Diverts with the prefix intact | cross-episode ordering, snapshot unavailable |
+| E3 | duplicate `listener_id`, same-episode `(event,listener_id)` SQLSTATE 23505, new episode reuse over the retained released row | real dispatch identity |
+| E4 | forged realm/key/prev/inverse/contract/seq/descriptor, missing/extra appends and forged P4-with-withdrawn-listener are `invalid_outcome` with zero write | dispatch child forging |
+| E5 | 16 declared listeners and a contracted host listener register; 17 plus invalid mode/filter/exec/contract/sync_reads/identity reject `invalid_args` with zero write | host execution |
+| E6 | production P5 withdrawal, P6 LIFO `contribution_inverse` release in batches 32..1 then 0..0, historical listener rows/descriptors/inverse retained | real listener_call drain |
+| E7 | no listener pin/run; fixture provider-owned `listener_call` `ready`/`claimed` make P6 `deferred`, `unknown` makes it `blocked_unknown` | source cross-provider unknown, emit source exit, real host receipts |
+
+The E7 effects are explicitly labelled owner fixtures; they prove the existing P6 barrier facts, not a W2 dispatch
+producer. E4’s direct `interpret_reconcile` probe is a validator/fixture path and does not persist a listener call.
+W3 D must add the real producer/drain, ordering, unavailable items and host receipt evidence. E6’s batches are P5/P6
+ledger evidence, not a claim that a W2 listener was executed.
+
+## W1 retained behavior
+
+W1’s overlay/intercept ABI, effective descriptor/digest resolution, configured model/tool claim `execution`, old-run
+drain and the `30_triggers.sql` scope UPDATE guard are unchanged. W2 replaced the W1 blanket listener-overlay rejection
+with declared-listener validation. R1 currently keeps its old unknown-target rejection case; E1 adds the declared
+success and cross-namespace case. `CDP5-R` still passes R1–R4/R8; R5–R7 remain W4.
 
 ## B0 history
 
-B0 re-adjudication passed capacity admission on 2026-10-28 at HEAD `ba66776` and is retained in the plan §9 and the DP5 matrix/ledger. The worktree is branch `v24`; fetched `origin/v24` is still `4b34bf2`, so the branch is **9 ahead / 0 behind** before the W1 commit. The user reports DP4 was pushed in another session, but this worktree cannot prove the remote target.
+B0 re-adjudication passed capacity admission on 2026-10-28 at HEAD `ba66776` and is retained in the plan §9 and the
+DP5 matrix/ledger. The worktree is branch `v24`; fetched `origin/v24` is still `4b34bf2`, so the branch was 9 ahead /
+0 behind before the W1 commit. The user reports DP4 was pushed in another session, but this worktree cannot prove the
+remote target.
 
-DP4 handoff: `348b9b8` W5, `f119429` acceptance correction, `73973d1` settlement-validation hardening, `ba66776` settlement-helper split. `43_loop.sql` was 592 lines / 25 private functions at B0 with no working-tree diff. The inherited 31-command sequence passed **31/31** in **185.9 s** at B0.
+DP4 handoff: `348b9b8` W5, `f119429` acceptance correction, `73973d1` settlement-validation hardening, `ba66776`
+settlement-helper split. `43_loop.sql` was 592 lines / 25 private functions at B0 with no working-tree diff. The
+inherited 31-command sequence passed **31/31** in **185.9 s** at B0. W1 then passed **32/32** in **155 s**; W2 passed
+**33/33** on top of that.
 
 ## Artifacts
 
-- `docs/plans/v24-cordis-dp5-events-resolution-plan-2026-10-28.md` — §9 W1 Result and updated status.
-- `docs/reviews/cordis-v2-dp5-conformance-matrix-2026-10-28.md` — B0 history plus the W1 implementation and the 32-command regression.
-- `docs/reviews/cordis-v2-dp5-deviation-ledger-2026-10-28.md` — B0 history plus W1 treatment rows and remaining unclaimed scope.
-- This README — W1 status, capacity and next action.
+- `docs/plans/v24-cordis-dp5-events-resolution-plan-2026-10-28.md` — §9 W2 Result and updated status.
+- `docs/reviews/cordis-v2-dp5-conformance-matrix-2026-10-28.md` — W2 scope, capacity and the 33-command regression.
+- `docs/reviews/cordis-v2-dp5-deviation-ledger-2026-10-28.md` — W2 treatment rows and remaining unclaimed scope.
+- This README — W2 status, capacity and next action.
 
 ## Next action
 
-W2: listener declaration registration and withdrawal (eight-key `listeners`, `registration_plan`, cross-32 iterator, P4 totality, `delete_row` withdrawal, E registration subset). W2 must not produce dispatch, must not introduce `44_events.sql`, and must replace the W1 listeners-map rejection with declared-listener overlay validation. Re-run the 31 inherited commands plus the delivered E subset and the existing W1 gate, then update the artifacts and commit.
+W3: add `44_events.sql`, the loader 19-entry change and the five-file budget tree in one milestone with the p4
+producer/snapshot/closure, four typed event ops, virtual receipts, `in_db` cascade, host claim/receipt,
+`ready_effects`/`execution`, parent/child IDs, request-response cache consistency, source/provider fences, all
+validators/postconditions and `CDP5-D`. W3 must also deliver the ordering, not-yet-created `unavailable` and real
+drain evidence that W2 deliberately leaves to D.
 
 ## Publication
 
-`AGENTS.md` says push `origin main`, but this worktree is branch `v24` tracking `origin/v24`; the plan's handoff explicitly leaves the target to orchestration or a user-named remote/branch. W1 is committed locally; no push was forced or inferred. If the target is `origin/v24`, fetch first and use an ordinary fast-forward push; if it is `main` or another ref, name it explicitly.
+`AGENTS.md` says push `origin main`, but this worktree is branch `v24` tracking `origin/v24`; the plan’s handoff
+explicitly leaves the target to orchestration or a user-named remote/branch. W2 is committed locally; no push was
+performed. If the target is `origin/v24`, fetch first and use an ordinary fast-forward push; if it is `main` or another
+ref, name it explicitly.

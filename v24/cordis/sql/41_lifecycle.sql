@@ -54,23 +54,81 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
   AND v24_cordis.descriptor_depth(v24_cordis.descriptor_merge(p_base,p_patch))<=4
   AND (v24_cordis.descriptor_merge(p_base,p_patch)->>'capability')=(p_base->>'capability'),false)
 $$;
+CREATE FUNCTION v24_cordis.listener_exec_valid(p_exec jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+ SELECT coalesce(CASE p_exec->>'type'
+  WHEN 'in_db' THEN CASE p_exec->>'op'
+   WHEN 'const' THEN v24_cordis.exact_keys(p_exec,ARRAY['type','op','value'])
+   WHEN 'acc' THEN v24_cordis.exact_keys(p_exec,ARRAY['type','op'])
+   WHEN 'append' THEN v24_cordis.exact_keys(p_exec,ARRAY['type','op','value'])
+   WHEN 'fail' THEN v24_cordis.exact_keys(p_exec,ARRAY['type','op','code'])
+    AND v24_cordis.json_text(p_exec->'code')
+   ELSE false END
+  WHEN 'host' THEN v24_cordis.exact_keys(p_exec,ARRAY['type','capability'])
+   AND p_exec->>'capability'='listener_call'
+  ELSE false END,false)
+$$;
+CREATE FUNCTION v24_cordis.listener_desc_shape(p_desc jsonb) RETURNS boolean
+LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+BEGIN
+ RETURN coalesce(
+  v24_cordis.exact_keys(p_desc,ARRAY['listener_id','event','mode','priority','filter','exec','sync_reads'])
+  AND v24_cordis.json_text(p_desc->'listener_id') AND v24_cordis.json_text(p_desc->'event')
+  AND p_desc->>'mode' IN ('emit','parallel','serial','bail','waterfall')
+  AND v24_cordis.json_int(p_desc->'priority',-2147483648,2147483647)
+  AND v24_cordis.check_policy_valid(p_desc->'filter')
+  AND v24_cordis.listener_exec_valid(p_desc->'exec')
+  AND p_desc->'sync_reads'='false'::jsonb,false);
+END $$;
+CREATE FUNCTION v24_cordis.listener_desc_valid(p_desc jsonb,p_contracts jsonb,p_cv text) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+ SELECT coalesce(v24_cordis.listener_desc_shape(p_desc)
+  AND p_cv IS NOT NULL AND length(p_cv) BETWEEN 1 AND 128
+  AND CASE WHEN p_desc->'exec'->>'type'='host' THEN
+   p_contracts ? 'listener_call'
+   AND p_cv=p_contracts->'listener_call'->>'contract_version'
+  ELSE p_cv='in_db_v1' END,false)
+$$;
+CREATE FUNCTION v24_cordis.listener_decl_valid(p_item jsonb,p_contracts jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+ SELECT coalesce(v24_cordis.exact_keys(p_item,ARRAY['listener_id','event','mode','priority',
+   'filter','exec','contract_version','sync_reads'])
+  AND v24_cordis.listener_desc_valid(p_item-'contract_version',p_contracts,p_item->>'contract_version'),false)
+$$;
+CREATE FUNCTION v24_cordis.listener_patch_ok(p_base jsonb,p_patch jsonb) RETURNS boolean
+LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+BEGIN
+ RETURN coalesce(jsonb_typeof(p_patch)='object'
+  AND p_patch-ARRAY['priority','filter']='{}'::jsonb
+  AND (NOT p_patch ? 'priority' OR v24_cordis.json_int(p_patch->'priority',-2147483648,2147483647))
+  AND v24_cordis.descriptor_depth(p_patch)<=4
+  AND v24_cordis.descriptor_depth(v24_cordis.descriptor_merge(p_base,p_patch))<=4
+  AND v24_cordis.listener_desc_shape(v24_cordis.descriptor_merge(p_base,p_patch)),false);
+END $$;
 CREATE FUNCTION v24_cordis.overlay_apply(p_manifest jsonb,p_overlay jsonb,p_item jsonb) RETURNS jsonb
 LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE base jsonb:=p_item->'descriptor'; patch jsonb; key text:=p_item->>'key';
 BEGIN
  IF p_overlay='{}'::jsonb THEN RETURN base; END IF;
  IF p_overlay->'v' IS DISTINCT FROM '1'::jsonb
-  OR jsonb_typeof(p_overlay->'services')<>'object' THEN RETURN NULL; END IF;
+  OR jsonb_typeof(p_overlay->'services')<>'object'
+  OR jsonb_typeof(p_overlay->'listeners')<>'object' THEN RETURN NULL; END IF;
+ IF p_item->>'kind'='listener' THEN
+  IF NOT (p_overlay->'listeners' ? key) THEN RETURN base; END IF;
+  patch:=p_overlay->'listeners'->key;
+  IF NOT v24_cordis.listener_patch_ok(base,patch) THEN RETURN NULL; END IF;
+  RETURN v24_cordis.descriptor_merge(base,patch);
+ END IF;
  IF NOT (p_overlay->'services' ? key) THEN RETURN base; END IF;
  patch:=p_overlay->'services'->key;
  IF NOT v24_cordis.descriptor_patch_ok(base,patch) THEN RETURN NULL; END IF;
  RETURN v24_cordis.descriptor_merge(base,patch);
 END $$;
--- W1 services namespace only; listener overlay targets are W2 and are rejected
--- here rather than silently ignored.
-CREATE FUNCTION v24_cordis.install_overlay_valid(p_manifest jsonb,p_overlay jsonb) RETURNS text
-LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE k text; patch jsonb; item jsonb;
+-- W1 services namespace plus W2 declared-listener namespace. Unknown targets are
+-- rejected rather than silently ignored.
+CREATE FUNCTION v24_cordis.install_overlay_valid(p_manifest jsonb,p_overlay jsonb,p_contracts jsonb)
+RETURNS text LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE k text; patch jsonb; item jsonb; merged jsonb;
 BEGIN
  IF p_overlay='{}'::jsonb THEN RETURN NULL; END IF;
  IF NOT coalesce(v24_cordis.exact_keys(p_overlay,ARRAY['v','services','listeners']),false)
@@ -85,8 +143,44 @@ BEGIN
   IF NOT v24_cordis.descriptor_patch_ok(item->'descriptor',patch) THEN RETURN 'overlay_patch'; END IF;
  END LOOP;
  IF EXISTS(SELECT 1 FROM jsonb_object_keys(p_overlay->'listeners')) THEN
-  RETURN 'overlay_listener_target'; END IF;
+  IF jsonb_typeof(p_manifest->'listeners')<>'array' THEN RETURN 'overlay_target'; END IF;
+  FOR k,patch IN SELECT e.key,e.value FROM jsonb_each(p_overlay->'listeners') e LOOP
+   SELECT value INTO item FROM jsonb_array_elements(p_manifest->'listeners') x
+    WHERE x.value->>'listener_id'=k LIMIT 1;
+   IF item IS NULL THEN RETURN 'overlay_target'; END IF;
+   IF NOT v24_cordis.listener_patch_ok(item-'contract_version',patch) THEN RETURN 'overlay_patch'; END IF;
+   merged:=v24_cordis.descriptor_merge(item-'contract_version',patch);
+   IF NOT v24_cordis.listener_desc_valid(merged,p_contracts,item->>'contract_version') THEN
+    RETURN 'overlay_patch'; END IF;
+  END LOOP;
+ END IF;
  RETURN NULL;
+END $$;
+CREATE FUNCTION v24_cordis.registration_plan(p_install v24_cordis.installs) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE result jsonb:='[]'::jsonb; item jsonb; v_desc jsonb; i int:=0;
+BEGIN
+ IF jsonb_typeof(p_install.manifest->'provides')<>'array' THEN RETURN NULL; END IF;
+ FOR item IN SELECT value FROM jsonb_array_elements(p_install.manifest->'provides') LOOP
+  v_desc:=v24_cordis.overlay_apply(p_install.manifest,p_install.overlay,item);
+  IF v_desc IS NULL THEN RETURN NULL; END IF;
+  result:=result||jsonb_build_array(jsonb_build_object('kind','service','index',to_jsonb(i),
+   'key',item->>'key','descriptor',v_desc,'contract_version',item->>'contract_version'));
+  i:=i+1;
+ END LOOP;
+ IF p_install.manifest ? 'listeners' THEN
+  IF jsonb_typeof(p_install.manifest->'listeners')<>'array' THEN RETURN NULL; END IF;
+  FOR item IN SELECT value FROM jsonb_array_elements(p_install.manifest->'listeners') LOOP
+   v_desc:=v24_cordis.overlay_apply(p_install.manifest,p_install.overlay,
+    jsonb_build_object('kind','listener','key',item->>'listener_id',
+     'descriptor',item-'contract_version'));
+   IF v_desc IS NULL THEN RETURN NULL; END IF;
+   result:=result||jsonb_build_array(jsonb_build_object('kind','listener','index',to_jsonb(i),
+    'key',item->>'listener_id','descriptor',v_desc,'contract_version',item->>'contract_version'));
+   i:=i+1;
+  END LOOP;
+ END IF;
+ RETURN result;
 END $$;
 CREATE FUNCTION v24_cordis.scope_intercept_valid(p_intercept jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
@@ -157,9 +251,10 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 $$;
 CREATE FUNCTION v24_cordis.manifest_shape_valid(p_manifest jsonb,p_contracts jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE item jsonb; key text; seen text[]:=ARRAY[]::text[];
+DECLARE item jsonb; key text; seen text[]:=ARRAY[]::text[]; v_keys text[]:=ARRAY['requires','provides','priority','check'];
 BEGIN
- IF NOT coalesce(v24_cordis.exact_keys(p_manifest,ARRAY['requires','provides','priority','check']),false)
+ IF p_manifest ? 'listeners' THEN v_keys:=v_keys||ARRAY['listeners']; END IF;
+ IF NOT coalesce(v24_cordis.exact_keys(p_manifest,v_keys),false)
   OR jsonb_typeof(p_manifest->'requires')<>'array'
   OR jsonb_typeof(p_manifest->'provides')<>'array'
   OR jsonb_array_length(p_manifest->'requires')>256
@@ -184,6 +279,16 @@ BEGIN
    RETURN false;
   END IF;
  END LOOP;
+ IF p_manifest ? 'listeners' THEN
+  IF jsonb_typeof(p_manifest->'listeners')<>'array'
+   OR jsonb_array_length(p_manifest->'listeners')>16 THEN RETURN false; END IF;
+  seen:=ARRAY[]::text[];
+  FOR item IN SELECT value FROM jsonb_array_elements(p_manifest->'listeners') LOOP
+   IF NOT v24_cordis.listener_decl_valid(item,p_contracts)
+    OR (item->>'listener_id')=ANY(seen) THEN RETURN false; END IF;
+   seen:=array_append(seen,item->>'listener_id');
+  END LOOP;
+ END IF;
  FOR key IN SELECT jsonb_object_keys(p_manifest->'check') LOOP
   IF NOT (p_manifest->'requires' @> jsonb_build_array(key))
    OR NOT coalesce(v24_cordis.check_policy_valid(p_manifest->'check'->key),false) THEN RETURN false; END IF;
@@ -237,7 +342,7 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
   AND jsonb_typeof(p_payload->'contracts')='object'
   AND (p_payload->'policy_ref'='null'::jsonb OR p_payload->'policy_ref'='"chat_tool"'::jsonb)
   AND jsonb_typeof(p_payload->'overlay')='object'
-  AND v24_cordis.install_overlay_valid(p_payload->'manifest',p_payload->'overlay') IS NULL
+  AND v24_cordis.install_overlay_valid(p_payload->'manifest',p_payload->'overlay',p_payload->'contracts') IS NULL
   AND v24_cordis.manifest_shape_valid(p_payload->'manifest',p_payload->'contracts'),false)
 $$;
 CREATE FUNCTION v24_cordis.scope_lineage_open(p_scope uuid) RETURNS boolean
@@ -848,7 +953,7 @@ BEGIN
  SELECT * INTO inst FROM v24_cordis.installs WHERE id=f.install_id;
  IF NOT FOUND OR inst.state<>'installed' THEN
   RETURN jsonb_build_object('code','install_not_ready','reason','reconcile_install'); END IF;
- IF v24_cordis.install_overlay_valid(inst.manifest,inst.overlay) IS NOT NULL THEN
+ IF v24_cordis.install_overlay_valid(inst.manifest,inst.overlay,inst.contracts) IS NOT NULL THEN
   RETURN v24_cordis.activation_fail('install_overlay'); END IF;
  IF v24_cordis.scope_live_fault(f.scope_id) IN ('cycle','closure_overflow') THEN
   RETURN jsonb_build_object('code','retry_with_closure','reason','provider_closure');
@@ -1020,31 +1125,36 @@ END $$;
 CREATE FUNCTION v24_cordis.activation_total(p_fiber uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE; inst v24_cordis.installs%ROWTYPE;
- c v24_cordis.contributions%ROWTYPE; item jsonb; realm text; v_i int; v_n int; v_desc jsonb;
+ c v24_cordis.contributions%ROWTYPE; item jsonb; plan jsonb; v_i int; v_n int; v_kind text; v_realm text;
 BEGIN
  SELECT * INTO f FROM v24_cordis.fibers WHERE id=p_fiber;
  SELECT * INTO ep FROM v24_cordis.episodes WHERE id=f.current_episode_id AND fiber_id=f.id;
  SELECT * INTO inst FROM v24_cordis.installs WHERE id=f.install_id;
- IF NOT FOUND OR jsonb_typeof(inst.manifest->'provides')<>'array' THEN RETURN v24_cordis.activation_fail('totality'); END IF;
- IF NOT coalesce(v24_cordis.contracts_valid(inst.contracts),false)
-  OR v24_cordis.install_overlay_valid(inst.manifest,inst.overlay) IS NOT NULL THEN
+ IF NOT FOUND OR NOT coalesce(v24_cordis.manifest_shape_valid(inst.manifest,inst.contracts),false)
+  OR v24_cordis.install_overlay_valid(inst.manifest,inst.overlay,inst.contracts) IS NOT NULL THEN
   RETURN v24_cordis.activation_fail('totality'); END IF;
- IF EXISTS(SELECT 1 FROM v24_cordis.contributions WHERE fiber_id=f.id AND episode_id=ep.id AND kind='service'
-  AND (withdrawn_at IS NOT NULL OR released_at IS NOT NULL)) THEN RETURN v24_cordis.activation_fail('totality'); END IF;
- SELECT count(*) INTO v_n FROM v24_cordis.contributions WHERE fiber_id=f.id AND episode_id=ep.id AND kind='service'
-  AND withdrawn_at IS NULL AND released_at IS NULL;
- IF v_n<>jsonb_array_length(inst.manifest->'provides') THEN RETURN v24_cordis.activation_fail('totality'); END IF;
+ plan:=v24_cordis.registration_plan(inst);
+ IF plan IS NULL THEN RETURN v24_cordis.activation_fail('totality'); END IF;
+ v_n:=jsonb_array_length(plan);
+ IF EXISTS(SELECT 1 FROM v24_cordis.contributions WHERE fiber_id=f.id AND episode_id=ep.id
+  AND kind IN ('service','listener') AND (withdrawn_at IS NOT NULL OR released_at IS NOT NULL)) THEN
+  RETURN v24_cordis.activation_fail('totality'); END IF;
+ IF (SELECT count(*) FROM v24_cordis.contributions WHERE fiber_id=f.id AND episode_id=ep.id
+  AND kind IN ('service','listener') AND withdrawn_at IS NULL AND released_at IS NULL)<>v_n THEN
+  RETURN v24_cordis.activation_fail('totality'); END IF;
  FOR v_i IN 0..v_n-1 LOOP
-  item:=inst.manifest->'provides'->v_i;
-  realm:=v24_cordis.service_realm(f.scope_id,item->>'key');
-  v_desc:=v24_cordis.overlay_apply(inst.manifest,inst.overlay,item);
-  SELECT * INTO c FROM v24_cordis.contributions WHERE fiber_id=f.id AND episode_id=ep.id AND seq=v_i AND kind='service'
-   AND withdrawn_at IS NULL AND released_at IS NULL;
-  IF item->'descriptor'->>'capability' IS NULL
-   OR inst.contracts->(item->'descriptor'->>'capability')->>'contract_version' IS DISTINCT FROM item->>'contract_version'
-   OR NOT FOUND OR c.key IS DISTINCT FROM item->>'key' OR c.descriptor IS DISTINCT FROM v_desc
-   OR c.contract_version IS DISTINCT FROM item->>'contract_version' OR c.realm IS DISTINCT FROM realm
+  item:=plan->v_i; v_kind:=item->>'kind';
+  SELECT * INTO c FROM v24_cordis.contributions WHERE fiber_id=f.id AND episode_id=ep.id
+   AND seq=v_i AND kind=v_kind AND withdrawn_at IS NULL AND released_at IS NULL;
+  IF NOT FOUND OR c.descriptor IS DISTINCT FROM item->'descriptor'
+   OR c.contract_version IS DISTINCT FROM item->>'contract_version'
    OR c.prev_contribution_id IS NOT NULL OR c.inverse IS DISTINCT FROM '{"op":"delete_row"}'::jsonb THEN
+   RETURN v24_cordis.activation_fail('totality'); END IF;
+  IF v_kind='service' THEN
+   v_realm:=v24_cordis.service_realm(f.scope_id,item->>'key');
+   IF c.key IS DISTINCT FROM item->>'key' OR c.realm IS DISTINCT FROM v_realm THEN
+    RETURN v24_cordis.activation_fail('totality'); END IF;
+  ELSIF c.realm IS NOT NULL OR c.key IS NOT NULL THEN
    RETURN v24_cordis.activation_fail('totality'); END IF;
  END LOOP;
  RETURN NULL;
@@ -1055,7 +1165,8 @@ DECLARE payload jsonb:=p_outcome->'body'->'payload'; action text:=payload->>'act
  f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE; inst v24_cordis.installs%ROWTYPE;
  err jsonb; built jsonb; v_epoch bigint; v_episode uuid; v_next int; v_len int; v_batch int; v_i int;
  v_reg bigint; v_seq int; item jsonb; v_key text; v_realm text; v_desc jsonb; seen text[]:=ARRAY[]::text[];
- v_domain jsonb:='[]'::jsonb; v_ids jsonb:='[]'::jsonb; v_first int; v_last int; cid uuid;
+  v_plan jsonb; v_kind text;
+  v_domain jsonb:='[]'::jsonb; v_ids jsonb:='[]'::jsonb; v_first int; v_last int; cid uuid;
 BEGIN
  IF action NOT IN ('on','off','retry','advance') THEN RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','reconcile_action')); END IF;
  SELECT * INTO f FROM v24_cordis.fibers WHERE id=(payload->>'fiber_id')::uuid;
@@ -1145,28 +1256,36 @@ BEGIN
  IF NOT FOUND OR ep.closed_at IS NOT NULL OR ep.state<>'reloading' THEN RAISE EXCEPTION 'phase_drift' USING ERRCODE='0A000'; END IF;
  err:=v24_cordis.activation_bubble(v24_cordis.activation_consistent(f.id));
  IF err IS NOT NULL THEN RETURN err; END IF;
- IF jsonb_typeof(inst.manifest->'provides')<>'array' THEN RAISE EXCEPTION 'provides_shape' USING ERRCODE='0A000'; END IF;
- v_next:=(ep.iterator->>'next_index')::int; v_len:=jsonb_array_length(inst.manifest->'provides');
+ v_plan:=v24_cordis.registration_plan(inst);
+ IF v_plan IS NULL THEN RAISE EXCEPTION 'manifest_drift' USING ERRCODE='0A000'; END IF;
+ v_next:=(ep.iterator->>'next_index')::int; v_len:=jsonb_array_length(v_plan);
  v_reg:=(ep.iterator->>'registered_through')::bigint;
  IF v_next<v_len THEN
   v_batch:=least(32,v_len-v_next);
   IF v_reg+v_batch>2147483647 THEN RETURN v24_cordis.error_v1('budget_exceeded',jsonb_build_object('reason','contribution_seq')); END IF;
   FOR v_i IN 0..v_batch-1 LOOP
-   item:=inst.manifest->'provides'->(v_next+v_i); v_key:=item->>'key'; v_realm:=v24_cordis.service_realm(f.scope_id,v_key);
-   v_desc:=v24_cordis.overlay_apply(inst.manifest,inst.overlay,item);
-   IF v_realm IS NULL OR v_key IS NULL OR length(v_key) NOT BETWEEN 1 AND 128 THEN RAISE EXCEPTION 'realm_unavailable' USING ERRCODE='0A000'; END IF;
-   IF (v_realm||'/'||v_key)=ANY(seen) OR EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.kind='service'
-    AND c.realm=v_realm AND c.key=v_key AND c.released_at IS NULL) THEN
-    RAISE EXCEPTION 'address_conflict' USING ERRCODE='0A000'; END IF;
-   seen:=array_append(seen,v_realm||'/'||v_key);
-   IF v_desc IS NULL OR item->'descriptor' IS NULL OR inst.contracts->(item->'descriptor'->>'capability')->>'contract_version'
-    IS DISTINCT FROM item->>'contract_version' THEN RAISE EXCEPTION 'contract_drift' USING ERRCODE='0A000'; END IF;
+   item:=v_plan->(v_next+v_i); v_kind:=item->>'kind'; v_desc:=item->'descriptor';
+   v_key:=CASE WHEN v_kind='service' THEN item->>'key' END;
+   v_realm:=CASE WHEN v_kind='service' THEN v24_cordis.service_realm(f.scope_id,v_key) END;
+   IF v_kind='service' THEN
+    IF v_realm IS NULL OR v_key IS NULL OR length(v_key) NOT BETWEEN 1 AND 128 THEN RAISE EXCEPTION 'realm_unavailable' USING ERRCODE='0A000'; END IF;
+    IF (v_realm||'/'||v_key)=ANY(seen) OR EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.kind='service'
+     AND c.realm=v_realm AND c.key=v_key AND c.released_at IS NULL) THEN
+     RAISE EXCEPTION 'address_conflict' USING ERRCODE='0A000'; END IF;
+    seen:=array_append(seen,v_realm||'/'||v_key);
+   END IF;
+    IF v_desc IS NULL OR NOT (CASE WHEN v_kind='service'
+      THEN inst.contracts->(v_desc->>'capability')->>'contract_version' IS NOT DISTINCT FROM item->>'contract_version'
+      ELSE v24_cordis.listener_desc_valid(v_desc,inst.contracts,item->>'contract_version') END)
+     THEN RAISE EXCEPTION 'contract_drift' USING ERRCODE='0A000'; END IF;
    v_seq:=(v_reg+1+v_i)::int; cid:=gen_random_uuid();
    IF v_i=0 THEN v_first:=v_seq; END IF; v_last:=v_seq;
    v_ids:=v_ids||jsonb_build_array(to_jsonb(cid));
    v_domain:=v_domain||jsonb_build_array(jsonb_build_object('op','contribution_append','id',to_jsonb(cid),
-    'fiber_id',to_jsonb(f.id),'episode_id',to_jsonb(ep.id),'seq',to_jsonb(v_seq),'kind','service',
-    'realm',to_jsonb(v_realm),'key',to_jsonb(v_key),'descriptor',v_desc,'prev_contribution_id','null'::jsonb,
+    'fiber_id',to_jsonb(f.id),'episode_id',to_jsonb(ep.id),'seq',to_jsonb(v_seq),'kind',v_kind,
+    'realm',CASE WHEN v_kind='service' THEN to_jsonb(v_realm) ELSE 'null'::jsonb END,
+    'key',CASE WHEN v_kind='service' THEN to_jsonb(v_key) ELSE 'null'::jsonb END,
+    'descriptor',v_desc,'prev_contribution_id','null'::jsonb,
     'inverse',jsonb_build_object('op','delete_row'),'contract_version',to_jsonb(item->>'contract_version')));
   END LOOP;
   v_domain:=v_domain||jsonb_build_array(jsonb_build_object('op','episode_progress','episode_id',to_jsonb(ep.id),

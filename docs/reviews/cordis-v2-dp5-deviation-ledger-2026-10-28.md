@@ -5,7 +5,7 @@ This ledger records two B0 passes:
 - the initial B0 at HEAD `f119429` on 2026-10-28, which was **blocked** at the then-current 5000 helper cap (`R=680<900`); and
 - the B0 **re-adjudication** at HEAD `ba66776` with the user's uncommitted 41 refactor and 5500 cap, which **passes** capacity (`R=1162≥900`) and the 31 inherited gates.
 
-The initial blocked result is kept as history and is not rewritten. No DP1–DP4 acceptance record is rewritten, and no DP5 W1+ behavior is claimed.
+The initial blocked result is kept as history and is not rewritten. No DP1–DP4 acceptance record is rewritten. W1 and W2 are recorded as local, verified milestones; W3+ behavior is not claimed.
 
 ## Initial B0 (2026-10-28, HEAD `f119429`) — historical, blocked at 5000
 
@@ -65,6 +65,27 @@ W1 is a local, verified milestone. The rows below record what changed against th
 | 2026-10-28 | No event scaffold | W2/W3 own listener, dispatch, 44 and loader 19 | No `44_events.sql`, no loader change (18 entries), no listener registration, no dispatch producer, no typed event op, no `CDP5-E/D/B`; R5–R7 deferred to W4 | `ls`; `v24/cordis/load.py`; CDP5-R |
 | 2026-10-28 | Publication | AGENTS says `origin main`; branch is `v24` tracking `origin/v24`; B0 left the target unresolved | W1 is a local commit; no force, no inferred target, no push to `main` or `origin/v24` | this ledger; plan §9; `git branch -vv` |
 
+## W2 implementation (2026-10-28, HEAD `c3ddd94`)
+
+W2 is a local, verified milestone for listener registration/revocation only. The rows below replace the W1 blanket listener-overlay rejection and record what remains deliberately outside W2.
+
+| Date | Item | Baseline / spec | W2 treatment | Evidence |
+|---|---|---|---|---|
+| 2026-10-28 | Manifest declaration | Plan §4.1: optional fifth key `listeners`, 0–16 exact eight-key items; missing/empty legacy fast path | `manifest_shape_valid` accepts exactly four keys or four+`listeners`; each listener validates listener_id/event/mode/priority/filter/exec/contract_version/sync_reads; listener_id unique in the manifest; `listeners=[]` returns the legacy provides plan | CDP5-E1/E5; CDP2-I3 |
+| 2026-10-28 | Exec/contracts | Plan §4.1: `in_db` fixed `in_db_v1`; `host` requires `contracts.listener_call` and equal version; `sync_reads` JSON false | `listener_exec_valid`/`listener_desc_shape`/`listener_desc_valid` enforce the exact exec variants, fail-code text, host capability, contract presence/version and literal false; malformed declarations are `invalid_args` with zero write | CDP5-E5; CDP5-E1 |
+| 2026-10-28 | Registration plan | Plan §4.1: `registration_plan(install)` = provides ++ listeners with kind/original position | `registration_plan` returns kind/index/key/overlay-applied descriptor/contract_version; P2, P4, `activation_total`, `validate_domain`, `reconcile_branch` and `reconcile_command_seed` route through it (seed only needs service addresses) | CDP5-E2/E4; CDP2-A3; CDP3-L4 |
+| 2026-10-28 | Cross-32 iterator | Plan §4.1: one P2 stream, ≤32/batch, next_index/registered_through continuous | 30 services + 3 listeners registered in batches 32/1; seq 0..32; iterator next_index 33, registered_through 32; P4 activates; a target change after batch one Diverts and keeps prefix 32 | CDP5-E2 |
+| 2026-10-28 | P4 totality | Plan §4.1: every plan item kind/seq/descriptor/contract/inverse/quantity, not only provides | `activation_total` counts service+listener rows, checks each seq/kind/realm/key/descriptor/contract/prev/inverse, and 40 P4 independently rejects a forged `episode_activate` when a listener row is withdrawn | CDP5-E2/E4; CDP2/CDP3 |
+| 2026-10-28 | Listener ledger row | Plan §4.1: realm/key/prev NULL, `inverse={op:delete_row}`, separate contract_version | `contribution_append` accepts `kind='listener'` only with null realm/key/prev, exact seven-key descriptor and delete_row inverse; the existing `(fiber,episode,event,listener_id)` unique index is the final defence | CDP5-E3/E4 |
+| 2026-10-28 | Identity/withdrawal | Plan §4.1/§4.6: duplicate listener_id and same-episode event/id reject; new episode may reuse; P5/P6 logical tombstones | Duplicate manifest id is invalid_args; same-episode collision is 23505; a new episode reuses the id over the retained released row; production P5 withdraws all listener rows and P6 releases in LIFO batches 32..1 then 0..0 without deleting rows, descriptors or inverse | CDP5-E3/E6 |
+| 2026-10-28 | Listener overlay | Plan §4.2.1: dual namespace, declared targets only, priority/filter only, identity/exec/contract protected | W1 rejected every non-empty listener map; W2 resolves each target to a declared listener and applies recursive merge to the seven-key descriptor, rejecting unknown targets, protected fields and invalid filters. A service key and listener_id may share a name | CDP5-E1; CDP5-R1 still passes |
+| 2026-10-28 | Independent validator | Plan §4.1: forged delta/wrong registration is `invalid_outcome`; DB uniqueness SQLSTATE preserved | Forged listener realm/key/prev/inverse/contract/seq/descriptor, missing/extra appends and P4 over a withdrawn listener are `invalid_outcome` with a full ten-table snapshot unchanged; the unmodified plan commits | CDP5-E4 |
+| 2026-10-28 | P6 listener barrier | Plan §6.2 E7: no listener pin/run; provider-owned ready/claimed/unknown fixture effects block P6 | Listener registration creates no pin/run and no dispatch/listener_call effect; owner-fixture `listener_call` ready/claimed make P6 `deferred`, unknown makes it `blocked_unknown`. No real drain is claimed | CDP5-E7 |
+| 2026-10-28 | Not delivered | W3 owns producer/execution/44/loader/typed ops; W4 R5–R7 | No `44_events.sql`, loader 19-entry change, dispatch producer, listener_call execution, host receipt, event planner, ordering, unavailable or real drain; E1–E7 explicitly exclude them | `ls`; `v24/cordis/load.py`; CDP5-E output |
+| 2026-10-28 | Capacity | W1: 4596, R=904, DDL 465, 138 functions | W2: 40=1589, 41=1473, 42=1015, 43=668, total **4745**, **R=755**, DDL **465**, **144** functions. Cap remains 5500; no limit/test/mode removed | CDP1-K0; CDP2-B; CDP3-B1; CDP4-B; CDP5-E |
+| 2026-10-28 | Regression | Inherited 31 + W1 R + W2 E | **33/33 exit 0** (167 s), one process at a time, s8 before s7 | `/tmp/dp5-w2-final2/gates.tsv`; `gate-01..33.log` |
+| 2026-10-28 | Publication | AGENTS says `origin main`; branch `v24` tracks `origin/v24`; target unresolved | W2 is a local commit; no force, no inferred target, no push | this ledger; plan §9; `git branch -vv` |
+
 ## Capacity contract history
 
 The authoritative line is design §10.1: **advance and all private helper modules 40–49, all physical lines, total ≤5500** (user authorization 2026-10-28; replaces the 2026-10-27 5000 line and the earlier 1200 per-advance line). The budget is not per file; splitting functions or moving them between 40–49 does not escape it. The 43 per-file 700 cap is an additional readability cap, not a substitute for the 5500 total.
@@ -76,6 +97,8 @@ The measured history is:
 | DP4 planning snapshot | 1546 | 1211 | 1000 | 459 | 4216 | 784 vs 5000 | planning only |
 | Initial B0 at `f119429` | 1549 | 1211 | 1000 | 560 | 4320 | 680 vs 5000 | blocked |
 | B0 re-adjudication at `ba66776` + user edits | 1549 | 1197 | 1000 | 592 | 4338 | **1162 vs 5500** | **pass** |
+| W1 at `c3ddd94` | 1567 | 1354 | 1007 | 668 | 4596 | 904 vs 5500 | pass |
+| W2 at `c3ddd94` | 1589 | 1473 | 1015 | 668 | **4745** | **755 vs 5500** | **pass** |
 
 DP1/DP2 docs still carry their 2026-10-27 "5000" notes; those are historical statements about the previous authorization and do not override design §10.1's 2026-10-28 5500 line. B0 did not rewrite those historical records.
 
@@ -85,11 +108,13 @@ B0 claims: DP4 handoff verification at `ba66776`, current 43 stability, the 41 r
 
 W1 claims: overlay/intercept exact ABI and boundaries; effective descriptor/digest through resolve/check/view/run/claim; configured claim `execution`; old-run drain; the scope UPDATE guard; R1–R4/R8; the W1 capacity measurement (4596/904/465/138); and the W1 local commit.
 
+W2 claims: optional five-key manifest, exact eight-key listener declarations and exec/contract/sync_reads validation; `registration_plan` = provides++listeners; cross-32 iterator/seq/registered_through and P4 totality; listener contribution shape/`delete_row` inverse; declared-listener overlay validation; production P5/P6 listener withdrawal/release; E1–E7 registration/revocation subset; the W2 capacity measurement (4745/755/465/144); and the W2 local commit. It explicitly does not claim W3 ordering, unavailable, real drain, host receipts or execution.
+
 Unclaimed and not implemented:
 
-- W2 listener declaration/registration/withdrawal; listener overlay application; `CDP5-E` registration subset.
-- W3 `44_events.sql`, loader 19, budget five-file tree, p4 producer, dispatch/listener_call execution, typed ops, virtual receipts, `CDP5-D`.
+- W3 `44_events.sql`, loader 19, budget five-file tree, p4 producer, dispatch/listener_call execution, typed ops, virtual receipts, `CDP5-D`; also listener ordering, not-yet-created `unavailable`, real drain and host receipt evidence deliberately left by W2.
+- W2 did deliver listener declaration/registration/withdrawal, listener overlay application and the `CDP5-E` registration subset; those are no longer unclaimed.
 - W4 refinement reference and deviations; `CDP5-R5–R7`.
 - W5 full `CDP5-B`, all-new-and-old closeout, final push-ready result.
 - DP6 scanner/recovery/unknown reconciliation and any G4 item outside events/resolution.
-- Any push for W1. Publication target remains unresolved; the local commit is not evidence of a remote target.
+- Any push for W1/W2. Publication target remains unresolved; the local commits are not evidence of a remote target.

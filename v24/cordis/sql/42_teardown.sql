@@ -289,7 +289,7 @@ BEGIN
  fault:=v24_cordis.lineage_fault(f.owner_id);
  IF fault IS NOT NULL THEN RETURN fault; END IF;
  IF v24_cordis.dispose_ancestor_sealed(f.owner_id) THEN RETURN 'lineage'; END IF;
- IF v24_cordis.install_overlay_valid(i.manifest,i.overlay) IS NOT NULL THEN RETURN 'overlay'; END IF;
+ IF v24_cordis.install_overlay_valid(i.manifest,i.overlay,i.contracts) IS NOT NULL THEN RETURN 'overlay'; END IF;
  fault:=v24_cordis.scope_live_fault(f.scope_id);
  IF fault IS NOT NULL THEN RETURN fault; END IF;
  IF v24_cordis.activation_total(f.id) IS NOT NULL THEN RETURN 'totality'; END IF;
@@ -485,7 +485,7 @@ $$;
 CREATE FUNCTION v24_cordis.reconcile_branch(p_fiber uuid,p_action text,p_expected bigint) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE; inst v24_cordis.installs%ROWTYPE;
- err jsonb; item jsonb; bind jsonb; row record; live jsonb; ids jsonb; k text; v_realm text;
+ err jsonb; item jsonb; bind jsonb; row record; live jsonb; ids jsonb; k text; v_realm text; plan jsonb; v_kind text;
  v_i int; v_next int; v_len int; seen text[]:=ARRAY[]::text[]; retire boolean; slot boolean;
 BEGIN
  IF p_action NOT IN ('on','off','retry','advance') THEN
@@ -638,32 +638,40 @@ BEGIN
     RETURN v24_cordis.branch_raise(ep,'p3','registration_stale','contract_drift',k,retire); END IF;
   END LOOP;
  END IF;
- IF jsonb_typeof(inst.manifest->'provides')<>'array' THEN
-  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','provides_shape'); END IF;
- v_next:=(ep.iterator->>'next_index')::int; v_len:=jsonb_array_length(inst.manifest->'provides');
+ plan:=v24_cordis.registration_plan(inst);
+ IF plan IS NULL THEN
+  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','manifest_drift'); END IF;
+ v_next:=(ep.iterator->>'next_index')::int; v_len:=jsonb_array_length(plan);
  IF v_next<v_len THEN
   FOR v_i IN 0..least(32,v_len-v_next)-1 LOOP
-   item:=inst.manifest->'provides'->(v_next+v_i); k:=item->>'key'; v_realm:=v24_cordis.service_realm(f.scope_id,k);
-   IF k IS NULL OR length(k) NOT BETWEEN 1 AND 128 OR v_realm IS NULL THEN
-    RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','realm_unavailable'); END IF;
-   IF (v_realm||'/'||k)=ANY(seen) OR EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.kind='service'
-    AND c.realm=v_realm AND c.key=k AND c.released_at IS NULL) THEN
-    RETURN v24_cordis.branch_raise(ep,'p2','provide_conflict','address_conflict',k,retire); END IF;
-   seen:=array_append(seen,v_realm||'/'||k);
-   IF NOT coalesce(v24_cordis.contracts_valid(inst.contracts),false)
-    OR item->'descriptor' IS NULL OR inst.contracts->(item->'descriptor'->>'capability')->>'contract_version'
-    IS DISTINCT FROM item->>'contract_version' THEN
+   item:=plan->(v_next+v_i); k:=item->>'key'; v_kind:=item->>'kind';
+   IF v_kind='service' THEN
+    v_realm:=v24_cordis.service_realm(f.scope_id,k);
+    IF k IS NULL OR length(k) NOT BETWEEN 1 AND 128 OR v_realm IS NULL THEN
+     RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','realm_unavailable'); END IF;
+    IF (v_realm||'/'||k)=ANY(seen) OR EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.kind='service'
+     AND c.realm=v_realm AND c.key=k AND c.released_at IS NULL) THEN
+     RETURN v24_cordis.branch_raise(ep,'p2','provide_conflict','address_conflict',k,retire); END IF;
+    seen:=array_append(seen,v_realm||'/'||k);
+    IF NOT coalesce(v24_cordis.contracts_valid(inst.contracts),false)
+     OR item->'descriptor' IS NULL OR inst.contracts->(item->'descriptor'->>'capability')->>'contract_version'
+     IS DISTINCT FROM item->>'contract_version' THEN
+     RETURN v24_cordis.branch_raise(ep,'p2','registration_stale','contract_drift',k,retire); END IF;
+   ELSIF NOT v24_cordis.contracts_valid(inst.contracts)
+    OR NOT v24_cordis.listener_desc_valid(item->'descriptor',inst.contracts,item->>'contract_version') THEN
     RETURN v24_cordis.branch_raise(ep,'p2','registration_stale','contract_drift',k,retire); END IF;
   END LOOP;
   RETURN jsonb_build_object('kind','p2');
  END IF;
  IF v24_cordis.activation_total(f.id) IS NOT NULL THEN
   FOR v_i IN 0..v_len-1 LOOP
-   item:=inst.manifest->'provides'->v_i; k:=item->>'key'; v_realm:=v24_cordis.service_realm(f.scope_id,k);
-   IF k IS NULL OR inst.contracts->(item->'descriptor'->>'capability')->>'contract_version'
-     IS DISTINCT FROM item->>'contract_version' OR NOT EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.fiber_id=f.id AND c.episode_id=ep.id
-    AND c.seq=v_i AND c.kind='service' AND c.withdrawn_at IS NULL AND c.released_at IS NULL AND c.key=k
-    AND c.realm IS NOT DISTINCT FROM v_realm AND c.descriptor IS NOT DISTINCT FROM item->'descriptor'
+   item:=plan->v_i; k:=item->>'key'; v_kind:=item->>'kind';
+   IF NOT EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.fiber_id=f.id AND c.episode_id=ep.id
+    AND c.seq=v_i AND c.kind=v_kind AND c.withdrawn_at IS NULL AND c.released_at IS NULL
+    AND c.key IS NOT DISTINCT FROM CASE WHEN v_kind='service' THEN k END
+    AND c.realm IS NOT DISTINCT FROM CASE WHEN v_kind='service'
+     THEN v24_cordis.service_realm(f.scope_id,k) END
+    AND c.descriptor IS NOT DISTINCT FROM item->'descriptor'
     AND c.contract_version IS NOT DISTINCT FROM item->>'contract_version'
     AND c.prev_contribution_id IS NULL AND c.inverse='{"op":"delete_row"}'::jsonb) THEN
     IF k IS NULL OR length(k) NOT BETWEEN 1 AND 128 THEN

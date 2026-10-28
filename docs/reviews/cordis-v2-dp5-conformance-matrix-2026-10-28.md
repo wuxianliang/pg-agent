@@ -1,6 +1,6 @@
 # Cordis v2 DP5 Conformance Matrix
 
-B0 re-adjudication executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, at HEAD `ba66776` plus the user's uncommitted `41_lifecycle.sql` refactor and `helper_budget.py` 5500 cap. W1 was then implemented on the same HEAD and verified by the inherited 31 commands plus `CDP5-R`. This matrix records B0 and W1: DP4 handoff inspection, the current `43_loop.sql` stability check, the relaxed 5500 capacity contract, the 31-command pre-DP5 regression, the admission decision, the W1 overlay/intercept/effective-descriptor implementation, and the 32-command W1 regression. W2+ does not exist.
+B0 re-adjudication executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, at HEAD `ba66776` plus the user's uncommitted `41_lifecycle.sql` refactor and `helper_budget.py` 5500 cap. W1 was then implemented on the same HEAD and verified by the inherited 31 commands plus `CDP5-R`; W2 was implemented on W1 HEAD `c3ddd94` and verified by the 31 inherited commands plus `CDP5-R` and `CDP5-E`. This matrix records B0, W1 and W2: DP4 handoff inspection, the current `43_loop.sql` stability check, the relaxed 5500 capacity contract, the 31-command pre-DP5 regression, the admission decision, the W1 overlay/intercept/effective-descriptor implementation, the W2 listener registration/withdrawal implementation, and the 33-command W2 regression. W3+ does not exist.
 
 The prior blocked-at-5000 B0 record is retained in the plan §9 as history; it is superseded by this re-adjudication. DP1–DP4 historical acceptance records are not rewritten.
 
@@ -29,7 +29,22 @@ W1 claims only overlay/intercept plus effective-descriptor consistency and its g
 - the `30_triggers.sql` scope guard for `realm_overrides`/`intercept` (55000) and the existing close-tombstone rule;
 - R1–R4/R8 in `v24/cordis/dp5/test_resolution.py`.
 
-W1 does **not** claim listener declaration/registration/withdrawal, listener overlay application, dispatch production, `44_events.sql`, the loader 19-entry change, typed event ops, `CDP5-E/D/B`, R5–R7, or any G4 completion. The W1 listeners-map rejection is a staged boundary, not a W2 implementation.
+W1 did **not** claim listener declaration/registration/withdrawal, listener overlay application, dispatch production, `44_events.sql`, the loader 19-entry change, typed event ops, `CDP5-E/D/B`, R5–R7, or any G4 completion. The W1 listeners-map rejection was a staged boundary; W2 replaced it with declared-listener validation.
+
+## W2 scope
+
+W2 claims listener production registration and revocation only:
+
+- optional manifest `listeners` fifth key, 0–16 items, exact eight keys `{listener_id,event,mode,priority,filter,exec,contract_version,sync_reads}`; missing/empty keeps the legacy four-key path and P2/P4 bytes;
+- `in_db` execs `const`/`acc`/`append`/`fail` with `contract_version='in_db_v1'`; `host` exec requires `contracts.listener_call` and inherits its contract version/handler/replay;
+- `sync_reads=false`, bounded listener id/event, mode/filter/priority/exec validation, listener id unique within the manifest;
+- `registration_plan(install)` = `provides ++ listeners`, each item carrying kind/index/key/overlay-applied descriptor/contract version;
+- one P2 iterator/seq/`registered_through` stream across services and listeners, ≤32 appends per batch, including a combined declaration crossing 32 items;
+- P4 totality over every plan item's kind/seq/descriptor/contract/realm address/inverse/quantity, plus the independent `contribution_append` listener shape and `delete_row` inverse;
+- declared-listener overlay application (priority/filter only; identity/exec/contract/sync_reads protected; service and listener namespaces independent);
+- production P5 withdrawal and P6 LIFO listener release with retained tombstones; no listener pin or run.
+
+W2 does **not** claim dispatch production, `dispatch`/`listener_call` execution, host receipts, `ready_effects`, virtual receipts, typed event ops, `44_events.sql`, the loader 19-entry change, five-file budget tree, `CDP5-D/B`, R5–R7, cross-episode listener ordering, not-yet-created snapshot `unavailable`, or a real listener drain. E7's `listener_call` effects are owner fixtures proving the existing P6 barrier, not a producer. Those remaining event-path items are W3/W4/W5 work.
 
 ## Environment
 
@@ -50,6 +65,23 @@ Commands ran from the worktree root. `uv run` resolved the worktree's `.venv`.
 | `.venv` | worktree directory under `v99`, not the main checkout |
 
 `git status --porcelain=v1` showed 18 modified tracked paths and 30 untracked entries before B0 wrote its artifacts. The 41 refactor, `helper_budget.py`, and the dp1/dp2/dp3/dp4 test edits are user/uncommitted work preserved by B0; they are not B0-created. None was reverted or staged. Full snapshot: `/tmp/dp5-b0-readjudication/pre-status.txt`.
+
+### W2 environment
+
+W2 started at the W1 commit and did not fetch or push:
+
+| Item | Observed value |
+|---|---|
+| `pwd -P` | `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` |
+| branch / upstream | `v24` / `origin/v24` |
+| HEAD at W2 start | `c3ddd940c8295d4025d16b4ba666329f3f20bd3d`, subject `v24: implement Cordis DP5 W1 overlay/intercept resolution` |
+| `git rev-list --left-right --count origin/v24...HEAD` at W2 start | `0 0` |
+| W2 changed helpers | `40_advance.sql`, `41_lifecycle.sql`, `42_teardown.sql` |
+| W2 added gates/artifacts | `v24/cordis/dp5/test_listeners.py`, DP5 README/matrix/ledger/plan |
+| Loader / budget / 44 | unchanged 18 entries / unchanged 5500 / absent |
+| Frozen `v24/sql` and `v24/s1`–`s12` | `git diff --exit-code 57e2c1e -- ...` exit 0; `git diff --check` exit 0 |
+
+The working tree still contains the pre-existing DP1/DP2 documentation and unrelated analysis/design/review edits shown below; W2 did not revert or stage them.
 
 ## DP4 handoff
 
@@ -156,6 +188,34 @@ W1 changed only `30_triggers.sql` (DDL) and the four helper modules. It did not 
 | `44_events.sql` | absent | absent at W1 | pass (intentional) |
 
 The 4-line DDL delta is exactly the `scopes.realm_overrides`/`intercept` UPDATE guard. The function delta is ten new private helpers (`descriptor_depth`, `descriptor_merge`, `descriptor_patch_ok`, `overlay_apply`, `install_overlay_valid`, `scope_intercept_valid`, `intercept_for`, `descriptor_effective`, `run_binding_desc`, `claim_execution`) minus the removed `scope_intercepted`.
+
+### W2 actual capacity
+
+W2 changed only the three already-mutable helper modules and added one gate script; it did not add a helper file, loader entry, DDL, table or public function.
+
+| Helper module | W1 | W2 | W2 delta |
+|---|---:|---:|---:|
+| `40_advance.sql` | 1567 | **1589** | +22 |
+| `41_lifecycle.sql` | 1354 | **1473** | +119 |
+| `42_teardown.sql` | 1007 | **1015** | +8 |
+| `43_loop.sql` | 668 | **668** | 0 |
+| **40–49 total** | 4596 | **4745** | **+149** |
+
+`R = 5500 − 4745 = 755`. `R=755` is a W3 admission measurement, not a W3–W5 capacity proof. No mode, validator, limit or test was removed.
+
+| Item | W2 observed | Limit | Result |
+|---|---:|---:|---|
+| Helper total | **4745** | 5500 | pass |
+| Remaining `R` | **755** | (inventory) | recorded |
+| DDL prefix | **465** | 900 | pass |
+| Manifest entries | 18 | 18 | pass |
+| Private functions | **144** | (inventory) | +6 net |
+| Domain tables | 10 | 10 | pass |
+| `SECURITY DEFINER` | 1 (`advance`) | 1 (`advance`) | pass |
+| public EXECUTE | 0 | 0 | pass |
+| `44_events.sql` | absent | absent at W2 | pass (intentional) |
+
+The six new helpers are `listener_exec_valid`, `listener_desc_shape`, `listener_desc_valid`, `listener_decl_valid`, `listener_patch_ok` and `registration_plan`. `install_overlay_valid` gained the contracts argument; its behavior for legacy/valid service overlays is unchanged, and R1–R4/R8 still pass.
 
 ## Refactor and 43 stability inspection
 
@@ -292,18 +352,72 @@ Key W1 assertions from the logs:
 
 The DP4 closeout assertion was changed from the historical exact `DDL 461` to the plan ceiling `DDL<=900`; the actual print uses the measured 465. `43=668` is under the DP4 per-file 700 cap.
 
+## W2 serial gates
+
+W2 ran the 31 inherited commands in the B0 order (s8 before s7), then `CDP5-R`, then `CDP5-E`, each in a separate process, stopping on the first non-zero exit. None occurred: **33/33 exit 0**, wall **167 s** (per-command sum 167 s). Summary: `/tmp/dp5-w2-final2/gates.tsv`; per-command logs `/tmp/dp5-w2-final2/gate-01..33.log`.
+
+| # | Command | Exit | Duration (s) |
+|---:|---|---:|---:|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0 |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 2 |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 2 |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 1 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 14 |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 4 |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4 |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3 |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 4 |
+| 10 | `uv run python v24/load.py` | 0 | 0 |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 2 |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1 |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 3 |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 1 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 4 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 7 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 11 |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3 |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 11 |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 6 |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 5 |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 7 |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 7 |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 5 |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 12 |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 9 |
+| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 15 |
+| 32 | `uv run python v24/cordis/dp5/test_resolution.py` | 0 | 4 |
+| 33 | `uv run python v24/cordis/dp5/test_listeners.py` | 0 | 6 |
+
+Key W2 assertions from the logs:
+
+```text
+[CDP1-K0] helper budget 4745<=5500 {'40_advance.sql': 1589, '41_lifecycle.sql': 1473, '42_teardown.sql': 1015, '43_loop.sql': 668}; predicate admits a 5500-line tree and rejects 5501
+[CDP2-B4/B5] multi-fiber dispose; tables=10 manifest=18 helpers=4745 40=1589 41=1473 42=1015 43=668 ddl=465
+[CDP3-B1] tables=10 manifest=18 helpers=4745 40=1589 41=1473 42=1015 ddl=465 definer=advance public_execute=0, views/extensions=0, 5500/5501 boundary proven
+[CDP4-B1] tables=10 manifest=18 helpers=4745 43=668 ddl=465 definer=advance public_execute=0 views/extensions=0
+[CDP4-B2] 5500/5501 helper-tree predicate reran; DDL 465<=900; 43<=700
+[passed] CDP5-R (W1: R1-R4/R8; R5-R7 deferred to W4)
+[passed] CDP5-E (W2: E1-E7 registration/revocation subset; ordering/unavailable/real drain deferred to W3 D)
+```
+
+The first W2 run also passed 33/33; after a test-only deterministic-order fix in E3, the table above is the clean final run. The E3 failure in an intermediate run was an `ORDER BY seq` tie between the old and new episode (both seq 0), not a registration failure; the assertion now selects the released and active rows explicitly.
+
 ### Future DP5 command index
 
-W1 delivered `test_resolution.py` (R1–R4/R8). W2/W3/W4/W5 append their own scripts/subset:
+W1 delivered `test_resolution.py` (R1–R4/R8); W2 delivered `test_listeners.py` (E1–E7 registration/revocation subset). W3/W4/W5 append their own scripts/subset:
 
 ```bash
-uv run python v24/cordis/dp5/test_listeners.py   # W2, CDP5-E registration subset
+uv run python v24/cordis/dp5/test_listeners.py   # W2, CDP5-E registration subset (delivered)
 uv run python v24/cordis/dp5/test_dispatch.py    # W3, CDP5-D
 uv run python v24/cordis/dp5/test_resolution.py  # W1 now; W4 completes R5-R7
 uv run python v24/cordis/dp5/test_boundaries.py  # W5, CDP5-B
 ```
 
-W2 runs the inherited set plus the delivered E registration subset and the existing W1 resolution script; W3 adds D; W4 completes R; W5 adds B. A missing item is not a skip-to-green: each milestone must name what is not yet covered. All commands run from the v99 root, one process at a time, with no concurrent DROP/CREATE of the same gate database.
+W2 ran the 31 inherited commands plus the delivered E registration subset and the existing W1 resolution script: **33/33 exit 0**. W3 adds D plus the ordering, unavailable and real-drain evidence W2 deliberately left out; W4 completes R; W5 adds B. A missing item is not a skip-to-green: each milestone must name what is not yet covered. All commands run from the v99 root, one process at a time, with no concurrent DROP/CREATE of the same gate database.
 
 ## Handoff inventory
 
@@ -454,16 +568,33 @@ M v24/cordis/dp4/test_closeout.py
 
 The five test files already carried pre-B0/B0-era edits (the 5500 `LIMIT` import/docstring and the 41-refactor fixture work); W1's required test changes are layered on top. Pre-existing unrelated paths — `docs/designs/cordis-plugin-system-2026-10-25.md`, DP1–DP4 plan/review files, `dp1/test_kernel.py`, `dp2/test_kernel.py`, `dp2/README.md`, `helper_budget.py`, the untracked analysis/design/review files, and the DP1–DP4 artifacts — are not part of the W1 commit.
 
+### W2 touched paths
+
+W2 modifies or adds exactly these paths:
+
+```text
+M v24/cordis/sql/40_advance.sql
+M v24/cordis/sql/41_lifecycle.sql
+M v24/cordis/sql/42_teardown.sql
+M v24/cordis/dp5/README.md
+?? v24/cordis/dp5/test_listeners.py
+M docs/plans/v24-cordis-dp5-events-resolution-plan-2026-10-28.md
+M docs/reviews/cordis-v2-dp5-conformance-matrix-2026-10-28.md
+M docs/reviews/cordis-v2-dp5-deviation-ledger-2026-10-28.md
+```
+
+No loader, budget, DDL, `30_triggers.sql`, `43_loop.sql`, frozen SQL, DP1–DP4 test/artifact, or unrelated pre-existing workspace path is staged. W1’s `test_resolution.py` is not edited; W2 runs it unchanged as the regression gate.
+
 ## Publication target conflict
 
 `AGENTS.md` says the working branch tracks `origin/main` and pushes there. The actual worktree is branch `v24`, tracking `origin/v24`; after `git fetch origin`, `origin/v24` is `4b34bf2` and HEAD is 9 commits ahead. `origin/main` is a different commit (`4635b4a`). The user reports DP4 was pushed in another session, but this worktree cannot prove which remote/ref received it, and the stale `origin/v24` is not evidence of a safe target.
 
-B0 did not commit and did not push. W1 is committed locally on `v24` after the 32-command regression; no push was performed because no remote/ref was named and the branch's `origin/v24` is stale. The W1 commit is not evidence of a safe publication target. Publication remains for orchestration or an explicit user-named remote/branch.
+B0 did not commit and did not push. W1 is committed locally on `v24` after the 32-command regression; W2 is committed locally on top of W1 after the clean 33-command regression. No push was performed for either milestone because no remote/ref was named by the task. The local commits are not evidence of a safe publication target; publication remains for orchestration or an explicit user-named remote/branch.
 
 ## Not covered
 
-- No W2+ behavior; no listener declaration/registration/withdrawal, listener overlay application, dispatch producer, `44_events.sql`, typed event op, or event planner.
-- No `44_events.sql`; the loader remains 18 entries and `helper_budget.py` remains the user's 5500-cap version.
-- No `CDP5-E/D/B` script or database gate, and no R5–R7 (W4). Only `v24/cordis/dp5/test_resolution.py` exists and was run (R1–R4/R8).
+- No W3+ behavior; no dispatch producer, `dispatch`/`listener_call` execution, host receipts, `ready_effects`, virtual receipts, typed event ops, event planner, `44_events.sql` or loader 19-entry change.
+- W2 covers listener registration/withdrawal and declared-listener overlays only. Cross-episode ordering, not-yet-created `unavailable`, a real listener drain and host receipt evidence remain W3 D.
+- No `CDP5-D/B` script or database gate, and no R5–R7 (W4). Only `test_resolution.py` (R1–R4/R8) and `test_listeners.py` (E1–E7) exist and were run; E7's effect rows are owner fixtures.
 - No DP6 scanner/recovery/unknown-reconciliation work; no claim that G4 is complete.
-- No push for B0 or W1. Capacity and the W1 local commit are proven; remote publication is unresolved.
+- No push for B0, W1 or W2. Capacity and the W1/W2 local commits are proven; remote publication is unresolved.

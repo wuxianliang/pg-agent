@@ -431,7 +431,7 @@ CREATE FUNCTION v24_cordis.validate_delta(p_delta jsonb,p_class text,p_structure
  p_kind text DEFAULT NULL) RETURNS jsonb
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE item jsonb; sub jsonb; op text; ordinal int; ordinals int[]:=ARRAY[]::int[]; status text;
- n_scope int:=0; n_install int:=0; n_fiber int:=0; n_begin int:=0; n_service int:=0; n_child int:=0;
+ n_scope int:=0; n_install int:=0; n_fiber int:=0; n_begin int:=0; n_service int:=0; n_child int:=0; n_listener int:=0;
  n_progress int:=0; n_control int:=0; n_activate int:=0; n_dispose int:=0; n_retire int:=0;
  n_close_start int:=0; n_withdraw int:=0; n_inverse int:=0; n_pin_release int:=0; n_close_ep int:=0;
  i int;
@@ -538,7 +538,7 @@ BEGIN
     OR NOT v24_cordis.json_text(item->'identity') OR NOT v24_cordis.json_text(item->'version')
     OR jsonb_typeof(item->'manifest')<>'object' OR NOT v24_cordis.json_hex64(item->'artifact_digest')
     OR jsonb_typeof(item->'contracts')<>'object' OR jsonb_typeof(item->'overlay')<>'object'
-    OR v24_cordis.install_overlay_valid(item->'manifest',item->'overlay') IS NOT NULL
+    OR v24_cordis.install_overlay_valid(item->'manifest',item->'overlay',item->'contracts') IS NOT NULL
     OR NOT (item->'policy_ref'='null'::jsonb
          OR (jsonb_typeof(item->'policy_ref')='string' AND length(item->'policy_ref'#>>'{}') BETWEEN 1 AND 128)) THEN
     RETURN v24_cordis.error_v1('invalid_outcome');
@@ -610,7 +610,7 @@ BEGIN
      'realm','key','descriptor','prev_contribution_id','inverse','contract_version']),false)
     OR NOT v24_cordis.json_uuid(item->'id') OR NOT v24_cordis.json_uuid(item->'fiber_id')
     OR NOT v24_cordis.json_uuid(item->'episode_id') OR NOT v24_cordis.json_int(item->'seq',0,2147483647)
-    OR jsonb_typeof(item->'kind')<>'string' OR item->>'kind' NOT IN ('service','child')
+    OR jsonb_typeof(item->'kind')<>'string' OR item->>'kind' NOT IN ('service','listener','child')
     OR jsonb_typeof(item->'descriptor')<>'object'
     OR NOT (item->'prev_contribution_id'='null'::jsonb OR v24_cordis.json_uuid(item->'prev_contribution_id'))
     OR jsonb_typeof(item->'inverse')<>'object' OR NOT v24_cordis.json_text(item->'contract_version') THEN
@@ -622,7 +622,16 @@ BEGIN
    END IF;
    IF item->>'kind'='service' THEN
     n_service:=n_service+1;
-    IF n_service>32 OR NOT v24_cordis.json_text(item->'realm') OR NOT v24_cordis.json_text(item->'key')
+    IF n_service+n_listener>32 OR NOT v24_cordis.json_text(item->'realm') OR NOT v24_cordis.json_text(item->'key')
+     OR item->'prev_contribution_id'<>'null'::jsonb
+     OR NOT coalesce(v24_cordis.exact_keys(item->'inverse',ARRAY['op']),false)
+     OR item->'inverse'->>'op' IS DISTINCT FROM 'delete_row' THEN
+     RETURN v24_cordis.error_v1('invalid_outcome');
+    END IF;
+   ELSIF item->>'kind'='listener' THEN
+    n_listener:=n_listener+1;
+    IF n_service+n_listener>32 OR NOT v24_cordis.listener_desc_shape(item->'descriptor')
+     OR item->'realm'<>'null'::jsonb OR item->'key'<>'null'::jsonb
      OR item->'prev_contribution_id'<>'null'::jsonb
      OR NOT coalesce(v24_cordis.exact_keys(item->'inverse',ARRAY['op']),false)
      OR item->'inverse'->>'op' IS DISTINCT FROM 'delete_row' THEN
@@ -783,7 +792,7 @@ CREATE FUNCTION v24_cordis.validate_domain(p_effect_id uuid,p_principal uuid,p_o
 LANGUAGE plpgsql SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE v_kind text; v_payload jsonb; v_action text; v_branch text; v_domain jsonb:=p_delta->'domain'; v_req_key text; v_dag jsonb; v_dag_ids uuid[];
  v_fiber uuid; f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE; inst v24_cordis.installs%ROWTYPE; v_item jsonb; v_op text; v_allowed text[]; v_i int; v_n int; v_seq bigint; v_old_next int; v_old_reg int;
- v_provides jsonb; v_requires jsonb; v_prov jsonb; v_scope jsonb; v_install jsonb; v_fiberc jsonb; v_begin jsonb; v_control jsonb; v_activate jsonb;
+ v_requires jsonb; v_prov jsonb; v_scope jsonb; v_install jsonb; v_fiberc jsonb; v_begin jsonb; v_control jsonb; v_activate jsonb;
  v_plan jsonb; v_progress jsonb; v_retire jsonb; v_close_start jsonb; v_withdraw jsonb; v_ev jsonb; v_pin jsonb; v_bind jsonb; v_scope_id uuid; v_install_id uuid; v_fiber_id uuid; v_episode_id uuid; v_epoch int; v_count int;
  v_contrib_ids jsonb:='[]'; v_pin_ids jsonb:='[]'; v_require_keys jsonb:='[]'; v_first bigint; v_last bigint; v_ctl bigint; v_maxbig bigint;
  v_prov_epoch int; v_prov_fiber uuid; v_prov_ep uuid; v_prov_cv text; v_prov_digest text; v_expected jsonb;
@@ -880,7 +889,6 @@ BEGIN
    IF NOT FOUND OR jsonb_typeof(inst.manifest->'provides')<>'array' THEN
     RETURN v24_cordis.error_v1('invalid_outcome');
    END IF;
-   v_provides:=inst.manifest->'provides';
    v_old_next:=(ep.iterator->>'next_index')::int;
   END IF;
  ELSE
@@ -1032,33 +1040,45 @@ BEGIN
    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p1_successor'));
   END IF;
  ELSIF v_branch='p2' THEN
+  v_plan:=v24_cordis.registration_plan(inst);
+  IF v_plan IS NULL THEN
+   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p2_provide'));
+  END IF;
   v_old_next:=(ep.iterator->>'next_index')::int; v_old_reg:=(ep.iterator->>'registered_through')::int;
   v_count:=0;
   FOR v_item IN SELECT value FROM jsonb_array_elements(v_domain) WITH ORDINALITY x(value,ord)
    WHERE x.value->>'op'='contribution_append' ORDER BY ord LOOP
    v_count:=v_count+1;
    IF (v_item->>'fiber_id')::uuid<>f.id OR (v_item->>'episode_id')::uuid<>ep.id
-    OR v_item->>'kind'<>'service' THEN
+    OR v_item->>'kind' NOT IN ('service','listener') THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p2_context'));
    END IF;
    v_seq:=v_old_reg+v_count;
    IF (v_item->>'seq')::bigint<>v_seq OR v_seq>2147483647 THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p2_seq'));
    END IF;
-   v_prov:=v_provides->(v_old_next+v_count-1);
-   IF v_prov IS NOT NULL THEN
-    v_eff:=v24_cordis.overlay_apply(inst.manifest,inst.overlay,v_prov); END IF;
-   IF v_prov IS NULL OR v_eff IS NULL OR v_item->>'key' IS DISTINCT FROM v_prov->>'key'
-    OR v_item->'descriptor' IS DISTINCT FROM v_eff
+   v_prov:=v_plan->(v_old_next+v_count-1);
+   IF v_prov IS NULL OR v_prov->>'kind' IS DISTINCT FROM v_item->>'kind' THEN
+    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p2_provide'));
+   END IF;
+   IF v_item->>'kind'='service' THEN
+    IF v_item->>'key' IS DISTINCT FROM v_prov->>'key'
+     OR v_item->'descriptor' IS DISTINCT FROM v_prov->'descriptor'
+     OR v_item->>'contract_version' IS DISTINCT FROM v_prov->>'contract_version'
+     OR v_item->>'realm' IS DISTINCT FROM v24_cordis.service_realm(f.scope_id,v_item->>'key') THEN
+     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p2_provide'));
+    END IF;
+   ELSIF v_item->'realm'<>'null'::jsonb OR v_item->'key'<>'null'::jsonb
+    OR v_item->'descriptor' IS DISTINCT FROM v_prov->'descriptor'
     OR v_item->>'contract_version' IS DISTINCT FROM v_prov->>'contract_version'
-    OR v_item->>'realm' IS DISTINCT FROM v24_cordis.service_realm(f.scope_id,v_item->>'key') THEN
+    OR NOT v24_cordis.listener_desc_valid(v_item->'descriptor',inst.contracts,v_item->>'contract_version') THEN
     RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p2_provide'));
    END IF;
    v_contrib_ids:=v_contrib_ids||jsonb_build_array(v_item->'id');
    IF v_count=1 THEN v_first:=v_seq; END IF;
    v_last:=v_seq;
   END LOOP;
-  IF v_count=0 OR v_old_next+v_count>jsonb_array_length(v_provides) THEN
+  IF v_count=0 OR v_old_next+v_count>jsonb_array_length(v_plan) THEN
    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p2_batch'));
   END IF;
   IF v_progress IS NULL OR (v_progress->>'episode_id')::uuid<>ep.id
@@ -1085,7 +1105,9 @@ BEGIN
   IF v_activate IS NULL OR (v_activate->>'episode_id')::uuid<>ep.id THEN
    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p4_context'));
   END IF;
-  IF (ep.iterator->>'next_index')::int<jsonb_array_length(inst.manifest->'provides') THEN
+  v_plan:=v24_cordis.registration_plan(inst);
+  IF v_plan IS NULL OR (ep.iterator->>'next_index')::int<jsonb_array_length(v_plan)
+   OR v24_cordis.activation_total(f.id) IS NOT NULL THEN
    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','p4_totality'));
   END IF;
   IF v_ev IS NULL OR v_ev->>'entity_type' IS DISTINCT FROM 'fiber' OR (v_ev->>'entity_id')::uuid IS DISTINCT FROM f.id
