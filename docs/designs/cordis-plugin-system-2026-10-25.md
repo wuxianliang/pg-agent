@@ -732,15 +732,17 @@ S(n) ≤ (K + 4) · (V(n) + 1)
 | 生命周期解释器 | **3** | install / fiber_reconcile / dispose（§3.3） |
 | reducer | 1（`chat_tool`） | 只读、预部署 |
 | 命令 kind | 3（command_install / command_reconcile / command_dispose） | 不含 run_start 与业务 kind |
-| advance 内 SQL 行数 | **≤ 1200** | 单一 SECURITY DEFINER 函数体加私有 helper；对照 v24 稿同口径 |
-| 领域 DDL 行数 | ≤ 900 | 八张表的 CREATE/INDEX/CONSTRAINT |
+| advance 内 SQL 行数 | **≤ 1200（历史；DP6 2026-10-28 授权改为仅报告）** | 单一 SECURITY DEFINER 函数体加私有 helper；对照 v24 稿同口径 |
+| 领域 DDL 行数 | ≤ 900（历史；DP6 2026-10-28 授权改为仅报告） | 八张表的 CREATE/INDEX/CONSTRAINT |
 | 宿主维护循环 | 1 | 公平扫描，无第二调度器 |
 | 后继上限 B | 16 | I6 |
 | gate | **4** | §10.2 |
 
 [论证] 紧凑性的判据不是行数少，而是**承重面少**：每张表、每个解释器、每个队列都是必须一致维护的状态。本设计的承重面数为 8（表）+ 3（解释器）+ 1（扫描循环）+ 1（锁 G），不随插件数量增长。DSH 的对应承重面是 fiber 树 + effect 栈 + 事件总线 + loader 缓存 + HMR 缓存，其中后两者在 DB 内无对应物也不引入（§9.3）。
 
-[规格] 超支处理：若实现时 advance 超过 1200 行，先拆私有 helper 函数（不增加表与 kind）；若仍超，说明有未识别的第五个概念，必须回到 §1 重裁，不得用 JSON 字段偷藏第二状态机（v24 稿 §3.3 同纪律）。
+[规格] 超支处理（DP1–DP5 历史口径）：若实现时 advance 超过 1200 行，先拆私有 helper 函数（不增加表与 kind）；若仍超，说明有未识别的第五个概念，必须回到 §1 重裁，不得用 JSON 字段偷藏第二状态机（v24 稿 §3.3 同纪律）。
+
+[规格] DP6 容量行数授权（2026-10-28，用户原文：「授权无视容量预算要求」）。该授权覆盖三项行数容量预算：advance 与全部私有 helper 的总行数、`43_loop.sql` 单文件可读性行数、领域 DDL 物理行数；不覆盖 `closure<=512`、`successor<=16`、协议 key/depth、ACL、validator/postcondition、replay 与事务外 IO 等语义边界。自本日起，DP6 仍须实测并报告这三项行数（40–49 全量、43、领域 DDL 与簿记分列），但不再以行数作为 DP6 准入或 gate 失败条件，也不设新的有限行数上限。W1 落实预算/gate 配套时只解除行数上限断言，保留完整文件/manifest 校验（19 项 canonical order、缺失/重复/未登记/符号链接负例）和全部语义负例。历史计量及 DP1–DP5 Result 保留不改；本授权仅适用于 DP6，除非用户另行授权。
 
 ### 10.2 四个 gate
 
