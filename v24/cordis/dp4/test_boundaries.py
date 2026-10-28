@@ -1,0 +1,371 @@
+"""CDP4-X: seal, terminal states, budget edges and the e7-e13 lifecycle walk."""
+from __future__ import annotations
+import contextlib
+import json
+import uuid
+
+import psycopg2
+from psycopg2.extras import Json
+from dp4_support import (Server, TestDB, snapshot, query, api, env, claim, settle,
+                         prepare_run, model_body, tool_call, tool_body, q1, rows,
+                         replace_function)
+from test_support import reconcile_payload, no_write
+from test_activation import commit_new, child_call
+
+
+def _snap(db):
+    with contextlib.closing(db.connect('owner')) as conn:
+        return snapshot(conn)
+
+
+def _run(db, run_id):
+    return rows(db, 'SELECT state,remaining_steps,ended_at,result FROM v24_cordis.runs '
+                    'WHERE id=%s', (run_id,))[0]
+
+
+def _pins(db, run_id):
+    return rows(db, 'SELECT id,key,contribution_id,provider_epoch,released_at '
+                    'FROM v24_cordis.pins WHERE consumer_run_id=%s ORDER BY key', (run_id,))
+
+
+def _event(db, effect):
+    return q1(db, "SELECT payload FROM v24_cordis.events WHERE effect_id=%s "
+                  "AND event_kind='run_progress'", (effect,))
+
+
+def _applied(db, effect, outcome):
+    with contextlib.closing(db.connect('service')) as conn:
+        result = api(conn, effect, outcome)
+        conn.commit()
+    return result
+
+
+def _insert_ready_model(db, x, pin, digests, contract):
+    run = rows(db, 'SELECT owner_fiber_id,owner_episode_id FROM v24_cordis.runs WHERE id=%s',
+               (x['run_id'],))[0]
+    effect = uuid.uuid4()
+    with contextlib.closing(db.connect('owner')) as conn:
+        query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
+        query(conn, "INSERT INTO v24_cordis.effects(id,kind,status,fiber_id,episode_id,run_id,"
+                    "input,request_actor) VALUES(%s,'model_call','ready',%s,%s,%s,%s,%s)",
+              (effect, run[0], run[1], x['run_id'],
+               Json({'v': 1, 'run_id': str(x['run_id']), 'pin_id': str(pin), 'key': 'model',
+                     'digests': digests,
+                     'contract': {'contract_version': contract['contract_version'],
+                                  'handler_digest': contract['handler_digest']}}),
+               db.roles['service']))
+        conn.commit()
+    return effect
+
+
+def test_x1_final(db):
+    x = prepare_run(db, 1)
+    model_pin = q1(db, "SELECT id FROM v24_cordis.pins WHERE consumer_run_id=%s AND key='model'",
+                   (x['run_id'],))
+    digests = q1(db, 'SELECT v24_cordis.run_digests(%s)', (x['run_id'],))
+    contract = q1(db, "SELECT i.contracts->'model_call' FROM v24_cordis.pins p "
+                      "JOIN v24_cordis.contributions c ON c.id=p.contribution_id "
+                      "JOIN v24_cordis.fibers f ON f.id=c.fiber_id "
+                      "JOIN v24_cordis.installs i ON i.id=f.install_id "
+                      "WHERE p.id=%s", (model_pin,))
+    c = claim(db, x['model_effect'])
+    body = model_body(final=True, text='done', usage={'input': 1, 'output': 2})
+    result = settle(db, x['model_effect'], body, c['claim'])
+    assert result['disposition'] == 'committed' and result['emitted'] == [], result
+    state, budget, ended, outcome = _run(db, x['run_id'])
+    assert budget == 0 and ended is not None, (budget, ended)
+    assert outcome == {'v': 1, 'reason': 'final', 'output': body['result'],
+                       'dropped_tool_calls': 0}, outcome
+    assert state['phase'] == 'sealed' and state['final'] is True and state['batch'] == [], state
+    pins = _pins(db, x['run_id'])
+    assert len(pins) == 2 and all(p[4] is not None for p in pins), pins
+    event = _event(db, x['model_effect'])
+    assert event['sealed'] is True and event['reason'] == 'final', event
+    assert event['step'] == 1 and event['remaining_steps'] == 0 and event['phase'] == 'sealed', event
+    before = _snap(db)
+    replay = settle(db, x['model_effect'], body, c['claim'])
+    assert replay['disposition'] == 'replay' and replay['emitted'] == [], replay
+    assert _snap(db) == before
+    conflict = settle(db, x['model_effect'], model_body(final=True, text='other'), c['claim'])
+    assert conflict['error']['code'] == 'receipt_conflict', conflict
+    assert _snap(db) == before
+    extra = _insert_ready_model(db, x, model_pin, digests, contract)
+    ec = claim(db, extra)
+    assert ec.get('disposition') == 'claimed', ec
+    before = _snap(db)
+    terminal = settle(db, extra, model_body(final=True), ec['claim'])
+    assert terminal['error']['code'] == 'already_terminal', terminal
+    assert _snap(db) == before
+    assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (extra,)) == 'claimed'
+    reclaim = claim(db, x['model_effect'])
+    assert reclaim['error']['code'] == 'receipt_conflict', reclaim
+    try:
+        with contextlib.closing(db.connect('owner')) as conn:
+            query(conn, "UPDATE v24_cordis.effects SET status='ready',settled_at=NULL "
+                        'WHERE id=%s', (x['model_effect'],))
+    except psycopg2.Error as exc:
+        assert exc.pgcode == '55000', exc.pgcode
+    else:
+        raise AssertionError('terminal effect was reopenable by DML')
+    print('[CDP4-X1] final seals+releases; replay/conflict; already_terminal; DML reopen 55000')
+
+
+def test_x1b_custom_model_key(db):
+    x = prepare_run(db, 3, ('tool',), model_key='brain')
+    pins = _pins(db, x['run_id'])
+    assert [(p[1], p[4]) for p in pins] == [('brain', None), ('tool', None)], pins
+    brain_pin, tool_pin = pins[0][0], pins[1][0]
+    mc = claim(db, x['model_effect'])
+    assert mc['input']['key'] == 'brain', mc
+    mr = settle(db, x['model_effect'], model_body([tool_call('c1')]), mc['claim'])
+    assert mr['disposition'] == 'committed' and len(mr['emitted']) == 1, mr
+    tool = rows(db, "SELECT id FROM v24_cordis.effects WHERE run_id=%s AND kind='tool_call'",
+                (x['run_id'],))[0][0]
+    tc = claim(db, tool)
+    tool_out = env('success', tool_body(), tc['claim'])
+    delta = q1(db, 'SELECT v24_cordis.run_delta(%s,%s)', (tool, Json(tool_out)))
+    successor = delta['successors'][0]['input']
+    assert successor['key'] == 'brain' and successor['pin_id'] == str(brain_pin), delta
+    original = q1(db, "SELECT pg_get_functiondef('v24_cordis.run_delta(uuid,jsonb)'::regprocedure)")
+    replace_function(db, """CREATE OR REPLACE FUNCTION v24_cordis.run_delta(p_effect_id uuid,p_outcome jsonb)
+      RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT current_setting('dp4.forged')::jsonb $$""")
+    try:
+        with contextlib.closing(db.connect('owner')) as conn:
+            for label, pin, key in (('key', brain_pin, 'tool'), ('capability', tool_pin, 'tool')):
+                forged = json.loads(json.dumps(delta))
+                forged['successors'][0]['input']['pin_id'] = str(pin)
+                forged['successors'][0]['input']['key'] = key
+                query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))
+                got = query(conn, 'SELECT v24_cordis.validate_run_domain(%s,%s,%s,%s)',
+                            (tool, uuid.uuid4(), Json(tool_out), Json(forged)))[0][0]
+                assert got['error']['code'] == 'invalid_outcome', (label, got)
+                assert got['error']['detail']['reason'] == 'run_successor', (label, got)
+            conn.commit()
+    finally:
+        replace_function(db, original)
+    tr = settle(db, tool, tool_body(), tc['claim'])
+    assert tr['disposition'] == 'committed' and len(tr['emitted']) == 1, tr
+    cont = _continuation(db, x['run_id'])
+    assert len(cont) == 1 and cont[0][3]['key'] == 'brain', cont
+    assert cont[0][3]['pin_id'] == str(brain_pin), cont
+    cc = claim(db, cont[0][0])
+    final = model_body(final=True, text='brain-done')
+    sealed = settle(db, cont[0][0], final, cc['claim'])
+    assert sealed['disposition'] == 'committed' and sealed['emitted'] == [], sealed
+    state, budget, ended, outcome = _run(db, x['run_id'])
+    assert budget == 0 and ended is not None and state['phase'] == 'sealed', (budget, state)
+    assert outcome['reason'] == 'final' and outcome['output'] == final['result'], outcome
+    assert all(p[4] is not None for p in _pins(db, x['run_id']))
+    print('[CDP4-X1b] brain key survives run_start->model->tool->continuation->final; validator rejects key/capability spoof')
+
+
+def test_x2_model_over(db):
+    x = prepare_run(db, 3, ('tool', 'tool2', 'tool3'))
+    c = claim(db, x['model_effect'])
+    calls = [tool_call(f'c{i}', ('tool', 'tool2', 'tool3')[i]) for i in range(3)]
+    result = settle(db, x['model_effect'], model_body(calls), c['claim'])
+    assert result['disposition'] == 'committed' and result['emitted'] == [], result
+    state, budget, ended, outcome = _run(db, x['run_id'])
+    assert budget == 2 and ended is not None and state['phase'] == 'sealed', (budget, state)
+    assert outcome['reason'] == 'budget_exhausted' and outcome['dropped_tool_calls'] == 3, outcome
+    assert q1(db, "SELECT count(*) FROM v24_cordis.effects WHERE run_id=%s "
+                  "AND kind='tool_call'", (x['run_id'],)) == 0
+    print('[CDP4-X2a] model N>budget seals budget_exhausted, dropped=3, no partial tool batch')
+
+
+def test_x2_tool_zero(db):
+    y = prepare_run(db, 2)
+    mc = claim(db, y['model_effect'])
+    mr = settle(db, y['model_effect'], model_body([tool_call('c1')]), mc['claim'])
+    assert mr['disposition'] == 'committed', mr
+    tool = rows(db, "SELECT id FROM v24_cordis.effects WHERE run_id=%s AND kind='tool_call'",
+                (y['run_id'],))[0][0]
+    tc = claim(db, tool)
+    tr = settle(db, tool, tool_body(), tc['claim'])
+    assert tr['disposition'] == 'committed' and tr['emitted'] == [], tr
+    state, budget, ended, outcome = _run(db, y['run_id'])
+    assert budget == 0 and ended is not None and state['phase'] == 'sealed', (budget, state)
+    assert outcome['reason'] == 'budget_exhausted' and outcome['dropped_tool_calls'] == 0, outcome
+    print('[CDP4-X2b] tool settlement 1->0 seals budget_exhausted with dropped=0')
+
+
+def test_x5_negative_budget(db):
+    x = prepare_run(db, 3)
+    c = claim(db, x['model_effect'])
+    with contextlib.closing(db.connect('owner')) as conn:
+        query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
+        query(conn, 'UPDATE v24_cordis.runs SET remaining_steps=0 WHERE id=%s', (x['run_id'],))
+        conn.commit()
+    before = _snap(db)
+    result = settle(db, x['model_effect'], model_body([tool_call('c1')]), c['claim'])
+    assert result['error']['code'] == 'budget_exceeded', result
+    assert _snap(db) == before
+    assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s',
+              (x['model_effect'],)) == 'claimed'
+    print('[CDP4-X5] negative deduction guard is budget_exceeded with zero write')
+
+
+def test_m6_model_failed(db):
+    x = prepare_run(db, 3)
+    c = claim(db, x['model_effect'])
+    body = {'kind': 'model_call', 'error': {'code': 'provider_down', 'detail': {'why': 'io'}}}
+    result = settle(db, x['model_effect'], body, c['claim'], 'failure')
+    assert result['disposition'] == 'committed' and result['emitted'] == [], result
+    state, budget, ended, outcome = _run(db, x['run_id'])
+    assert budget == 2 and ended is not None and state['phase'] == 'sealed', (budget, state)
+    assert state['final'] is False
+    assert outcome == {'v': 1, 'reason': 'model_failed', 'output': body['error'],
+                       'dropped_tool_calls': 0}, outcome
+    assert q1(db, "SELECT count(*) FROM v24_cordis.effects WHERE run_id=%s "
+                  "AND kind IN ('model_call','tool_call')", (x['run_id'],)) == 1
+    assert all(p[4] is not None for p in _pins(db, x['run_id']))
+    event = _event(db, x['model_effect'])
+    assert event['sealed'] is True and event['reason'] == 'model_failed', event
+    print('[CDP4-M6] model failure seals model_failed, releases pins and emits no successor')
+
+
+def test_validator(db):
+    x = prepare_run(db, 3)
+    final_out = env('success', model_body(final=True, text='done'), None)
+    tool_out = env('success', model_body([tool_call('c1')]), None)
+    final_delta = q1(db, 'SELECT v24_cordis.run_delta(%s,%s)', (x['model_effect'], Json(final_out)))
+    tool_delta = q1(db, 'SELECT v24_cordis.run_delta(%s,%s)', (x['model_effect'], Json(tool_out)))
+    assert 'error' not in final_delta and 'error' not in tool_delta, (final_delta, tool_delta)
+    original = q1(db, "SELECT pg_get_functiondef('v24_cordis.run_delta(uuid,jsonb)'::regprocedure)")
+    replace_function(db, """CREATE OR REPLACE FUNCTION v24_cordis.run_delta(p_effect_id uuid,p_outcome jsonb)
+      RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT current_setting('dp4.forged')::jsonb $$""")
+    try:
+        cases = []
+        bad = json.loads(json.dumps(final_delta))
+        bad['domain'][1]['remaining_steps'] = 63
+        cases.append(('budget', bad, 'run_state_delta'))
+        bad = json.loads(json.dumps(final_delta))
+        bad['domain'][2]['effect_id'] = str(uuid.uuid4())
+        cases.append(('seal', bad, 'run_seal_delta'))
+        bad = json.loads(json.dumps(final_delta))
+        bad['domain'][3]['pin_ids'].pop()
+        cases.append(('pins', bad, 'run_seal_delta'))
+        bad = json.loads(json.dumps(tool_delta))
+        bad['successors'][0]['input']['pin_id'] = str(uuid.uuid4())
+        cases.append(('successor', bad, 'run_successor'))
+        with contextlib.closing(db.connect('owner')) as conn:
+            for label, forged, reason in cases:
+                query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))
+                got = query(conn, 'SELECT v24_cordis.validate_run_domain(%s,%s,%s,%s)',
+                            (x['model_effect'], uuid.uuid4(),
+                             Json(final_out if label != 'successor' else tool_out),
+                             Json(forged)))[0][0]
+                assert got['error']['code'] == 'invalid_outcome', (label, got)
+                assert got['error']['detail']['reason'] == reason, (label, got)
+            conn.commit()
+    finally:
+        replace_function(db, original)
+    print('[CDP4-X6] forged planner rejects budget/seal/pins/successor invariants independently')
+
+
+
+def _enter_closing(db, fiber):
+    control = q1(db, 'SELECT control_seq FROM v24_cordis.fibers WHERE id=%s', (fiber,))
+    off, result, _ = commit_new(db, 'command_reconcile', reconcile_payload(fiber, 'off', control))
+    assert result['disposition'] == 'committed' and result['emitted'], result
+    slot, outcome = child_call(db, off, reconcile_payload(fiber, 'advance', control + 1))
+    done = _applied(db, slot, outcome)
+    assert done['disposition'] == 'committed', done
+    assert rows(db, 'SELECT state,outcome FROM v24_cordis.episodes WHERE id=(SELECT '
+                    'current_episode_id FROM v24_cordis.fibers WHERE id=%s)',
+                (fiber,)) == [('closing', 'retire')]
+    return control + 1
+
+
+def _p6_slot(db, fiber, control):
+    off, result, _ = commit_new(db, 'command_reconcile', reconcile_payload(fiber, 'off', control))
+    assert result['disposition'] == 'committed' and len(result['emitted']) == 1, result
+    new_control = q1(db, 'SELECT control_seq FROM v24_cordis.fibers WHERE id=%s', (fiber,))
+    effect, outcome = child_call(db, off, reconcile_payload(fiber, 'advance', new_control))
+    assert effect == uuid.UUID(result['emitted'][0]), (effect, result)
+    return effect, outcome, new_control
+
+
+def _continuation(db, run_id):
+    return rows(db, "SELECT id,parent_id,ordinal,input FROM v24_cordis.effects "
+                    "WHERE run_id=%s AND kind='model_call' AND status='ready'", (run_id,))
+
+
+def test_x3_lifecycle(db):
+    x = prepare_run(db, 3, ('tool',))
+    owner, episode = rows(db, 'SELECT owner_fiber_id,owner_episode_id FROM v24_cordis.runs '
+                              'WHERE id=%s', (x['run_id'],))[0]
+    model_pin, model_epoch = rows(db, "SELECT p.id,p.provider_epoch FROM v24_cordis.pins p "
+                                      "WHERE p.consumer_run_id=%s AND p.key='model'", (x['run_id'],))[0]
+    model_fiber = q1(db, "SELECT c.fiber_id FROM v24_cordis.pins p "
+                         "JOIN v24_cordis.contributions c ON c.id=p.contribution_id "
+                         "WHERE p.id=%s", (model_pin,))
+    model_contrib, model_ep, model_cepoch = rows(db, "SELECT c.id,c.episode_id,e.epoch "
+                        "FROM v24_cordis.pins p JOIN v24_cordis.contributions c ON c.id=p.contribution_id "
+                        "JOIN v24_cordis.episodes e ON e.id=c.episode_id WHERE p.id=%s", (model_pin,))[0]
+    mc = claim(db, x['model_effect'])
+    e8 = settle(db, x['model_effect'], model_body([tool_call('c1')]), mc['claim'])
+    assert e8['disposition'] == 'committed' and len(e8['emitted']) == 1, e8
+    tool = rows(db, "SELECT id FROM v24_cordis.effects WHERE run_id=%s AND kind='tool_call'",
+                (x['run_id'],))[0][0]
+    tc = claim(db, tool)
+    e9 = settle(db, tool, tool_body(), tc['claim'])
+    assert e9['disposition'] == 'committed' and len(e9['emitted']) == 1, e9
+    assert _run(db, x['run_id'])[1] == 1
+    cont = _continuation(db, x['run_id'])
+    assert len(cont) == 1, cont
+    mcontrol = _enter_closing(db, model_fiber)
+    assert q1(db, 'SELECT retire_started_at IS NOT NULL FROM v24_cordis.fibers WHERE id=%s',
+              (model_fiber,)) is True
+    assert q1(db, 'SELECT withdrawn_at IS NOT NULL AND released_at IS NULL '
+                  'FROM v24_cordis.contributions WHERE id=%s', (model_contrib,)) is True
+    assert q1(db, 'SELECT v24_cordis.pin_readable(%s)', (model_pin,)) is True
+    acontrol = _enter_closing(db, owner)
+    a_p6, a_out, _ = _p6_slot(db, owner, acontrol)
+    with contextlib.closing(db.connect('service')) as conn:
+        deferred = no_write(db, conn, a_p6, a_out, disposition='deferred')
+    assert deferred.get('disposition') == 'deferred', deferred
+    assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (a_p6,)) == 'ready'
+    m_p6, m_out, _ = _p6_slot(db, model_fiber, mcontrol)
+    with contextlib.closing(db.connect('service')) as conn:
+        mdeferred = no_write(db, conn, m_p6, m_out, disposition='deferred')
+    assert mdeferred.get('disposition') == 'deferred', mdeferred
+    assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (m_p6,)) == 'ready'
+    pin_before = rows(db, 'SELECT id,contribution_id,provider_epoch FROM v24_cordis.pins '
+                          'WHERE consumer_run_id=%s ORDER BY key', (x['run_id'],))
+    assert all(p[2] == 1 for p in pin_before), pin_before
+    assert model_epoch == 1 and model_cepoch == 1
+    cc = claim(db, cont[0][0])
+    final = model_body(final=True, text='e13')
+    sealed = settle(db, cont[0][0], final, cc['claim'])
+    assert sealed['disposition'] == 'committed' and sealed['emitted'] == [], sealed
+    state, budget, ended, outcome = _run(db, x['run_id'])
+    assert budget == 0 and ended is not None and state['phase'] == 'sealed', (budget, state)
+    assert outcome == {'v': 1, 'reason': 'final', 'output': final['result'],
+                       'dropped_tool_calls': 0}, outcome
+    released = rows(db, 'SELECT contribution_id,provider_epoch,released_at FROM v24_cordis.pins '
+                        'WHERE consumer_run_id=%s ORDER BY key', (x['run_id'],))
+    assert all(p[2] is not None for p in released), released
+    assert [(p[0], p[1]) for p in released] == [(p[1], p[2]) for p in pin_before], (released, pin_before)
+    assert q1(db, 'SELECT count(*) FROM v24_cordis.pins WHERE consumer_fiber_id=%s '
+                  'AND released_at IS NULL', (owner,)) > 0
+    assert q1(db, 'SELECT v24_cordis.run_pin_release_delta(%s)', (x['run_id'],)) == []
+    plan = q1(db, 'SELECT v24_cordis.p6_plan(%s,%s)', (a_p6, owner))
+    assert not (plan['kind'] == 'deferred' and plan.get('reason') == 'run'), plan
+    print('[CDP4-X3/X4] e7-e13: old pin/epoch settle after provider retire; e11c/e12 deferred zero-write; seal frees run pins, P6 unblocked')
+
+def main():
+    with Server() as server:
+        with TestDB(server) as db: test_x1_final(db)
+        with TestDB(server) as db: test_x1b_custom_model_key(db)
+        with TestDB(server) as db: test_x2_model_over(db)
+        with TestDB(server) as db: test_x2_tool_zero(db)
+        with TestDB(server) as db: test_x5_negative_budget(db)
+        with TestDB(server) as db: test_m6_model_failed(db)
+        with TestDB(server) as db: test_x3_lifecycle(db)
+        with TestDB(server) as db: test_validator(db)
+    print('[passed] CDP4-X')
+
+
+if __name__ == '__main__':
+    main()

@@ -408,6 +408,8 @@ tool receipt、pin/key/liveness、sibling 查询、唯一 continuation、unknown
 
 `run_seal`（含 `effect_id`）、final/budget/model_failed、`pins_release` 与 current-effect 排除、e7→e13。验收 `CDP4-X`（含 M6）。
 
+**Result**（2026-10-27）：在 W3 commit `dbd943d` 之上完成。30 条命令（26 条旧 gate + `CDP4-R`/`M`/`T`/`X`）逐条独立启动并等待退出，全部 exit 0，总耗时 141.6 秒（日志 `/tmp/dp4-w4-gates-brain.log`）。X1–X5、X1b 与 M6 全部通过：final/budget_exhausted/model_failed 三终局同事务 `run_seal`+`pins_release`；model N>r 记 `dropped=N` 且不建部分 tool，tool 1→0 正确封口；终态 replay、异 bytes `receipt_conflict`、新 effect `already_terminal` 零写与 DML 重开 `55000` 分路径验证；e7→e13 生产走查确认 provider retire 后旧 pin/epoch 仍可结算、e11c/e12 `deferred` 零写、e13 不重新 resolve 改绑；伪造 planner 的 budget/seal/pins/successor 反例均被独立 validator 拒绝。X1b 用真实 provider key `brain` 走通 run_start→model→tool→continuation→final：model pin 按 `descriptor.capability='model_call'` 唯一选取，后继 `input.key` 取真实 pin key；validator 要求 `pin.key=input.key` 且 capability 匹配，key 与 capability 两种伪造均 `run_successor` 零写。终态 effect 的 API 再 claim 实际为 replay-first `receipt_conflict`，`55000` 仅由直接 DML 重开触发；ledger 已按此记录，不声称 advance claim `55000`。`validate_run_domain` 已补 model/tool 的旧 state 步进、旧预算−1、后继 pin/batch/digests 绑定、seal `effect_id` 与全部 live run pin 释放检查。43 通过集合式 `settlement_seed`、reducer 复用 receipt validator、validator 独立检查控制到 **560≤560**（无压行、无搬文件）；四文件 helper **4317≤5000**（40=1546、41=1211、42=1000、43=560），DDL 实测 **461**（W1 的 state CHECK 为原行内追加），manifest 18，十表，唯一 `SECURITY DEFINER` 仍为 `advance`。W4 只做本地 commit，不 push。
+
 ### W5 — 收尾
 
 26 条旧命令 + `CDP4-R/M/T/X/B` 串行全绿；冻结 hash、预算、DDL、ACL 复核；README/matrix/ledger 与本文 result 回填。每个里程碑按路径 `git add`、独立本地 commit 并记录 commit id；**不 push**。收尾输出 push-ready 摘要（commit 列表、分支、`git status`），等用户点名远程/分支后再推。

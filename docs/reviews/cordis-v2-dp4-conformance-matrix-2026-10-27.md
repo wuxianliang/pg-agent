@@ -267,3 +267,63 @@ W1 changed `16_runs.sql` by extending the existing `state` CHECK with `octet_len
 - `run_seal`, final/budget/model_failed terminal closure, run pin release on terminal and e7→e13 are W4; M6 is tested there.
 - CDP4-B layout/ACL/frozen-surface closeout and the full 31-command serial closeout are W5.
 - W3 was committed locally only; no push.
+
+## W4 / CDP4-X (2026-10-27)
+
+Same worktree and branch `v24`, HEAD `dbd943d` (W3) plus W4 changes before staging. The 26 legacy commands plus `CDP4-R`, `CDP4-M`, `CDP4-T` and `CDP4-X` were launched one process at a time; all 30 exited 0, total 141.6 seconds.
+
+| # | Command | Exit | Duration (s) | Evidence |
+|---:|---|---:|---:|---|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 1 | canonical loader, 18 entries |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 2 | fixture/role/OID cleanup |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 2 | CDP1-E, exact 18-entry manifest |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 2 | CDP1-D, `DDL lines 461` |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 14 | CDP1-K; helper 4317, 5000/5001 proof |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 4 | CDP2-K |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4 | CDP2-I |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3 | CDP2-A |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 4 | CDP2-B, `helpers=4317 40=1546 41=1211 42=1000 43=560 ddl=461` |
+| 10 | `uv run python v24/load.py` | 0 | 1 | v24 loader |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 2 | v24/s1 setup |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 2 | G1-O |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 3 | G1 kernel/commands/ACL |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 2 | S2 W1-W6 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5 | S3 W1-W7 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 4 | S4 W1-W6 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3 | S5 W1-W4 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 4 | S6 W1-W4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 3 | S8 W1-W3 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 7 | S7 W1-W2 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 11 | G8, 23 cases |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3 | CDP3-P |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 11 | CDP3-L |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 7 | CDP3-T |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 6 | CDP3-D |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 7 | CDP3-B1…B13; `tables=10 manifest=18 helpers=4317 ... ddl=461 definer=advance` |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 6 | CDP4-R1…R7 regression |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 5 | CDP4-M1…M5 regression |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 10 | CDP4-T1…T7 regression |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 7 | CDP4-X1/X1b…X5, M6, e7→e13 |
+
+| W4 invariant | Actual evidence |
+|---|---|
+| final seal | A model `final` receipt spends 1→0, writes `state.phase='sealed'`, `state.final=true`, `batch=[]`, `result={v:1,reason:'final',output:<model result>,dropped_tool_calls:0}`, emits no successor and releases both run pins in the same advance. The one `run_progress` payload has `sealed=true`, `reason='final'`, step 1, remaining 0, phase sealed. CDP4-X1 |
+| Custom model key | A real provider keyed `brain` runs run_start→model→tool→continuation→final. The model effect, tool-to-continuation successor, continuation effect and both run pins carry `brain`; the terminal seal then releases both pins. A forged planner probe rejects a key mismatch and a tool-capability pin with `run_successor`. CDP4-X1b |
+| budget_exhausted | Model success with 3 distinct tool calls at `r'=2` seals `budget_exhausted` with `dropped_tool_calls=3`, keeps budget 2 and creates zero tool effects. Tool success at 1→0 seals with dropped 0 and budget 0. CDP4-X2a/X2b |
+| model_failed (M6) | A model failure receipt writes `reason='model_failed'`, `output` equal to the receipt `error` object, `dropped_tool_calls=0`, no successor, both run pins released and one `run_progress` with `sealed=true`. CDP4-M6 |
+| Terminal paths | Same receipt returns `disposition=replay, emitted=[]` with an unchanged snapshot; different bytes returns `receipt_conflict`; a newly inserted ready model effect on the sealed run claims then settles to `already_terminal` zero-write; direct DML reopen of the terminal effect is `55000`; API claim of the same terminal effect is replay-first `receipt_conflict`. CDP4-X1 |
+| Terminal claim deviation | Plan §3.6/X1 says an already-terminal effect re-claim is `55000`. The actual API path is replay-first `receipt_conflict` (the terminal effect has a stored receipt); `55000` is raised only by direct DML reopening the immutable row. W4 records both paths separately and does not claim `advance`-claim `55000`. CDP4-X1 |
+| Defensive budget | Forcing `remaining_steps=0` on an open run makes the next model settlement `budget_exceeded` with an unchanged snapshot and the effect still claimed. CDP4-X5 |
+| e7→e13 | Real production chain: run_start(3)→model(tool)→tool→continuation with budget 1; retire model provider (contribution withdrawn, pin readable, provider epoch 1), retire agent, e11c and e12 P6 both `deferred` zero-write; the continuation settles `final` on the old pin/epoch, budget 0, run pins released, contribution/epoch unchanged, provider activation pins still live, `run_pin_release_delta` empty, and P6 no longer `deferred/run`. CDP4-X3/X4 |
+| Independent validator | A probe replaces `run_delta` with a forged planner and passes deltas that match it: wrong `run_budget`, wrong seal `effect_id`, missing one live pin, a successor with a random `pin_id`, and (X1b) a `brain` continuation whose key or capability is spoofed. `validate_run_domain` rejects them independently as `run_state_delta`, `run_seal_delta`, `run_seal_delta` and `run_successor`. X1b pins the model successor with `pin.key=input.key` plus `descriptor.capability='model_call'`, not the literal `'model'`. CDP4-X6/X1b |
+| Capacity | 40=1546, 41=1211, 42=1000, 43=560, sum **4317≤5000**; 43=560≤560; DDL measured 461; manifest 18; 10 tables; one DEFINER (`advance`) |
+
+### DDL count and W5 citation
+
+The DDL count is still **461**: the W1 `state` CHECK is an inline predicate on the existing line. §4.5/B2’s “实测 462” is stale; W5 must cite 461, not 462.
+
+### W4 not covered
+
+- `CDP4-B` layout/ACL/frozen-surface closeout and the full 31-command W5 sequence remain.
+- The known W5 test gaps (R4 calling a private function rather than `advance`, R4 missing non-chat_tool/existing-run) are unchanged by W4.
+- W4 was committed locally only; no push.

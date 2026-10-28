@@ -91,11 +91,11 @@ def agent(db, requires=('model', 'tool'), *, policy='chat_tool', run_contract=Tr
                                              if result.get('emitted') else None))
 
 
-def prepare_run(db, steps=3, tool_keys=('tool',)):
-    provider(db, 'model_call', 'model')
+def prepare_run(db, steps=3, tool_keys=('tool',), model_key='model'):
+    provider(db, 'model_call', model_key)
     for key in tool_keys:
         provider(db, 'tool_call', key)
-    chat = agent(db, requires=('model',) + tuple(tool_keys))
+    chat = agent(db, requires=(model_key,) + tuple(tool_keys))
     rs = run_start_effect(db, chat['p4_result'])
     c = claim(db, rs)
     settled = settle(db, rs, {'v': 1, 'request': {}, 'steps': steps}, c['claim'])

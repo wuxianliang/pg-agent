@@ -73,3 +73,21 @@ Same worktree, W2 `8cbc5f3` plus W3 changes. The 29-command sequence (26 legacy 
 ### W3 not covered
 
 `run_seal`, terminal closure, pin release and e7→e13 (W4); CDP4-B and the full closeout (W5).
+
+## W4 observations (2026-10-27)
+
+Same worktree, W3 `dbd943d` plus W4 changes. The 30-command sequence (26 legacy + CDP4-R/M/T/X) is green; this section does not rewrite B0/W1/W2/W3.
+
+| Date | Item | Plan / baseline | W4 treatment | Evidence |
+|---|---|---|---|---|
+| 2026-10-27 | Custom model provider key | The run contract requires one unique model-capability pin (§3.2) and §3.8 requires the successor pin/key to hit a live run pin; neither constrains the provider key. The W4 draft hardcoded `key='model'` in both the producer and the independent validator, which would reject a legal provider named `brain` | `emit_model` now selects the unique live pin whose contribution descriptor capability is `model_call`, and writes that pin's real key into the successor `input.key`; the validator requires `pin.key = successor.input.key` plus `descriptor.capability='model_call'`. No provider-key restriction is added. `CDP4-X1b` runs `brain` through run_start→model→tool→continuation→final and injects a key mismatch and a tool-capability pin, both `run_successor` | CDP4-X1b |
+| 2026-10-27 | Terminal re-claim code | Plan §3.6 and X1 say an already-terminal effect re-claim is `55000`; the immutable trigger is the cited baseline | The actual API path is replay-first `receipt_conflict` because the terminal effect has a stored receipt; only direct DML reopening the immutable row raises `55000`. X1 asserts both paths separately. W4 does **not** claim that `advance`-claim of a terminal effect proves `55000` | CDP4-X1 |
+| 2026-10-27 | Validator capability binding | §3.8 names the successor binding but the W4 draft checked only `p.key='model'` | The tool→model successor check now joins `contributions` and accepts any key when the pin is the run's model-capability pin and `input.key` matches it; tampering either half is `run_successor` with zero write | CDP4-X1b/X6 |
+| 2026-10-27 | Capacity | 43 ≤560, four-file sum ≤5000 | After the brain-key fix, 43 remains **560** splitlines (no line squeezing, test deletion or file move); 40=1546, 41=1211, 42=1000, sum **4317≤5000**; DDL measured 461; manifest 18; 10 tables; one `SECURITY DEFINER` (`advance`) | CDP1-K0, CDP2-B, CDP3-B, CDP1-D |
+| 2026-10-27 | Gate evidence | 26 legacy + R/M/T/X serial | All 30 commands launched one process at a time and exited 0; total 141.6 seconds. Log `/tmp/dp4-w4-gates-brain.log`; X1b is in the CDP4-X output | 30/30 gate log |
+| 2026-10-27 | W5 test gaps | Known R4/T4c gaps were noted before W4 | Unchanged by W4: R4 still calls a private function rather than `advance` and lacks non-chat_tool/existing-run cases; T4c calls the production planner but is not a full `advance` submission probe. W5 must close or record them | Plan W5 |
+| 2026-10-27 | Publication | Local commits only until target confirmed | W4 committed locally; no push and `main` untouched | W4 commit |
+
+### W4 not covered
+
+`CDP4-B` layout/ACL/frozen-surface closeout and the full W5 sequence; the known R4/T4c test gaps; push target decision.
