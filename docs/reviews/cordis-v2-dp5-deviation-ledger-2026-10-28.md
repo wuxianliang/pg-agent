@@ -5,7 +5,7 @@ This ledger records two B0 passes:
 - the initial B0 at HEAD `f119429` on 2026-10-28, which was **blocked** at the then-current 5000 helper cap (`R=680<900`); and
 - the B0 **re-adjudication** at HEAD `ba66776` with the user's uncommitted 41 refactor and 5500 cap, which **passes** capacity (`R=1162≥900`) and the 31 inherited gates.
 
-The initial blocked result is kept as history and is not rewritten. No DP1–DP4 acceptance record is rewritten. W1, W2 and W3 are recorded as local, verified milestones; W4+ behavior is not claimed.
+The initial blocked result is kept as history and is not rewritten. No DP1–DP4 acceptance record is rewritten. W1–W5 are recorded as local, verified milestones; DP6+ behavior is not claimed.
 
 ## Initial B0 (2026-10-28, HEAD `f119429`) — historical, blocked at 5000
 
@@ -100,6 +100,8 @@ The measured history is:
 | W1 at `c3ddd94` | 1567 | 1354 | 1007 | 668 | 4596 | 904 vs 5500 | pass |
 | W2 at `c3ddd94` | 1589 | 1473 | 1015 | 668 | **4745** | **755 vs 5500** | **pass** |
 | W3 at `20599f6`+W3 | 1685 | 1473 | 1020 | 700 | **5500** | **0 vs 5500** | **pass (at cap)** |
+| W4 at `184938e`+W4 | 1685 | 1473 | 1020 | 700 | 5500 | 0 vs 5500 | pass (at cap) |
+| W5 at `7aa32ca`+W5 | 1685 | 1473 | 1020 | 700 | **5500** | **0 vs 5500** | **pass (at cap)** |
 
 DP1/DP2 docs still carry their 2026-10-27 "5000" notes; those are historical statements about the previous authorization and do not override design §10.1's 2026-10-28 5500 line. B0 did not rewrite those historical records.
 
@@ -111,13 +113,14 @@ W1 claims: overlay/intercept exact ABI and boundaries; effective descriptor/dige
 
 W2 claims: optional five-key manifest, exact eight-key listener declarations and exec/contract/sync_reads validation; `registration_plan` = provides++listeners; cross-32 iterator/seq/registered_through and P4 totality; listener contribution shape/`delete_row` inverse; declared-listener overlay validation; production P5/P6 listener withdrawal/release; E1–E7 registration/revocation subset; the W2 capacity measurement (4745/755/465/144); and the W2 local commit. It explicitly does not claim W3 ordering, unavailable, real drain, host receipts or execution.
 
+W5 claims: CDP5-B B1–B6, the 35/35 serial closeout, the final 5500/465/19/162/one-DEFINER record, the twelve frozen hashes and `git diff --check`, and the W5 local commit. W5 changes no product semantics.
+
 Unclaimed and not implemented:
 
 - W3 delivered `44_events.sql`, loader 19, the five-file budget tree, the p4 producer, dispatch/listener_call execution, typed ops, virtual receipts, `CDP5-D`, cross-episode ordering, not-yet-created `unavailable`, real drain and host receipt evidence.
 - W4 delivered the independent five-mode reference, R5–R7, R6b mixed generation, the no-config DP4 digest recomputation, and the named emit/waterfall/host deviations; see the W4 section.
-- W5 full `CDP5-B`, all-new-and-old closeout, final push-ready result.
 - DP6 scanner/recovery/unknown reconciliation and any G4 item outside events/resolution.
-- Any push for W1–W4. Publication target remains unresolved; the local commits are not evidence of a remote target.
+- Any push for W1–W5. Publication target remains unresolved by this session; the local commits are not evidence of a remote target. `origin/v24` was `7aa32ca` and `origin/v24...HEAD` was `0 0` at W5 start, but W5 did not push.
 
 
 ## W3 implementation (2026-10-28, HEAD `20599f6` plus W3)
@@ -162,7 +165,24 @@ W4 is a local, verified refinement milestone. It adds no helper, table, DDL, loa
 | 2026-10-28 | R3b no-config DP4 digest | W4 contract: add no-config DP4 digest evidence | The no-config run still returns the DP4 claim shape (no `execution`); `policy`/`schema` are recomputed in Python from the shipped DP4 text (`06267903…`, `0f782569…`), and `toolset` is recomputed from the raw model/tool descriptor digests rather than effective overlay/intercept values | CDP5-R3b |
 | 2026-10-28 | Capacity | 5500 cap; no helper/mode/validator removal | W4: 40=1685, 41=1473, 42=1020, 43=700, 44=622; total **5500**, **R=0**, DDL 465, manifest 19, 162 functions, one DEFINER, public EXECUTE 0. The body-form correction has no net line change | `[CDP1-K0]`; CDP2-B; CDP3-B1; CDP4-B1/B2 |
 | 2026-10-28 | Regression | Complete 31 inherited + R + E + D, one process at a time, s8 before s7 | **34/34 exit 0 in 177 s** on the final tree; the refined `CDP5-R` then ran again as the final-tree confirmation with exit 0. W3's D assertions and E's registration/revocation assertions are unchanged | `/tmp/dp5-w4-gates/gates.tsv`; `gate-01..34.log`; `/tmp/dp5-w4-gates/final-resolution.log` |
-| 2026-10-28 | W4 scope boundary | Tests/docs only beyond the R5 body form; W5 owns `CDP5-B` and final closeout | W4 did not add a SQL helper, table, loader entry, public function, producer or mode; no frozen `v24/sql`/`v24/s1`–`s12` path was touched. W5 remains unclaimed | `git diff`; matrix "W4 not covered" |
+| 2026-10-28 | W4 scope boundary | Tests/docs only beyond the R5 body form; W5 owns `CDP5-B` and final closeout | W4 did not add a SQL helper, table, loader entry, public function, producer or mode; no frozen `v24/sql`/`v24/s1`–`s12` path was touched. At W4, `CDP5-B` remained unclaimed; W5 delivered it below | `git diff`; matrix "W4 not covered"; W5 section |
 | 2026-10-28 | Publication | AGENTS says `origin main`; branch `v24` tracks `origin/v24`; target unresolved | W4 is a local commit; no force, no inferred target, no push to `main` or `origin/v24` | this ledger; plan §9; `git branch -vv` |
 
 W4 does **not** claim W5's `CDP5-B`, the final all-boundary/frozen-hash closeout, DP6 scanner/recovery or any push. The R5 body-form correction is recorded as a narrow conformance fix, not a broadened implementation.
+
+
+## W5 implementation (2026-10-28, HEAD `7aa32ca` plus W5)
+
+W5 is a local, verified closeout. It adds only `v24/cordis/dp5/test_boundaries.py` (`CDP5-B` B1-B6) and the DP5 artifacts; no product semantics, SQL helper, DDL, table, loader entry, budget or public function changed. The helper total stays exactly 5500.
+
+| Date | Item | Baseline / spec | W5 treatment | Evidence |
+|---|---|---|---|---|
+| 2026-10-28 | B1 final layout and ACL | Plan §6.5 B1: ten tables, manifest 19, one DEFINER, public EXECUTE 0, no VIEW/EXTENSION, 3 command kinds, 24 protocol errors, real-role ACL | Asserted against the live catalog: ten `v24_cordis` tables, 19 loader entries, `advance` as the only `SECURITY DEFINER`, public EXECUTE/DML 0, no view or non-plpgsql extension, exactly three command kinds in `role_allowed`, all 24 `error_v1` codes and a 22023 unknown-code refusal | `[CDP5-B1]`; `test_boundaries.py::test_b1_layout` |
+| 2026-10-28 | B2 capacity and loader | Plan §6.5 B2: all helpers ≤5500 with a real 5500/5501 predicate; DDL ≤900; loader/budget negatives | Real tree is exactly **5500** (40=1685, 41=1473, 42=1020, 43=700, 44=622), DDL **465**; a temporary five-file tree of 5500 is accepted and 5501 rejected. The loader refuses missing 44, duplicate 44, 50-before-44, a missing 44 file and an unregistered SQL file; the budget refuses a 5500-line tree missing 44 | `[CDP5-B2]`; `[CDP1-K0]` in the serial log |
+| 2026-10-28 | B3 event ACL and DP4 surface | Plan §6.5 B3: replace DP4's blanket event-kind refusal with dispatch/in_db-refused and host-listener-allowed; retain host_io 0A000, no scanner, read-only release delta and the DP4 run path | Service claim/settle of `dispatch` and in_db `listener_call` is `unauthorized`; service claims the host listener; admin/operator are `unauthorized`; `host_io` settlement raises 0A000; no `recover|scanner|sweep` function; `run_pin_release_delta` has no DML; a real run_start→model→tool path commits | `[CDP5-B3]` |
+| 2026-10-28 | B4 non-event seeds, closure and locks | Plan §6.5 B4: non-event kind seed bytes equal DP4 W5; p4/host closure 512/513; 600 historical effects do not enter unrelated scans; provider/install/sibling rows locked | Independent Python recomputation of the DP4 W5 `settlement_seed` branches matches `host_io`, `run_start`, `model_call`, `tool_call`, `command_reconcile`, `command_install`. The p4 command seed and host listener closure admit 512 and refuse 513. 600 unrelated effects in the same provider fiber leave the host/p4/model seeds and host closure unchanged. `lock_closure` holds the parent, siblings, provider fiber/episode/contribution and install against `FOR UPDATE NOWAIT` (55P03) | `[CDP5-B4]` |
+| 2026-10-28 | B5 event bounds | Plan §6.5 B5: manifest listeners 16/17 and created 16/17; snapshot/receipt bytes and 200-key boundary; 24-error closed set; legal failure/unknown are bounded writes | Manifest accepts 16 and rejects 17 listeners; 15 listeners+dispatch=16 passes and 16 listeners→17 created rejects with zero dispatch. Exact dispatch/child input and host receipt key sets are asserted. Failure writes one effect plus one dispatch_progress event; unknown writes only the effect. 200 keys/32 depth pass and 201 keys/33 depth fail; 24 codes are unique | `[CDP5-B5]` |
+| 2026-10-28 | B6 frozen, purity and replay | Plan §6.5 B6: all frozen hashes and diff, pure helpers, same LOGIN/replay-first, 24 errors | Twelve `v24/sql` SHA-256 values match; `git diff --exit-code 57e2c1e -- v24/load.py v24/sql v24/s1…s12` and `git diff --check` exit 0. 162 helper symbols / 170 `pg_proc` rows (8 trigger guards), one DEFINER, public EXECUTE 0; pure helpers are immutable and token-free. Same-LOGIN command cache replay returns the first response; an admin login cannot reuse the effect id; a settled host receipt replays before token validation with empty arrays | `[CDP5-B6]` |
+| 2026-10-28 | Regression | Complete 31 inherited + R + E + D + B, one process at a time, s8 before s7 | **35/35 exit 0 in 187.4 s** on the final tree; every command's exit and duration is in the matrix; `CDP5-B` reran on the completed artifact tree with exit 0 | `/tmp/dp5-w5-gates/gates.tsv`; `gate-01..35.log`; `final-boundaries.log` |
+| 2026-10-28 | No product change | W5 is closeout-only; no new helper/mode/table/DDL/loader/budget/public function | The only new implementation path is `v24/cordis/dp5/test_boundaries.py`; SQL helpers, DDL, tables, loader, budget, public functions and the frozen `v24/sql`/`v24/s1`–`s12` surfaces are unchanged | `git diff --stat`; B6 |
+| 2026-10-28 | Publication | AGENTS says `origin main`; branch `v24` tracks `origin/v24`; user says do not push until orchestration verifies | W5 is a local commit; `origin/v24` was `7aa32ca` and `origin/v24...HEAD` was `0 0` at W5 start; no push was performed | `git branch -vv`; this ledger |

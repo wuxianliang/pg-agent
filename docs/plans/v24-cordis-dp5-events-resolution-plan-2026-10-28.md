@@ -1,6 +1,6 @@
 # Cordis v2 DP5：事件派发与描述符解析 Deep Plan
 
-> 状态：规划完成；B0 已于 2026-10-28 在 DP4 HEAD `ba66776` 上完成重裁并通过容量准入；W1/W2 已在该 HEAD 上实施并分别通过 32/32、33/33 命令（W2 为 31 继承 + `CDP5-R` + `CDP5-E`）并本地提交；W3 已在 W2 HEAD `20599f6` 上实施，交付 `44_events.sql`、原子 producer/execution 闭环与 `CDP5-D`，34/34 命令串行通过并本地提交；W4 已在 W3 HEAD `184938e` 上实施，交付 `CDP5-R` R5–R7、独立五 mode Python 参考、R6b 混代激活、R7 host 前提与显式 emit/waterfall 偏差，34/34 命令串行通过并本地提交。W5 未启动。本文相对路径以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含 Cordis。DP1–DP4 已完成；DP4 W5 及两次收尾补正已本地提交，DP5 在 B0 重裁后接续。本文把 W1/W2/W3/W4 写成有实跑证据的已交付里程碑，W5 仍只写实施合同。
+> 状态：规划完成；B0 已于 2026-10-28 在 DP4 HEAD `ba66776` 上完成重裁并通过容量准入；W1/W2 已在该 HEAD 上实施并分别通过 32/32、33/33 命令（W2 为 31 继承 + `CDP5-R` + `CDP5-E`）并本地提交；W3 已在 W2 HEAD `20599f6` 上实施，交付 `44_events.sql`、原子 producer/execution 闭环与 `CDP5-D`，34/34 命令串行通过并本地提交；W4 已在 W3 HEAD `184938e` 上实施，交付 `CDP5-R` R5–R7、独立五 mode Python 参考、R6b 混代激活、R7 host 前提与显式 emit/waterfall 偏差，34/34 命令串行通过并本地提交；W5 已在 W4 HEAD `7aa32ca` 上实施，交付 `CDP5-B` B1–B6 与最终收尾证据，31 继承 + `CDP5-R`/`CDP5-E`/`CDP5-D`/`CDP5-B` 共 35/35 命令串行通过并本地提交，未改产品语义、SQL helper、DDL、loader 或 budget。本文相对路径以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含 Cordis。DP1–DP4 已完成；DP4 W5 及两次收尾补正已本地提交，DP5 在 B0 重裁后接续。本文把 W1/W2/W3/W4/W5 写成有实跑证据的已交付里程碑。
 >
 > 文中“现状”是规划快照，不是执行时 HEAD；“拟新增”是实施合同，不代表代码已存在。执行前重新记录 HEAD、工作区和所有引用符号，禁止把另一个会话的未提交工作作为 DP5 已完成事实。
 
@@ -537,7 +537,20 @@ Result（2026-10-28，HEAD `184938e` 加 W4）：**已执行并本地提交。**
 
 B加全部旧新命令串行实跑，十二hash和冻结diff、helper实际行数、DDL、manifest19、十表/1DEFINER、ACL、无scanner/网络全部记录。README/matrix/ledger/本文Result逐项覆盖；保留未认领的DP6与G4其余项。不能要求用户所有工作区干净，只要求暂存区仅本里程碑确定路径。
 
-Result：未执行。
+**Result（2026-10-28，implemented, verified and locally committed）：**在 worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`、分支 `v24`、HEAD `7aa32ca` 加 W5 上完成。W5 只新增 `v24/cordis/dp5/test_boundaries.py`（`CDP5-B` B1–B6）并回填 README/matrix/ledger/本 Result；未改任何 SQL helper、DDL、表、loader、budget、public function、frozen `v24/sql` 或 `v24/s1`–`s12`，未改产品语义，helper 总数仍为 **5500**。
+
+B1–B6 覆盖：
+
+- B1 十表、manifest 19、唯一 `SECURITY DEFINER=advance`、public EXECUTE 0、无 VIEW/EXTENSION、三 command kind、24 协议错误闭集与真实角色 ACL。
+- B2 helper 5500/5500（40=1685、41=1473、42=1020、43=700、44=622），临时五文件树 5500 通过/5501 拒绝，DDL 465≤900；loader 漏 44、重复 44、44/50 乱序、缺 44 文件、未注册 SQL 均拒绝；budget 对缺 44 的 5500 行树仍拒绝。
+- B3 `dispatch`/in_db `listener_call` 外部 claim 拒绝，host listener 由 service claim 而 admin/operator 拒绝；`host_io` settlement 仍 0A000；无 scanner/sweep/recover；`run_pin_release_delta` 只读；DP4 run/model/tool 路径仍提交。
+- B4 host_io/run_start/model/tool/command 非 event seed 与 DP4 W5 分支独立重算逐字节一致；p4 command seed 与 host listener settlement closure 在 512 接受、513 拒绝；同 provider fiber 的 600 个历史 effects 不进入无关 seed/closure；provider/install/sibling 行由 `lock_closure` 实际持锁（55P03）。
+- B5 manifest listeners 16/17、created 16/17；dispatch/child input 与 host receipt 键集精确；failure 写 effects+一个 event、unknown 只写 effects（限定写而非零写）；200/201 key 与 32/33 depth；24 协议错误。
+- B6 十二份 `v24/sql` 冻结 SHA-256、`57e2c1e` frozen diff、`git diff --check` exit 0；162 helper 符号（170 `pg_proc` 行含 8 trigger guards）唯一 DEFINER、public EXECUTE 0、pure helper 无动态 SQL/外呼/RAISE；同 LOGIN command cache replay 与 terminal replay-first 保持。
+
+实跑：31 条继承命令后依次 `CDP5-R`/`CDP5-E`/`CDP5-D`/`CDP5-B`，逐条独立进程串行，**35/35 exit 0，总耗时 187.4 秒**（`/tmp/dp5-w5-gates/gates.tsv`、`gate-01..35.log`；`CDP5-B` 为 `gate-35.log`）。收尾工件完成后 `CDP5-B` 再跑一次，exit 0（`/tmp/dp5-w5-gates/final-boundaries.log`）。无 skip、无“应通过未跑”项。
+
+边界：W5 不新增 producer/mode/helper/table/DDL/loader 项，只交付最终边界与收尾证据。DP6 仍未实现：scanner/公平恢复、外部 unknown 对账、upgrade/HMR、cancel/steer/respond、spawn/child runs、multi-host、cell/reservation 生产写入、realm ACL、`thisArg`、同步 disposer 链。发布目标仍由 orchestration/用户点名；W5 只做本地 commit，不 push、不推断 `origin/main` 或 `origin/v24`。
 
 **每里程碑工件：**`v24/cordis/dp5/README.md`；`docs/reviews/cordis-v2-dp5-conformance-matrix-2026-10-28.md`；`docs/reviews/cordis-v2-dp5-deviation-ledger-2026-10-28.md`；本文Result；新增SQL时loader/budget同步。矩阵写Scope/Environment/HEAD/冻结hash/Capacity/每命令exit与Evidence/未覆盖，台账列Baseline/DP treatment/Evidence与Final unclaimed scope。
 

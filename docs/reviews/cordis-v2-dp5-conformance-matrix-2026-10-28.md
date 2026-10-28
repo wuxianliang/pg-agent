@@ -1,6 +1,6 @@
 # Cordis v2 DP5 Conformance Matrix
 
-B0 re-adjudication executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, at HEAD `ba66776` plus the user's uncommitted `41_lifecycle.sql` refactor and `helper_budget.py` 5500 cap. W1 was then implemented on the same HEAD and verified by the inherited 31 commands plus `CDP5-R`; W2 was implemented on W1 HEAD `c3ddd94` and verified by the 31 inherited commands plus `CDP5-R` and `CDP5-E`; W3 was implemented on W2 HEAD `20599f6` and verified by the 34-command serial regression. This matrix records B0, W1, W2, W3 and W4: DP4 handoff inspection, the current `43_loop.sql` stability check, the relaxed 5500 capacity contract, the 31-command pre-DP5 regression, the admission decision, the W1 overlay/intercept/effective-descriptor implementation, the W2 listener registration/withdrawal implementation, the 33-command W2 regression, the W3 atomic event producer/execution closure, and the W4 refinement evidence (R5–R7, mixed generation, host premises and the no-config DP4 digest) on HEAD `184938e`. W5 does not exist yet.
+B0 re-adjudication executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, at HEAD `ba66776` plus the user's uncommitted `41_lifecycle.sql` refactor and `helper_budget.py` 5500 cap. W1 was then implemented on the same HEAD and verified by the inherited 31 commands plus `CDP5-R`; W2 was implemented on W1 HEAD `c3ddd94` and verified by the 31 inherited commands plus `CDP5-R` and `CDP5-E`; W3 was implemented on W2 HEAD `20599f6` and verified by the 34-command serial regression. This matrix records B0, W1, W2, W3, W4 and W5: DP4 handoff inspection, the current `43_loop.sql` stability check, the relaxed 5500 capacity contract, the 31-command pre-DP5 regression, the admission decision, the W1 overlay/intercept/effective-descriptor implementation, the W2 listener registration/withdrawal implementation, the 33-command W2 regression, the W3 atomic event producer/execution closure, the W4 refinement evidence (R5–R7, mixed generation, host premises and the no-config DP4 digest) on HEAD `184938e`, and the W5 final `CDP5-B` boundary gate plus the 35-command serial closeout on HEAD `7aa32ca` plus W5.
 
 The prior blocked-at-5000 B0 record is retained in the plan §9 as history; it is superseded by this re-adjudication. DP1–DP4 historical acceptance records are not rewritten.
 
@@ -811,3 +811,118 @@ W4 does **not** claim W5's `CDP5-B`, the final all-boundary closeout, or any pus
 - W5: `CDP5-B` all-boundary gate, full old+new serial closeout, final frozen/hash/ACL/manifest record, push-ready result.
 - DP6: scanner/fair recovery, external unknown reconciliation, upgrade/HMR, cancel/steer/respond, spawn/child runs, multi-host, cell/reservation production writers, realm ACL, `thisArg`, synchronous disposer chains.
 - Publication: W4 is local only; the target remains unresolved.
+
+
+## W5 implementation (2026-10-28, HEAD `7aa32ca` plus W5)
+
+W5 is the final boundary/closeout milestone. It adds `v24/cordis/dp5/test_boundaries.py` (`CDP5-B` B1–B6) and changes no SQL helper, DDL, table, loader entry, budget or public function. The helper total remains exactly 5500. At W5 start `origin/v24` was `7aa32ca` and `origin/v24...HEAD` was `0 0`; W5 is a local commit and did not push.
+
+### W5 environment
+
+| Item | Observed value |
+|---|---|
+| `pwd -P` | `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` |
+| branch / upstream | `v24` / `origin/v24` |
+| HEAD at W5 start | `7aa32ca3a7777ac04fc03db3968dd90f97d147e6`, subject `v24: implement Cordis DP5 W4 refinement evidence` |
+| `origin/v24` at W5 start | `7aa32ca`, subject `v24: implement Cordis DP5 W4 refinement evidence` |
+| `git rev-list --left-right --count origin/v24...HEAD` | `0 0` |
+| W5 changed implementation | new `v24/cordis/dp5/test_boundaries.py` (CDP5-B B1–B6) |
+| W5 changed artifacts | DP5 README, this matrix, deviation ledger, plan W5 Result |
+| helper budget | **5500** (40=1685, 41=1473, 42=1020, 43=700, 44=622), `R=0` |
+| frozen `v24/sql` / `v24/s1`–`s12` | twelve SHA-256 match; `git diff --exit-code 57e2c1e -- ...` exit 0; `git diff --check` exit 0 |
+
+The pre-existing modified DP1/DP2 documentation paths and untracked analysis/design/review files remained untouched; W5 stages only its new gate and the four DP5 artifacts.
+
+### W5 capacity
+
+| Item | Value |
+|---|---|
+| `40_advance.sql` | 1685 |
+| `41_lifecycle.sql` | 1473 |
+| `42_teardown.sql` | 1020 |
+| `43_loop.sql` | 700 |
+| `44_events.sql` | 622 |
+| helper total | **5500** |
+| `R = 5500 − total` | **0** |
+| DDL prefix | **465≤900** |
+| manifest | **19** |
+| domain tables | **10** |
+| helper symbols | **162** |
+| `pg_proc` rows | **170** (162 helper symbols + 8 trigger guards) |
+| unique `SECURITY DEFINER` | **`advance`** |
+| public EXECUTE | **0** |
+| no VIEW / EXTENSION | **yes** |
+| command kinds / protocol errors | **3 / 24** |
+
+`[CDP5-B2]` re-invoked the five-file predicate on a temporary tree of exactly 5500 lines (accepted) and 5501 (rejected), and measured the real tree at exactly 5500. No mode, validator, limit or test was removed.
+
+### W5 35-command serial regression
+
+One `uv run python` process at a time, no concurrency, no joined commands, stopping on the first non-zero exit; s8 before s7. **35/35 exit 0, 187.4 s.** Summary `/tmp/dp5-w5-gates/gates.tsv`; per-command logs `/tmp/dp5-w5-gates/gate-01..35.log`. `CDP5-B` then reran on the completed artifact tree; exit 0 (`/tmp/dp5-w5-gates/final-boundaries.log`).
+
+| # | Command | Exit | Duration (s) | Evidence |
+|---:|---|---:|---:|---|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0.8 | canonical loader, 19 entries |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1.6 | PostgreSQL 18.4 self-check |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1.6 | CDP1-E exact 19-entry manifest |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 1.7 | CDP1-D; DDL 465 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 13.8 | CDP1-K; helper 5500≤5500, 5500/5501 admits/rejects |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3.4 | CDP2-K continuation, typed delta, closure, replay |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4.2 | CDP2-I declaration/admission |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3.3 | CDP2-A activation and provide bounds |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 3.6 | CDP2-B `tables=10 manifest=19 helpers=5500 ddl=465` |
+| 10 | `uv run python v24/load.py` | 0 | 0.6 | v24 loader self-check |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1.6 | v24/s1 setup |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1.6 | G1-O owner DDL |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2.5 | G1 kernel, commands, claim, locks, ACL |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 1.9 | S2 W1–W6 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5.1 | S3 W1–W7 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 4.1 | S4 W1–W6 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3.2 | S5 W1–W4 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 3.7 | S6 W1–W4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2.4 | S8 W1–W3 G7-A…H + N1–N7 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 6.5 | S7 W1–W2 G6-A…H + N1–N9 + L1–L5 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 10.6 | G8, 23 cases |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3.1 | CDP3-P |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 10.9 | CDP3-L |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 6.2 | CDP3-T |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 6.0 | CDP3-D |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 6.5 | CDP3-B1…B13; `helpers=5500 40=1685 41=1473 42=1020 ddl=465`, 5500/5501 |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 6.5 | CDP4-R1…R7 |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 5.2 | CDP4-M1…M5 |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 11.6 | CDP4-T1…T8 |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 8.6 | CDP4-X1…X7/M6/e7→e13 |
+| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 14.1 | CDP4-B1…B6; `helpers=5500 43=700 ddl=465` |
+| 32 | `uv run python v24/cordis/dp5/test_resolution.py` | 0 | 8.8 | CDP5-R R1–R8, five-mode reference, purity, host premises |
+| 33 | `uv run python v24/cordis/dp5/test_listeners.py` | 0 | 5.2 | CDP5-E E1–E7 |
+| 34 | `uv run python v24/cordis/dp5/test_dispatch.py` | 0 | 11.5 | CDP5-D D1–D12 |
+| 35 | `uv run python v24/cordis/dp5/test_boundaries.py` | 0 | 5.4 | CDP5-B B1–B6 final boundary |
+
+Key W5 assertions from the logs:
+
+```text
+[CDP5-B1] tables=10 manifest=19 definer=advance public_execute=0 views/extensions=0 commands=3 protocol_errors=24
+[CDP5-B2] helpers=40=1685 41=1473 42=1020 43=700 44=622 total=5500==5500 ddl=465<=900; 5500/5501 and loader missing/duplicate/order probes refused
+[CDP5-B3] dispatch/in_db external claim is unauthorized; service claims host listener while admin/operator are unauthorized; host_io settlement 0A000; no scanner/sweep/recover; release delta read-only; DP4 run/model/tool commits
+[CDP5-B4] non-event host_io/run_start/model/tool/command seeds match the DP4 W5 recomputation; p4 and host closure admit 512 and refuse 513; 600 unrelated effects are absent; provider/install/sibling rows are lock-held
+[CDP5-B5] manifest listeners 16/17 and created 16/17; dispatch/child input and host receipt key sets exact; failure writes effects+event and unknown writes only the effect; 200/201 keys and 32/33 depth; 24 protocol errors
+[CDP5-B6] twelve frozen v24/sql hashes, frozen 57e2c1e diff and git diff --check hold; 162 private helpers with one DEFINER, no public EXECUTE, pure helpers immutable/token-free; same-LOGIN cache replay and terminal replay-first hold
+[passed] CDP5-B (W5: B1-B6 final layout, ACL, capacity, seed/closure, bounds, frozen)
+```
+
+### W5 evidence
+
+| Item | Evidence |
+|---|---|
+| B1 layout/ACL | Ten tables, manifest 19, one `SECURITY DEFINER=advance`, public EXECUTE 0, no VIEW/EXTENSION, three command kinds, all 24 `error_v1` codes plus a 22023 unknown-code refusal, real-role function ACL |
+| B2 capacity/loader | Exactly 5500 helper lines, 5500/5501 predicate, DDL 465≤900; loader refuses missing/duplicate/out-of-order 44, a missing 44 file and unregistered SQL; budget refuses a 5500-line tree missing 44 |
+| B3 event ACL/DP4 surface | `dispatch`/in_db external claim unauthorized; service host-listener claim allowed; admin/operator unauthorized; host_io settlement 0A000; no scanner/sweep/recover; release delta read-only; real run_start→model→tool commit |
+| B4 seeds/closure/locks | Independent DP4 W5 recomputation for host_io/run_start/model/tool/command; p4 command seed and host closure 512/513; 600 unrelated effects absent; provider/install/sibling rows hold locks (55P03) |
+| B5 event bounds | Manifest listeners 16/17; created 16/17; exact dispatch/child input and host receipt key sets; failure writes effect+event, unknown writes effect only; 200/201 keys and 32/33 depth; 24 errors |
+| B6 frozen/purity/replay | Twelve frozen hashes; `57e2c1e` frozen diff and `git diff --check` exit 0; 162 helper symbols / 170 pg_proc rows; one DEFINER; no public EXECUTE; pure helpers immutable and token-free; same-LOGIN cache replay and terminal replay-first |
+| No product change | Only `test_boundaries.py` plus artifacts; no SQL helper, DDL, table, loader, budget, public function or frozen surface changed |
+
+### W5 not covered
+
+- DP6 scanner/fair recovery, external unknown reconciliation, upgrade/HMR, cancel/steer/respond, spawn/child runs, multi-host, cell/reservation production writers, realm ACL, `thisArg` and synchronous disposer chains.
+- Any push. W5 is local only; the target remains for orchestration or an explicitly named remote/branch.
