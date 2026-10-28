@@ -402,3 +402,56 @@ ABI 核证：`ensure` 不存在（payload 仅 `on/advance/off/retry`）；reuse 
 - **W1 原子落实预算/gate 配套。** 只解除三项行数断言；保留 19 项 canonical manifest/缺失/重复/未登记/符号链接校验、必需 helper 文件校验与全部语义/ACL/文件负例；旧 line-only probes 按授权废止。B0 不改这些代码。
 - **当前仅完成 B0 baseline/capacity。** W1–W5 未开始；W1 semantic admission pending。
 - **发布授权（2026-10-28）：** 目标明确为当前分支 `origin/v24`，允许正常提交与普通 push；只发布本 B0 的 5 个 DP6 工件。设计稿只暂存本次授权 hunk，既有用户 5500 改写不随提交。35 条继承 gate 先前已全绿，纯 docs 改动无需无因重跑。
+
+### W1 semantic admission Result（2026-10-28，Oracle 裁决；实现前记录）
+
+**结论：`ensure` 语义准入通过（admit-with-corrections）；W1 可实施。** B0 的两点 pending 已按 Oracle 双 lane 裁决闭合，未采用 B0 已撤回的 failure-before-teardown / 全 closing→`ensure_no_work` 草案。设计记录：`docs/reviews/cordis-v2-dp6-w1-oracle-design-2026-10-28.md`；Oracle group `D2EED4FF-ECCC-44C2-803A-7CA520DFC462`（primary `codex/gpt-6.1-sol-xhigh` chat `new-chat-AB0DCA`，additional `openCode/kimi-code-plan-cn/k3.1-pro` chat `new-chat-oracle-2-BD1ACF`）；导出 `prompt-exports/oracle-chat-2026-10-28-232411-new-chat-ab0dca-d52e.md`（gitignored）。
+
+最终裁决要点：
+
+1. `ensure` 只扩展既有 `command_reconcile` 的 payload action 枚举，payload 仍精确为 `{fiber_id,action,expected_control_seq}`；non-reserved key `cordis/dp6/ensure/<fiber>/<attempt-uuid>`。不加 command kind/表/列/错误码/解释器/第二 writer。
+2. 顺序：当前 episode 一致性（含 NULL episode + 非空 `retire_started_at` → `0A000/phase_drift`）→ persisted-emission invariant → reloading/closing 缺失后继 invariant → expected seq stale → slot → terminal → 递归 `advance` selector。只有递归结果为 `p1` 时才检查同代 failure；`leave`/`p6` 永不读 failure，故 teardown 不被 failure 抑制。
+3. 缺失后继的精确证据是两类，均在 no-work 之前：成功 command_reconcile 父（以及由 `install_dispose_progress` 证明本 fiber 为 `fiber_requested`/`work_scheduled` 目标的 command_dispose 父）的 `requests.response->'emitted'` 指向不存在的 effect；或 reloading 无 slot / closing 已存在本 episode 的 `contributions_released`/`pins_released` 但无 slot。均 `0A000/missing_reconcile_successor`。空 emitted 与合法 `successors:[]` 不会误报。
+4. 工作路径返回 `{kind:'p0',mode:'schedule',control_seq:f.control_seq}`，复用 `p0_delta`；`validate_domain` 现有 exact `p_delta IS NOT DISTINCT FROM p0_delta(f,v_expected)` 即 validator；apply 仍是唯一写入点。无工作/故障在 `validate_and_apply_delta` 前返回或 raise，十表零写且不缓存 no-op。`reconcile_command_seed` 仅把 contributions/runs/pins 的 action 过滤扩为 `IN ('advance','ensure')`；activation-candidate refs 保持 `advance`-only。
+5. Observer：独立 NOLOGIN group + LOGIN、schema USAGE + 列级 SELECT（不回退为表级）、无 advance EXECUTE/DML/函数 EXECUTE；`role_family` 纳入 observer 组但 `role_allowed` 不纳入。TEMP 是数据库级 PUBLIC 默认，fixture 需从 PUBLIC revoke 并只回授原四组，observer 无 TEMP；`dp1/test_kernel` 的 hostile temp negative 显式给其 foreign service login TEMP 以保留原语义断言。
+6. Scanner：只读 observer 原始事实分页（每主题独立 keyset、LIMIT 64、每页短 READ COMMITTED 事务、页尾不跳过、short page wrap、轮询）；只通过 `advance` 决策/写入；ensure 用配置的真实 admin/service/operator LOGIN，reserved continuation 按 `effects.request_actor` 直连并核验 `session_user`，缺凭据 `blocked_actor_credential`，不冒充。W1 不执行外部 effect（W2 负责 claim/receipt/crash recovery）；Fake handler 只用于证明未调用。
+
+以上为 admission 证据；实现、CDP6-S gate 与 W1 Result 待后续记录。B0 原 pending 判定保留为历史。
+
+### W1 Result（2026-10-28，实现、修正后的 CDP6-S 与 36-gate 串行实跑）
+
+**结论：W1 Done-when 与修正后的 CDP6-S 已实现；最终 36/36 gate 串行 exit 0；本会话仅交付 W1 范围并返回父级验证，W2–W5 未开始。** 实现起点 HEAD `78e21500cc716203ae5d978d7e2948aa4bcf66e0`，分支 `v24`。Oracle 设计记录 `docs/reviews/cordis-v2-dp6-w1-oracle-design-2026-10-28.md`；矩阵新增 §W1 implementation and gate evidence。
+
+过程中父级验收指认：临时 36-green 运行的 S6 只用“缺失后继 fiber + 无关 unknown 诊断”打印 blocked/deferred，缺少独立进程重启/丢 cursor、重复/乱序/陈旧 raw row 注入、真实 deferred/`blocked_unknown`/closure>512/bad actor 首项公平、cursor 之后插入、事务 IDLE 与 dispose 父级缺失后继覆盖。该指认成立；以下为修正后的实测结果，不把临时运行冒充 Done-when。
+
+实现面：
+
+- **`ensure`**：`reconcile_payload_valid`/`interpret_reconcile` 接受新 action；`reconcile_command_seed` 仅将 contributions/runs/pins 过滤扩为 `('advance','ensure')`；42 新增 `ensure_emission_missing` 与 `ensure_branch`；工作路径复用 `p0_delta` 的 schedule，`validate_domain` 的原 exact `p0_delta` 校验不变。未加 command kind/表/列/错误码/validator 分支/第二 writer。
+- **selector 顺序**：episode 一致性（含 NULL episode + retire → `0A000/phase_drift`）→ emitted-missing → reloading/closing 缺失后继 → expected stale → slot → terminal → 递归 `advance`。同代 failure 只在 `p1` 检查，`leave`/`p6` 先行，故 teardown 不被抑制。
+- **observer ACL**：独立 NOLOGIN group + LOGIN；schema USAGE + 8 张表的列级 SELECT；无表级 SELECT/DML/函数 EXECUTE/CREATE；`role_family` 纳入 observer、`role_allowed` 排除；fixture 创建/核验/清理，TEMP 从 PUBLIC revoke 并只回授原四组。
+- **scanner**：`v24/cordis/dp6/driver.py` 7 个独立 keyset topic、LIMIT 64、每页短 READ COMMITTED 事务、轮询/旋转起点、页尾处理与 wrap、可丢 cursor；只发 `advance`；reserved continuation 按 `effects.request_actor` 直连并核验 `session_user`；缺凭据 `blocked_actor_credential`；W1 外部 effect 仅诊断。
+- **budget/gate**：`helper_budget.py` 改为 measurement-only + required-file negative；DP1–DP5 旧 5500/5501、43≤700、DDL≤900 断言移除，measured print 保留；DP5 B6 私有 helper/`pg_proc` 计数 162/170→164/172（新增两个 helper）。
+
+CDP6-S 修正后覆盖（逐项均由生产 install/reconcile/dispose 路径 + 真实 observer/service/admin LOGIN 驱动；fault fixture 只用 owner DML 破坏被证明的对象）：
+
+- `[CDP6-S1f/S7]` observer NOLOGIN group + LOGIN、schema USAGE、列级 SELECT；真实 LOGIN 负例覆盖表 SELECT/DML/TRUNCATE、advance EXECUTE、CREATE/TEMP、`SET ROLE`；fixture 创建/核验/精确清理。
+- `[CDP6-S2/S4/S11]` ensure quiet/slot/stale/work/replay/conflict/并发唯一 slot；teardown-before-failure 与同代 activation failure suppression；provider 撤出在 consumer 同 control_seq 下被 ensure 唤醒并收敛；重复 quiet 扫描十表零增长。
+- `[CDP6-S3/S3b]` reconcile 父级 emitted-missing、reloading 无 slot、closing 已释放无 slot、retire-without-episode；以及 `command_dispose` 的 `fiber_requested`/`work_scheduled` emitted-missing（由 `install_dispose_progress` 事件限定目标），均为 `0A000/missing_reconcile_successor` 或 `phase_drift` 零写；无关 dispose 父级不误报。
+- `[CDP6-S5a/S5b/S5c]` >page fibers/ready commands/dispose installs；在 cursor 之后和之前分别插入新 fiber，均在有限 wrap 内重新发现并推进；页边界无跳项。
+- `[CDP6-S6]` 最低 key 的 >512 closure fiber、真实 deferred closing fiber、真实 `blocked_unknown` closing fiber、坏 actor continuation 与 deferred dispose install 同页时，同一 commands 页中的健康项仍提交；unknown/external/inverse 债务仍被其他 topic 诊断；重复 quiet pass 十表零增长且每个 blocked 项每 pass 至多尝试一次。
+- `[CDP6-S8/S9/S9b]` host_io/unknown/expired/ready-external/inverse 仅诊断，Fake handler 零调用、零写；缺凭据 `blocked_actor_credential`；真实但错误的 LOGIN 由 `session_user` 校验拒绝，ready effect 保持零写，正确绑定的 sibling 仍推进。
+- `[CDP6-S12]` duplicate、out-of-order、stale raw row 交给 item handler；`advance` replay/revalidate 后无重复 request/effect，stale fiber seq 零写。
+- `[CDP6-S13]` 独立 driver 子进程在同一 canonical DB 上正常退出，第二个子进程完成一页后被 SIGKILL，第三个空内存进程从头 rediscover 并收敛；无持久 cursor。
+- `[CDP6-S14]` 每个 observer read / advance 事务在 close 前 commit/rollback 到 IDLE；无残留 session、无 idle-in-transaction；driver 源码无直接 DML/sleep/socket/thread。
+
+Oracle review group `6B696214-99CB-48A0-BEC6-131CBDE8508F`（primary `codex/gpt-6.1-sol-xhigh` chat `new-chat-7BEF5C`；additional `openCode/kimi-code-plan-cn/k3.1-pro` chat `new-chat-oracle-2-ABB6CD`）对修正后的 staged diff 给出双 lane **ACCEPT WITH CORRECTIONS**；两条修正（dispose 父级缺失后继、真实错误 LOGIN 的 `session_user` 校验）已落实为 S3b/S9b，未放宽 driver/SQL 语义。
+
+补充实测：`test_scanner.py` 1311 行、`driver.py` 326 行（report-only，无新上限）。
+
+实跑：36 条命令（35 条继承 + `test_scanner.py`）逐条独立 `uv run python` 串行，**36/36 exit 0**；per-command 合计 **216.5 s**，wall ≈**217.0 s**；日志 `/tmp/dp6_w1_final3/gates/`，汇总 `/tmp/dp6_w1_final3/gates.tsv`。逐条命令/退出码/耗时见矩阵。无 skipped gate、无弱化语义/ACL/manifest 负例、无真实 provider socket；W1 仅按授权更新 physical-line-only 断言并新增 scanner 覆盖；每个 DB 为 disposable pgembed。
+
+实测：40=1685、41=1481、42=1112、43=700、44=622，total **5600**（report-only，无替代上限）；领域 DDL **465**；簿记 18+19=**22** 分列；manifest 19、tables 10、`pg_proc` **172**（164 helper + 8 trigger guard）、唯一 DEFINER `advance`、public EXECUTE 0、无 VIEW/EXTENSION、3 command kinds、24 错误码、closure 512/B=16。冻结 `v24/load.py`、`v24/sql/**`、`v24/s1`–`s12` 与 `57e2c1e` diff 仍 exit 0，`git diff --check` exit 0。
+
+剩余限制：W1 不执行外部 effect（W2）；无 receipt journal/crash injection/dispatch/run 恢复；reuse/rollback W4 未准入；slot 身份由 `continuation_state` 在推进时重验，ensure 不重复；observer 不读 `events`；既有数据库部署需先 provision observer group（fixture 已做）；无界对抗性低 key 插入下 UUID keyset 只给 E1/E2 假设下的有限公平。
+
+发布状态：本 Result 与实现同属 W1 里程碑变更，仅 stage W1 文件；设计稿 mixed file 的用户 5500 改写不 stage。按父级本轮指令，先返回父级验证，**本会话尚未 commit/push**；验证后再按仓库规则普通提交并 push `origin/v24`（不 force、不 `--no-verify`）。提交/远程 SHA 在父级发布后由交接报告（本文件不自引用自身提交）。

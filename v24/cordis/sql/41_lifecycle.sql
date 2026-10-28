@@ -1168,9 +1168,17 @@ DECLARE payload jsonb:=p_outcome->'body'->'payload'; action text:=payload->>'act
   v_plan jsonb; v_kind text; v_plan_event jsonb;
   v_domain jsonb:='[]'::jsonb; v_ids jsonb:='[]'::jsonb; v_first int; v_last int; cid uuid;
 BEGIN
- IF action NOT IN ('on','off','retry','advance') THEN RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','reconcile_action')); END IF;
+ IF action NOT IN ('on','off','retry','advance','ensure') THEN RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','reconcile_action')); END IF;
  SELECT * INTO f FROM v24_cordis.fibers WHERE id=(payload->>'fiber_id')::uuid;
  IF NOT FOUND THEN RETURN v24_cordis.error_v1('not_found_or_denied',jsonb_build_object('reason','reconcile_fiber')); END IF;
+ IF action='ensure' THEN
+  built:=v24_cordis.reconcile_branch(f.id,'ensure',(payload->>'expected_control_seq')::bigint);
+  IF built->>'kind'='error' THEN
+   IF built->>'sqlstate'='0A000' THEN RAISE EXCEPTION '%',built->>'reason' USING ERRCODE='0A000'; END IF;
+   RETURN v24_cordis.error_v1(built->>'code',built->'detail');
+  END IF;
+  RETURN v24_cordis.p0_delta(f.id,built);
+ END IF;
  IF action IN ('on','off','retry') THEN
   built:=v24_cordis.reconcile_branch(f.id,action,(payload->>'expected_control_seq')::bigint);
   IF built->>'kind'='error' THEN
@@ -1329,16 +1337,16 @@ BEGIN
   UNION ALL SELECT jsonb_build_object('t','contributions','id',c.id) FROM v24_cordis.contributions c
    JOIN v24_cordis.fibers f ON f.current_episode_id=c.episode_id
    WHERE f.id=fid AND c.fiber_id=fid AND c.released_at IS NULL
-    AND p_payload->>'action'='advance'
+    AND p_payload->>'action' IN ('advance','ensure')
   UNION ALL SELECT jsonb_build_object('t','runs','id',rr.id) FROM v24_cordis.runs rr
    JOIN v24_cordis.fibers f ON f.id=rr.owner_fiber_id
    WHERE f.id=fid AND rr.owner_episode_id=f.current_episode_id
-    AND p_payload->>'action'='advance'
+    AND p_payload->>'action' IN ('advance','ensure')
   UNION ALL SELECT jsonb_build_object('t','pins','id',pp.id) FROM v24_cordis.pins pp
    JOIN v24_cordis.runs rr ON rr.id=pp.consumer_run_id
    JOIN v24_cordis.fibers f ON f.id=rr.owner_fiber_id
    WHERE f.id=fid AND rr.owner_episode_id=f.current_episode_id AND pp.released_at IS NULL
-    AND p_payload->>'action'='advance'
+    AND p_payload->>'action' IN ('advance','ensure')
   UNION ALL SELECT jsonb_build_object('t','effects','id',x.id) FROM v24_cordis.effects x
    WHERE x.fiber_id=fid AND x.kind='command_reconcile' AND x.status IN ('ready','claimed')
   UNION ALL SELECT jsonb_build_object('t','pins','id',p.id) FROM v24_cordis.pins p

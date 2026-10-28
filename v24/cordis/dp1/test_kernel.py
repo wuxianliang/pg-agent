@@ -16,7 +16,7 @@ import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import Json, register_uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from helper_budget import LIMIT, assert_helper_budget, prove_helper_budget_boundary
+from helper_budget import assert_helper_budget, prove_helper_budget_measurement
 from load import CANONICAL_ORDER
 from setup_db import Server, TestDB, TABLES
 from test_ddl import snapshot
@@ -210,6 +210,11 @@ def test_vectors_acl(db,other):
         query(owner,sql.SQL('GRANT USAGE ON SCHEMA v24_cordis TO {}').format(sql.Identifier(other.roles['service'])))
         query(owner,sql.SQL('GRANT EXECUTE ON FUNCTION v24_cordis.advance(uuid,jsonb) TO {}').format(sql.Identifier(other.roles['service'])))
         owner.commit()
+    # The Cordis fixture denies TEMP to the observer by revoking the PUBLIC default; this
+    # foreign hostile-shadow login receives an explicit TEMP grant so the original ACL
+    # negative (temp catalog shadows must not satisfy the family check) is preserved.
+    query(db.admin,sql.SQL('GRANT TEMP ON DATABASE {} TO {}').format(
+        sql.Identifier(db.name),sql.Identifier(other.roles['service'])))
     # Real foreign LOGIN with explicit EXECUTE, plus hostile temporary catalog shadows.
     try:
         with contextlib.closing(db.server.connect(db.name,other.roles['service'])) as conn:
@@ -236,6 +241,8 @@ def test_vectors_acl(db,other):
             query(conn,'INSERT INTO pg_temp.pg_auth_members VALUES(%s,%s)',(service_oid,login_oid))
             no_write(db,conn,seed['effect'],env('claim',{'lease_ms':1000}),'unauthorized')
     finally:
+        query(db.admin,sql.SQL('REVOKE TEMP ON DATABASE {} FROM {}').format(
+            sql.Identifier(db.name),sql.Identifier(other.roles['service'])))
         with contextlib.closing(db.connect('owner')) as owner:
             query(owner,sql.SQL('REVOKE EXECUTE ON FUNCTION v24_cordis.advance(uuid,jsonb) FROM {}').format(sql.Identifier(other.roles['service'])))
             query(owner,sql.SQL('REVOKE USAGE ON SCHEMA v24_cordis FROM {}').format(sql.Identifier(other.roles['service'])))
@@ -545,9 +552,9 @@ def test_committed_probe(production,probe):
 
 def main():
     assert len(CANONICAL_ORDER) == 19 and len(list((Path(__file__).resolve().parents[1] / 'sql').glob('*.sql'))) == 19
-    prove_helper_budget_boundary()
+    prove_helper_budget_measurement()
     total,counts=assert_helper_budget(Path(__file__).resolve().parents[1]/'sql')
-    print(f'[CDP1-K0] helper budget {total}<={LIMIT} {counts}; predicate admits a {LIMIT}-line tree and rejects {LIMIT + 1}')
+    print(f'[CDP1-K0] helper lines measured {total} {counts}; missing-required-file negative retained, no line cap')
     with Server() as server, TestDB(server) as production, TestDB(server) as probe:
         test_vectors_acl(production,probe)
         test_preflight_claim(production)

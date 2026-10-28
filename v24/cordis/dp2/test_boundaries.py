@@ -260,7 +260,6 @@ def test_multi_and_bounds(db, owner, scope):
     prefix = sum(len((root / 'sql' / name).read_text().splitlines()) for name in (
         '10_installs.sql', '11_scopes.sql', '12_fibers.sql', '13_episodes.sql', '14_contributions.sql',
         '15_pins.sql', '16_runs.sql', '17_effects.sql', '20_relations.sql', '30_triggers.sql'))
-    assert prefix <= 900, prefix
     assert one(db, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                    "WHERE n.nspname='v24_cordis' AND c.relkind='r'") == 10
     assert one(db, "SELECT count(*) FROM pg_proc WHERE pronamespace='v24_cordis'::regnamespace AND prosecdef") == 1

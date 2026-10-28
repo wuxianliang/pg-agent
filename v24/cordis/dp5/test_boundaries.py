@@ -30,9 +30,9 @@ sys.path.insert(0, str(HERE))
 import psycopg2  # noqa: E402
 from psycopg2.extras import Json  # noqa: E402
 
-from test_support import (Server, TestDB, TABLES, ERRORS, LIMIT, query, api, env,  # noqa: E402
+from test_support import (Server, TestDB, TABLES, ERRORS, query, api, env,  # noqa: E402
                           snapshot, no_write, sqlstate, principal,
-                          assert_helper_budget, prove_helper_budget_boundary)
+                          assert_helper_budget, prove_helper_budget_measurement)
 from test_activation import one, rows, commit_new  # noqa: E402
 from dp4_support import (prepare_run, model_body, tool_call, tool_body, claim,  # noqa: E402
                          settle)
@@ -120,28 +120,24 @@ def test_b1_layout(db):
         expect_value_error(lambda: loader.validate_manifest(root), 'unregistered SQL')
         (root / '99_extra.sql').unlink()
 
-    # B2 budget: the real tree is exactly at the authorized cap, the predicate
-    # admits exactly 5500 and rejects 5501, and a whole 5500-line tree that is
-    # missing 44 is still a failure.
-    prove_helper_budget_boundary()
+    # B2 measurement: the 2026-10-28 authorization removed the helper/43/DDL
+    # numeric caps. Counts are still measured and reported; the surviving
+    # required-file predicate is proved with a tree missing 44_events.sql.
+    prove_helper_budget_measurement()
     total, counts = assert_helper_budget(SQL)
-    assert LIMIT == 5500, LIMIT
-    assert total == 5500, (total, counts)
     assert counts == measured_helpers(), counts
-    assert counts['43_loop.sql'] <= 700, counts
     ddl = sum(len((SQL / name).read_text().splitlines()) for name in DDL)
-    assert ddl <= 900, ddl
     with TemporaryDirectory(prefix='cordis-b2-missing-') as raw:
         root = Path(raw)
         for name, lines in zip(('40_advance.sql', '41_lifecycle.sql', '42_teardown.sql',
-                                '43_loop.sql'), (LIMIT - 3, 1, 1, 1)):
+                                '43_loop.sql'), (3, 1, 1, 1)):
             (root / name).write_text('x\n' * lines)
         try:
             assert_helper_budget(root)
         except AssertionError as exc:
             assert sorted(exc.args[0]) == ['44_events.sql'], exc
         else:
-            raise AssertionError('budget admitted a 5500-line tree missing 44_events.sql')
+            raise AssertionError('budget admitted a helper tree missing 44_events.sql')
 
     text = source()
     assert re.search(r'\bCREATE\s+(OR\s+REPLACE\s+)?(MATERIALIZED\s+)?VIEW\b', text, re.I) is None
@@ -193,7 +189,7 @@ def test_b1_layout(db):
     print(f'[CDP5-B1] tables=10 manifest=19 definer=advance public_execute=0 '
           f'views/extensions=0 commands=3 protocol_errors=24')
     print('[CDP5-B2] helpers=' + ' '.join(f'{name[:2]}={counts[name]}' for name in HELPERS) +
-          f' total={total}=={LIMIT} ddl={ddl}<=900; 5500/5501 and loader '
+          f' total={total} ddl={ddl}; line counts measured (no cap), missing-44 and loader '
           'missing/duplicate/order probes refused')
 
 
@@ -531,9 +527,9 @@ def test_b6_frozen(db):
                             "FROM pg_proc WHERE pronamespace='v24_cordis'::regnamespace")
         helper_names = set(re.findall(r'CREATE FUNCTION v24_cordis\.([a-z0-9_]+)',
                                       ''.join((SQL / name).read_text() for name in HELPERS)))
-        assert len(helper_names) == 162, len(helper_names)
+        assert len(helper_names) == 164, len(helper_names)
         assert helper_names <= {name for name, _, _, _ in funcs}
-        assert len(funcs) == 170, len(funcs)
+        assert len(funcs) == 172, len(funcs)
         assert [name for name, definer, _, _ in funcs if definer] == ['advance']
         assert all('search_path=pg_catalog, v24_cordis, pg_temp' in (config or [])
                    for _, _, config, _ in funcs), 'function search_path drifted'
@@ -597,7 +593,7 @@ def test_b6_frozen(db):
     assert replay['ready_effects'] == [], replay
     assert q1(db, "SELECT status FROM v24_cordis.effects WHERE id=%s", (host,)) == 'succeeded'
     print('[CDP5-B6] twelve frozen v24/sql hashes, frozen 57e2c1e diff and git diff --check '
-          'hold; 162 private helpers with one DEFINER, no public EXECUTE, pure helpers '
+          'hold; 164 private helpers with one DEFINER, no public EXECUTE, pure helpers '
           'immutable/token-free; same-LOGIN cache replay and terminal replay-first hold')
 
 

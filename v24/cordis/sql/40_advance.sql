@@ -161,7 +161,7 @@ BEGIN
  IF owner_name IS NULL OR owner_name!~'^v24_cordis_[0-9]+_[0-9a-f]{12}_owner$' THEN RETURN NULL; END IF;
  family:=left(owner_name,length(owner_name)-6);
  IF EXISTS(SELECT 1 FROM pg_proc p WHERE p.pronamespace='v24_cordis'::regnamespace AND p.proowner<>owner_oid) THEN RETURN NULL; END IF;
- FOREACH suffix IN ARRAY ARRAY['owner','admin','service','operator'] LOOP
+ FOREACH suffix IN ARRAY ARRAY['owner','admin','service','operator','observer'] LOOP
   SELECT * INTO r FROM pg_roles WHERE rolname=family||'_'||suffix;
   IF NOT FOUND OR r.rolcanlogin OR r.rolsuper OR r.rolcreatedb OR r.rolcreaterole
     OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
@@ -294,7 +294,7 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
  SELECT coalesce(v24_cordis.exact_keys(p_payload,ARRAY['fiber_id','action','expected_control_seq'])
   AND v24_cordis.json_uuid(p_payload->'fiber_id')
   AND jsonb_typeof(p_payload->'action')='string'
-  AND p_payload->>'action' IN ('on','advance','off','retry')
+  AND p_payload->>'action' IN ('on','advance','off','retry','ensure')
   AND v24_cordis.json_int(p_payload->'expected_control_seq',0,9223372036854775807),false)
 $$;
 CREATE FUNCTION v24_cordis.command_seed(p_kind text,p_payload jsonb) RETURNS jsonb
@@ -1547,7 +1547,7 @@ BEGIN
   IF reserved<>((kind='command_reconcile') AND action='advance') THEN
    RETURN v24_cordis.error_v1('invalid_args',jsonb_build_object('reason','reserved_key_pairing'));
   END IF;
-  IF kind='command_reconcile' AND action IN ('on','off','retry') THEN
+  IF kind='command_reconcile' AND action IN ('on','off','retry','ensure') THEN
    preflight:=v24_cordis.reconcile_preflight(body->'payload');
    IF preflight IS NOT NULL THEN RETURN v24_cordis.error_v1(preflight->>'code',jsonb_build_object('reason',preflight->>'reason')); END IF;
   END IF;

@@ -484,16 +484,108 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
   'epoch',to_jsonb(p_ep.epoch),'control_seq',to_jsonb((p_ep.iterator->>'control_seq')::bigint),
   'retire',p_retire,'withdraw_ids','[]'::jsonb,'failure','null'::jsonb)
 $$;
+CREATE FUNCTION v24_cordis.ensure_emission_missing(p_fiber uuid) RETURNS boolean
+LANGUAGE sql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+ SELECT EXISTS (
+  SELECT 1
+  FROM (
+   SELECT p.id FROM v24_cordis.effects p
+    WHERE p.kind='command_reconcile' AND p.status='succeeded' AND p.fiber_id=p_fiber
+   UNION
+   SELECT p.id FROM v24_cordis.effects p
+    JOIN v24_cordis.events ev ON ev.effect_id=p.id
+    WHERE p.kind='command_dispose' AND p.status='succeeded'
+     AND v24_cordis.json_uuid(p.input->'install_id')
+     AND ev.entity_type='install' AND ev.entity_id=(p.input->>'install_id')::uuid
+     AND ev.event_kind='install_dispose_progress'
+     AND ev.payload->>'phase' IN ('fiber_requested','work_scheduled')
+     AND ev.payload->>'fiber_id'=p_fiber::text
+     AND ev.payload->'scheduled_targets' @> jsonb_build_array(p_fiber::text)
+     AND v24_cordis.fiber_in_install_subtree(p_fiber,(p.input->>'install_id')::uuid)
+  ) par
+  LEFT JOIN v24_cordis.requests rq ON rq.effect_id=par.id
+  WHERE rq.effect_id IS NULL
+     OR rq.response->>'v' IS DISTINCT FROM '1'
+     OR rq.response->>'disposition' IS DISTINCT FROM 'committed'
+     OR rq.response->>'effect_id' IS DISTINCT FROM par.id::text
+     OR jsonb_typeof(rq.response->'emitted') IS DISTINCT FROM 'array'
+     OR EXISTS (
+      SELECT 1 FROM jsonb_array_elements(
+       CASE WHEN jsonb_typeof(rq.response->'emitted')='array'
+        THEN rq.response->'emitted' ELSE '[]'::jsonb END) x(value)
+      WHERE NOT v24_cordis.json_uuid(x.value)
+         OR NOT EXISTS (SELECT 1 FROM v24_cordis.effects child
+          WHERE child.id=CASE WHEN v24_cordis.json_uuid(x.value)
+           THEN (x.value#>>'{}')::uuid END))
+ )
+$$;
+CREATE FUNCTION v24_cordis.ensure_branch(p_fiber uuid,p_expected bigint) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE f v24_cordis.fibers%ROWTYPE; inst v24_cordis.installs%ROWTYPE;
+ ep v24_cordis.episodes%ROWTYPE; built jsonb; slot boolean; failed boolean;
+BEGIN
+ SELECT * INTO f FROM v24_cordis.fibers WHERE id=p_fiber;
+ IF NOT FOUND THEN RETURN v24_cordis.branch_error('not_found_or_denied','reconcile_fiber',NULL); END IF;
+ SELECT * INTO inst FROM v24_cordis.installs WHERE id=f.install_id;
+ IF NOT FOUND THEN
+  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','install_missing'); END IF;
+ IF f.current_episode_id IS NOT NULL THEN
+  SELECT * INTO ep FROM v24_cordis.episodes WHERE id=f.current_episode_id AND fiber_id=f.id;
+  IF NOT FOUND OR ep.closed_at IS NOT NULL THEN
+   RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','phase_drift'); END IF;
+ ELSIF EXISTS(SELECT 1 FROM v24_cordis.episodes WHERE fiber_id=f.id AND closed_at IS NULL) THEN
+  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','phase_drift');
+ ELSIF f.retire_started_at IS NOT NULL THEN
+  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','phase_drift'); END IF;
+ IF v24_cordis.ensure_emission_missing(f.id) THEN
+  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','missing_reconcile_successor'); END IF;
+ slot:=v24_cordis.reconcile_slot_open(f.id);
+ IF inst.state='disposed' AND f.disposed_at IS NULL THEN
+  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','phase_drift'); END IF;
+ IF (f.disposed_at IS NOT NULL OR inst.state='disposed')
+  AND (f.current_episode_id IS NOT NULL OR slot) THEN
+  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','phase_drift'); END IF;
+ IF f.current_episode_id IS NOT NULL AND ep.state='reloading' AND NOT slot THEN
+  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','missing_reconcile_successor'); END IF;
+ IF f.current_episode_id IS NOT NULL AND ep.state='closing' AND NOT slot
+  AND EXISTS(SELECT 1 FROM v24_cordis.events ev WHERE ev.entity_type='fiber' AND ev.entity_id=f.id
+   AND ev.event_kind IN ('contributions_released','pins_released')
+   AND ev.payload->>'episode_id'=ep.id::text) THEN
+  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','missing_reconcile_successor'); END IF;
+ IF p_expected IS DISTINCT FROM f.control_seq THEN
+  RETURN v24_cordis.branch_error('stale_generation','reconcile_generation',NULL); END IF;
+ IF slot THEN RETURN v24_cordis.branch_error('stale_generation','ensure_slot_present',NULL); END IF;
+ IF f.disposed_at IS NOT NULL OR inst.state='disposed' THEN
+  RETURN v24_cordis.branch_error('stale_generation','ensure_no_work',NULL); END IF;
+ built:=v24_cordis.reconcile_branch(f.id,'advance',p_expected);
+ IF built->>'kind'='error' THEN
+  IF built->>'sqlstate'='0A000' THEN RETURN built; END IF;
+  IF built->>'code' IN ('already_terminal','owner_closing') THEN
+   RETURN v24_cordis.branch_error('stale_generation','ensure_no_work',NULL); END IF;
+  RETURN built;
+ END IF;
+ IF built->>'kind' IN ('active_noop','idle_noop') THEN
+  RETURN v24_cordis.branch_error('stale_generation','ensure_no_work',NULL); END IF;
+ IF built->>'kind'='p1' THEN
+  failed:=jsonb_typeof(f.failure)='object'
+   AND v24_cordis.json_int(f.failure->'control_seq',0,9223372036854775807)
+   AND (f.failure->>'control_seq')::bigint=f.control_seq;
+  IF failed THEN RETURN v24_cordis.branch_error('stale_generation','ensure_failure_suppressed',NULL); END IF;
+ ELSIF built->>'kind' NOT IN ('leave','p6') THEN
+  RETURN jsonb_build_object('kind','error','sqlstate','0A000','reason','ensure_branch'); END IF;
+ RETURN jsonb_build_object('kind','p0','mode','schedule','control_seq',to_jsonb(f.control_seq));
+END $$;
 CREATE FUNCTION v24_cordis.reconcile_branch(p_fiber uuid,p_action text,p_expected bigint) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE f v24_cordis.fibers%ROWTYPE; ep v24_cordis.episodes%ROWTYPE; inst v24_cordis.installs%ROWTYPE;
  err jsonb; item jsonb; bind jsonb; row record; live jsonb; ids jsonb; k text; v_realm text; plan jsonb; v_kind text;
  v_i int; v_next int; v_len int; seen text[]:=ARRAY[]::text[]; retire boolean; slot boolean;
 BEGIN
- IF p_action NOT IN ('on','off','retry','advance') THEN
+ IF p_action NOT IN ('on','off','retry','advance','ensure') THEN
   RETURN v24_cordis.branch_error('invalid_args','reconcile_action',NULL); END IF;
  SELECT * INTO f FROM v24_cordis.fibers WHERE id=p_fiber;
  IF NOT FOUND THEN RETURN v24_cordis.branch_error('not_found_or_denied','reconcile_fiber',NULL); END IF;
+ IF p_action='ensure' THEN RETURN v24_cordis.ensure_branch(f.id,p_expected); END IF;
  SELECT * INTO inst FROM v24_cordis.installs WHERE id=f.install_id;
  IF p_action IN ('on','off','retry') AND p_expected IS DISTINCT FROM f.control_seq THEN
   RETURN v24_cordis.branch_error('stale_generation','reconcile_generation',NULL); END IF;

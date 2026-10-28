@@ -1,6 +1,6 @@
 # Cordis v2 DP6 Conformance Matrix
 
-B0 (admission audit) executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `fad3a55800d8ccb9548ec720886e07ad8fcc2c13`. This matrix records B0 only. **No DP6 runtime, SQL, loader/budget change, test scaffold or gate was created, and no DP6 gate exists or was run.** B0's original capacity verdict was **blocked at admission** (helper tree exactly 5500/5500, no proven semantics-preserving reclaim, 380–560 estimated new helper lines). The user's same-day authorization (`授权无视容量预算要求`) waives the three line-count budgets, so the operative verdict is **B0 baseline + capacity done, W1 semantic admission pending, W1–W5 not started**. Semantic boundaries are unchanged; `ensure`/actor/pagination/reuse remain document-level or open implementation items, not completed work.
+B0 (admission audit) executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `fad3a55800d8ccb9548ec720886e07ad8fcc2c13`. **This matrix now records B0 and W1.** B0 created no DP6 runtime/SQL/test scaffold; W1 then implemented the fair scanner, `ensure`, observer ACL and `CDP6-S` gate. W2–W5 remain unimplemented. The B0 verdict below is preserved as history; the operative W1 status is in §W1 implementation. B0's original capacity verdict was **blocked at admission** (helper tree exactly 5500/5500, no proven semantics-preserving reclaim, 380–560 estimated new helper lines). The user's same-day authorization (`授权无视容量预算要求`) waives the three line-count budgets. The B0 verdict below is preserved as history; W1 semantic admission was subsequently resolved by Oracle (both lanes admitted `ensure` with corrections), and the corrected W1 implementation/CDP6-S evidence is in §W1 implementation. W2–W5 remain unimplemented.
 
 Authority: `docs/plans/v24-cordis-dp6-recovery-maintenance-plan-2026-10-28.md` (B0 §3.1–3.4, §4.3.1, §4.4–4.7, §5, §9.1), `docs/designs/cordis-plugin-system-2026-10-25.md` §10.1 (including the 2026-10-28 authorization paragraph), and the user's 2026-10-28 authorization. DP1–DP5 historical Results and artifacts were read only.
 
@@ -15,22 +15,22 @@ User authorization, verbatim: **「授权无视容量预算要求」**.
 | Domain DDL physical line count (previously 900) | waived as an admission/gate failure condition; still measured and reported |
 | `closure<=512`, `successor<=16`, protocol key/depth, ACL, validator/postcondition, replay, transaction-external IO | **unchanged**; all semantic/ACL/file/manifest negative examples still apply. The old line-only probes (5500/5501, 43≤700, DDL≤900) are revoked by the authorization |
 | New finite line cap | **none set**; the authorization does not substitute a different number |
-| W1 semantic admission | **pending**; capacity waiver does not admit W1. See §W1 semantic admission: `ensure` envelope compatible but teardown-vs-failure order and closing missing-successor invariant fault unproven; actor/pagination documented; reuse non-root-only and `command_binding` owner source unresolved |
+| W1 semantic admission | **resolved (W1)** — Oracle group `D2EED4FF-ECCC-44C2-803A-7CA520DFC462` admitted `ensure` with corrections; see §W1 semantic admission, the Oracle design record, and §W1 implementation. Reuse/rollback remains W4-open |
 
-The original blocked-at-admission analysis below is preserved as historical evidence (it is why the authorization was requested and why W1 begins from `R=0`). The operative B0 result is: **capacity admission passes by explicit authorization; B0 baseline + capacity are done; W1 semantic admission is pending (see §W1 semantic admission); W1–W5 were not started; `ensure`/reuse are not implemented; no commit/push.**
+The original blocked-at-admission analysis below is preserved as historical evidence (it is why the authorization was requested and why W1 begins from `R=0`). At B0 the operative result was: capacity admission passes by explicit authorization; B0 baseline + capacity done; W1 semantic admission pending; W1–W5 not started; `ensure`/reuse not implemented. W1 later resolved the semantic admission and implemented `ensure`/the scanner; reuse/rollback remains W4-open.
 
 ## Milestone status
 
 | Milestone | Status at B0 |
 |---|---|
-| B0 | **baseline + capacity done; W1 semantic admission pending** |
-| W1 `CDP6-S` | not started |
+| B0 | **baseline + capacity done** |
+| W1 `CDP6-S` | **complete** (Oracle semantic admission with corrections; corrected `test_scanner.py` and final 36-command serial run) |
 | W2 `CDP6-R` | not started |
 | W3 `CDP6-U/D` | not started |
 | W4 `CDP6-H` | not started |
 | W5 `CDP6-B` | not started |
 
-No DP6 gate file exists; the five future commands are listed as not implemented/not run in §Not covered.
+W1 gate `v24/cordis/dp6/test_scanner.py` exists and passed; the remaining four DP6 command names (`test_recovery.py`, `test_dispose.py`, `test_upgrade.py`, `test_boundaries.py`) are still not implemented/not run.
 
 ## Environment
 
@@ -251,11 +251,13 @@ No gate was skipped, no gate was modified, and no failure was rewritten as succe
 - `host_io` stays `0A000` (unsupported) by design; DP6 must report/block it, not execute it.
 - The plan's "shared artifact still referenced by another install is not deleted" item is **not applicable as written**: there is no artifact table, blob store or delete path — `installs.artifact_digest` is only a hex64 text column. B0 records this as N/A rather than claiming a preserved-artifact test, and DP6 adds no artifact subsystem.
 
-## W1 semantic admission (document-level, B0)
+## W1 semantic admission (B0 document-level audit, resolved 2026-10-28)
 
-Capacity authorization does **not** admit W1. This section records the source-level adjudication only. **Verdict: B0 baseline + capacity done; W1 semantic admission pending; W1–W5 not started; `ensure`/reuse are not implemented.**
+Capacity authorization did **not** admit W1. B0 initially recorded a document-level adjudication only. **B0 verdict: baseline + capacity done; W1 semantic admission pending; W1–W5 not started; `ensure`/reuse were not implemented.**
 
-### `ensure` wake-up — envelope compatible; semantic admission pending
+The pending proof points were then resolved by an Oracle design adjudication (group `D2EED4FF-ECCC-44C2-803A-7CA520DFC462`, two lanes: `codex/gpt-6.1-sol-xhigh` and `openCode/kimi-code-plan-cn/k3.1-pro`). The full design record is `docs/reviews/cordis-v2-dp6-w1-oracle-design-2026-10-28.md`; the exported response is `prompt-exports/oracle-chat-2026-10-28-232411-new-chat-ab0dca-d52e.md` (gitignored). **Verdict: `ensure` admitted with corrections.** The final ordering, exact predicates and validation flow are recorded there and summarised below; B0's withdrawn draft (failure before teardown; every closing/p6 gap → `ensure_no_work`) is not used.
+
+### `ensure` wake-up — envelope compatible; admission resolved with corrections
 
 The command envelope, replay-first, lock/closure, unique-slot and zero-write insertion points are identified. **No `ensure` precedence algorithm is approved by B0.** The earlier draft that checked same-generation failure before teardown, and mapped every `p6`/closing result to `ensure_no_work`, is **withdrawn**: it conflicts with §4.3.1 ("failure cannot block an already-started teardown"; a missing atomic successor in reloading/closing must be an invariant fault, not a no-work claim).
 
@@ -273,12 +275,14 @@ The command envelope, replay-first, lock/closure, unique-slot and zero-write ins
 | zero-write errors | `interpret_reconcile`/`reconcile_branch`/`p0_delta` are read-only; error returns before `validate_and_apply_delta` (`40:1658-1684`) | no-work/slot/failure/dispose/stale/closure errors write no table row |
 | error ABI | 24-code `error_v1` already contains `stale_generation`, `retry_with_closure`, `dependency_unresolved`, `owner_closing`, `install_not_ready`, `already_terminal` (`40:13-17`) | new only `detail.reason` strings; no new protocol code |
 
-**Two unresolved proof points — W1 semantic admission remains pending:**
+**The two B0 proof points are resolved (Oracle, 2026-10-28):**
 
-1. **failure vs already-started teardown.** §4.3.1 requires that failure must not block teardown that has already begun. The withdrawn draft checked same-generation failure before `p6`/closing; that is not acceptable. The ensure branch must be proven against the existing teardown-first checks in `activation_admission` (`41:966-981`) and `reconcile_branch` (`42:498-503`, `42:546`). No replacement order is approved here.
-2. **reloading/closing with a missing atomic successor.** If a committed atomic transition should have left a ready/claimed `command_reconcile` successor but none exists, the scanner must report an invariant fault (`0A000`), not `ensure_no_work`, which would hide database damage. The predicate for "should have left one" and the correct response are **not proven**; no replacement algorithm is approved here.
+1. **failure vs already-started teardown — resolved by ordering.** The final order evaluates structural invariants, generation, slot and terminal state first, then delegates to `reconcile_branch(f,'advance',expected)`. Failure is consulted **only** when the delegated result is `p1`, the sole activation branch. An active non-live fiber returns `leave`; a closing episode returns `p6`; neither reads `fibers.failure`. A same-generation failure can therefore never suppress an already-started teardown. `owner_closing`/`already_terminal` map to zero-write `ensure_no_work`; other errors propagate.
+2. **missing atomic successor — resolved by two exact predicates, both before no-work.** (a) `emit` evidence: any succeeded `command_reconcile` parent for the fiber (plus a `command_dispose` parent only when its persisted `install_dispose_progress` event proves this fiber was a `fiber_requested`/`work_scheduled` target in that install subtree) whose committed `requests.response->'emitted'` names a missing effect row; (b) phase evidence: a `reloading` episode with no reconcile slot, or a `closing` episode that already persisted `contributions_released`/`pins_released` for that episode and has no slot. Both raise `0A000 / missing_reconcile_successor`; empty `emitted` and legitimate `successors:[]` leave/close/terminal deltas cannot false-positive. The exact SQL is in the Oracle design record.
 
-Envelope changes still required (not implemented/gated): add the `ensure` action token, extend `reconcile_command_seed` action filters, and add the `interpret_reconcile` branch. B0 does not claim this is W1-admissible until the two proof points above are settled.
+Final `ensure` order (after loading `f`/install/current episode): current-episode consistency (including NULL episode + non-NULL `retire_started_at` → `0A000 / phase_drift`); emitted-missing invariant; reloading/closing progress invariant; expected sequence (`stale_generation / reconcile_generation`); open slot (`ensure_slot_present`); disposed (`ensure_no_work`); recursive `advance` classification; `p1` + same-generation failure (`ensure_failure_suppressed`); `p1`/`leave`/`p6` → P0 `schedule` successor. `interpret_reconcile` returns `p0_delta` for the work branch; `validate_domain`'s existing exact `p0_delta` equality is the validator, and apply is the only writer. All no-work/fault paths return or raise before `validate_and_apply_delta`, so they are ten-table zero-write and never cached.
+
+Envelope changes still required (implemented in W1): add the `ensure` action token and preflight, extend `reconcile_command_seed` action filters for contributions/runs/pins (activation-candidate refs stay `advance`-only), and add the early `interpret_reconcile` branch. No command kind, error code, table, column, validator branch or second writer is added.
 
 ### Actor reconnect — same real LOGIN, no `SET ROLE`
 
@@ -383,6 +387,143 @@ Explicitly **not** changed by the authorization:
 - `closure<=512` (513 rejected), `successor<=16` (17 rejected), protocol 200/201 keys, depth 32/33, ACL matrix, validator/postcondition, replay-first, transaction-external IO.
 - No semantic/ACL/file/manifest gate or negative example may be deleted. The **only** permitted removals are the old line-only probes (5500/5501 admit/reject, `43<=700`, `ddl<=900`), explicitly revoked by the 2026-10-28 authorization; replace them with measurement/report assertions. No new finite line cap may be introduced.
 
+## W1 implementation and gate evidence
+
+W1 was implemented from HEAD `78e21500cc716203ae5d978d7e2948aa4bcf66e0` on branch `v24`. The Oracle admission record is `docs/reviews/cordis-v2-dp6-w1-oracle-design-2026-10-28.md`; the exported two-lane response is `prompt-exports/oracle-chat-2026-10-28-232411-new-chat-ab0dca-d52e.md` (gitignored).
+
+### Implemented surfaces
+
+| Surface | Files | Result |
+|---|---|---|
+| `ensure` action | `40_advance.sql`, `41_lifecycle.sql`, `42_teardown.sql` | exact payload action; non-reserved key; preflight; seed filters extended only for contributions/runs/pins; early interpreter branch; `ensure_branch` + `ensure_emission_missing`; P0 `schedule` delta only |
+| fair scanner | `v24/cordis/dp6/driver.py` | 7 independent keyset topics, `LIMIT 64`, short READ COMMITTED page then commit, round-robin with rotated start, page-tail handling and wrap, lossable cursors, actor reconnect/`session_user` verification, `advance` only for writes, external/debt diagnostics only |
+| observer ACL | `50_permissions.sql`, `dp1/setup_db.py` | observer NOLOGIN/NOINHERIT group + LOGIN; schema USAGE; column-only SELECT; no table SELECT/DML/function EXECUTE/CREATE/TEMP; `role_family` observes the group, `role_allowed` excludes it; fixture creates/verifies/removes it; TEMP revoked from PUBLIC and re-granted only to the four inherited groups |
+| budget/gate conversion | `helper_budget.py`, DP1–DP5 gates | measurement-only helper proof + required-file negative; old 5500/5501, 43≤700 and DDL≤900 asserts removed; measured prints retained; DP5 B6 private-helper/`pg_proc` counts updated 162/170 → 164/172 for the two new helpers |
+| W1 gate | `dp6/test_scanner.py` | CDP6-S plus observer ACL, fixture lifecycle, independent-process restart, raw-row replay, real-blocker fairness and transaction discipline |
+
+No command kind, table, column, protocol error code, second scheduler, second writer or validator branch was added. `advance` remains the only DEFINER and the only writer.
+
+### CDP6-S assertions passed
+
+```text
+[CDP6-S10] driver source has no direct DML, sleep, socket or thread; only writer call is advance
+[CDP6-S7]  observer LOGIN: column-only SELECT; no table SELECT/DML/EXECUTE/TEMP/CREATE;
+            single DEFINER, public EXECUTE 0, role_allowed false for observer
+[CDP6-S1f] observer LOGIN/group/database created and exactly removed by the fixture
+[CDP6-S2]  ensure quiet/stale/work; teardown-before-failure; same-generation failure suppression
+[CDP6-S4]  ensure replay-first, conflicting bytes, concurrent unique slot
+[CDP6-S3]  reconcile-parent emitted-missing / reloading-no-slot / closing-release /
+            retire-without-episode are 0A000 faults with zero write
+[CDP6-S3b] command_dispose fiber_requested/work_scheduled missing successors are 0A000 faults
+            with zero write; unrelated dispatches do not false-positive
+[CDP6-S5a] >page closing fibers; keys inserted before and after the advanced cursor are
+            rediscovered within bounded wraps
+[CDP6-S5b] >page ready command continuations advanced fairly with no skip
+[CDP6-S5c] >page dispose_pending installs converge through the original dispose protocol
+[CDP6-S6]  real >512 closure, deferred, blocked_unknown and bad-actor first items do not starve
+            same-page healthy commands, other topics or debt diagnostics; repeated quiet passes
+            are zero-write and do not tight-loop
+[CDP6-S8]  host_io/unknown/expired/ready-external/inverse debt are diagnostics only;
+            no handler, no claim, no write
+[CDP6-S9]  missing request_actor credential blocked locally; other items still advance
+[CDP6-S9b] a real but wrong LOGIN is rejected by session_user verification; the ready effect
+            stays unclaimed/zero-write and a correctly-bound sibling advances
+[CDP6-S11] provider withdrawal wakes the consumer at unchanged control_seq; repeated quiet
+            scans are ten-table zero-growth
+[CDP6-S12] duplicate/out-of-order/stale rows revalidate in advance; replay adds no
+            request/effect and stale fiber state is zero-write
+[CDP6-S13] a separate driver process, a SIGKILLed driver and a third empty-memory process
+            rediscover the same canonical DB and converge with no durable cursor
+[CDP6-S14] every observer read and advance transaction ends IDLE before close; no residual
+            child session or idle-in-transaction
+```
+
+### Oracle review of the corrected gate
+
+Oracle group `6B696214-99CB-48A0-BEC6-131CBDE8508F` reviewed the corrected staged diff
+(snapshot `2026-10-28/2358`, all.patch + MAP from `repo:v99`): primary `codex/gpt-6.1-sol-xhigh`
+(chat `new-chat-7BEF5C`) and additional `openCode/kimi-code-plan-cn/k3.1-pro`
+(chat `new-chat-oracle-2-ABB6CD`). Both returned **ACCEPT WITH CORRECTIONS**. The two requested
+additions were applied: `[CDP6-S3b]` covers the Oracle-specific `command_dispose`
+`fiber_requested`/`work_scheduled` missing-successor predicate with a negative control, and
+`[CDP6-S9b]` proves a real but wrong LOGIN is rejected by `session_user` verification while a
+correctly-bound sibling advances. The corrected gate passed afterward; no driver or SQL relaxation
+was needed.
+
+### 36-command serial gate evidence (2026-10-28)
+
+One `uv run python` process per command, launched only after the previous exited; no concurrency, no joined commands, no skip. The runner stopped on the first non-zero exit; none occurred. **36/36 exit 0; per-command sum 216.5 s; wall ≈217.0 s.** Logs: `/tmp/dp6_w1_final3/gates/gate-01..36.log`; summary `/tmp/dp6_w1_final3/gates.tsv`. The 35 inherited commands retain the B0/DP5 order (including s8-before-s7); `test_scanner.py` is the final W1 gate and contains the corrected coverage plus both Oracle-requested additions.
+
+| # | Command | Exit | Seconds |
+|---:|---|---:|---:|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0.5 |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1.6 |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1.6 |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 1.9 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 14.3 |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3.5 |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4.4 |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3.4 |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 3.7 |
+| 10 | `uv run python v24/load.py` | 0 | 0.5 |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1.6 |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1.6 |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2.5 |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 1.8 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5.2 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 3.8 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3.3 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 3.7 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2.4 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 6.3 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 11.2 |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3.1 |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 10.6 |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 6.1 |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 5.9 |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 6.7 |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 7.6 |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 6.3 |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 12.6 |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 10.8 |
+| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 15.6 |
+| 32 | `uv run python v24/cordis/dp5/test_resolution.py` | 0 | 8.8 |
+| 33 | `uv run python v24/cordis/dp5/test_listeners.py` | 0 | 5.6 |
+| 34 | `uv run python v24/cordis/dp5/test_dispatch.py` | 0 | 15.1 |
+| 35 | `uv run python v24/cordis/dp5/test_boundaries.py` | 0 | 6.2 |
+| 36 | `uv run python v24/cordis/dp6/test_scanner.py` | 0 | 16.7 |
+
+Key printed assertions:
+
+```text
+[CDP1-K0] helper lines measured 5600 {40=1685 41=1481 42=1112 43=700 44=622}; no line cap
+[CDP2-B4/B5] tables=10 manifest=19 helpers=5600 ... ddl=465
+[CDP3-B1] tables=10 manifest=19 helpers=5600 ... ddl=465 ... line counts measured with no cap
+[CDP4-B1/B2] tables=10 manifest=19 helpers=5600 43=700 ddl=465 ... no line cap
+[CDP5-B2] helpers=... total=5600 ddl=465; line counts measured (no cap), missing-44 negative retained
+[CDP5-B6] twelve frozen hashes, frozen 57e2c1e diff and git diff --check hold; 164 private
+          helpers with one DEFINER, no public EXECUTE, pure helpers immutable/token-free
+[CDP6-S3b] command_dispose fiber_requested/work_scheduled missing successors are 0A000 faults
+          with zero write; unrelated dispatches do not false-positive
+[CDP6-S6] real >512 closure, deferred, blocked_unknown and bad-actor first items do not starve
+          same-page healthy commands, other topics or debt diagnostics
+[CDP6-S9b] a real but wrong LOGIN is rejected by session_user verification; the ready effect
+          stays unclaimed/zero-write and a correctly-bound sibling advances
+[CDP6-S12] duplicate/out-of-order/stale rows revalidate in advance; replay adds no request/effect
+[CDP6-S13] a separate driver process, a SIGKILLed driver and a third empty-memory process
+          rediscover the same canonical DB and converge with no durable cursor
+[CDP6-S14] every observer read and advance transaction ends IDLE before close; no residual session
+[passed] CDP6-S
+```
+
+### Measured W1 baseline
+
+Physical lines use `str.splitlines()`, the same count as the gates: `40`=1685, `41`=1481, `42`=1112, `43`=700, `44`=622; **40–49 total 5600** (report-only; no replacement cap). Domain DDL `10`–`17`+`20`+`30` = **465**; bookkeeping `18`+`19` = 11+11 = **22** separately. Manifest 19, tables 10, `pg_proc` **172** (164 private helper symbols + 8 trigger guards), unique DEFINER `advance`, public EXECUTE 0, no VIEW/EXTENSION, 3 command kinds, 24 protocol errors, closure 512 / successor 16. `v24/cordis/dp6/test_scanner.py` measures 1311 lines and `driver.py` 326 lines (report-only; no cap). The twelve frozen `v24/sql` SHA-256 values and the `57e2c1e` frozen diff still hold; `git diff --check` exits 0.
+
+### W1 publication and staging
+
+W1 stages only the W1 code and DP6 artifacts: the four SQL files, `helper_budget.py`, the DP1–DP5 gate changes, `dp1/setup_db.py`, `driver.py`, `test_scanner.py`, the DP6 README/matrix/ledger/plan and the Oracle design record. `docs/designs/cordis-plugin-system-2026-10-25.md` remains a mixed file; its pre-existing user 5500 rewrite is **not** staged (the B0 authorization hunk is already in the base commit). Per the parent handoff, this session returns the corrected staged diff for verification and does **not** commit or push; the normal milestone commit/push is performed after that verification. W2–W5 are not started.
+
 ## Staging and DP5 handoff
 
 **Mixed-file staging warning.** `docs/designs/cordis-plugin-system-2026-10-25.md` already carries user modifications. Stage only the §10.1 authorization hunk (`git add -p` or an equivalent patch), then inspect `git diff --cached -- docs/designs/cordis-plugin-system-2026-10-25.md`; never `git add` the whole file. The DP6 plan is untracked and contains only the planning file plus the B0 Result/addendum. No commit/push was performed.
@@ -391,11 +532,11 @@ Explicitly **not** changed by the authorization:
 
 **Shared artifact gate = N/A.** There is no artifact table, blob store or delete path; `installs.artifact_digest` is a hex64 text column. DP6 does not add an artifact subsystem, so no shared-artifact gate is defined.
 
-## Publication
+## Publication (B0 historical note)
 
-Publication authorized on 2026-10-28 for the current branch **`origin/v24`**, with a normal commit and ordinary push (no force/reset). The earlier AGENTS `origin main` vs `origin/v24` conflict is recorded as historical and is resolved for this B0 by explicit authorization.
+Publication authorized on 2026-10-28 for the current branch **`origin/v24`**, with a normal commit and ordinary push (no force/reset). The earlier AGENTS `origin main` vs `origin/v24` conflict is recorded as historical and is resolved by explicit authorization. W1's corrected staged diff is returned for parent verification before that commit/push; see §W1 publication and staging.
 
-This B0 publishes only the five DP6 artifacts. `docs/designs/cordis-plugin-system-2026-10-25.md` is a mixed file: only the 2026-10-28 authorization markers/paragraph are staged; its pre-existing user 5500 rewrite remains unstaged. The 35 inherited gates passed earlier; this publication changes docs only and does not warrant a rerun. W1 semantic admission remains pending; nothing in this commit is runtime or semantic proof.
+This B0 section publishes only the five DP6 artifacts. `docs/designs/cordis-plugin-system-2026-10-25.md` is a mixed file: only the 2026-10-28 authorization markers/paragraph are staged; its pre-existing user 5500 rewrite remains unstaged. The 35 inherited gates passed earlier; that B0 publication changed docs only. At B0 W1 semantic admission was still pending; it was later resolved and implemented as recorded in §W1 implementation and gate evidence.
 
 ## Artifacts written by B0
 
@@ -457,9 +598,9 @@ b047be95cd539ccac45f3e128fb88a979ecd63abc81314e80341ddc2ce2d4fa4  ?? docs/review
 
 ## Not covered
 
-- **W1–W5 are all future milestones; none started.** B0 is audit/evidence only.
-- No DP6 runtime/scanner/driver, no `ensure`, no reuse-declaration install/rollback, no observer role/grant, no `45_maintenance.sql`, no DP6 gate script.
-- No `CDP6-S/R/U-D/H/B` evidence; the five future commands (`test_scanner.py`, `test_recovery.py`, `test_dispose.py`, `test_upgrade.py`, `test_boundaries.py`) are **not implemented and not run**.
-- The 2026-10-28 authorization does not implement or validate `ensure`/reuse; those ABI audits remain W1/W4 work, including their validator/closure/postcondition and ten-table constraints.
-- No real provider socket, no network, no external adapter; all gate DBs were disposable pgembed instances.
-- No commit or push; publication target remains unresolved.
+- **W1 is implemented and gated.** `ensure`, the fair scanner, the observer ACL/fixture and `CDP6-S` are covered above; `test_scanner.py` passes and the 36-command serial suite is green.
+- **W2–W5 are still future milestones.** No external-effect executor, receipt journal/crash recovery, dispatch/run recovery, terminal-unknown resolution, dispose-tree convergence evidence or drain upgrade/rollback is implemented. `test_recovery.py`, `test_dispose.py`, `test_upgrade.py` and `test_boundaries.py` are **not implemented and not run**.
+- Reuse-declaration install/rollback is **not** implemented; W4 semantic admission remains pending. The 2026-10-28 capacity authorization does not admit it.
+- W1 does not execute external effects; `host_io` remains unsupported/`0A000`, and external/expired/unknown items are diagnostics only. W2 owns claim/receipt/journal and crash injection.
+- No real provider socket, no network, no external adapter; all gate DBs were disposable pgembed instances and all handlers were Fake or absent.
+- W2–W5 will be handled in later fresh sessions; this W1 publication does not claim them.

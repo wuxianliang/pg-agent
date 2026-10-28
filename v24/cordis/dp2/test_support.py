@@ -16,8 +16,8 @@ CORDIS = Path(__file__).resolve().parents[1]
 DP1 = CORDIS / 'dp1'
 sys.path.insert(0, str(CORDIS))
 sys.path.insert(0, str(DP1))
-from helper_budget import LIMIT, assert_helper_budget as _assert_helper_budget  # noqa: E402
-from helper_budget import prove_helper_budget_boundary  # noqa: E402
+from helper_budget import assert_helper_budget as _assert_helper_budget  # noqa: E402
+from helper_budget import prove_helper_budget_measurement  # noqa: E402
 from setup_db import Server, TestDB, TABLES  # noqa: E402
 from test_ddl import snapshot  # noqa: E402
 import psycopg2  # noqa: E402
@@ -372,6 +372,6 @@ def execute(db, effect, outcome, alias='service'):
 
 
 def assert_helper_budget(sql_dir):
-    """Real helper tree, after the same predicate accepts LIMIT lines and rejects LIMIT+1."""
-    prove_helper_budget_boundary()
+    """Measured real helper tree plus the retained missing-required-file negative."""
+    prove_helper_budget_measurement()
     return _assert_helper_budget(sql_dir)

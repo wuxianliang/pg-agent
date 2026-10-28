@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO))
 from v24.cordis.load import load_stage, SQL_LOAD_ORDER, self_check_manifest
 
-ALIASES = ('owner', 'admin', 'service', 'operator')
+ALIASES = ('owner', 'admin', 'service', 'operator', 'observer')
 TABLES = frozenset(('installs','scopes','fibers','episodes','contributions','pins','runs','effects','events','requests'))
 
 
@@ -170,12 +170,32 @@ class TestDB:
                 assert conn.get_transaction_status() == TRANSACTION_STATUS_INTRANS
                 conn.commit()
             self.assert_catalog()
+            self.lock_down_temp()
         except BaseException as exc:
             try:
                 self.cleanup()
             except BaseException as cleanup:
                 exc.add_note(f'fixture cleanup failed: {cleanup!r}')
             raise
+
+    def lock_down_temp(self):
+        """Deny database TEMP to the observer only; inherited roles keep their fixture privilege."""
+        if '50_permissions.sql' not in self.loaded_files:
+            return
+        with self.admin.cursor() as c:
+            c.execute(sql.SQL('REVOKE TEMP ON DATABASE {} FROM PUBLIC').format(sql.Identifier(self.name)))
+            for alias in ALIASES:
+                if alias == 'observer':
+                    continue
+                c.execute(sql.SQL('GRANT TEMP ON DATABASE {} TO {}').format(
+                    sql.Identifier(self.name), sql.Identifier(self.groups[alias])))
+            c.execute('SELECT has_database_privilege(%s,%s,\'TEMP\')', (self.roles['observer'], self.name))
+            assert c.fetchone()[0] is False
+            for alias in ALIASES:
+                if alias == 'observer':
+                    continue
+                c.execute('SELECT has_database_privilege(%s,%s,\'TEMP\')', (self.roles[alias], self.name))
+                assert c.fetchone()[0] is True
 
     def connect(self, alias=None):
         if self.closed:
@@ -193,6 +213,12 @@ class TestDB:
             assert set(c.fetchall()) == {(n,'r') for n in expected}
             c.execute("SELECT extname FROM pg_extension WHERE extname <> 'plpgsql'")
             assert c.fetchall() == []
+            if '50_permissions.sql' in self.loaded_files:
+                c.execute('SELECT has_schema_privilege(%s,%s,\'USAGE\'),'
+                          'has_function_privilege(%s,%s,\'EXECUTE\')',
+                          (self.roles['observer'],'v24_cordis',self.roles['observer'],
+                           'v24_cordis.advance(uuid,jsonb)'))
+                assert c.fetchone() == (True, False)
         return expected
 
     def cleanup(self):
