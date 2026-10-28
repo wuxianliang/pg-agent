@@ -455,3 +455,32 @@ Oracle review group `6B696214-99CB-48A0-BEC6-131CBDE8508F`（primary `codex/gpt-
 剩余限制：W1 不执行外部 effect（W2）；无 receipt journal/crash injection/dispatch/run 恢复；reuse/rollback W4 未准入；slot 身份由 `continuation_state` 在推进时重验，ensure 不重复；observer 不读 `events`；既有数据库部署需先 provision observer group（fixture 已做）；无界对抗性低 key 插入下 UUID keyset 只给 E1/E2 假设下的有限公平。
 
 发布状态：本 Result 与实现同属 W1 里程碑变更，仅 stage W1 文件；设计稿 mixed file 的用户 5500 改写不 stage。按父级本轮指令，先返回父级验证，**本会话尚未 commit/push**；验证后再按仓库规则普通提交并 push `origin/v24`（不 force、不 `--no-verify`）。提交/远程 SHA 在父级发布后由交接报告（本文件不自引用自身提交）。
+
+### W2 Result（2026-10-28，实现、CDP6-R 与 37-command 串行实跑）
+
+**结论：W2 Done-when 已实现；最终 37/37 gate 串行 exit 0；本会话仅接受/收尾 W2 范围，W3–W5 未开始。** 起点 HEAD `8d475eaf4032e008952fea5675a64ec277f5b1d3`，分支 `v24`。仅改 `v24/cordis/dp6/driver.py` 与新增 `v24/cordis/dp6/test_recovery.py`；未改 SQL、loader、permission、manifest、设计稿或冻结面。
+
+实现面：
+
+- **external executor**：`Executor` 通过既有 `advance` 提交 `claim`，COMMIT 后核验 `TRANSACTION_STATUS_IDLE` 并关闭连接；Fake/受信 handler 在零 DB 连接下执行；完整 receipt 先原子写入 fsync journal，再在新短事务以原 attempt/fence/owner 提交 `advance`。`host_io`、非 host listener、unsupported 路径不调用 handler。
+- **receipt journal**：`ReceiptJournal` 每 effect/token 一个 0600 JSON，目录 0700；临时文件写入 + file/dir fsync + `os.replace`；规范化 SHA-256；torn/duplicate/conflict 显式阻断。`committed`/`replay` 后才 `confirm`；`stale_claim`/`receipt_conflict` 移入 `.dead` 隔离，不静默解析。
+- **`run_start` source**：`RunStartSource` 以 `effect_id + contract_version + handler_digest + request + steps + digest` 固定原始请求和初始步数；inbox 只消费一次；missing/corrupt/duplicate/conflicting/mismatch 在 claim 前或 claim 后明确阻断，不从 adapter/events/default 推断。
+- **dispatch recovery**：`_dispatch` 只读已提交 child 行；unknown 不 join、不封口；pending child 继续；全部可信 child 已终态但 parent 仍 ready 时只报 invariant，不补 `acc`/next/seal。
+- **replay 权限**：仅冻结合同 `repeat=true` 且 `concurrent=true` 可过期重领；原 token 在未被替换前仍可交可信结果；新 fence 使旧 token `stale_claim`；terminal replay-first、冲突零写；host 不猜测。
+
+CDP6-R 覆盖（`test_recovery.py`，真实子进程 kill/restart，Fake handler，无网络）：
+
+- `[R1..R7]` run_start→model→final 生产链；claim 前/COMMIT 后、IO 中、journal 前后、settle COMMIT 前后的 kill；journal replay 与 COMMIT 确认丢失零重复 reducer/event。
+- `[R8..R12]` terminal receipt replay/冲突；不可变触发器；repeat/concurrent 2×2；并发重领唯一新 fence；旧 token 过期后仍可结算。
+- `[R13..R16]` run_start source missing/corrupt/duplicate/mismatch、allocation 前 kill；L-Iter batch 回滚/重放；install COMMIT ack loss。
+- `[R17..R20]` unknown 债务、P6 阻塞；缺凭据/错误真实 LOGIN；torn/duplicate journal 阻断；所有连接 IDLE、handler 零连接、无 idle-in-transaction、文件 0600/0700、driver 无 socket/thread/DML。
+- `[R21..R23]` 五种 dispatch mode 半程重启、unknown 不 join、settled-parent invariant。
+- `[R24..R28]` withdraw/dispose COMMIT ack loss、adapter 返回后 journal 前 kill、无 replay 权限、digest mismatch、install pre-COMMIT 回滚。
+
+实跑：CDP6-R 单条 `uv run python v24/cordis/dp6/test_recovery.py` **exit 0**，29 个 R 标签，45.33 s；随后 37 条命令（35 条继承 + `test_scanner.py` + `test_recovery.py`）逐条独立 `uv run python` 串行，**37/37 exit 0**；per-command 合计 **244.5 s**，wall **245.2 s**；日志 `/tmp/dp6_w2_verify/gates/`，汇总 `/tmp/dp6_w2_verify/gates.tsv`。无 skipped gate、无真实 provider socket、每个 DB 为 disposable pgembed。
+
+实测：40=1685、41=1481、42=1112、43=700、44=622，total **5600**（report-only，无替代上限）；领域 DDL **465**；簿记 18+19=**22** 分列；manifest 19、tables 10、`pg_proc` 172、唯一 DEFINER `advance`、public EXECUTE 0、3 command kinds、24 错误码、closure 512/B=16。W2 代码 `driver.py` **1028** 行、`test_recovery.py` **1737** 行（report-only）。冻结 `v24/load.py`、`v24/sql/**`、`v24/s1`–`s12` 与 `57e2c1e` diff 仍 exit 0，`git diff --check` exit 0。
+
+审查状态：验收开始时未发现已落盘的 W2 Oracle review（`docs/reviews/` 最新仍为 W1 工件，无 W2 export）；上一 review wrapper 在写出结果前被停止，故本会话未重复启动 review，记录直接代码审计 + 37 条实跑。现有 W2 残余限制：terminal unknown/inverse unknown 仍为 W3 债务；`host_io`/非 host listener 仍 unsupported；journal `.dead` 隔离文件未单独 gate 覆盖，属人工对账面；`run_start` handler 无可发布 receipt 时保持 claimed，不伪造 unknown 终态。
+
+发布状态：W2 仅 stage 本里程碑 6 个文件（driver、test_recovery、DP6 README、matrix、ledger、本 Result）。用户既有 10 modified + 26 untracked 路径不 stage；无 SQL/设计/loader 变更。按父级本轮指令，**本会话尚未 commit/push**；父级验证后按仓库规则普通提交并 push `origin/v24`（不 force、不 `--no-verify`）。

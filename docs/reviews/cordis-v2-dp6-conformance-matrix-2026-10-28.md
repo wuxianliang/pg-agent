@@ -1,6 +1,6 @@
 # Cordis v2 DP6 Conformance Matrix
 
-B0 (admission audit) executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `fad3a55800d8ccb9548ec720886e07ad8fcc2c13`. **This matrix now records B0 and W1.** B0 created no DP6 runtime/SQL/test scaffold; W1 then implemented the fair scanner, `ensure`, observer ACL and `CDP6-S` gate. W2–W5 remain unimplemented. The B0 verdict below is preserved as history; the operative W1 status is in §W1 implementation. B0's original capacity verdict was **blocked at admission** (helper tree exactly 5500/5500, no proven semantics-preserving reclaim, 380–560 estimated new helper lines). The user's same-day authorization (`授权无视容量预算要求`) waives the three line-count budgets. The B0 verdict below is preserved as history; W1 semantic admission was subsequently resolved by Oracle (both lanes admitted `ensure` with corrections), and the corrected W1 implementation/CDP6-S evidence is in §W1 implementation. W2–W5 remain unimplemented.
+B0 (admission audit) executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `fad3a55800d8ccb9548ec720886e07ad8fcc2c13`. **This matrix now records B0, W1 and W2.** B0 created no DP6 runtime/SQL/test scaffold; W1 implemented the fair scanner, `ensure`, observer ACL and `CDP6-S` gate; W2 implemented the external-effect executor, receipt journal, `run_start` source binding, dispatch recovery and `CDP6-R` gate. W3–W5 remain unimplemented. The B0 verdict below is preserved as history; the operative status is in §W1 implementation and §W2 implementation. B0's original capacity verdict was **blocked at admission** (helper tree exactly 5500/5500, no proven semantics-preserving reclaim, 380–560 estimated new helper lines). The user's same-day authorization (`授权无视容量预算要求`) waives the three line-count budgets. The B0 verdict below is preserved as history; W1 semantic admission was subsequently resolved by Oracle (both lanes admitted `ensure` with corrections), and the corrected W1 implementation/CDP6-S evidence is in §W1 implementation.
 
 Authority: `docs/plans/v24-cordis-dp6-recovery-maintenance-plan-2026-10-28.md` (B0 §3.1–3.4, §4.3.1, §4.4–4.7, §5, §9.1), `docs/designs/cordis-plugin-system-2026-10-25.md` §10.1 (including the 2026-10-28 authorization paragraph), and the user's 2026-10-28 authorization. DP1–DP5 historical Results and artifacts were read only.
 
@@ -21,16 +21,16 @@ The original blocked-at-admission analysis below is preserved as historical evid
 
 ## Milestone status
 
-| Milestone | Status at B0 |
+| Milestone | Status |
 |---|---|
 | B0 | **baseline + capacity done** |
 | W1 `CDP6-S` | **complete** (Oracle semantic admission with corrections; corrected `test_scanner.py` and final 36-command serial run) |
-| W2 `CDP6-R` | not started |
+| W2 `CDP6-R` | **complete** (external executor, receipt journal, `run_start` source, dispatch recovery; `test_recovery.py` and final 37-command serial run) |
 | W3 `CDP6-U/D` | not started |
 | W4 `CDP6-H` | not started |
 | W5 `CDP6-B` | not started |
 
-W1 gate `v24/cordis/dp6/test_scanner.py` exists and passed; the remaining four DP6 command names (`test_recovery.py`, `test_dispose.py`, `test_upgrade.py`, `test_boundaries.py`) are still not implemented/not run.
+W1 gate `v24/cordis/dp6/test_scanner.py` and W2 gate `v24/cordis/dp6/test_recovery.py` exist and passed. The remaining three DP6 command names (`test_dispose.py`, `test_upgrade.py`, `test_boundaries.py`) are still not implemented/not run.
 
 ## Environment
 
@@ -524,6 +524,196 @@ Physical lines use `str.splitlines()`, the same count as the gates: `40`=1685, `
 
 W1 stages only the W1 code and DP6 artifacts: the four SQL files, `helper_budget.py`, the DP1–DP5 gate changes, `dp1/setup_db.py`, `driver.py`, `test_scanner.py`, the DP6 README/matrix/ledger/plan and the Oracle design record. `docs/designs/cordis-plugin-system-2026-10-25.md` remains a mixed file; its pre-existing user 5500 rewrite is **not** staged (the B0 authorization hunk is already in the base commit). Per the parent handoff, this session returns the corrected staged diff for verification and does **not** commit or push; the normal milestone commit/push is performed after that verification. W2–W5 are not started.
 
+## W2 implementation and gate evidence
+
+W2 was implemented from HEAD `8d475eaf4032e008952fea5675a64ec277f5b1d3` on branch `v24`. Only
+`v24/cordis/dp6/driver.py` and `v24/cordis/dp6/test_recovery.py` changed; no SQL, loader, manifest,
+permission, design or frozen surface was edited. No persisted W2 Oracle review result existed when
+this acceptance session started (the prior wrapper was stopped before writing one), so no duplicate
+review was launched; this section records the direct contract audit and the final serial run.
+
+### Implemented surfaces
+
+| Surface | Files | Result |
+|---|---|---|
+| external executor | `dp6/driver.py` (`Executor`, line 426) | claim through `advance`; COMMIT then IDLE verification/close; handler outside every DB transaction; receipt settlement in a new short transaction; `host_io`, non-host listeners and unsupported paths never invoke a handler |
+| receipt journal | `dp6/driver.py` (`ReceiptJournal`, line 161) | one `0600` JSON file per effect/token under a `0700` directory; temp write + file/dir fsync; canonical SHA-256; torn/duplicate/conflict detection; confirmed only after `committed`/`replay`, quarantined on `stale_claim`/`receipt_conflict` |
+| `run_start` source | `dp6/driver.py` (`RunStartSource`, line 269) | binding fixes `effect_id + contract_version + handler_digest + request + steps + digest`; inbox consumed once; missing/corrupt/duplicate/conflicting/mismatched input blocks without claim or invention |
+| dispatch recovery | `dp6/driver.py` (`Executor._dispatch`, line 524) | progress rebuilt from committed child rows; `unknown` stays debt; pending children continue; all-terminal-parent-still-ready is a zero-write invariant, never a fabricated seal |
+| W2 gate | `dp6/test_recovery.py` | CDP6-R R1–R28 with real child-process kill/restart and Fake handlers |
+
+W2 added no command kind, table, column, protocol error, SQL helper, scheduler or writer. `advance`
+remains the only DEFINER and the only domain writer.
+
+### CDP6-R assertions passed
+
+```text
+[CDP6-R1]  production run_start source -> model_call -> final run settlement; claim IDLE before
+           handler; receipt journal empty after confirmed COMMIT
+[CDP6-R2]  claim transaction killed before COMMIT rolls back; effect stays ready at attempt/fence 0
+           and a fresh process claims it exactly once
+[CDP6-R3]  claim COMMIT then host death leaves one claimed token; restart waits; expiry with
+           repeat+concurrent reclaims a new fence; original steps survive
+[CDP6-R4]  SIGKILL during the Fake adapter leaves no journal and one claimed token; only explicit
+           replay right reclaims; the new fence publishes once
+[CDP6-R5]  journal write+fsync before settlement survives death; restart replays exact token/body,
+           never calls the adapter, and cleans only after COMMIT
+[CDP6-R6]  settlement killed before COMMIT keeps the claimed effect and journal; restart commits
+           the same receipt once without adapter work
+[CDP6-R7]  settlement COMMIT with the response lost replays by identical receipt: no second
+           reducer/event, no adapter call, zero table change
+[CDP6-R8]  identical terminal receipt replays with no new work; conflicting bytes return
+           receipt_conflict and write no table row
+[CDP6-R9]  terminal outcome/attempt/fence replacement remains rejected by the immutable trigger
+[CDP6-R10] repeat/concurrent 2x2: only both true reclaims; other combinations return
+           blocked_unknown zero-write while the original token still settles after lease expiry;
+           a new fence makes the old token stale_claim zero-write
+[CDP6-R11] two concurrent post-expiry claims under G produce exactly one new fence; the loser is
+           stale_claim and the old token can never publish after replacement
+[CDP6-R12] a credible original model token settles after lease expiry while the fence is unchanged;
+           the run reducer consumes it exactly once
+[CDP6-R13] missing run_start input waits without invention; corrupt/damaged digests, duplicate
+           bindings and contract mismatch are zero-write blocks; a source lost after claim stays
+           claimed rather than inventing new input
+[CDP6-R14] allocation kill before claim leaves the fsynced original request/steps; restart consumes
+           the same binding and never re-derives input from events or defaults
+[CDP6-R15] L-Iter batch killed before COMMIT rolls back all 32 contributions and the iterator;
+           restart re-submits the same continuation and converges to 33/active
+[CDP6-R16] install COMMIT ack loss leaves complete rows; request replay returns the same cached
+           response exactly once and creates no duplicate install/fiber
+[CDP6-R17] a model unknown receipt is terminal debt: no retry, no event/reducer replay, no seal, no
+           new claim (receipt_conflict) and P6 stays blocked
+[CDP6-R18] missing and wrong-real-LOGIN external credentials block before any claim; the ready
+           effect and all ten tables stay unchanged
+[CDP6-R19] a torn/duplicate journal digest is an explicit block: no settlement, no handler, zero
+           ten-table write; no receipt bytes are guessed
+[CDP6-R20] every claim/settle/replay connection closes IDLE; the handler sees zero open connections;
+           no idle-in-transaction remains; journal/source files are 0600/0700; the driver opens no
+           network or thread
+[CDP6-R21] all five dispatch modes are killed after the first committed child receipt; restart
+           rebuilds progress only from child rows plus the journal, finds the next ready child (or
+           emit tail), seals once and never invents acc/next
+[CDP6-R22] an unknown listener child is not joined into acc and never causes a fabricated next
+           child/seal; the dispatch stays ready as debt and P6 blocks
+[CDP6-R23] a dispatch whose trusted children are all terminal but whose parent is still ready is an
+           invariant fault: zero write, no invented seal or acc
+[CDP6-R24] consumer pin release committed before the host saw the response; restart keeps the
+           provider contribution until that pin fact is visible, then completes drain without early
+           release or a second cleanup engine
+[CDP6-R25] dispose COMMIT ack loss leaves the tombstone and original receipt; restart converges
+           from committed facts, never re-activates or duplicates the dispose command
+[CDP6-R26] death after the adapter returns but before the journal fsync is treated as unknown: an
+           explicit replay right re-executes under a new fence, while no right leaves the claimed
+           token as debt and invents neither success nor failure
+[CDP6-R27] a frozen contract without replay rights blocks reclaim as blocked_unknown with zero
+           write; it is never assumed replayable
+[CDP6-R27b] a handler_digest mismatch is invalid_args before any claim and a production install
+            with a missing replay object is invalid_args; both zero-write
+[CDP6-R28] install/activation pre-COMMIT rollback leaves no install/fiber/contribution; the
+           original request re-applies once to complete rows
+[passed] CDP6-R
+```
+
+### Contract audit
+
+- **Crash injection is real.** `spawn_child` (test_recovery.py:411) starts a separate Python process
+  with `start_new_session=True`; `_child_fault` (line 353) uses `os._exit(23)` at named production
+  phases, and `[CDP6-R4]` additionally `SIGKILL`s the child's process group during the Fake adapter.
+  Every restart builds a fresh `Maintainer`/`Executor` with empty process memory on the same
+  canonical DB and inspects committed rows with an owner connection.
+- **Journal durability.** `atomic_write` (driver.py:89) writes a temp file, flushes, `fsync`s the file,
+  `chmod`s `0600`, `os.replace`s it and `fsync`s the directory. `ReceiptJournal.load` (line 193)
+  validates the shape and SHA-256 and marks torn/duplicate entries corrupt; `_settle` (line 569) writes
+  the journal before `advance` and only calls `confirm` after `committed`/`replay`.
+- **`run_start` binding.** `RunStartSource.resolve` (line 369) validates the exact
+  `effect_id`/contract/request/steps/digest shape; `_receipt` (line 542) takes the request and steps
+  from that trusted binding, never from the adapter. `[CDP6-R13]`/`[CDP6-R14]` prove missing,
+  corrupt, duplicate, mismatched and allocation-before-claim cases.
+- **Replay rights.** DB `advance` remains replay-first and authoritative; the host never guesses.
+  `[CDP6-R10]` exercises the 2×2 matrix, `[CDP6-R11]` the concurrent fence, `[CDP6-R12]` the credible
+  old token, `[CDP6-R27]`/`[CDP6-R27b]` missing rights/digest and `[CDP6-R8]` conflicting bytes.
+- **IDLE / no network.** `Executor._call` (line 491) and `Maintainer._advance` (line 838) close only
+  after COMMIT returns IDLE; `Executor.assert_idle` (line 458) guards the journal/handler boundary.
+  `[CDP6-R20]` checks every tracked commit/rollback/close status, zero handler connections, no
+  `idle in transaction`, file modes, and source purity. `driver.py` imports no socket/thread module and
+  contains no DML; `diff --check` exits 0.
+
+### 37-command serial gate evidence (2026-10-28)
+
+One `uv run python` process per command, launched only after the previous exited; no concurrency, no
+joined commands, no skip. The runner stopped on the first non-zero exit; none occurred. **37/37 exit
+0; per-command sum 244.5 s; wall 245.2 s.** Logs: `/tmp/dp6_w2_verify/gates/gate-01..37.log`; summary
+`/tmp/dp6_w2_verify/gates.tsv`. The 35 inherited commands retain the B0/DP5 order (including
+s8-before-s7); `test_scanner.py` is W1's final gate and `test_recovery.py` is appended as W2's gate.
+
+| # | Command | Exit | Seconds |
+|---:|---|---:|---:|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0.5 |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1.7 |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1.7 |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 1.7 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 13.5 |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3.5 |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4.3 |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3.3 |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 3.6 |
+| 10 | `uv run python v24/load.py` | 0 | 0.5 |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1.6 |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1.6 |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2.4 |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 1.8 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5.1 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 3.8 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3.1 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 3.7 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2.3 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 6.2 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 11.4 |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3.1 |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 10.3 |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 5.9 |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 5.7 |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 6.4 |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 6.5 |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 5.4 |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 11.7 |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 8.7 |
+| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 14.6 |
+| 32 | `uv run python v24/cordis/dp5/test_resolution.py` | 0 | 8.3 |
+| 33 | `uv run python v24/cordis/dp5/test_listeners.py` | 0 | 5.2 |
+| 34 | `uv run python v24/cordis/dp5/test_dispatch.py` | 0 | 11.6 |
+| 35 | `uv run python v24/cordis/dp5/test_boundaries.py` | 0 | 5.4 |
+| 36 | `uv run python v24/cordis/dp6/test_scanner.py` | 0 | 14.7 |
+| 37 | `uv run python v24/cordis/dp6/test_recovery.py` | 0 | 43.7 |
+
+Key printed assertions:
+
+```text
+[CDP6-R1..R28] see §CDP6-R assertions passed; final line "[passed] CDP6-R"
+[CDP6-S14] every observer read and advance transaction ends IDLE before close
+[CDP6-S13] separate driver process, SIGKILLed driver and third empty-memory process converge
+[passed] CDP6-S
+```
+
+### Measured W2 baseline
+
+W2 changed no SQL or loader file, so the W1 measurements are unchanged: `40`=1685, `41`=1481,
+`42`=1112, `43`=700, `44`=622; **40–49 total 5600** (report-only; no replacement cap); domain DDL
+`10`–`17`+`20`+`30` = **465**; bookkeeping `18`+`19` = **22** separately; manifest 19, tables 10,
+`pg_proc` 172 (164 private helpers + 8 trigger guards), unique DEFINER `advance`, public EXECUTE 0,
+no VIEW/EXTENSION, 3 command kinds, 24 protocol errors, closure 512 / successor 16. W2 code:
+`dp6/driver.py` **1028** lines, `dp6/test_recovery.py` **1737** lines (report-only; no cap).
+`test_scanner.py` remains 1311 lines. The twelve frozen `v24/sql` SHA-256 values, the `57e2c1e`
+frozen diff and `git diff --check` still hold (the inherited DP4/DP5 gates passed).
+
+### W2 publication and staging
+
+The W2 stage contains exactly `v24/cordis/dp6/driver.py`, `v24/cordis/dp6/test_recovery.py`,
+`v24/cordis/dp6/README.md`, this matrix, the deviation ledger and the DP6 plan Result. The user's
+pre-existing 10 modified + 26 untracked paths are not staged, and no design/SQL/loader file is
+staged. Per the parent handoff, this session does **not** commit or push; the normal milestone
+commit/push is performed after that verification. W3–W5 are not started.
+
 ## Staging and DP5 handoff
 
 **Mixed-file staging warning.** `docs/designs/cordis-plugin-system-2026-10-25.md` already carries user modifications. Stage only the §10.1 authorization hunk (`git add -p` or an equivalent patch), then inspect `git diff --cached -- docs/designs/cordis-plugin-system-2026-10-25.md`; never `git add` the whole file. The DP6 plan is untracked and contains only the planning file plus the B0 Result/addendum. No commit/push was performed.
@@ -598,9 +788,10 @@ b047be95cd539ccac45f3e128fb88a979ecd63abc81314e80341ddc2ce2d4fa4  ?? docs/review
 
 ## Not covered
 
-- **W1 is implemented and gated.** `ensure`, the fair scanner, the observer ACL/fixture and `CDP6-S` are covered above; `test_scanner.py` passes and the 36-command serial suite is green.
-- **W2–W5 are still future milestones.** No external-effect executor, receipt journal/crash recovery, dispatch/run recovery, terminal-unknown resolution, dispose-tree convergence evidence or drain upgrade/rollback is implemented. `test_recovery.py`, `test_dispose.py`, `test_upgrade.py` and `test_boundaries.py` are **not implemented and not run**.
+- **W1 and W2 are implemented and gated.** `ensure`, the fair scanner, observer ACL/fixture, `CDP6-S`, the external executor, receipt journal, `run_start` source binding, dispatch recovery and `CDP6-R` are covered above; `test_scanner.py` and `test_recovery.py` passed in the final 37-command serial run.
+- **W3–W5 are still future milestones.** Terminal-unknown resolution, the full dispose-tree convergence matrix and drain upgrade/rollback/HMR are not implemented. `test_dispose.py`, `test_upgrade.py` and `test_boundaries.py` are **not implemented and not run**.
 - Reuse-declaration install/rollback is **not** implemented; W4 semantic admission remains pending. The 2026-10-28 capacity authorization does not admit it.
-- W1 does not execute external effects; `host_io` remains unsupported/`0A000`, and external/expired/unknown items are diagnostics only. W2 owns claim/receipt/journal and crash injection.
+- W2 does not resolve terminal unknown: unknown effect outcomes and inverse-unknown contributions stay debt/`blocked_unknown`; `host_io` remains unsupported/`0A000`; no real adapter is used.
+- No persisted W2 Oracle review result existed at acceptance start; the prior wrapper was stopped before writing one, so this session did not launch a duplicate review. Acceptance is the direct code audit plus the 37-command run.
 - No real provider socket, no network, no external adapter; all gate DBs were disposable pgembed instances and all handlers were Fake or absent.
-- W2–W5 will be handled in later fresh sessions; this W1 publication does not claim them.
+- W3–W5 will be handled in later fresh sessions; this W2 publication does not claim them.

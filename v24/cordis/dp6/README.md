@@ -1,11 +1,11 @@
-# Cordis v2 DP6 — W1 fair rediscovery / maintenance scanner
+# Cordis v2 DP6 — fair maintenance, crash recovery and receipt journal
 
-Status 2026-10-28: **W1 implementation and corrected `CDP6-S` coverage complete; the final
-36-command serial run is recorded in the conformance matrix. W2–W5 remain future milestones.** This
-directory contains the single-host maintenance scanner, the `ensure` wake-up command, the independent
-observer ACL and the `CDP6-S` gate. It does not contain external-effect execution, receipt
-journal/crash recovery, unknown resolution, dispose-tree convergence evidence or upgrade/rollback;
-those are W2–W5.
+Status 2026-10-28: **W1 fair scanner and W2 external-effect crash recovery are implemented and
+gated; the final 37-command serial run is recorded in the conformance matrix. W3–W5 remain future
+milestones.** This directory contains the single-host maintenance scanner, the `ensure` wake-up
+command, the independent observer ACL, the W2 claim/receipt/journal executor and the `CDP6-S`/
+`CDP6-R` gates. It does not contain terminal-unknown resolution, dispose-tree convergence evidence
+or upgrade/rollback; those are W3–W5.
 
 - Plan: `docs/plans/v24-cordis-dp6-recovery-maintenance-plan-2026-10-28.md`
 - Conformance matrix: `docs/reviews/cordis-v2-dp6-conformance-matrix-2026-10-28.md`
@@ -25,8 +25,19 @@ those are W2–W5.
 | budget/gate conversion | `v24/cordis/helper_budget.py` + DP1–DP5 gates | physical lines measured/reported, no numeric cap; required-file/manifest negatives retained |
 | gate | `v24/cordis/dp6/test_scanner.py` | CDP6-S (8 specification items) plus observer ACL, fixture lifecycle, independent-process restart, raw-row replay and transaction discipline |
 
-No command kind, table, column, protocol error code, second scheduler or second writer was added.
-`advance` remains the only `SECURITY DEFINER` function and the only domain writer.
+## W2 deliverables
+
+| Surface | File | Contract |
+|---|---|---|
+| external executor | `v24/cordis/dp6/driver.py` | `Executor`: claim through `advance`, close/verify IDLE, Fake/trusted handler outside every DB transaction, receipt `advance` in a new short transaction; `host_io`/non-host listener/unsupported paths never invoke a handler |
+| receipt journal | `v24/cordis/dp6/driver.py` | `ReceiptJournal`: one 0600 JSON file per effect/token under a 0700 directory, atomic temp write + file/dir fsync, canonical SHA-256, duplicate/torn/conflict detection; deleted only after `committed`/`replay`, quarantined when the DB says `stale_claim`/`receipt_conflict` |
+| `run_start` source binding | `v24/cordis/dp6/driver.py` | `RunStartSource`: binding fixes `effect_id + contract_version + handler_digest + request + steps + digest`; inbox is consumed once; missing waits, corrupt/duplicate/conflicting/mismatched input blocks without invention |
+| dispatch progress | `v24/cordis/dp6/driver.py` | child rows are read from committed facts; `unknown` is debt, never joined; pending children continue; all-terminal parent still ready is a zero-write invariant, never a fabricated seal |
+| W2 gate | `v24/cordis/dp6/test_recovery.py` | CDP6-R R1–R28: real child-process kill/restart, claim rollback/COMMIT-loss, journal boundaries, receipt replay/conflict, 2×2 replay rights, run_start source/allocation, L-Iter, dispatch modes, withdraw/dispose ack loss and IDLE/no-network discipline |
+
+W2 changed no SQL, loader, manifest or frozen surface. No command kind, table, column, protocol
+error code, second scheduler or second writer was added. `advance` remains the only
+`SECURITY DEFINER` function and the only domain writer.
 
 ## `ensure` command contract
 
@@ -72,6 +83,37 @@ Every no-work/fault path returns or raises before `validate_and_apply_delta`: te
 request/effect row, no cached no-op. A committed schedule replays by request key; no-op results are
 intentionally uncached and a fresh attempt UUID is used after a received result.
 
+## W2 external execution and recovery contract
+
+`Maintainer` uses an `Executor` when external execution is enabled; without it the scanner remains the
+W1 observer-only diagnostic mode. For every external effect:
+
+1. `run_start` resolves the trusted source binding before claim; missing, corrupt, duplicate,
+   conflicting or contract-mismatched input is reported without a claim. The binding fixes the
+   original request and initial step count by `effect_id + contract_version + handler_digest` and an
+   integrity digest; the adapter cannot replace them.
+2. Claim is one short `READ COMMITTED` transaction through `advance` (`class='claim'`). After COMMIT
+   the connection is verified `TRANSACTION_STATUS_IDLE` and closed.
+3. The frozen input and claim execution descriptor are handed to the Fake/trusted handler while zero
+   database connections are open. No adapter runs inside a transaction.
+4. A complete receipt (effect id, actor, original attempt/fence/owner and full outcome) is written
+   atomically to the fsynced journal **before** settlement.
+5. Settlement is a new short `advance` transaction with the same token and bytes. A lost COMMIT
+   response is retried with identical bytes and the DB's replay-first decides. `committed`/`replay`
+   removes the journal entry; `stale_claim`/`receipt_conflict` quarantines it; every other failure
+   keeps it. No lease timeout, process death or empty response is upgraded to success/failure.
+
+Replay rights come from the frozen contract, not from the host: only `repeat=true` **and**
+`concurrent=true` permits a post-expiry reclaim. A credible original token may settle after lease
+expiry while it is still current; a new fence makes the old token `stale_claim`. A terminal receipt
+replays without a second reducer/event; different bytes are `receipt_conflict` and zero-write.
+
+Dispatch is recovered only from committed child rows: `unknown` children stay debt and are never
+joined; `ready`/`claimed` children continue; an all-terminal parent still `ready` is an invariant, not
+an invitation to invent an `acc` or seal. `host_io` is reported unsupported and never sent to a
+handler. Journal files are `0600` inside a `0700` directory; their content is trusted host data and
+must not be logged. The executor opens no socket and starts no thread.
+
 ## Scanner contract
 
 Topics and page order (`ORDER BY id`, `LIMIT 64`, independent cursor per topic):
@@ -80,8 +122,8 @@ Topics and page order (`ORDER BY id`, `LIMIT 64`, independent cursor per topic):
 fibers            disposed_at IS NULL                                  -> ensure
 commands          ready command_reconcile                              -> reserved advance continuation
 disposes          installs.state='dispose_pending'                     -> fresh command_dispose
-external          ready/claimed host/run/model/tool/listener/dispatch  -> diagnostics only (W2)
-expired           claimed with lease_until < clock_timestamp()         -> diagnostics only (W2)
+external          ready/claimed host/run/model/tool/listener/dispatch  -> W2 claim/handler/receipt; without executor diagnostics
+expired           claimed with lease_until < clock_timestamp()         -> W2 reclaim only with replay rights; otherwise blocked
 unknown           effects.status='unknown'                             -> debt diagnostic
 inverse_unknown   released_at IS NULL AND inverse->>'op'='unknown'     -> debt diagnostic
 ```
@@ -102,10 +144,13 @@ Actor rule:
 - a missing credential is a scanner-local `blocked_actor_credential`, leaves the item untouched and
   does not stop other items or topics.
 
-W1 never claims, settles or invokes a handler for an external effect. `host_io` is reported as
-`unsupported_host_io`; ready/claimed external/dispatch effects as `external_pending`/
-`claimed_external_pending`/`dispatch_pending`; expired claims as `expired_claim_pending`. Claim,
-receipt journal, crash injection and dispatch/run recovery are W2.
+With an executor, ready external effects are claimed and settled under the W2 contract; an unexpired
+claim waits, an expired claim is reclaimed only when the frozen contract permits repeat+concurrent,
+and `host_io` is reported `unsupported_host_io` without a handler call. Dispatch parents are inspected
+from child rows, never claimed or sealed by the host. Without an executor (W1 mode) external rows are
+diagnostics only: `external_pending`/`claimed_external_pending`/`dispatch_pending`; expired claims are
+`expired_claim_pending`. Unknown effects and inverse-unknown contributions remain debt diagnostics in
+both modes and are never guessed into a terminal result.
 
 ## Observer ACL
 
@@ -139,14 +184,20 @@ preserved, not weakened.
 2. Provide the scanner with a read-only observer connection factory, a trusted credential map from
    real admin/service/operator LOGINs, and one configured `ensure` actor. Do not use the observer or
    a superuser as the product writer.
-3. Call `Maintainer.run_once()` periodically (or `run(rounds)`). A process restart loses only memory
-   cursors; the next pass starts from the beginning and rediscovers committed facts.
-4. Inspect `Report.actions`/`Report.diagnostics`: `committed` means a protocol write; `stale_generation`
+3. For external execution, construct the `Executor` with the same credential map, a trusted
+   `handler`, a durable `ReceiptJournal` directory and, for `run_start`, a pre-deployed
+   `RunStartSource` directory. Missing credentials/source are reported blocks, never impersonated or
+   invented; never place the journal/source under a world-readable path.
+4. Call `Maintainer.run_once()` periodically (or `run(rounds)`). A process restart loses only memory
+   cursors; the next pass starts from the beginning, replays any surviving journal entry with its
+   original token, and rediscovers committed facts. Do not delete journal files manually.
+5. Inspect `Report.actions`/`Report.diagnostics`: `committed` means a protocol write; `stale_generation`
    reasons `ensure_no_work`/`ensure_slot_present`/`ensure_failure_suppressed` are expected no-ops;
    `invariant_fault` is `0A000` and must be reported, not retried in a tight loop; `blocked_actor_credential`
-   means a credential is missing; debt diagnostics are not resolutions.
-5. Stop the scanner before external adapters on rollback; keep effects, unknown receipts, pins and
-   tombstones. Do not clear the DB or hand-edit lifecycle rows.
+   means a credential is missing; `blocked_unknown`, `journal_corrupt`, `dispatch_*_invariant` and
+   `receipt_not_publishable` are debt/blocks, not resolutions.
+6. Stop the scanner before external adapters on rollback; keep effects, unknown receipts, pins and
+   tombstones. Do not clear the DB, quarantine journal entries or hand-edit lifecycle rows.
 
 ## CDP6-S gate
 
@@ -167,9 +218,25 @@ committed or rolled back to IDLE before close with no residual session; a separa
 SIGKILLed driver and a third empty-memory process converging on the same canonical DB; and driver DML
 purity.
 
-## Verified W1 baseline
+## CDP6-R gate
 
-Measured at the W1 commit (physical lines, `str.splitlines()`, same count as the gates):
+```bash
+uv run python v24/cordis/dp6/test_recovery.py
+```
+
+The gate covers: real child-process kill/restart at claim before/after COMMIT, during the Fake
+adapter, after the adapter returns and before the journal fsync, after journal write, and before/after
+settlement COMMIT; receipt replay with no second reducer/event and conflicting bytes zero-write;
+terminal outcome immutability; the repeat/concurrent 2×2 replay matrix, concurrent post-expiry reclaim
+with exactly one new fence, old-token settlement before replacement and `stale_claim` after it;
+`run_start` source missing/corrupt/duplicate/mismatch and allocation-before-claim; L-Iter batch
+rollback; install, withdraw and dispose COMMIT-ack loss restart convergence; all five dispatch modes
+after a committed child, unknown-child non-join and the settled-parent invariant; unknown debt;
+missing/wrong actor credentials; corrupt/duplicate journal blocking; and IDLE/no-network discipline.
+
+## Verified W2 baseline
+
+Measured at the W2 gate (physical lines, `str.splitlines()`, same count as the gates):
 
 ```text
 40_advance.sql  1685
@@ -182,28 +249,38 @@ domain DDL       465      (report-only; bookkeeping 18+19 = 22 separate)
 manifest 19 / tables 10 / pg_proc 172 (164 private helpers + 8 trigger guards)
 one DEFINER advance / public EXECUTE 0 / command kinds 3 / protocol errors 24
 closure 512 / successor 16 unchanged
-dp6/test_scanner.py 1311 / dp6/driver.py 326  (report-only; no cap)
+dp6/test_scanner.py 1311 / dp6/driver.py 1028 / dp6/test_recovery.py 1737  (report-only; no cap)
 ```
 
-The 36-command serial gate evidence (35 inherited + `test_scanner.py`) is recorded in the conformance
-matrix with exit code and elapsed time. No real provider socket, external adapter or network call was
-used; every gate used a disposable pgembed database and Fake handlers. The corrected gate was also
-reviewed once by Oracle group `6B696214-99CB-48A0-BEC6-131CBDE8508F` (both lanes: accept with
-corrections); the two requested additions — `command_dispose` missing-successor coverage and a real
-wrong-`session_user` mismatch — are included as `[CDP6-S3b]`/`[CDP6-S9b]`.
+W2 changed no SQL, loader, manifest or frozen surface, so the W1 SQL measurements above are unchanged.
+
+The 37-command serial gate evidence (35 inherited + `test_scanner.py` + `test_recovery.py`) is recorded
+in the conformance matrix with exit code and elapsed time. No real provider socket, external adapter or
+network call was used; every gate used a disposable pgembed database and Fake handlers. The W1
+corrected gate was reviewed once by Oracle group `6B696214-99CB-48A0-BEC6-131CBDE8508F` (both lanes:
+accept with corrections). No W2 Oracle review result was persisted before the prior review wrapper was
+stopped; this acceptance session therefore did not launch a duplicate review and records the direct
+code audit plus the 37-command run instead.
 
 ## Known limitations / non-claims
 
-- W1 is not crash-recovery evidence. External claim/receipt/journal, dispatch half-way rebuild and
-  `run_start` source binding are W2.
-- External effects are diagnosed, never executed. `host_io` remains `0A000`/unsupported.
+- W2 is not W3–W5 evidence. Terminal-unknown resolution, the full dispose-tree convergence matrix and
+  drain upgrade/rollback/HMR remain unimplemented.
+- `host_io` and non-host listener execution remain unsupported/blocked; no real adapter is used by any
+  gate.
+- Unknown effect outcomes and inverse-unknown contributions remain debt/`blocked_unknown`; W2 never
+  converts lease expiry, process death or an empty response into success/failure.
+- A journal entry whose DB receipt is `stale_claim`/`receipt_conflict` is quarantined as `.dead` for
+  manual inspection; the host does not silently resolve or delete it, and does not retry it.
+- A `run_start` handler that returns no publishable receipt leaves the effect claimed and does not
+  invent an unknown terminal outcome; recovery requires the original source/credential or manual
+  handling.
 - A ready reconcile slot's full identity is revalidated by `continuation_state` when the continuation
   is advanced; `ensure` treats the unique-index slot as the driver and does not duplicate that check.
   A malformed slot is therefore diagnosed through the continuation path, not treated as no-work.
 - Under unbounded adversarial low-key insertions, UUID keyset paging alone cannot promise a hard
-  liveness bound; W1 relies on the documented E1/E2 operational assumptions and does not claim
-  unconditional fairness.
+  liveness bound; the scanner relies on the documented E1/E2 operational assumptions and does not
+  claim unconditional fairness.
 - The observer has no `events` SELECT; if a later diagnostic needs it, add exact columns with a gate.
 - No new finite line cap was set. The old 5500/700/900 assertions are measurement-only; all required
   file/manifest and semantic/ACL/boundary negatives remain.
-- W2–W5 are separate fresh-session milestones; this README does not claim them.
