@@ -8,7 +8,7 @@ import psycopg2
 from psycopg2.extras import Json
 from dp4_support import (Server, TestDB, snapshot, query, api, env, claim, settle,
                          prepare_run, model_body, tool_call, tool_body, q1, rows,
-                         replace_function)
+                         replace_function, provider, agent)
 from test_support import reconcile_payload, no_write
 from test_activation import commit_new, child_call
 
@@ -130,17 +130,13 @@ def test_x1b_custom_model_key(db):
     replace_function(db, """CREATE OR REPLACE FUNCTION v24_cordis.run_delta(p_effect_id uuid,p_outcome jsonb)
       RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT current_setting('dp4.forged')::jsonb $$""")
     try:
-        with contextlib.closing(db.connect('owner')) as conn:
-            for label, pin, key in (('key', brain_pin, 'tool'), ('capability', tool_pin, 'tool')):
-                forged = json.loads(json.dumps(delta))
-                forged['successors'][0]['input']['pin_id'] = str(pin)
-                forged['successors'][0]['input']['key'] = key
+        for label, pin, key in (('key', brain_pin, 'tool'), ('capability', tool_pin, 'tool')):
+            forged = json.loads(json.dumps(delta))
+            forged['successors'][0]['input']['pin_id'] = str(pin)
+            forged['successors'][0]['input']['key'] = key
+            with contextlib.closing(db.connect('service')) as conn:
                 query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))
-                got = query(conn, 'SELECT v24_cordis.validate_run_domain(%s,%s,%s,%s)',
-                            (tool, uuid.uuid4(), Json(tool_out), Json(forged)))[0][0]
-                assert got['error']['code'] == 'invalid_outcome', (label, got)
-                assert got['error']['detail']['reason'] == 'run_successor', (label, got)
-            conn.commit()
+                no_write(db, conn, tool, tool_out, 'invalid_outcome')
     finally:
         replace_function(db, original)
     tr = settle(db, tool, tool_body(), tc['claim'])
@@ -156,7 +152,7 @@ def test_x1b_custom_model_key(db):
     assert budget == 0 and ended is not None and state['phase'] == 'sealed', (budget, state)
     assert outcome['reason'] == 'final' and outcome['output'] == final['result'], outcome
     assert all(p[4] is not None for p in _pins(db, x['run_id']))
-    print('[CDP4-X1b] brain key survives run_start->model->tool->continuation->final; validator rejects key/capability spoof')
+    print('[CDP4-X1b] brain key survives run_start->model->tool->continuation->final; advance rejects key/capability spoof')
 
 
 def test_x2_model_over(db):
@@ -226,8 +222,9 @@ def test_m6_model_failed(db):
 
 def test_validator(db):
     x = prepare_run(db, 3)
-    final_out = env('success', model_body(final=True, text='done'), None)
-    tool_out = env('success', model_body([tool_call('c1')]), None)
+    c = claim(db, x['model_effect'])
+    final_out = env('success', model_body(final=True, text='done'), c['claim'])
+    tool_out = env('success', model_body([tool_call('c1')]), c['claim'])
     final_delta = q1(db, 'SELECT v24_cordis.run_delta(%s,%s)', (x['model_effect'], Json(final_out)))
     tool_delta = q1(db, 'SELECT v24_cordis.run_delta(%s,%s)', (x['model_effect'], Json(tool_out)))
     assert 'error' not in final_delta and 'error' not in tool_delta, (final_delta, tool_delta)
@@ -238,29 +235,107 @@ def test_validator(db):
         cases = []
         bad = json.loads(json.dumps(final_delta))
         bad['domain'][1]['remaining_steps'] = 63
-        cases.append(('budget', bad, 'run_state_delta'))
+        cases.append(('budget', bad, final_out))
         bad = json.loads(json.dumps(final_delta))
         bad['domain'][2]['effect_id'] = str(uuid.uuid4())
-        cases.append(('seal', bad, 'run_seal_delta'))
+        cases.append(('seal', bad, final_out))
         bad = json.loads(json.dumps(final_delta))
         bad['domain'][3]['pin_ids'].pop()
-        cases.append(('pins', bad, 'run_seal_delta'))
+        cases.append(('pins', bad, final_out))
         bad = json.loads(json.dumps(tool_delta))
         bad['successors'][0]['input']['pin_id'] = str(uuid.uuid4())
-        cases.append(('successor', bad, 'run_successor'))
-        with contextlib.closing(db.connect('owner')) as conn:
-            for label, forged, reason in cases:
+        cases.append(('successor', bad, tool_out))
+        for label, forged, outcome in cases:
+            with contextlib.closing(db.connect('service')) as conn:
                 query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))
-                got = query(conn, 'SELECT v24_cordis.validate_run_domain(%s,%s,%s,%s)',
-                            (x['model_effect'], uuid.uuid4(),
-                             Json(final_out if label != 'successor' else tool_out),
-                             Json(forged)))[0][0]
-                assert got['error']['code'] == 'invalid_outcome', (label, got)
-                assert got['error']['detail']['reason'] == reason, (label, got)
-            conn.commit()
+                no_write(db, conn, x['model_effect'], outcome, 'invalid_outcome')
     finally:
         replace_function(db, original)
-    print('[CDP4-X6] forged planner rejects budget/seal/pins/successor invariants independently')
+    print('[CDP4-X6] advance rejects forged budget/seal/pins/successor planners independently with zero write')
+
+
+def test_run_start_forged(db):
+    provider(db, 'model_call', 'model')
+    provider(db, 'tool_call', 'tool')
+    chat = agent(db)
+    rs = uuid.UUID(chat['p4_result']['emitted'][0])
+    tc = claim(db, rs)
+    out = env('success', {'v': 1, 'request': {}, 'steps': 2}, tc['claim'])
+    delta = q1(db, 'SELECT v24_cordis.run_delta(%s,%s)', (rs, Json(out)))
+    assert 'error' not in delta, delta
+    tool_pin = next(p['id'] for p in delta['domain'][1]['pins'] if p['key'] == 'tool')
+    cases = []
+
+    def case(label, mutate):
+        forged = json.loads(json.dumps(delta))
+        mutate(forged)
+        cases.append((label, forged))
+
+    case('state_phase', lambda d: d['domain'][0]['state'].__setitem__('phase', 'tools'))
+    case('state_step', lambda d: d['domain'][0]['state'].__setitem__('step', 1))
+    case('state_origin', lambda d: d['domain'][0]['state'].__setitem__('origin', str(uuid.uuid4())))
+    case('budget', lambda d: d['domain'][0].__setitem__('remaining_steps', 3))
+    case('pins_missing', lambda d: d['domain'][1]['pins'].pop())
+    case('pins_contribution', lambda d: d['domain'][1]['pins'][1].__setitem__(
+        'contribution_id', str(uuid.uuid4())))
+    case('pins_epoch', lambda d: d['domain'][1]['pins'][0].__setitem__('provider_epoch', 99))
+    case('pins_extra', lambda d: d['domain'][1]['pins'].append(dict(
+        d['domain'][1]['pins'][0], key='zzz', id=str(uuid.uuid4()))))
+    case('successor_ordinal', lambda d: d['successors'][0].__setitem__('ordinal', 1))
+    case('successor_kind', lambda d: d['successors'][0].__setitem__('kind', 'tool_call'))
+    case('successor_run', lambda d: d['successors'][0]['input'].__setitem__(
+        'run_id', str(uuid.uuid4())))
+    case('successor_pin', lambda d: d['successors'][0]['input'].__setitem__('pin_id', tool_pin))
+    case('successor_key', lambda d: d['successors'][0]['input'].__setitem__('key', 'tool'))
+    case('successor_digests', lambda d: d['successors'][0]['input']['digests'].__setitem__(
+        'toolset', '0' * 64))
+    case('successor_contract', lambda d: d['successors'][0]['input']['contract'].__setitem__(
+        'handler_digest', 'd' * 64))
+    case('successor_extra', lambda d: d['successors'].append(dict(
+        d['successors'][0], ordinal=1)))
+    for label in ('owner_closing', 'start_failed', 'replay_right_missing'):
+        cases.append(('empty_' + label, {
+            'domain': [], 'receipt': {'status': 'succeeded'},
+            'events': [{'entity_type': 'run', 'entity_id': str(rs),
+                        'event_kind': 'run_refused',
+                        'payload': {'run_id': None, 'effect_id': str(rs), 'reason': label}}],
+            'successors': []}))
+
+    original = q1(db, "SELECT pg_get_functiondef('v24_cordis.run_delta(uuid,jsonb)'::regprocedure)")
+    replace_function(db, """CREATE OR REPLACE FUNCTION v24_cordis.run_delta(p_effect_id uuid,p_outcome jsonb)
+      RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT current_setting('dp4.forged')::jsonb $$""")
+    try:
+        for label, forged in cases:
+            with contextlib.closing(db.connect('service')) as conn:
+                query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))
+                no_write(db, conn, rs, out, 'invalid_outcome')
+        assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (rs,)) == 'claimed'
+        assert q1(db, 'SELECT count(*) FROM v24_cordis.runs') == 0
+        # A real failure refusal is still accepted: the validator recomputes start_failed,
+        # so empty domain is not rejected wholesale.
+        fail = env('failure', {'v': 1, 'error': {'code': 'boom'}}, tc['claim'])
+        refusal = {'domain': [], 'receipt': {'status': 'failed'},
+                   'events': [{'entity_type': 'run', 'entity_id': str(rs),
+                               'event_kind': 'run_refused',
+                               'payload': {'run_id': None, 'effect_id': str(rs),
+                                           'reason': 'start_failed'}}],
+                   'successors': []}
+        with contextlib.closing(db.connect('service')) as conn:
+            query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(refusal),))
+            done = api(conn, rs, fail)
+            conn.commit()
+        assert done['disposition'] == 'committed' and done['emitted'] == [], done
+        assert done.get('reason') == 'start_failed', done
+        assert q1(db, 'SELECT count(*) FROM v24_cordis.runs') == 0
+        assert q1(db, 'SELECT count(*) FROM v24_cordis.pins WHERE consumer_run_id IS NOT NULL') == 0
+        assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (rs,)) == 'failed'
+        assert q1(db, "SELECT count(*) FROM v24_cordis.events WHERE effect_id=%s "
+                      "AND event_kind='run_refused'", (rs,)) == 1
+    finally:
+        replace_function(db, original)
+    print('[CDP4-X7] advance rejects forged run_start state/budget/pins/successor and empty-domain '
+          'refusals as invalid_outcome with zero write; a real failure refusal still commits')
+
 
 
 
@@ -364,6 +439,7 @@ def main():
         with TestDB(server) as db: test_m6_model_failed(db)
         with TestDB(server) as db: test_x3_lifecycle(db)
         with TestDB(server) as db: test_validator(db)
+        with TestDB(server) as db: test_run_start_forged(db)
     print('[passed] CDP4-X')
 
 

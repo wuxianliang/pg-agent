@@ -20,25 +20,28 @@ BEGIN
  RETURN jsonb_build_object('v',1,'error',jsonb_build_object('code',p_code,'detail',p_detail));
 END $$;
 CREATE FUNCTION v24_cordis.exact_keys(p_value jsonb,p_keys text[]) RETURNS boolean
-LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
- SELECT jsonb_typeof(p_value)='object' AND p_value ?& p_keys AND p_value-p_keys='{}'::jsonb
-$$;
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp
+BEGIN ATOMIC
+ SELECT jsonb_typeof(p_value)='object' AND p_value ?& p_keys AND p_value-p_keys='{}'::jsonb;
+END;
 CREATE FUNCTION v24_cordis.json_uuid(p_value jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
  SELECT coalesce(jsonb_typeof(p_value)='string' AND (p_value#>>'{}') ~
   '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',false)
 $$;
 CREATE FUNCTION v24_cordis.json_int(p_value jsonb,p_lo bigint,p_hi bigint) RETURNS boolean
-LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp
+BEGIN ATOMIC
  SELECT CASE WHEN jsonb_typeof(p_value)='number'
   AND (p_value#>>'{}') ~ '^-?(0|[1-9][0-9]*)$' AND length(p_value#>>'{}')<=20
-  THEN (p_value#>>'{}')::numeric BETWEEN p_lo AND p_hi ELSE false END
-$$;
+  THEN (p_value#>>'{}')::numeric BETWEEN p_lo AND p_hi ELSE false END;
+END;
 CREATE FUNCTION v24_cordis.json_text(p_value jsonb) RETURNS boolean
-LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp
+BEGIN ATOMIC
  SELECT CASE WHEN jsonb_typeof(p_value)='string'
-  THEN length(p_value#>>'{}') BETWEEN 1 AND 128 ELSE false END
-$$;
+  THEN length(p_value#>>'{}') BETWEEN 1 AND 128 ELSE false END;
+END;
 CREATE FUNCTION v24_cordis.json_hex64(p_value jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
  SELECT coalesce(jsonb_typeof(p_value)='string' AND (p_value#>>'{}') ~ '^[0-9a-f]{64}$',false)

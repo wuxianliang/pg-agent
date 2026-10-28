@@ -116,7 +116,7 @@ def test_m3(db):
 def test_m4(db):
     oid = q1(db, "SELECT oid FROM pg_proc WHERE oid='v24_cordis.reduce_chat_tool(jsonb,jsonb)'::regprocedure")
     assert q1(db, 'SELECT provolatile FROM pg_proc WHERE oid=%s', (oid,)) == 'i'
-    def dcl(oid):
+    def closure(oid):
         return q1(db, '''WITH RECURSIVE d(classid,objid,refclassid,refobjid) AS (
             SELECT classid,objid,refclassid,refobjid FROM pg_depend
              WHERE classid='pg_proc'::regclass AND objid=%s
@@ -124,19 +124,28 @@ def test_m4(db):
             SELECT g.classid,g.objid,g.refclassid,g.refobjid FROM pg_depend g
              JOIN d ON g.classid=d.refclassid AND g.objid=d.refobjid
              WHERE d.refclassid='pg_proc'::regclass)
-          SELECT count(*) FROM d WHERE refclassid='pg_class'::regclass''', (oid,))
-    assert dcl(oid) == 0, 'reducer has a relation dependency'
+          SELECT jsonb_build_object(
+            'relations',count(*) FILTER (WHERE d.refclassid='pg_class'::regclass),
+            'functions',count(DISTINCT d.refobjid) FILTER (WHERE d.refclassid='pg_proc'::regclass
+              AND p.pronamespace<>'pg_catalog'::regnamespace),
+            'missing_sql_body',count(DISTINCT d.refobjid) FILTER (WHERE d.refclassid='pg_proc'::regclass
+              AND p.pronamespace<>'pg_catalog'::regnamespace AND p.prosqlbody IS NULL))
+          FROM d LEFT JOIN pg_proc p ON p.oid=d.refobjid''', (oid,))
+    dep = closure(oid)
+    assert dep['relations'] == 0, ('reducer has a relation dependency', dep)
+    assert dep['functions'] >= 5, ('dependency chain stopped early', dep)
+    assert dep['missing_sql_body'] == 0, ('non-catalog callee has no parsed body', dep)
     replace_function(db, '''CREATE OR REPLACE FUNCTION v24_cordis.dp4_probe_runs() RETURNS bigint
       LANGUAGE sql BEGIN ATOMIC SELECT count(*) FROM v24_cordis.runs; END''')
     try:
         poid = q1(db, "SELECT oid FROM pg_proc WHERE oid='v24_cordis.dp4_probe_runs()'::regprocedure")
-        assert dcl(poid) > 0, 'BEGIN ATOMIC probe did not expose its table dependency'
+        assert closure(poid)['relations'] > 0, 'BEGIN ATOMIC probe did not expose its table dependency'
     finally:
         with contextlib.closing(db.connect('owner')) as conn:
             query(conn, sql.SQL('SET ROLE {}').format(sql.Identifier(db.groups['owner'])))
             query(conn, 'DROP FUNCTION v24_cordis.dp4_probe_runs()')
             conn.commit()
-    print('[CDP4-M4] reducer is IMMUTABLE; dependency closure has no pg_class; a reading probe is detected')
+    print('[CDP4-M4] reducer is IMMUTABLE; closure has parsed non-catalog bodies and no pg_class; a reading probe is detected')
 
 
 def test_m5(db):

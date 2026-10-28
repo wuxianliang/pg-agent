@@ -91,3 +91,28 @@ Same worktree, W3 `dbd943d` plus W4 changes. The 30-command sequence (26 legacy 
 ### W4 not covered
 
 `CDP4-B` layout/ACL/frozen-surface closeout and the full W5 sequence; the known R4/T4c test gaps; push target decision.
+
+## W5 observations (2026-10-27)
+
+Same worktree, W4 `faccab4` plus W5 changes. The 31-command sequence (26 legacy + CDP4-R/M/T/X/B) is green on the final tree; this section does not rewrite B0/W1–W4.
+
+| Date | Item | Plan / baseline | W5 treatment | Evidence |
+|---|---|---|---|---|
+| 2026-10-27 | CDP4-B gate | Plan requires a fifth gate, not docs-only closeout | Added `v24/cordis/dp4/test_closeout.py` with B1–B6: layout/ACL/budget, write surface, structural limits, manifest boundary, frozen surface | 31/31 exit 0, `/tmp/dp4-w5-gates-rerun.log`; CDP4-B1…B6 |
+| 2026-10-27 | R4 entry point | W4 R4 called `validate_domain` directly and lacked non-chat_tool/existing-run | R4 now replaces `interpret_command` and submits the p4 effect through real `advance`; covers two, ordinal-1, bad-input, non-chat_tool and existing-run, each `invalid_outcome` + ten-table snapshot unchanged | CDP4-R4 |
+| 2026-10-27 | T4c entry point | W4 T4c called `run_delta` directly | T4c now uses real `advance`: model-pin/tool-key rejected at claim; tool-pin/`nope` and tool-pin/`model` claimed then rejected at settlement; all zero-write | CDP4-T4c |
+| 2026-10-27 | X6/X1b entry point | W4 spoof cases called `validate_run_domain` directly | Both replace `run_delta` and submit through real `advance`; rejected independently with unchanged snapshots. X7 now covers the run_start initial state/budget, pin set, model successor and empty-domain forgery family (19 negatives) plus a legal failure refusal | CDP4-X6/X1b/X7 |
+| 2026-10-27 | `tools` fact | W4 query included every live run pin, including the model pin | Query joins contributions and filters `descriptor.capability='tool_call'`. B4 proves a real brain model key in `tool_calls` is `invalid_outcome` zero-write while the tool key succeeds | CDP4-B4 |
+| 2026-10-27 | Purity closure | Receipt validators were BEGIN ATOMIC, but 40 `exact_keys/json_text/json_int` were `AS $$`, truncating `pg_depend` | Converted those three to BEGIN ATOMIC; M4 now requires every non-catalog callee in the reducer closure to have `prosqlbody` and no `pg_class` | CDP4-M4 |
+| 2026-10-27 | Manifest capacity conflict | Plan §3.3 claimed 256 unrelated + 32 model/tool stays under 512 | Measured: 256 requires is shape-legal, but 224+32 activation is `retry_with_closure` because each resolved require expands contribution+fiber+episode (224×3) before the 32 bindings. Recorded as a non-executable path; no false legal claim | CDP4-B5a |
+| 2026-10-27 | 288 committed_view | Plan/critique asked to distinguish the 288 fixture from legal 256 | 288 is an owner-injected episode created with 288 keys (256 unrelated + 32 real model/tool) and filters to 32 run bindings; 288 requires is rejected by `manifest_shape_valid`. A ready run_start effect on the same episode gives `settlement_seed=97` and `discover_closure=137`, both non-NULL and <512, so only the 32 bindings expand. It is not a legal manifest | CDP4-B5b |
+| 2026-10-27 | Terminal claim | Plan §3.6/§4.4 still said API re-claim is `55000` | Corrected plan to API replay-first `receipt_conflict`; direct DML reopen remains `55000`; X1 asserts both paths | Plan §3.6/§4.4/X1; CDP4-X1 |
+| 2026-10-27 | DDL count | Stale plan references said 462 | Corrected to 461; `test_ddl.py` and CDP4-B both report 461 | CDP1-D; CDP4-B1 |
+| 2026-10-27 | Run_start validator completeness | Plan §3.8 requires independent recompute, not only `p_delta = run_delta` | `validate_run_domain` now re-derives run_create initial state/remaining_steps, the `run_pin_bind` projection from `run_bindings`, the unique model successor's run/pin/key/digests/contract, and empty-domain refusal reason/receipt/event. X7 forges `run_delta` for 19 cases through real `advance`; all are `invalid_outcome` with the ten-table snapshot unchanged, and a legal `start_failed` refusal still commits | CDP4-X7 |
+| 2026-10-27 | Oracle review | One review required across B0..W5 | Single `mode=review` executed with `4b34bf2..working tree` artifacts and untracked B gate in selection. Direct fixes applied: domain op total/cardinality, released model pin → `dependency_unresolved` + T4b-model, T4c isolation, 288 view completeness, explicit B2 boundary, plan terminal/DDL correction, and the complete run_start independent re-derivation (initial state/budget, pin projection, model successor, empty-domain refusal). X7 covers the forgery family. 43=560. No new review was run | Oracle chat `new-chat-27546B`; CDP4-B5b/T4b-model/X7 |
+| 2026-10-27 | Capacity | 43 ≤560, four-file sum ≤5000, DDL ≤900 | 40=1549, 41=1211, 42=1000, 43=560, sum **4320≤5000**; DDL **461**; manifest 18; 10 tables; one DEFINER (`advance`) | CDP1-K0, CDP2-B, CDP3-B, CDP4-B1 |
+| 2026-10-27 | Publication | Local commits only until target confirmed | W5 committed locally; no push and `main` untouched | W5 commit |
+
+### W5 not covered
+
+- Push target decision.

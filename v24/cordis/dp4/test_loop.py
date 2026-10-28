@@ -7,7 +7,7 @@ import uuid
 
 from psycopg2.extras import Json
 from dp4_support import (Server, TestDB, snapshot, query, api, env, claim, settle,
-                         prepare_run, model_body, tool_call, tool_body, q1, rows)
+                         prepare_run, model_body, tool_call, tool_body, q1, rows, no_write)
 
 
 def _snap(db):
@@ -168,6 +168,23 @@ def test_t4_released(db):
     print('[CDP4-T4b] a released pin is dependency_unresolved with zero write')
 
 
+def test_t4_model_released(db):
+    x = prepare_run(db, 3)
+    c = claim(db, x['model_effect'])
+    pin = q1(db, "SELECT id FROM v24_cordis.pins WHERE consumer_run_id=%s AND key='model'",
+             (x['run_id'],))
+    with contextlib.closing(db.connect('owner')) as conn:
+        query(conn, 'UPDATE v24_cordis.pins SET released_at=now() WHERE id=%s', (pin,))
+        conn.commit()
+    before = _snap(db)
+    r = settle(db, x['model_effect'], model_body(final=True), c['claim'])
+    assert r['error']['code'] == 'dependency_unresolved', r
+    assert _snap(db) == before
+    assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s',
+              (x['model_effect'],)) == 'claimed'
+    print('[CDP4-T4b-model] a released model pin is dependency_unresolved with zero write')
+
+
 def _mismatch_effect(db, x, pin_id, key, call_id, ordinal, digest, contract):
     run = rows(db, 'SELECT owner_fiber_id,owner_episode_id FROM v24_cordis.runs WHERE id=%s',
                (x['run_id'],))[0]
@@ -191,27 +208,34 @@ def _mismatch_effect(db, x, pin_id, key, call_id, ordinal, digest, contract):
 
 
 def test_t4_mismatch(db):
-    x, tools = prepare_tools(db, 1, 3)
+    x, tools = prepare_tools(db, 1, 4)
     model_pin = q1(db, "SELECT id FROM v24_cordis.pins WHERE consumer_run_id=%s AND key='model'",
                    (x['run_id'],))
-    pin, contrib, desc = _tool_pin(db, x['run_id'])
+    tool_pin, _, desc = _tool_pin(db, x['run_id'])
     tool_contract = q1(db, "SELECT i.contracts->'tool_call' FROM v24_cordis.pins p "
                            "JOIN v24_cordis.contributions c ON c.id=p.contribution_id "
                            "JOIN v24_cordis.fibers f ON f.id=c.fiber_id "
                            "JOIN v24_cordis.installs i ON i.id=f.install_id "
-                           "WHERE p.consumer_run_id=%s AND p.key='tool'", (x['run_id'],))
-    digest = q1(db, "SELECT encode(sha256(convert_to(%s::jsonb::text,'UTF8')),'hex')",
-                (Json(desc),))
-    cases = ((model_pin, 'tool', 'c2', 1), (pin, 'nope', 'c3', 2))
-    for pin_id, key, call_id, ordinal in cases:
-        effect = _mismatch_effect(db, x, pin_id, key, call_id, ordinal, digest, tool_contract)
-        before = _snap(db)
-        out = env('success', tool_body(), None)
-        err = q1(db, 'SELECT v24_cordis.run_delta(%s,%s)', (effect, Json(out)))
-        assert err['error']['code'] == 'invalid_outcome', (pin_id, key, err)
-        assert _snap(db) == before
-        assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (effect,)) == 'ready'
-    print('[CDP4-T4c] pin_id/key mismatch is invalid_outcome with zero write for both directions')
+                           "WHERE p.id=%s", (tool_pin,))
+    digest = q1(db, "SELECT encode(sha256(convert_to(%s::jsonb::text,'UTF8')),'hex')", (Json(desc),))
+    for pin_name, key, ordinal in (('model', 'toolm', 1), ('tool', 'nope', 2), ('tool', 'model', 3)):
+        pin_id = model_pin if pin_name == 'model' else tool_pin
+        effect = _mismatch_effect(db, x, pin_id, key, f'x{ordinal}', ordinal, digest, tool_contract)
+        if pin_name == 'model':
+            # The claim contract cannot bind a model pin to a tool effect: advance refuses before settlement.
+            with contextlib.closing(db.connect('service')) as conn:
+                no_write(db, conn, effect, env('claim', {'lease_ms': 300000}), 'invalid_outcome')
+            assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (effect,)) == 'ready'
+        else:
+            tc = claim(db, effect)
+            assert tc.get('disposition') == 'claimed', tc
+            before = _snap(db)
+            with contextlib.closing(db.connect('service')) as conn:
+                no_write(db, conn, effect, env('success', tool_body(), tc['claim']), 'invalid_outcome')
+            assert _snap(db) == before
+            assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s', (effect,)) == 'claimed'
+    print('[CDP4-T4c] advance rejects model-pin/tool-key at claim and tool-pin/nope+model-key at '
+          'settlement as invalid_outcome with zero write')
 
 
 def test_t5_unknown(db):
@@ -375,6 +399,7 @@ def main():
         with TestDB(server) as db: test_t3_expired_lease(db)
         with TestDB(server) as db: test_t4_withdrawn(db)
         with TestDB(server) as db: test_t4_released(db)
+        with TestDB(server) as db: test_t4_model_released(db)
         with TestDB(server) as db: test_t4_mismatch(db)
         with TestDB(server) as db: test_t5_unknown(db)
         with TestDB(server) as db: test_t6_failure(db)

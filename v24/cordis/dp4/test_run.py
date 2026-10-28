@@ -1,6 +1,7 @@
 """CDP4-R: production run_start, claim, binding, refusal and replay rights."""
 from __future__ import annotations
 import contextlib
+import json
 import uuid
 
 from psycopg2.extras import Json
@@ -35,17 +36,17 @@ def _assert_zero_write(db, fn):
     return result
 
 
-def _prepared_p4(db):
-    provider(db, 'model_call', 'model')
-    provider(db, 'tool_call', 'tool')
+def _prepared_p4(db, policy='chat_tool', keys=('model', 'tool')):
+    provider(db, 'model_call', keys[0])
+    provider(db, 'tool_call', keys[1])
     root = active_owner(db)
     payload = install_payload(mode='existing', existing_scope=root['scope'],
                               owner=dict(fiber_id=str(root['fiber']), episode_id=str(root['episode'])))
-    payload['manifest'] = dict(requires=['model', 'tool'], provides=[], priority=0, check={})
+    payload['manifest'] = dict(requires=list(keys), provides=[], priority=0, check={})
     payload['contracts'] = {'run_start': dict(
         contract_version='1', handler_digest='c' * 64,
         replay=dict(repeat=True, concurrent=True))}
-    payload['policy_ref'] = 'chat_tool'
+    payload['policy_ref'] = policy
     _, result, _ = commit_new(db, 'command_install', payload)
     assert result['disposition'] == 'committed', result
     fiber = uuid.UUID(payload['fiber_id'])
@@ -121,29 +122,75 @@ def test_r2_binding_and_replay(db):
     print('[CDP4-R2/R3] claim carries input; run/pins/model successor are exact; replay is zero-write')
 
 
+def _successor_for(db, fiber, episode):
+    contract = q1(db, "SELECT i.contracts->'run_start' FROM v24_cordis.installs i "
+                      "JOIN v24_cordis.fibers f ON f.install_id=i.id WHERE f.id=%s", (fiber,))
+    return {'ordinal': 0, 'kind': 'run_start', 'input': {
+        'v': 1, 'fiber_id': str(fiber), 'episode_id': str(episode),
+        'contract': {'contract_version': contract['contract_version'],
+                     'handler_digest': contract['handler_digest']}}}
+
+
+def _command_interpreter(db):
+    return q1(db, "SELECT pg_get_functiondef('v24_cordis.interpret_command(uuid,uuid,jsonb,jsonb)'::regprocedure)")
+
+
 def test_r4_forged_p4(db):
-    fiber, p4_effect, p4_outcome, _, episode = _prepared_p4(db)
+    fiber, effect, outcome, _, episode = _prepared_p4(db)
     with contextlib.closing(db.connect('owner')) as conn:
         principal = query(conn, 'SELECT v24_cordis.principal_id(session_user)')[0][0]
-        real = query(conn, 'SELECT v24_cordis.interpret_reconcile(%s,%s,%s,%s)',
-                     (p4_effect, principal, Json(p4_outcome), Json([])))[0][0]
+        real = query(conn, 'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',
+                     (effect, principal, Json(outcome), Json([])))[0][0]['context']
         assert len(real['successors']) == 1, real
         succ = real['successors'][0]
-        forged = []
-        two = [succ, {**succ, 'ordinal': 1}]
-        forged.append({**real, 'successors': two})
-        forged.append({**real, 'successors': [{**succ, 'ordinal': 1}]})
-        bad_input = {**succ, 'input': {**succ['input'], 'extra': True}}
-        forged.append({**real, 'successors': [bad_input]})
-        for delta in forged:
-            before = snapshot(conn)
-            closure = Json([{'t': 'episodes', 'id': str(episode)}])
-            got = query(conn, 'SELECT v24_cordis.validate_domain(%s,%s,%s,%s,%s)',
-                        (p4_effect, principal, Json(p4_outcome), Json(delta), closure))[0][0]
-            conn.rollback()
-            assert got['error']['code'] == 'invalid_outcome', (delta, got)
-            assert snapshot(conn) == before
-    print('[CDP4-R4] two/ordinal-1/bad-input p4 successors are invalid_outcome with zero write')
+        original = _command_interpreter(db)
+    cases = []
+    cases.append(('two', {**real, 'successors': [succ, {**succ, 'ordinal': 1}]}))
+    cases.append(('ordinal', {**real, 'successors': [{**succ, 'ordinal': 1}]}))
+    bad_input = {**succ, 'input': {**succ['input'], 'extra': True}}
+    cases.append(('input', {**real, 'successors': [bad_input]}))
+    # Legal successor shape, but the target is non-chat_tool (real producer returns []).
+    other_fiber, other_effect, other_outcome, _, other_episode = _prepared_p4(db, policy=None, keys=('bmodel', 'btool'))
+    with contextlib.closing(db.connect('owner')) as conn:
+        other_real = query(conn, 'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',
+                           (other_effect, principal, Json(other_outcome), Json([])))[0][0]['context']
+    assert other_real['successors'] == [], other_real
+    cases.append(('non_chat_tool', {**other_real,
+                 'successors': [_successor_for(db, other_fiber, other_episode)]}))
+    # Legal successor shape, but the target already has an open run (real producer returns []).
+    run_fiber, run_effect, run_outcome, _, run_episode = _prepared_p4(db, keys=('cmodel', 'ctool'))
+    scope = q1(db, 'SELECT scope_id FROM v24_cordis.fibers WHERE id=%s', (run_fiber,))
+    with contextlib.closing(db.connect('owner')) as conn:
+        query(conn, 'SELECT pg_advisory_xact_lock(24,1)')
+        query(conn, "INSERT INTO v24_cordis.runs(id,owner_fiber_id,owner_episode_id,scope_id,state,"
+                    "remaining_steps) VALUES(%s,%s,%s,%s,%s,1)",
+              (uuid.uuid4(), run_fiber, run_episode, scope,
+               Json({'v': 1, 'origin': str(run_effect), 'step': 0, 'phase': 'model',
+                     'batch': [], 'final': False})))
+        conn.commit()
+        run_real = query(conn, 'SELECT v24_cordis.interpret_command(%s,%s,%s,%s)',
+                         (run_effect, principal, Json(run_outcome), Json([])))[0][0]['context']
+    assert run_real['successors'] == [], run_real
+    cases.append(('existing_run', {**run_real,
+                     'successors': [_successor_for(db, run_fiber, run_episode)]}))
+
+    replace_function(db, """CREATE OR REPLACE FUNCTION v24_cordis.interpret_command(
+      p_effect_id uuid,p_principal uuid,p_outcome jsonb,p_closure jsonb) RETURNS jsonb
+      LANGUAGE sql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp
+      BEGIN ATOMIC SELECT current_setting('dp4.forged_command')::jsonb; END""")
+    try:
+        fixtures = {'two': effect, 'ordinal': effect, 'input': effect,
+                    'non_chat_tool': other_effect, 'existing_run': run_effect}
+        outcomes = {'two': outcome, 'ordinal': outcome, 'input': outcome,
+                    'non_chat_tool': other_outcome, 'existing_run': run_outcome}
+        for label, delta in cases:
+            with contextlib.closing(db.connect('service')) as conn:
+                query(conn, "SELECT set_config('dp4.forged_command',%s,false)", (json.dumps(delta),))
+                no_write(db, conn, fixtures[label], outcomes[label], 'invalid_outcome')
+    finally:
+        replace_function(db, original)
+    print('[CDP4-R4] advance rejects two/ordinal-1/bad-input/non-chat_tool/existing-run p4 '
+          'successors as invalid_outcome with zero write')
 
 
 def test_r5_owner_closing(db):

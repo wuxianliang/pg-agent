@@ -126,7 +126,7 @@ return 去重 + 按 (t,id) 排序
 实现约束：
 - 去重必须用 `SELECT DISTINCT` 子查询（`jsonb_agg(DISTINCT x ORDER BY x->>'t')` 在 PostgreSQL 会报错）；变量名不用 `out`（PL/pgSQL 参数模式关键字）。
 - 锁后重比对必须**重算** `settlement_seed(p_effect_id)`，不能复用旧种子；pin 集在锁前后变化即 `retry_with_closure` 零写。
-- 上界：run(1)+pins(≤32)+contributions(≤32)+provider episodes(≤32)+effect(1)+owner 链(≈6) ≈ 104，远低于 512。`manifest.requires` 允许 256 项（`41:58-62`），但 `run_start` 只 seed 过滤后的 model/tool 绑定；CDP4-B 用「256 个无关 requires + 32 个 model/tool」实测不越过 512。
+- 上界：run(1)+pins(≤32)+contributions(≤32)+provider episodes(≤32)+effect(1)+owner 链(≈6) ≈ 104，远低于 512。`manifest.requires` 允许 256 项（`41:58-62`），`run_start` 只 seed 过滤后的 model/tool 绑定。**CDP4-B 实测修正**：256 requires 的形状合法，但 224 个无关 requires + 32 model/tool 在 activation seed 阶段会因每个 resolve 目标展开 contribution+fiber+episode（224×3）触发 `retry_with_closure`，不能作为可执行生产路径；288-entry committed_view 只是 owner 注入夹具，不是合法 manifest。
 - 非 run kind 的种子必须与 DP3 逐字节相同，否则 CDP1-K 的 512/513 与 CDP3-B7 的 600 历史 effect 断言会翻转。
 
 ### 3.4 `run_start`：生产、claim 与结算
@@ -268,7 +268,7 @@ episode_begin → run_create → run_pin_bind → run_state → run_budget
 - replay-first：command replay 返回存储 response；terminal replay 返回 `disposition='replay'` 且 `emitted=[]`，不得重复 event/successor。
 - 过期 lease 不阻碍可信原 receipt；重领才 attempt/fence+1；reclaim 要求 `replay.repeat && replay.concurrent`，否则 `blocked_unknown`。
 - run 有 unknown effect 时：已 claimed 的 sibling 仍接受可信 receipt（扣预算、写 state、无 continuation/封口/pin release）；该 run 的 `ready` effect 新 claim 返回 `blocked_unknown` 零写。**claim 分支必须显式加这条检查**（`barrier_ready` 恒 true，只能产出 deferred，不能产出该错误码）；优先级：终态 replay → unknown wall → lease/reclaim → barrier → attempt/fence。`p6_plan`（`42:650-734`）的 unknown 检查先于 `deferred/run`，无需改。
-- 封口后结算 → `already_terminal` 零写；对已终态 effect 再 claim → SQLSTATE `55000`（immutable trigger 既有口径）。
+- 封口后结算 → `already_terminal` 零写；对已终态 effect 再 claim → replay-first `receipt_conflict`；只有直接 DML 重开 immutable 行才为 SQLSTATE `55000`。
 - `dependency_unresolved`：pin 已释放、provider episode epoch 漂移、contribution 已释放；`withdrawn_at` 非空不算。
 - 首次 claim 目前不检查 replay 双真（只在 reclaim `:1329-1331`）；DP4 在 `run_start` 处新增更强检查，因此无 replay 权利的 provider 无法进入任何 run。
 - `P0401` → `retry_with_closure` 零写。
@@ -326,7 +326,7 @@ episode_begin → run_create → run_pin_bind → run_state → run_budget
 ### 4.4 `CDP4-X` — 预算、终止与 e7→e13（W4）
 
 - M6 model failure → `model_failed` 封口 + pin 释放，无后继（W2 实现 reducer 分支，本阶段接 `run_seal` 验收）。
-- X1 `final`：`run_seal(final)` + `pins_release` 同事务；`ended_at`/`result` 正确；封口后结算 → `already_terminal` 零写；已终态 effect 再 claim → `55000`。
+- X1 `final`：`run_seal(final)` + `pins_release` 同事务；`ended_at`/`result` 正确；封口后结算 → `already_terminal` 零写；已终态 effect 再 claim → `receipt_conflict`；直接 DML 重开 → `55000`。
 - X2 `budget_exhausted`：1→0 时封口；`dropped_tool_calls` 记录正确；不建部分 tool。
 - X3 e7→e13 全走查：3→2→1→0，e10 provider retire 后旧 run 继续用旧 pin/epoch，e11c/e12 deferred 零写，e13 不重新 resolve 改绑。
 - X4 完成的 run 释放全部 run pin；`run_pin_release_delta` 只读断言保留；P6 在 seal 后不再被 run 阻塞。
@@ -335,7 +335,7 @@ episode_begin → run_create → run_pin_bind → run_state → run_budget
 ### 4.5 `CDP4-B` — 布局、ACL、预算与回归（W5）
 
 - B1 十表、manifest 18、唯一 `SECURITY DEFINER`、public EXECUTE 0、VIEW/EXTENSION 0。
-- B2 helper 四文件合计 ≤5000，临时四文件树恰好 5000 通过/5001 拒绝；DDL 前缀 ≤900（实测 462）。
+- B2 helper 四文件合计 ≤5000，临时四文件树恰好 5000 通过/5001 拒绝；DDL 前缀 ≤900（实测 461）。
 - B3 ACL：service 可 claim/settle 四 kind；admin/operator 对三个 run kind 一律 `unauthorized`；跨 family 拒绝。未获 replay 双真的 provider 在 DP4 生产链路里已被 `run_start` 拒绝，因此“reclaim 时 `blocked_unknown`”只能用 owner-fixture 的 `model_call`/`tool_call` 行构造，并标为 fixture 证据。
 - B4 生产证据替换：`runs` 只经 `run_create`/`run_state`/`run_budget`/`run_seal` 四个 op 写，`pins` 只经 `run_pin_bind` 写（按 `ELSIF v_op='run_` 切分源码断言 DML 只在五分支内）；`host_io` 六态仍 `0A000` 且快照不变；`dispatch`/`listener_call` 不可 claim；scanner/sweep/recover 正则保留并扩展到 DP4 新增函数；`run_pin_release_delta` 无 DML。
 - B5 结构上限：successor 16/17、batch 16/17、run pin 32/33、closure 512/513；600 条历史 effect 不膨胀 closure；`settlement_seed` 对 `host_io` 与 DP3 逐字节相同。
@@ -361,7 +361,7 @@ B0 与 W5 必须串行实跑 DP3 收尾的全部命令（`docs/reviews/cordis-v2
 | `dp4/README.md`、DP4 matrix/ledger | 新建收尾工件 | W5 |
 | 本文 | 回填裁决与各阶段 result | W5 |
 
-预算核算：3550 + 560(43) + 270(40) + 25(41) + 65(42) = **4470 ≤5000**，余量 530；DDL 461+1=**462 ≤900**。实际行数每里程碑实测；若预测超 4800，先简化校验，不压行、不挪文件、不删行为。
+预算核算：3550 + 560(43) + 270(40) + 25(41) + 65(42) = **4470 ≤5000**，余量 530；DDL 实测 **461≤900**（W1 的 state CHECK 是原行内追加）。实际行数每里程碑实测；若预测超 4800，先简化校验，不压行、不挪文件、不删行为。
 
 ## 6. Risks、兼容与回退
 
@@ -413,6 +413,8 @@ tool receipt、pin/key/liveness、sibling 查询、唯一 continuation、unknown
 ### W5 — 收尾
 
 26 条旧命令 + `CDP4-R/M/T/X/B` 串行全绿；冻结 hash、预算、DDL、ACL 复核；README/matrix/ledger 与本文 result 回填。每个里程碑按路径 `git add`、独立本地 commit 并记录 commit id；**不 push**。收尾输出 push-ready 摘要（commit 列表、分支、`git status`），等用户点名远程/分支后再推。
+
+**Result**（2026-10-27）：在 W4 commit `faccab4` 之上完成。31 条命令（26 条旧 gate + `CDP4-R`/`M`/`T`/`X`/`B`）逐条独立启动并等待退出，全部 exit 0，总耗时 164.0 秒（日志 `/tmp/dp4-w5-gates-rerun.log`）。CDP4-B B1–B6 通过：十表、manifest 18、唯一 `advance` DEFINER、public EXECUTE 0；临时 5000/5001 helper 树边界实际重跑；40=1549、41=1211、42=1000、43=560，合计 **4320≤5000**，DDL **461≤900**；service 四 kind claim/settle、admin/operator 三个 run kind claim+settle 拒绝、真实 foreign family 拒绝；`runs` 仅四个 typed op、`pins` 仅 `run_pin_bind`，`host_io` 六态 `0A000`，`dispatch`/`listener_call` 不可 claim，无 scanner，`run_pin_release_delta` 只读；successor 16/17、batch 16/17、pins 32/33、closure 512/513、600 历史 effect、host_io seed 逐字节均符合。R4 改为真实 `advance` 注入 `interpret_command`，覆盖 two/ordinal-1/bad-input/non-chat_tool/existing-run；T4c 走 advance claim/settlement 两条路径；X6/X1b 替换 `run_delta` 后走真实 `advance`。X7 现覆盖 forged run_start 的 initial state/budget、pin 集合（缺/多/contribution/epoch）、model successor 的 run/pin/key/capability/digests/contract/ordinal/唯一性，以及空 domain 的 owner_closing/start_failed/replay_right_missing 伪造；19 个负例均 `invalid_outcome` 且十表快照不变，另以合法 failure 拒启正例证明空 domain 不被整体拒绝。B5b 以 owner fixture 的 run_start effect 进入 `settlement_seed`/`discover_closure`：288-entry committed_view 过滤为 32 bindings，seed=97、closure=137，均非 NULL 且 <512。43 的 `tools` fact 只含 `tool_call` capability，B4 的 brain-key `tool_calls` 为 `invalid_outcome` 零写。M4 现在断言 reducer 非 catalog 闭包中每个 callee 都有 `prosqlbody` 且无 `pg_class`；40 的 `exact_keys/json_text/json_int` 已 `BEGIN ATOMIC`。§3.3 的 256+32 乐观上界已按实测修正：256 requires 形状合法，但 224+32 在 activation seed 展开为 224×3 个目标后 `retry_with_closure`，不能作为可执行生产路径；288-entry committed_view 仅为 owner 注入夹具，288 requires 被 manifest 形状拒绝。`validate_run_domain` 现独立重算 run_start 的 initial state/剩余预算、`run_pin_bind` 与 committed model/tool 绑定集合、唯一 model successor 的 run/pin/key/digests/contract，以及空 domain 拒启的 reason/receipt/event；不再以“残余边界”记录。43 通过合并 batch/receipt 的重复唯一性扫描、`run_bindings` 谓词复用、model/tool input/pin 公共校验、集合式 pin 释放比较，控制到 **560≤560**（无压行、无搬文件）。单次 Oracle `mode=review` 已执行；其 run_start 独立验证要求已落实，未重复 review。W5 只做本地 commit，不 push。
 
 ## 8. References 与保真索引
 
