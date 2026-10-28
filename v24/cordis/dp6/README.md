@@ -1,12 +1,13 @@
 # Cordis v2 DP6 — fair maintenance, crash recovery and receipt journal
 
-Status 2026-10-28: **W1 fair scanner, W2 external-effect crash recovery and W3 unknown debt /
-dispose convergence are implemented and gated; the final 38-command serial run is recorded in the
-conformance matrix. W4–W5 remain future milestones.** This directory contains the single-host
-maintenance scanner, the `ensure` wake-up command, the independent observer ACL, the W2
-claim/receipt/journal executor, the W3 debt diagnostics and dispose convergence evidence, and the
-`CDP6-S`/`CDP6-R`/`CDP6-U-D` gates. It does not contain drain upgrade/rollback or the final
-boundary closeout; those are W4–W5.
+Status 2026-10-29: **W1 fair scanner, W2 external-effect crash recovery, W3 unknown debt / dispose
+convergence and W4 drain-based upgrade/rollback + HMR trigger are implemented and gated; the final
+39-command serial run is recorded in the conformance matrix. W5 remains the future closeout
+milestone.** This directory contains the single-host maintenance scanner, the `ensure` wake-up
+command, the independent observer ACL, the W2 claim/receipt/journal executor, the W3 debt
+diagnostics and dispose convergence evidence, the W4 switch driver/HMR trigger, and the
+`CDP6-S`/`CDP6-R`/`CDP6-U-D`/`CDP6-H` gates. It does not contain the final boundary closeout;
+that is W5.
 
 - Plan: `docs/plans/v24-cordis-dp6-recovery-maintenance-plan-2026-10-28.md`
 - Conformance matrix: `docs/reviews/cordis-v2-dp6-conformance-matrix-2026-10-28.md`
@@ -53,6 +54,21 @@ W3 changed only `42_teardown.sql` (one predicate), `driver.py` diagnostics and t
 command kind, table, column, protocol error code, second scheduler, second writer or second
 interpreter was added. `advance` remains the only `SECURITY DEFINER` writer, and terminal
 effect/contribution/tombstone facts remain immutable.
+
+## W4 deliverables
+
+| Surface | File | Contract |
+|---|---|---|
+| drain switch driver | `v24/cordis/dp6/driver.py` (`SwitchPlan`, `SwitchDriver`) | freezes operation UUID/actor/source/target/digest/source-seq; every phase is rebuilt from committed `requests`/`fibers`/`installs`/`episodes`/`contributions`; every write is the existing `command_install`/`command_reconcile` through `advance`; drain is produced only by the W1 scanner |
+| rollback reuse declaration | `v24/cordis/sql/41_lifecycle.sql` | a second exact `command_install` payload `{mode:'reuse',install_id,fiber_id,expected_digest}` creates one fiber on an immutable install: no scope/install row, no declaration rewrite, existing child contribution/`dispose_child`/iterator rules |
+| reuse event | `v24/cordis/sql/40_advance.sql` | `install_reused` exact payload (`scope_id,fiber_id,owner_fiber_id,owner_episode_id,child_contribution_id`); no new command kind, table, column or error code |
+| HMR trigger | `v24/cordis/dp6/driver.py` (`HmrTrigger`) | one pre-deployed JSON descriptor per identity; it compares the running install version+digest and submits the identical frozen switch request; no download, import, ESM cache or state hot-swap |
+| W4 gate | `v24/cordis/dp6/test_upgrade.py` | CDP6-H1–H9 plus the H3b early-activation negative, H3c dependency-unresolved and H4a–H4d real SIGKILL/restart boundaries; 14 disposable databases, Fake/no adapter, no network |
+
+W4 changed `40_advance.sql` (+7) and `41_lifecycle.sql` (+204); `42`/`43`/`44`, the loader,
+permission file and manifest are untouched. No command kind, table, column, protocol error code,
+second scheduler, second writer or second interpreter was added. `advance` remains the only
+`SECURITY DEFINER` writer and the only domain writer.
 
 ## Unknown-debt contract
 
@@ -146,6 +162,101 @@ still runs teardown.
 Every no-work/fault path returns or raises before `validate_and_apply_delta`: ten-table zero write, no
 request/effect row, no cached no-op. A committed schedule replays by request key; no-op results are
 intentionally uncached and a fresh attempt UUID is used after a received result.
+
+## Drain-based switch contract
+
+A switch is one frozen intent, submitted through the existing command protocol and advanced only by
+committed facts. `SwitchPlan` fixes `kind` (`U` upgrade / `R` rollback), `operation` UUID, `actor`,
+`source_fiber`, `target_fiber`, `source_seq`, `source_install`, `target_install`,
+`expected_digest`, the exact first-request payload and the expected service keys. The keys are:
+
+```text
+cordis/dp6/switch/v1/<U|R>/<operation>/<source>/<target>/<source-seq>/start
+cordis/dp6/switch/v1/<U|R>/<operation>/<source>/<target>/off/<source-seq>
+cordis/dp6/switch/v1/<U|R>/<operation>/<source>/<target>/on/0
+```
+
+They are non-reserved (the reserved `cordis/reconcile/...` continuation pairing is unchanged) and
+bounded well below the 512-character request-key limit. The first request is the existing
+`command_install` (new declaration for `U`, reuse declaration for `R`); `off`/`on` are existing
+`command_reconcile` commands at the frozen source sequence and target sequence `0`. All three use the
+same real LOGIN; `advance` records that actor on each effect. The committed `requests` row stores the
+canonical payload bytes, so a restart can re-verify the declaration (version/digest/ids) instead of
+inventing a new intent. Conflicting bytes on the same actor/key are `request_conflict`; the same
+operation UUID from another actor is `effect_id_conflict`; a second unfinished operation on one
+`(scope, identity)` slot is `switch_slot_busy`, except an explicit reversal whose source is the
+other operation's target and whose target install is the other operation's source install.
+
+`SwitchDriver.status` derives the phase from committed facts only:
+
+```text
+start_pending -> off_pending -> draining -> on_pending -> activating -> complete
+                                            \-> failed (activation failure at the current seq)
+any stage -> blocked (payload/actor/digest/slot/stale-seq/target-moved/address-missing)
+```
+
+- **start** creates the new immutable install/fiber (or the rollback fiber on the old install) with
+  `want_on=false, control_seq=0`.
+- **off** is sent only at the frozen `source_seq`; an independent control change is
+  `blocked/stale_control_seq`, never silently retargeted.
+- **draining** waits until the source is `want_on=false`, has no open episode, no
+  `retire_started_at`, no unreleased contribution, no live pin (consumer or provider), no open run,
+  and no ready/claimed/unknown effect. The scanner produces the drain; the driver never writes a
+  lifecycle column.
+- **on** is sent only when the target is still the same fiber at `control_seq=0`, never on.
+- **complete** requires the target episode active, no pending reconcile slot, and (when the expected
+  key set is known) every declared service key live from that exact episode. The empty window
+  between the old release and the new activation is legal and observable; two live versions are
+  impossible because `contributions_service_addr` still arbitrates the address.
+
+Rollback reuses the old immutable install through the exact 4-key payload. Admission (under G and
+the same closure lock) requires: the install is `installed`; the digest matches; it is not a root
+install; its scope lineage is open; its owner fiber/episode is the live current generation (owner
+install installed, want_on, no dispose/retire/failure); every existing fiber of the install is off
+and drained; there is no unknown effect on any of its fibers; and the target fiber does not exist.
+The declaration (scope, owner, manifest, contracts, overlay, policy, digest) is read from the old
+install and never rewritten. The delta is fiber-only: one `fiber_create`, one child
+`contribution_append` with `dispose_child` inverse, one `episode_progress`, one `install_reused`
+event, no successors, no scope/install row. `validate_install_domain` requires exactly those ops,
+fields, ledger seq/iterator and event; `assert_delta_applied` proves the applied fiber/contribution/
+progress postcondition. The closure seed is the immutable install + scope + owner fiber/episode +
+owner-episode contributions + every fiber of the install, so `dispose_subtree` already covers the
+old and new instances and `install_dispose_finish` requires all of them tombstoned.
+
+**Root installs cannot be reused.** A root install has no owner and a second ownerless fiber would
+violate the single-root `fibers_graph` invariant; admission returns
+`invalid_args / install_reuse_root` and the driver returns `switch_target_install_exists` for the
+in-place variant. Non-root child installs are fully supported. A disposed install
+(`install_not_ready / install_reuse_state`) or a changed owner episode
+(`owner_closing / install_reuse_owner`) is never revived.
+
+**Restart.** `resume(kind, operation, actor)` parses the one committed start key and rebuilds the
+plan from the committed request bytes; a U plan carries the declaration, an R plan derives the
+expected service keys from the source fiber's retained service-contribution history. The driver then
+continues at the first missing phase. If the first request never committed, the database has no
+intent: only the caller can resubmit the same operation UUID/key/payload. There is no phase table,
+cursor or scheduler; `SwitchPlan.as_dict()`/`from_dict()` let a caller persist its own intent, but
+the committed request remains authoritative.
+
+## HMR trigger
+
+`HmrTrigger(driver, directory, actor)` reads one pre-deployed JSON descriptor per managed identity:
+
+```json
+{"identity":"svc","version":"2","artifact_digest":"<sha256>",
+ "operation_uuid":"<uuid>","source_fiber_id":"<uuid>",
+ "install_id":"<uuid>","target_fiber_id":"<uuid>",
+ "manifest":{},"contracts":{},"policy_ref":null,"overlay":{}}
+```
+
+A tick compares the running source install's version+digest with the descriptor. If equal it returns
+`hmr_current`; otherwise it calls `SwitchDriver.start` with the descriptor's fixed operation/target
+UUIDs and scope/owner read from the source install. Repeating a tick sees the committed operation and
+replays (`hmr_inflight`/`start_replay`); a different descriptor under the same operation is blocked,
+never treated as a new intent. Missing/corrupt/mismatched descriptors are `hmr_*` diagnostics with no
+write. The trigger opens no socket, imports no code, downloads nothing, invalidates no ESM cache and
+moves no in-process state: it only submits the same version-switch request. The manual driver flow
+works without any watcher.
 
 ## W2 external execution and recovery contract
 
@@ -262,6 +373,14 @@ preserved, not weakened.
    `receipt_not_publishable` are debt/blocks, not resolutions.
 6. Stop the scanner before external adapters on rollback; keep effects, unknown receipts, pins and
    tombstones. Do not clear the DB, quarantine journal entries or hand-edit lifecycle rows.
+7. For an upgrade/rollback, build `SwitchDriver` with the same observer/actor factories and call
+   `plan_upgrade`/`plan_rollback`, then `start` and `step`/`drive`. The caller supplies the operation
+   UUID, target fiber UUID and (for an upgrade) the new declaration; `start` fixes the request key.
+   Do not hand-edit `want_on`/`control_seq`, do not create a second phase table, and do not submit
+   `on` before the source drain observation says `on_pending`.
+8. For HMR, write the pre-deployed descriptor and call `HmrTrigger.tick()` periodically. It only
+   submits the same switch request; never reload modules, invalidate an ESM cache or move process
+   state.
 
 ## CDP6-S gate
 
@@ -317,6 +436,35 @@ owner, pin-cycle, mixed owner+pin-cycle and over-depth rejections at COMMIT; a >
 and an in-flight slot staying stable and zero-write; and service/operator/admin/observer negatives
 proving no LOGIN can rewrite, release or insert around a debt.
 
+## CDP6-H gate
+
+```bash
+uv run python v24/cordis/dp6/test_upgrade.py
+```
+
+The gate covers: a new declaration identity with a same-digest new version, in-place install
+overwrite rejected by the driver, the command admission and the immutable-install trigger, and a
+duplicate `(scope,identity,version)` refused (`H1`); an open run, an activation pin and created host
+listener children each keeping the old address live while the source drains, with the released pin
+and contribution history still readable and `resolve` moving to the new generation (`H2`); one live
+provider per slot throughout, the unique address index refusing a second live insert, an observable
+empty window with no live row and no resolution, and activation only after the old release (`H3`);
+activation attempted before the release failing with `provide_conflict`, never two live versions,
+then a fresh rollback restoring the old declaration (`H3b`); an unmet dependency leaving the switch
+`activating` with no episode, no failure write, an empty address and a successful explicit rollback
+(`H3c`); a real pre-COMMIT rollback leaving no intent, and real child-process SIGKILLs after the
+start/off COMMIT, mid-P6, at the address release and after the on COMMIT resumed from committed
+facts with exactly one request per phase and no duplicate install/fiber/episode (`H4a`–`H4d`);
+conflicting payload/actor, same-slot concurrency, an independent control change, an
+independently enabled target, a duplicate fiber, a digest mismatch and a changed owner episode all
+refused or safely blocked (`H5`); rollback on the immutable old declaration with a new fiber/episode,
+old fiber asleep, whole-install dispose covering both historical instances, then disposed-install
+reuse refused (`H6`); a terminal unknown keeping the upgrade draining and refusing rollback reuse
+without clearing the debt (`H7`); an upgraded service and event listener resolving only to the new
+generation with the window/dispatch children never mixed (`H8`); and HMR ticks submitting the
+identical stable request, replaying on a repeat tick, blocking descriptor corruption/mismatch and
+exposing no download/ESM path (`H9`).
+
 ## Verified W3 baseline
 
 Measured at the W3 gate (physical lines, `str.splitlines()`, same count as the gates):
@@ -344,10 +492,53 @@ database and Fake handlers. The W1 corrected gate was reviewed once by Oracle gr
 review result was persisted; this acceptance session therefore did not launch a duplicate review and
 records the direct code audit plus the 38-command run instead.
 
+## Verified W4 baseline
+
+Measured at the W4 gate (physical lines, `str.splitlines()`, same count as the gates):
+
+```text
+40_advance.sql  1692      (+7: install_reused payload)
+41_lifecycle.sql 1685     (+204: reuse payload/admission/delta/validator/seed/binding)
+42_teardown.sql 1119
+43_loop.sql      700
+44_events.sql    622
+40-49 total     5818      (report-only; 2026-10-28 authorization, no cap)
+domain DDL       465      (report-only; bookkeeping 18+19 = 22 separate)
+manifest 19 / tables 10 / pg_proc 172 (164 private helpers + 8 trigger guards)
+one DEFINER advance / public EXECUTE 0 / command kinds 3 / protocol errors 24
+closure 512 / successor 16 / address uniqueness / I7 unchanged
+dp6/driver.py 1868 / dp6/test_upgrade.py 1215
+                  (report-only; no cap)
+```
+
+The 39-command serial gate evidence (35 inherited + `test_scanner.py` + `test_recovery.py` +
+`test_dispose.py` + `test_upgrade.py`) is recorded in the conformance matrix; per-command sum
+283.3 s, wall ≈306.2 s, 39/39 exit 0. No real provider socket, external adapter or network call was
+used; every gate used a disposable pgembed database and Fake/absent handlers. No W4 Oracle design
+was launched because the reuse admission was proven against the existing ABI (payload, closure,
+validator, postcondition, owner/episode, I7, unique address, dispose); the root-install limitation
+is recorded as a gated refusal, not worked around.
+
 ## Known limitations / non-claims
 
-- W3 is not W4–W5 evidence. Drain upgrade/rollback, the HMR trigger and the final `CDP6-B` boundary
-  matrix remain unimplemented.
+- W4 is not W5 evidence: the final `CDP6-B` boundary matrix, a whole-DP6 closeout and any W5
+  publication remain future work.
+- Root-install rollback is structurally unsupported: a second ownerless fiber violates the
+  single-root invariant, so `install_reuse_root` / `switch_target_install_exists` is a gated refusal.
+  Non-root child installs are fully supported.
+- A rollback resumed after a crash derives its expected service keys from the source fiber's
+  retained service-contribution history; an install whose address set changed without a source
+  contribution is reported as `blocked/switch_address_missing`, not guessed.
+- The HMR descriptor is a host-side pre-deployed file, not a database table; its `operation_uuid` and
+  target UUIDs are fixed by the deploy step. The trigger never downloads, imports, invalidates an
+  ESM cache or preserves in-process state.
+- A switch whose source drain is blocked (unknown debt, missing replay right, live pin/run/child)
+  stays `draining`/`blocked`; the operator must resolve the obligation or start an explicit
+  rollback. There is no timeout-based escalation.
+- W4 did not change the observer ACL, the 24 error codes, the three command kinds, the ten tables or
+  the dispose planner.
+- W3's 38-command evidence is historical; the W4 39-command run supersedes it. `CDP6-B` and the W5
+  closeout remain unimplemented.
 - Automatic terminal-unknown resolution is a design gate, not a W3 deliverable: an out-of-band
   compensation has no approved ABI, so the debt stays blocked (CDP6-U6).
 - Below a debt, `blocks` names the obligation classes touched by raw facts; it is a diagnostic

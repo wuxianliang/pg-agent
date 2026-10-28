@@ -68,7 +68,14 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
    AND (p_payload->'owner_fiber_id'='null'::jsonb OR v24_cordis.json_uuid(p_payload->'owner_fiber_id'))
    AND (p_payload->'owner_episode_id'='null'::jsonb OR v24_cordis.json_uuid(p_payload->'owner_episode_id'))
    AND (p_payload->'child_contribution_id'='null'::jsonb OR v24_cordis.json_uuid(p_payload->'child_contribution_id'))
-  WHEN p_kind='fiber_target_requested' THEN
+   WHEN p_kind='install_reused' THEN
+    coalesce(v24_cordis.exact_keys(p_payload,ARRAY['scope_id','fiber_id','owner_fiber_id',
+     'owner_episode_id','child_contribution_id']),false)
+    AND v24_cordis.json_uuid(p_payload->'scope_id') AND v24_cordis.json_uuid(p_payload->'fiber_id')
+    AND v24_cordis.json_uuid(p_payload->'owner_fiber_id')
+    AND v24_cordis.json_uuid(p_payload->'owner_episode_id')
+    AND v24_cordis.json_uuid(p_payload->'child_contribution_id')
+   WHEN p_kind='fiber_target_requested' THEN
    coalesce(v24_cordis.exact_keys(p_payload,ARRAY['want_on','control_seq']),false)
    AND jsonb_typeof(p_payload->'want_on')='boolean'
    AND v24_cordis.json_int(p_payload->'control_seq',0,9223372036854775807)

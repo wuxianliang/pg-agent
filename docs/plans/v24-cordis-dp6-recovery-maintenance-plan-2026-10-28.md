@@ -518,3 +518,93 @@ CDP6-R 覆盖（`test_recovery.py`，真实子进程 kill/restart，Fake handler
 - `host_io`/非 host listener 仍 unsupported；无真实 adapter/socket。W3 未触发 scoped Oracle design（无真正设计阻塞），也未启动 Oracle review；验收为直接代码审计 + 38 条实跑（DP6-D47）。
 
 发布状态：仅 stage 本 W3 的 6 个文件（`42_teardown.sql`、`driver.py`、`test_dispose.py`、DP6 README、matrix、ledger）与本 Result；用户既有 10 modified + 26 untracked 不 stage；未 commit/push，父级验收后按仓库规则普通提交并 push `origin/v24`（不 force、不 `--no-verify`）。
+
+### W4 Result（2026-10-29，drain upgrade / rollback / HMR 与 CDP6-H）
+
+**结论：W4 Done-when 与 CDP6-H 已实现；最终 39/39 gate 串行 exit 0；W5 未开始。** 起点 HEAD
+`d58a6ee5a88057a33c462cbe24918d02f63980f1`，分支 `v24`，`origin/v24` 同 SHA。本会话只改
+`v24/cordis/sql/40_advance.sql`（+7 物理行）、`v24/cordis/sql/41_lifecycle.sql`（+204）与
+`v24/cordis/dp6/driver.py`，并新增 `v24/cordis/dp6/test_upgrade.py`；未改 42/43/44、loader、
+permission、manifest、设计稿或冻结面；未新增表/列/command kind/错误码/解释器/第二 writer。
+
+**语义准入（实现前文档级证明，未触发 Oracle）：**reuse 是既有 `command_install` 的第二种精确
+payload `{mode:'reuse',install_id,fiber_id,expected_digest}`。证明覆盖：payload 精确键集与 canonical
+bytes/effect id；closure seed（install+scope+owner fiber/episode+owner episode contributions+该
+install 全部 fibers）与 G-first 锁序/锁后重验；validator（零 scope/install create、恰一
+fiber/contribution/progress、owner 字段、child inverse、`install_reused` event、`successors:[]`）；
+既有 `assert_delta_applied` postcondition；owner/episode live+current、iterator/seq 上界、live
+resolve 与同代 failure；I7（reuse 是 command_install，不占 reconcile slot）；唯一地址仍由
+`contributions_service_addr` 与 P2/P4 仲裁；`dispose_subtree(install)` 覆盖该 install 的全部历史
+fiber；operation UUID/actor/source/target/source-seq/digest 由首个 request key/bytes 固定；无 phase
+table/cursor。**root install 因单 root 不变量结构性不可复用**，admission 返回
+`invalid_args/install_reuse_root`、driver 返回 `switch_target_install_exists`，作为受 gate 的拒绝
+记录，不伪造可回滚；非 root child install 完整支持。证明表见矩阵 §W4。
+
+**实现面：**
+
+- **driver**：`SwitchPlan` 固定 kind/operation/actor/source/target/source_seq/install/digest/payload/
+  provides；`SwitchDriver` 以 observer 只读事实派生
+  `start_pending→off_pending→draining→on_pending→activating→complete|failed|blocked`；
+  `start`/`off`/`on` 只提交既有 `command_install`/`command_reconcile`，drain 仅由 W1
+  `Maintainer` 推进；`resume` 从已提交 start request 重建（U 读 declaration，R 从 source fiber
+  保留的 service 历史派生 expected keys），首提交前无 DB intent 时只能由调用方重交；slot/actor/
+  payload/stale-seq/target-moved 冲突均停止而不猜测。
+- **41**：reuse admission/delta/validator/seed/preflight/references/binding 分支；新 fiber 引用
+  不可变 install 的 scope/owner，append 既有 child contribution（`dispose_child` inverse）与
+  episode_progress；不创建/修改 install，不复活旧 fiber。
+- **40**：`event_payload_valid` 增加 `install_reused` 精确 payload；未改任何 command kind/错误码/
+  表/列。
+- **HMR**：`HmrTrigger` 仅读预部署 JSON descriptor（identity/version/digest/operation_uuid/
+  source_fiber_id/install_id/target_fiber_id/manifest/contracts/policy_ref/overlay），与运行中
+  install 的 version+digest 比较后提交同一 frozen switch request；重复 tick replay，descriptor
+  形状/identity 不符为诊断；无下载/import/ESM cache/进程内状态搬运，手工 driver 流程不依赖 watcher。
+
+**CDP6-H 覆盖：**H1（新声明身份/digest 不变/原地覆盖被 command、driver、immutable trigger 拒绝，
+重复 scope+identity+version 零写）；H2（open run、activation pin、已创建 host listener child 分别
+阻止旧地址释放；withdrawn 后 pin/contribution 历史仍可读，release 后 resolve 只指向新代）；H3（全程
+单 live provider 唯一索引；空窗 0 live/无 resolve/旧行仍可读；新 provider 不早于 release 激活）；
+H3b（release 前 on → `provide_conflict` 失败、无双 live，之后显式 rollback 成功）；H3c（依赖
+`missing-svc` 不满足 → on successor `dependency_unresolved` 零写、无 episode/failure、地址为空、
+switch 保持 activating，随后显式 rollback 成功）；H4a–H4d（首请求 COMMIT 前回滚无 intent；
+start/off COMMIT 后、mid-P6、address-release、on COMMIT 后真实 SIGKILL，空内存新 driver 从已提交
+事实恢复，三相位各恰一 request、无重复 install/fiber/episode）；H5（同 operation 不同 bytes/actor、
+同槽未完成操作、独立 control seq、目标被独立启用、重复 fiber、digest 不匹配、旧 owner episode 变化
+均拒绝或稳定 blocked，零写）；H6（rollback 新 fiber/episode、旧 fiber 不复活、旧声明不变、新地址
+归属新 episode；整个旧 install dispose 覆盖两个历史实例；disposed install 不可再复用/回滚；R start
+与 R on 真实 SIGKILL 恢复）；H7（terminal unknown 使 upgrade 持续 draining、地址不释放、debt 行
+byte-stable、quiet pass 零写、rollback reuse `blocked_unknown/install_reuse_debt` 零写）；H8（升级后
+service 与 event listener 均只指向新代，空窗与 dispatch child 不混代）；H9（HMR 首 tick 提交 frozen
+request，重复 tick replay，current descriptor 零写，malformed/mismatch 诊断，无 download/ESM 路径）。
+
+**实跑：**`uv run python v24/cordis/dp6/test_upgrade.py` exit 0，14 个 H 标签；随后 39 条命令
+（35 继承 + `test_scanner.py` + `test_recovery.py` + `test_dispose.py` + `test_upgrade.py`）逐条独立
+`uv run python` 串行，**39/39 exit 0**；per-command 合计 **283.3 s**，wall ≈**306.2 s**；日志
+`/tmp/dp6_w4_final2/gates/`，汇总 `/tmp/dp6_w4_final2/gates.tsv`。最终串行后又单独重跑一次 `test_upgrade.py`，
+仍 exit 0。无 skipped gate、无真实 provider socket、每个 DB 为 disposable pgembed；14 个 H 测试各用
+独立数据库，崩溃用例使用真实子进程 SIGKILL（start 前回滚、start/off、mid-P6、release、on、R
+start/R on）。
+
+**实测：**40=**1692**、41=**1685**、42=1119、43=700、44=622，total **5818**（report-only，无替代
+上限）；领域 DDL **465**；簿记 18+19=**22** 分列；manifest 19、tables 10、`pg_proc` **172**
+（164 private helpers + 8 trigger guards）、唯一 DEFINER `advance`、public EXECUTE 0、无 VIEW/
+EXTENSION、3 command kinds、24 错误码、closure 512/successor 16/I7/唯一地址不变。`driver.py`
+**1868**、`test_upgrade.py` **1215**（report-only）。冻结 `v24/load.py`、`v24/sql/**`、`v24/s1`–`s12`
+与 `57e2c1e` diff 仍 exit 0，`git diff --check` exit 0。
+
+**剩余限制：**
+
+- **root install rollback 不支持**：单 root 不变量使第二条 ownerless fiber 不可创建；已作为
+  `install_reuse_root`/`switch_target_install_exists` 拒绝记录，非 root child install 完整支持。
+- **R resume 的 expected keys 从 source fiber 保留的 service 历史派生**；若地址集合在无 source
+  contribution 的情况下变化，报告 `blocked/switch_address_missing`，不猜测。
+- **未知债务仍安全阻塞**：terminal unknown 使 upgrade 持续 draining，rollback reuse 返回
+  `blocked_unknown/install_reuse_debt`，不清理、不改写 terminal 事实；人工对账 ABI 仍是设计闸门。
+- **HMR 是宿主侧预部署 descriptor 触发器**：operation/target UUID 由部署步骤固定，不下载、不
+  import、不失效 ESM、不搬运进程内状态；descriptor 不是 DB 表。
+- 无 W4 Oracle design/review：reuse 合同已按既有 ABI 证明，root 为显式拒绝，无真正设计阻塞。
+- W5（`CDP6-B` 与 DP6 总收尾）未开始。
+
+**发布状态：**仅 stage 本 W4 的 7 个文件/工件（`40_advance.sql`、`41_lifecycle.sql`、`driver.py`、
+`test_upgrade.py`、DP6 README、matrix、ledger）与本 Result；设计稿、DP1–DP5 与用户既有 10 modified
++ 26 untracked 路径不 stage。按父级本轮指令，**本会话尚未 commit/push**；父级验收后按仓库规则普通
+提交并 push `origin/v24`（不 force、不 `--no-verify`）。W5 由下一位 fresh pair agent 负责。

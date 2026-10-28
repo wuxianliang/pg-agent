@@ -1,6 +1,6 @@
 # Cordis v2 DP6 Conformance Matrix
 
-B0 (admission audit) executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `fad3a55800d8ccb9548ec720886e07ad8fcc2c13`. **This matrix now records B0, W1 and W2.** B0 created no DP6 runtime/SQL/test scaffold; W1 implemented the fair scanner, `ensure`, observer ACL and `CDP6-S` gate; W2 implemented the external-effect executor, receipt journal, `run_start` source binding, dispatch recovery and `CDP6-R` gate. W3–W5 remain unimplemented. The B0 verdict below is preserved as history; the operative status is in §W1 implementation and §W2 implementation. B0's original capacity verdict was **blocked at admission** (helper tree exactly 5500/5500, no proven semantics-preserving reclaim, 380–560 estimated new helper lines). The user's same-day authorization (`授权无视容量预算要求`) waives the three line-count budgets. The B0 verdict below is preserved as history; W1 semantic admission was subsequently resolved by Oracle (both lanes admitted `ensure` with corrections), and the corrected W1 implementation/CDP6-S evidence is in §W1 implementation.
+B0 (admission audit) executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, branch `v24`, HEAD `fad3a55800d8ccb9548ec720886e07ad8fcc2c13`. **This matrix now records B0, W1, W2, W3 and W4.** B0 created no DP6 runtime/SQL/test scaffold; W1 implemented the fair scanner, `ensure`, observer ACL and `CDP6-S` gate; W2 implemented the external-effect executor, receipt journal, `run_start` source binding, dispatch recovery and `CDP6-R` gate; W3 implemented the unknown/inverse debt diagnostics and dispose convergence; W4 implemented the drain-based switch driver, the reuse-declaration rollback and the HMR trigger with `CDP6-H`. **W5 remains the future closeout milestone.** The B0 verdict below is preserved as history; the operative W1–W4 evidence is in the corresponding implementation sections. B0's original capacity verdict was **blocked at admission** (helper tree exactly 5500/5500, no proven semantics-preserving reclaim, 380–560 estimated new helper lines). The user's same-day authorization (`授权无视容量预算要求`) waives the three line-count budgets. The B0 verdict below is preserved as history; W1 semantic admission was subsequently resolved by Oracle (both lanes admitted `ensure` with corrections), and the corrected W1 implementation/CDP6-S evidence is in §W1 implementation. W4's reuse admission was proven against the existing ABI rather than a new design; the root-install refusal is recorded in the W4 section.
 
 Authority: `docs/plans/v24-cordis-dp6-recovery-maintenance-plan-2026-10-28.md` (B0 §3.1–3.4, §4.3.1, §4.4–4.7, §5, §9.1), `docs/designs/cordis-plugin-system-2026-10-25.md` §10.1 (including the 2026-10-28 authorization paragraph), and the user's 2026-10-28 authorization. DP1–DP5 historical Results and artifacts were read only.
 
@@ -15,9 +15,9 @@ User authorization, verbatim: **「授权无视容量预算要求」**.
 | Domain DDL physical line count (previously 900) | waived as an admission/gate failure condition; still measured and reported |
 | `closure<=512`, `successor<=16`, protocol key/depth, ACL, validator/postcondition, replay, transaction-external IO | **unchanged**; all semantic/ACL/file/manifest negative examples still apply. The old line-only probes (5500/5501, 43≤700, DDL≤900) are revoked by the authorization |
 | New finite line cap | **none set**; the authorization does not substitute a different number |
-| W1 semantic admission | **resolved (W1)** — Oracle group `D2EED4FF-ECCC-44C2-803A-7CA520DFC462` admitted `ensure` with corrections; see §W1 semantic admission, the Oracle design record, and §W1 implementation. Reuse/rollback remains W4-open |
+| W1 semantic admission | **resolved (W1)** — Oracle group `D2EED4FF-ECCC-44C2-803A-7CA520DFC462` admitted `ensure` with corrections; see §W1 semantic admission, the Oracle design record, and §W1 implementation. Reuse/rollback was later implemented in W4 for non-root installs; the root case is a gated refusal |
 
-The original blocked-at-admission analysis below is preserved as historical evidence (it is why the authorization was requested and why W1 begins from `R=0`). At B0 the operative result was: capacity admission passes by explicit authorization; B0 baseline + capacity done; W1 semantic admission pending; W1–W5 not started; `ensure`/reuse not implemented. W1 later resolved the semantic admission and implemented `ensure`/the scanner; reuse/rollback remains W4-open.
+The original blocked-at-admission analysis below is preserved as historical evidence (it is why the authorization was requested and why W1 begins from `R=0`). At B0 the operative result was: capacity admission passes by explicit authorization; B0 baseline + capacity done; W1 semantic admission pending; W1–W5 not started; `ensure`/reuse not implemented. W1 later resolved the semantic admission and implemented `ensure`/the scanner; W4 later implemented non-root reuse/rollback and the drain switch; the root case is refused, and W5 remains unimplemented.
 
 ## Milestone status
 
@@ -27,10 +27,12 @@ The original blocked-at-admission analysis below is preserved as historical evid
 | W1 `CDP6-S` | **complete** (Oracle semantic admission with corrections; corrected `test_scanner.py` and final 36-command serial run) |
 | W2 `CDP6-R` | **complete** (external executor, receipt journal, `run_start` source, dispatch recovery; `test_recovery.py` and final 37-command serial run) |
 | W3 `CDP6-U/D` | **complete** (unknown/inverse debt diagnostics, sealed-subtree inverse barrier, zero-write in-flight slot, `test_dispose.py` and final 38-command serial run) |
-| W4 `CDP6-H` | not started |
+| W4 `CDP6-H` | **complete** (drain switch, reuse-declaration rollback, HMR trigger; `test_upgrade.py`, 14 H labels and final 39-command serial run from start HEAD `d58a6ee`) |
 | W5 `CDP6-B` | not started |
 
-W1 gate `v24/cordis/dp6/test_scanner.py`, W2 gate `v24/cordis/dp6/test_recovery.py` and W3 gate `v24/cordis/dp6/test_dispose.py` exist and passed. The remaining two DP6 command names (`test_upgrade.py`, `test_boundaries.py`) are still not implemented/not run.
+W1 gate `v24/cordis/dp6/test_scanner.py`, W2 gate `v24/cordis/dp6/test_recovery.py`, W3 gate
+`v24/cordis/dp6/test_dispose.py` and W4 gate `v24/cordis/dp6/test_upgrade.py` exist and passed. The
+remaining DP6 command name (`test_boundaries.py`) is still not implemented/not run.
 
 ## Environment
 
@@ -889,6 +891,199 @@ design/loader/frozen/DP1–DP5 file is staged. Per the parent handoff, this sess
 or push; the normal milestone commit/push is performed after that verification. W4/W5 are not
 started.
 
+## W4 implementation and gate evidence
+
+W4 started at HEAD `d58a6ee5a88057a33c462cbe24918d02f63980f1`, branch `v24`, `origin/v24` at the
+same SHA; the main checkout was not touched.
+
+### Reuse-declaration admission proof
+
+The W4 premise is a **new fiber instance on an existing immutable install**. The proof was made
+against the current ten tables, three command kinds, 24 error codes, closure 512 / successor 16 /
+I7 / one G / unique address / existing dispose planner before implementation; the root case is
+explicitly refused rather than forced.
+
+| Requirement | Proof |
+|---|---|
+| payload | The legacy 11-key payload is unchanged. Reuse is a second **exact** 4-key shape `{mode:'reuse',install_id,fiber_id,expected_digest}` with `mode='reuse'`, two UUIDs and a lowercase 64-hex digest; any extra/missing key or mixture is `invalid_args/install_payload`. `advance` still verifies base64 canonical bytes and the deterministic effect id. |
+| command/key identity | Same `command_install` kind; no new interpreter. The switch keys are non-reserved, so the reserved `cordis/reconcile/...` ↔ `action='advance'` pairing is untouched; all keys are far below the 512-character limit. |
+| closure | Reuse seed = immutable install + scope + owner fiber/episode + owner-episode contributions + **every fiber of the install**. `discover_closure` expands the same way as the legacy child-install seed; `lock_closure` stays G-first with the same order; the post-lock `discover_closure(seed) IS DISTINCT FROM closure` recheck is unchanged. Exceeding 512 returns `retry_with_closure`. |
+| validator | Reuse uses only the existing `fiber_create`, `contribution_append`, `episode_progress` ops already in the `install` branch whitelist. `validate_install_domain` additionally requires zero scope/install creates, exactly one of each ledger op, exact target/install/scope/owner fields, exact child descriptor/`dispose_child` inverse/seq/iterator and exactly one `install_reused` event; `successors=[]`. The legacy 11-key path is unchanged. |
+| postcondition | Existing `assert_delta_applied` proves the applied `fiber_create` (install/scope/owner, `want_on=false`, `control_seq=0`), `contribution_append` (seq/kind/descriptor/inverse/contract) and `episode_progress` (iterator) rows. The install row is never inserted or updated by a reuse delta; `installs_immutable` stays in force. |
+| owner/episode | The new fiber's owner is the immutable install's owner fiber/episode. Admission requires that owner episode to be open, active and current, the owner fiber `want_on` with no dispose/retire and no same-generation failure, the owner install `installed`, a valid iterator and seq bound, a live resolve (`P0401` → `retry_with_closure`), and **all other fibers of the install** off and drained (no open episode, unreleased contribution, live pin, open run or ready/claimed effect). A changed owner episode returns `owner_closing/install_reuse_owner`. |
+| I7 | The reuse command is `command_install`; it never occupies a fiber's single reconcile slot. The new fiber starts with no episode and no effect. The existing child contribution/`episode_progress` append on the owner episode is the same ledger step the legacy child install uses, with the same seq bound and owner iterator. |
+| unique address | No install row is created or mutated. The new fiber holds no service contribution until its own P1/P2 activation, where the existing `contributions_service_addr` unique index and `episode_activate` postcondition arbitrate. Concurrent or early activation is therefore `provide_conflict`, never two live providers; the gate inserts a second live row and gets `23505`. |
+| dispose | `dispose_subtree(install)` already seeds every fiber whose `install_id` is the install and recurses by owner; a reused install's old and new fibers are both in the subtree, and `install_dispose_finish` requires all of them tombstoned. `[CDP6-H6]` disposes an upgraded-then-rolled-back install and asserts both fibers and the install tombstone while history is retained. |
+| operation identity / actor / seq / digest | The start key embeds `U|R`, operation UUID, source/target fiber and the frozen source control sequence; the request bytes fix install id/version/digest and the reuse digest. The request row joins its effect to the real `request_actor`. Byte mismatch on the same actor/key is `request_conflict`; another actor on the same operation is `effect_id_conflict`; an independent control change is `blocked/stale_control_seq`; a moved target is `blocked/switch_target_moved`. |
+| no second phase table/cursor | `SwitchDriver.status` derives every phase from committed `requests`/`fibers`/`installs`/`episodes`/`contributions`; `resume` rebuilds the plan from the committed start request. `SwitchPlan.as_dict()` is only caller-held intent, never a DB object. |
+| root refusal | A root install has `owner_fiber_id=NULL`; a second ownerless fiber violates `fibers_graph` (`>1` root, `23514`). Admission returns `invalid_args/install_reuse_root`; the driver refuses the in-place/reuse target. Non-root child installs are supported. |
+
+No scoped Oracle design was launched: the reuse contract was provable against the existing ABI with
+the root case explicitly refused. If a non-root proof point had failed (closure/validator/owner/I7/
+address/dispose), the result would have been a W4 design block rather than a new table, column,
+command kind, error code or second scheduler.
+
+### Implemented surfaces
+
+| Surface | File | Contract |
+|---|---|---|
+| drain switch driver | `v24/cordis/dp6/driver.py` (`SwitchPlan`, `SwitchDriver`) | freezes operation/actor/source/target/digest/source-seq; `start` submits the first `command_install`; `off`/`on` are existing `command_reconcile` commands; `status` is committed-fact only; `resume` rebuilds from the committed start request; drain comes only from the W1 `Maintainer` |
+| rollback reuse | `v24/cordis/sql/41_lifecycle.sql` | exact 4-key reuse payload; fiber-only delta (`fiber_create` + one child `contribution_append` + `episode_progress` + `install_reused`); admission/delta/validator/seed/preflight/references/binding branches; no scope/install row, no declaration rewrite |
+| reuse event | `v24/cordis/sql/40_advance.sql` | `install_reused` exact payload; `event_payload_valid` only |
+| HMR trigger | `v24/cordis/dp6/driver.py` (`HmrTrigger`) | pre-deployed descriptor → identical frozen request; `hmr_current` / `hmr_inflight` / `hmr_blocked` / `hmr_descriptor_invalid`; no download, import, ESM cache or state hot-swap |
+| W4 gate | `v24/cordis/dp6/test_upgrade.py` | CDP6-H1–H9, H3b, H3c and H4a–H4d; 14 disposable databases, Fake/absent handlers, no network |
+
+### CDP6-H assertions passed
+
+- `[CDP6-H1]` a new version is a distinct immutable declaration even when the artifact digest is
+  unchanged; in-place install overwrite is refused by the driver, by command admission
+  (`invalid_args/install_id`) and by the `installs_immutable` trigger (`55000`); a duplicate
+  `(scope,identity,version)` is `install_identity_conflict` zero-write; the start request key/actor
+  and the `install_created` event link the new declaration.
+- `[CDP6-H2]` an open run, a consumer activation pin and ready host listener children each keep the
+  old address live while the source drains; `off` withdraws visibility but does not release the row;
+  settling the listener children removes only the effect blocker; ending the run leaves the pin;
+  the scanner converges the now-unlive consumer and releases the pin; `resolve` then points at the
+  new provider and the released contribution/pin history stays readable.
+- `[CDP6-H3]` the partial unique address index refuses a second live provider (`23505`) before the
+  switch; every phase samples at most one live service row; after the source release the live count
+  is 0, `resolve` is unavailable and the old row is still readable; `on` is only sent after this
+  window and the final live row belongs to the new fiber/episode.
+- `[CDP6-H3b]` sending `on` while the old provider still holds the address produces a real
+  `provide_conflict` activation failure, never two live versions; the old address survives; after
+  the blocker clears the operation is terminal-failed and a fresh explicit rollback activates the
+  old declaration again.
+- `[CDP6-H3c]` an unmet dependency leaves the switch `activating`: the on successor returns
+  `dependency_unresolved` with no write, the target has no episode and no failure, the address is
+  empty, and an explicit rollback (allowed as the reversal of the unfinished upgrade) creates the
+  old declaration's new fiber and activates it.
+- `[CDP6-H4a]` a pre-COMMIT rollback of the first request leaves no request/install/fiber (the DB
+  has no intent, so only the caller can resubmit); a real child-process SIGKILL after the start
+  COMMIT resumes from the committed request and completes with exactly one start/off/on request;
+  identical post-completion calls replay (`start_replay`/`off_replay`/`on_replay`) without a new row.
+- `[CDP6-H4b..H4d]` real SIGKILLs immediately after the off COMMIT, mid-P6, at the address-release
+  boundary and after the on COMMIT each converge from a fresh empty-memory driver with one request
+  per phase, one target install/fiber and one target episode; the drain/activation never duplicates.
+- `[CDP6-H5]` same operation/different bytes is `request_conflict` zero-write; same operation/
+  different actor is `effect_id_conflict/switch_actor`; a second unfinished operation on the same
+  slot is `switch_slot_busy`; an independent control change is `blocked/stale_control_seq`; an
+  independently enabled target is `blocked/switch_target_moved`; duplicate fiber, digest mismatch
+  and a changed owner episode are refused zero-write.
+- `[CDP6-H6]` rollback uses a new fiber/episode on the immutable old declaration (old fiber asleep,
+  no new episode, declaration byte-identical), with a real SIGKILL after the rollback start and
+  after the rollback on; the whole old install then disposes both historical instances and the
+  install; a disposed install cannot be reused or rolled back again.
+- `[CDP6-H7]` a terminal unknown effect keeps the upgrade draining (`blocked_unknown` surfaced by
+  the scanner), leaves the address live and the debt row byte-stable, reaches a write-free steady
+  state, and makes the rollback reuse fail with `blocked_unknown/install_reuse_debt` zero-write.
+- `[CDP6-H8]` an upgraded service and its event listener both resolve to the new generation; the
+  window has neither live generation; ready listener children belong to the new fiber/episode and
+  their parent dispatch has the new fiber; no listener contribution of the old generation is live.
+- `[CDP6-H9]` the first HMR tick submits the frozen request, a repeated tick is
+  `hmr_inflight/start_replay` with one install/fiber/request, an already-current descriptor is
+  `hmr_current` zero-write, malformed/identity-mismatched descriptors are diagnostics, and
+  `HmrTrigger` contains no socket/import/subprocess/exec/ESM path.
+
+### Contract audit
+
+- No new table, column, command kind, protocol error code, view, extension, interpreter, scheduler or
+  writer. The 24 error codes are reused (`invalid_args`, `install_identity_conflict`,
+  `install_not_ready`, `owner_closing`, `scope_closed`, `blocked_unknown`,
+  `retry_with_closure`, …); only reasons are new.
+- One new event kind `install_reused` is added to the existing `event_payload_valid` whitelist; the
+  events table is unchanged and reuse commits exactly one event, like the legacy install.
+- `command_binding` changed from an IMMUTABLE SQL function to a STABLE plpgsql function so a reuse
+  effect is bound to the immutable install's owner fiber/episode; the legacy 11-key binding is
+  byte-identical. No function count changes (`pg_proc=172`, 164 private helpers + 8 trigger guards).
+- No install row is updated by reuse; `installs_immutable` remains in force. The new fiber obeys
+  `fibers_immutable`, `fibers_graph`, `fibers_current_open`, `contributions_service_addr` and
+  `contributions_pin_release`.
+- The driver still contains no direct DML, sleep, socket or thread token; all reads are observer
+  SELECTs and every write is `SELECT v24_cordis.advance(...)` in a short transaction committed to
+  IDLE. The child crash harness only kills its own service-login process; the parent verifies the
+  committed facts in a fresh driver.
+- No real provider socket, adapter or network call; every gate used a disposable pgembed database and
+  Fake/absent handlers.
+
+### 39-command serial gate evidence (2026-10-29)
+
+One `uv run python` process per command, launched only after the previous exited; no concurrency, no
+skip, stop on first non-zero. **39/39 exit 0; per-command sum 283.3 s; wall ≈306.2 s.** Logs:
+`/tmp/dp6_w4_final2/gates/gate-01..39.log`; summary `/tmp/dp6_w4_final2/gates.tsv`. The 38 inherited
+commands retain the W3 order (including s8-before-s7); `test_upgrade.py` is appended as command 39.
+
+| # | Command | Exit | Seconds |
+|---:|---|---:|---:|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0.5 |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1.6 |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1.6 |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 1.7 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 14.5 |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3.5 |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4.9 |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3.7 |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 3.9 |
+| 10 | `uv run python v24/load.py` | 0 | 0.5 |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1.6 |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1.6 |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2.5 |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 1.8 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5.0 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 4.0 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3.1 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 3.7 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2.4 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 6.2 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 10.3 |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3.0 |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 10.2 |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 5.9 |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 5.6 |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 6.4 |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 6.4 |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 5.4 |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 11.9 |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 8.9 |
+| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 14.4 |
+| 32 | `uv run python v24/cordis/dp5/test_resolution.py` | 0 | 8.3 |
+| 33 | `uv run python v24/cordis/dp5/test_listeners.py` | 0 | 5.2 |
+| 34 | `uv run python v24/cordis/dp5/test_dispatch.py` | 0 | 11.6 |
+| 35 | `uv run python v24/cordis/dp5/test_boundaries.py` | 0 | 5.6 |
+| 36 | `uv run python v24/cordis/dp6/test_scanner.py` | 0 | 14.7 |
+| 37 | `uv run python v24/cordis/dp6/test_recovery.py` | 0 | 44.4 |
+| 38 | `uv run python v24/cordis/dp6/test_dispose.py` | 0 | 15.0 |
+| 39 | `uv run python v24/cordis/dp6/test_upgrade.py` | 0 | 21.8 |
+
+A second standalone `uv run python v24/cordis/dp6/test_upgrade.py` run after the serial run also
+exited 0 (14 H labels), confirming the gate is repeatable on a fresh disposable database.
+
+### Measured W4 baseline
+
+```text
+40_advance.sql  1692      (+7)
+41_lifecycle.sql 1685     (+204)
+42_teardown.sql 1119
+43_loop.sql      700
+44_events.sql    622
+40-49 total     5818      (report-only; 2026-10-28 authorization, no cap)
+domain DDL       465      (report-only; bookkeeping 18+19 = 22 separate)
+manifest 19 / tables 10 / pg_proc 172 (164 private helpers + 8 trigger guards)
+one DEFINER advance / public EXECUTE 0 / command kinds 3 / protocol errors 24
+closure 512 / successor 16 / address uniqueness / I7 unchanged
+dp6/driver.py 1868 / dp6/test_upgrade.py 1215   (report-only; no cap)
+```
+
+`git diff --check` exit 0; the frozen `v24/load.py`, `v24/sql/**`, `v24/s1`–`s12` compare equal to
+`57e2c1e` (exit 0). The user's pre-existing 10 modified + 26 untracked paths were not touched.
+
+### W4 publication and staging
+
+Only W4 files are staged: `v24/cordis/sql/40_advance.sql`, `v24/cordis/sql/41_lifecycle.sql`,
+`v24/cordis/dp6/driver.py`, `v24/cordis/dp6/test_upgrade.py`, `v24/cordis/dp6/README.md`, this
+matrix, the DP6 deviation ledger and the DP6 plan Result. The design file, DP1–DP5 files and the
+user's other paths are not staged. Per the parent instruction, this session did **not** commit or
+push; the parent validates and publishes W4. W5 is the next fresh pair agent's milestone.
+
 ## Staging and DP5 handoff
 
 **Mixed-file staging warning.** `docs/designs/cordis-plugin-system-2026-10-25.md` already carries user modifications. Stage only the §10.1 authorization hunk (`git add -p` or an equivalent patch), then inspect `git diff --cached -- docs/designs/cordis-plugin-system-2026-10-25.md`; never `git add` the whole file. The DP6 plan is untracked and contains only the planning file plus the B0 Result/addendum. No commit/push was performed.
@@ -963,10 +1158,24 @@ b047be95cd539ccac45f3e128fb88a979ecd63abc81314e80341ddc2ce2d4fa4  ?? docs/review
 
 ## Not covered
 
-- **W1, W2 and W3 are implemented and gated.** `ensure`, the fair scanner, observer ACL/fixture, `CDP6-S`, the external executor, receipt journal, `run_start` source binding, dispatch recovery, `CDP6-R`, the unknown/inverse debt diagnostics and the sealed-subtree inverse barrier are covered above; `test_scanner.py`, `test_recovery.py` and `test_dispose.py` passed in the final 38-command serial run.
-- **W4–W5 are still future milestones.** Drain upgrade/rollback, the HMR trigger and `CDP6-B` are not implemented. `test_upgrade.py` and `test_boundaries.py` are **not implemented and not run**; `test_dispose.py` is implemented and passed.
-- Reuse-declaration install/rollback is **not** implemented; W4 semantic admission remains pending. The 2026-10-28 capacity authorization does not admit it.
-- DP6 does not resolve terminal unknown: unknown effect outcomes and inverse-unknown contributions stay debt/`blocked_unknown`; the manual-reconciliation ABI remains a design gate (CDP6-U6); `host_io` remains unsupported/`0A000`; no real adapter is used.
-- No persisted W2 or W3 Oracle review result exists. W3 hit no true design blocker (the two SQL candidates were decided by production-path probes and the inherited DP3 gate), so no scoped Oracle design was launched; acceptance is the direct code audit plus the 38-command run. A second opinion remains a new review, not a recovery of a W2/W3 artifact.
-- No real provider socket, no network, no external adapter; all gate DBs were disposable pgembed instances and all handlers were Fake or absent.
-- W4/W5 will be handled in later fresh sessions; this W3 publication does not claim them.
+- **W1, W2, W3 and W4 are implemented and gated.** `ensure`, the fair scanner, observer ACL/fixture,
+  `CDP6-S`, the external executor, receipt journal, `run_start` source binding, dispatch recovery,
+  `CDP6-R`, the unknown/inverse debt diagnostics, the sealed-subtree inverse barrier, `CDP6-U/D`, the
+  drain-based switch, the reuse-declaration rollback, the HMR trigger and `CDP6-H` are covered above;
+  `test_scanner.py`, `test_recovery.py`, `test_dispose.py` and `test_upgrade.py` passed in the final
+  39-command serial run.
+- **W5 is the remaining milestone.** `CDP6-B`, the final DP1–DP6 closeout, the whole-boundary matrix
+  and any W5 publication are not implemented. `test_boundaries.py` is not implemented and not run.
+- Reuse-declaration rollback is implemented for **non-root** installs. A root install cannot be
+  reused (a second ownerless fiber violates the single-root invariant), so root rollback is a gated
+  refusal (`install_reuse_root` / `switch_target_install_exists`), not a claimed capability.
+- DP6 does not resolve terminal unknown: unknown effect outcomes and inverse-unknown contributions
+  stay debt/`blocked_unknown`; the manual-reconciliation ABI remains a design gate (CDP6-U6);
+  `host_io` remains unsupported/`0A000`; no real adapter is used.
+- No persisted W2, W3 or W4 Oracle review/design result exists. W4 hit no true design blocker: the
+  reuse contract was proven against the existing payload/closure/validator/postcondition/owner/I7/
+  address/dispose facts, and the root limit is an explicit refusal. A second opinion remains a new
+  review, not a recovered artifact.
+- No real provider socket, no network, no external adapter; all gate DBs were disposable pgembed
+  instances and all handlers were Fake or absent.
+- W5 will be handled by the next fresh pair agent; this W4 publication does not claim it.

@@ -328,22 +328,29 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 $$;
 CREATE FUNCTION v24_cordis.install_payload_valid(p_payload jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
- SELECT coalesce(
-  v24_cordis.exact_keys(p_payload,ARRAY['install_id','fiber_id','scope','owner','identity','version',
-   'manifest','artifact_digest','contracts','policy_ref','overlay'])
-  AND v24_cordis.json_uuid(p_payload->'install_id')
-  AND v24_cordis.json_uuid(p_payload->'fiber_id')
-  AND v24_cordis.scope_shape_valid(p_payload->'scope')
-  AND v24_cordis.owner_shape_valid(p_payload->'owner')
-  AND v24_cordis.json_text(p_payload->'identity')
-  AND v24_cordis.json_text(p_payload->'version')
-  AND jsonb_typeof(p_payload->'manifest')='object'
-  AND v24_cordis.json_hex64(p_payload->'artifact_digest')
-  AND jsonb_typeof(p_payload->'contracts')='object'
-  AND (p_payload->'policy_ref'='null'::jsonb OR p_payload->'policy_ref'='"chat_tool"'::jsonb)
-  AND jsonb_typeof(p_payload->'overlay')='object'
-  AND v24_cordis.install_overlay_valid(p_payload->'manifest',p_payload->'overlay',p_payload->'contracts') IS NULL
-  AND v24_cordis.manifest_shape_valid(p_payload->'manifest',p_payload->'contracts'),false)
+ SELECT coalesce(CASE
+  WHEN v24_cordis.exact_keys(p_payload,ARRAY['mode','install_id','fiber_id','expected_digest']) THEN
+   p_payload->>'mode'='reuse'
+   AND v24_cordis.json_uuid(p_payload->'install_id')
+   AND v24_cordis.json_uuid(p_payload->'fiber_id')
+   AND v24_cordis.json_hex64(p_payload->'expected_digest')
+  ELSE
+   v24_cordis.exact_keys(p_payload,ARRAY['install_id','fiber_id','scope','owner','identity','version',
+    'manifest','artifact_digest','contracts','policy_ref','overlay'])
+   AND v24_cordis.json_uuid(p_payload->'install_id')
+   AND v24_cordis.json_uuid(p_payload->'fiber_id')
+   AND v24_cordis.scope_shape_valid(p_payload->'scope')
+   AND v24_cordis.owner_shape_valid(p_payload->'owner')
+   AND v24_cordis.json_text(p_payload->'identity')
+   AND v24_cordis.json_text(p_payload->'version')
+   AND jsonb_typeof(p_payload->'manifest')='object'
+   AND v24_cordis.json_hex64(p_payload->'artifact_digest')
+   AND jsonb_typeof(p_payload->'contracts')='object'
+   AND (p_payload->'policy_ref'='null'::jsonb OR p_payload->'policy_ref'='"chat_tool"'::jsonb)
+   AND jsonb_typeof(p_payload->'overlay')='object'
+   AND v24_cordis.install_overlay_valid(p_payload->'manifest',p_payload->'overlay',p_payload->'contracts') IS NULL
+   AND v24_cordis.manifest_shape_valid(p_payload->'manifest',p_payload->'contracts')
+  END,false)
 $$;
 CREATE FUNCTION v24_cordis.scope_lineage_open(p_scope uuid) RETURNS boolean
 LANGUAGE sql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
@@ -416,6 +423,76 @@ DECLARE v_scope jsonb:=p_payload->'scope'; v_owner jsonb:=p_payload->'owner';
 BEGIN
  IF NOT coalesce(v24_cordis.install_payload_valid(p_payload),false) THEN
   RETURN jsonb_build_object('code','invalid_args','reason','install_payload');
+ END IF;
+ v_install:=(p_payload->>'install_id')::uuid; v_fiber:=(p_payload->>'fiber_id')::uuid;
+ -- DP6 W4 reuse declaration: an existing immutable install gets one new fiber instance.
+ -- It creates no scope/install row and never rewrites the declaration. Root installs are
+ -- rejected because a second ownerless fiber would violate the single-root invariant.
+ IF p_payload ? 'mode' THEN
+  SELECT * INTO inst FROM v24_cordis.installs WHERE id=v_install;
+  IF NOT FOUND THEN
+   RETURN jsonb_build_object('code','not_found_or_denied','reason','install_reuse_install'); END IF;
+  IF inst.artifact_digest IS DISTINCT FROM p_payload->>'expected_digest' THEN
+   RETURN jsonb_build_object('code','install_identity_conflict','reason','install_reuse_digest'); END IF;
+  IF inst.state<>'installed' THEN
+   RETURN jsonb_build_object('code','install_not_ready','reason','install_reuse_state'); END IF;
+  IF inst.owner_fiber_id IS NULL THEN
+   RETURN jsonb_build_object('code','invalid_args','reason','install_reuse_root'); END IF;
+  IF NOT v24_cordis.scope_lineage_open(inst.scope_id) THEN
+   RETURN jsonb_build_object('code','scope_closed','reason','install_reuse_scope'); END IF;
+  IF EXISTS(SELECT 1 FROM v24_cordis.fibers WHERE id=v_fiber) THEN
+   RETURN jsonb_build_object('code','invalid_args','reason','fiber_id'); END IF;
+  SELECT * INTO f FROM v24_cordis.fibers WHERE id=inst.owner_fiber_id;
+  IF NOT FOUND THEN
+   RETURN jsonb_build_object('code','not_found_or_denied','reason','install_reuse_owner'); END IF;
+  SELECT * INTO e FROM v24_cordis.episodes
+   WHERE id=inst.owner_episode_id AND fiber_id=f.id;
+  IF NOT FOUND OR e.closed_at IS NOT NULL OR e.state<>'active'
+   OR f.current_episode_id IS DISTINCT FROM e.id THEN
+   RETURN jsonb_build_object('code','owner_closing','reason','install_reuse_owner'); END IF;
+  IF NOT f.want_on OR f.dispose_requested_at IS NOT NULL OR f.disposed_at IS NOT NULL
+   OR f.retire_started_at IS NOT NULL THEN
+   RETURN jsonb_build_object('code','owner_closing','reason','install_reuse_owner'); END IF;
+  IF jsonb_typeof(f.failure)='object'
+   AND v24_cordis.json_int(f.failure->'control_seq',0,9223372036854775807)
+   AND (f.failure->>'control_seq')::bigint=f.control_seq THEN
+   RETURN jsonb_build_object('code','owner_closing','reason','install_owner_failure'); END IF;
+  IF NOT EXISTS(SELECT 1 FROM v24_cordis.installs WHERE id=f.install_id AND state='installed') THEN
+   RETURN jsonb_build_object('code','owner_closing','reason','install_owner_install'); END IF;
+  IF jsonb_typeof(e.iterator)<>'object'
+   OR NOT coalesce(v24_cordis.exact_keys(e.iterator,
+     ARRAY['v','next_index','registered_through','control_seq']),false)
+   OR e.iterator->'v' IS DISTINCT FROM '1'::jsonb
+   OR NOT v24_cordis.json_int(e.iterator->'next_index',0,2147483647)
+   OR NOT v24_cordis.json_int(e.iterator->'registered_through',-1,2147483647)
+   OR NOT v24_cordis.json_int(e.iterator->'control_seq',0,9223372036854775807) THEN
+   RETURN jsonb_build_object('code','invalid_args','reason','install_owner_iterator'); END IF;
+  SELECT coalesce(max(seq),-1)::bigint+1 INTO v_seq FROM v24_cordis.contributions
+   WHERE fiber_id=f.id AND episode_id=e.id;
+  IF v_seq>2147483647 THEN
+   RETURN jsonb_build_object('code','budget_exceeded','reason','install_owner_seq'); END IF;
+  BEGIN
+   IF NOT v24_cordis.fiber_live_resolve_ok(f.id,e.id) THEN
+    RETURN jsonb_build_object('code','owner_closing','reason','install_owner_live'); END IF;
+  EXCEPTION WHEN SQLSTATE 'P0401' THEN
+   RETURN jsonb_build_object('code','retry_with_closure','reason','provider_closure');
+  END;
+  IF EXISTS(SELECT 1 FROM v24_cordis.effects x JOIN v24_cordis.fibers xf ON xf.id=x.fiber_id
+   WHERE xf.install_id=v_install AND x.status='unknown') THEN
+   RETURN jsonb_build_object('code','blocked_unknown','reason','install_reuse_debt'); END IF;
+  IF EXISTS(SELECT 1 FROM v24_cordis.fibers x WHERE x.install_id=v_install AND (
+   x.want_on OR x.current_episode_id IS NOT NULL OR x.retire_started_at IS NOT NULL
+   OR (x.disposed_at IS NULL AND (
+    EXISTS(SELECT 1 FROM v24_cordis.episodes ex WHERE ex.fiber_id=x.id AND ex.closed_at IS NULL)
+    OR EXISTS(SELECT 1 FROM v24_cordis.contributions cx WHERE cx.fiber_id=x.id AND cx.released_at IS NULL)
+    OR EXISTS(SELECT 1 FROM v24_cordis.pins px WHERE px.released_at IS NULL AND (px.consumer_fiber_id=x.id
+     OR px.contribution_id IN (SELECT id FROM v24_cordis.contributions WHERE fiber_id=x.id)))
+    OR EXISTS(SELECT 1 FROM v24_cordis.runs rx WHERE rx.owner_fiber_id=x.id AND rx.ended_at IS NULL)
+    OR EXISTS(SELECT 1 FROM v24_cordis.effects xx WHERE xx.status IN ('ready','claimed')
+     AND (xx.fiber_id=x.id OR xx.episode_id IN (SELECT id FROM v24_cordis.episodes WHERE fiber_id=x.id)
+      OR xx.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=x.id))))))) THEN
+   RETURN jsonb_build_object('code','install_not_ready','reason','install_reuse_fibers'); END IF;
+  RETURN NULL;
  END IF;
  v_mode:=v_scope->>'mode'; v_scope_id:=(v_scope->>'id')::uuid;
  v_install:=(p_payload->>'install_id')::uuid; v_fiber:=(p_payload->>'fiber_id')::uuid;
@@ -515,9 +592,35 @@ DECLARE v_scope jsonb:=p_payload->'scope'; v_owner jsonb:=p_payload->'owner';
  v_scope_id uuid:=(v_scope->>'id')::uuid; v_install uuid:=(p_payload->>'install_id')::uuid;
  v_fiber uuid:=(p_payload->>'fiber_id')::uuid; v_owner_fiber uuid; v_owner_ep uuid;
  v_ep v24_cordis.episodes%ROWTYPE; v_seq bigint; v_next int; v_child uuid; v_created boolean;
- v_domain jsonb:='[]'; v_event jsonb;
+ v_domain jsonb:='[]'; v_event jsonb; inst v24_cordis.installs%ROWTYPE;
 BEGIN
  v_created:=v_scope->>'mode'<>'existing';
+ IF p_payload ? 'mode' THEN
+  SELECT * INTO inst FROM v24_cordis.installs WHERE id=v_install;
+  v_owner_fiber:=inst.owner_fiber_id; v_owner_ep:=inst.owner_episode_id;
+  SELECT * INTO v_ep FROM v24_cordis.episodes WHERE id=v_owner_ep AND fiber_id=v_owner_fiber;
+  v_next:=(v_ep.iterator->>'next_index')::int;
+  SELECT coalesce(max(seq),-1)::bigint+1 INTO v_seq FROM v24_cordis.contributions
+   WHERE fiber_id=v_owner_fiber AND episode_id=v_owner_ep;
+  v_child:=gen_random_uuid();
+  v_domain:=jsonb_build_array(
+   jsonb_build_object('op','fiber_create','id',v_fiber,'install_id',v_install,
+    'owner_id',to_jsonb(v_owner_fiber),'owner_episode_id',to_jsonb(v_owner_ep),
+    'scope_id',inst.scope_id),
+   jsonb_build_object('op','contribution_append','id',v_child,'fiber_id',v_owner_fiber,
+    'episode_id',v_owner_ep,'seq',v_seq,'kind','child','realm','null'::jsonb,'key','null'::jsonb,
+    'descriptor',jsonb_build_object('child_fiber_id',to_jsonb(v_fiber)),
+    'prev_contribution_id','null'::jsonb,'inverse',jsonb_build_object('op','dispose_child'),
+    'contract_version','1'),
+   jsonb_build_object('op','episode_progress','episode_id',v_owner_ep,'next_index',v_next,
+    'registered_through',v_seq));
+  v_event:=jsonb_build_object('entity_type','install','entity_id',to_jsonb(v_install),
+   'event_kind','install_reused','payload',jsonb_build_object('scope_id',to_jsonb(inst.scope_id),
+    'fiber_id',to_jsonb(v_fiber),'owner_fiber_id',to_jsonb(v_owner_fiber),
+    'owner_episode_id',to_jsonb(v_owner_ep),'child_contribution_id',to_jsonb(v_child)));
+  RETURN jsonb_build_object('domain',v_domain,'receipt',jsonb_build_object('status','succeeded'),
+   'events',jsonb_build_array(v_event),'successors','[]'::jsonb);
+ END IF;
  IF v_created THEN
   v_domain:=v_domain||jsonb_build_array(jsonb_build_object('op','scope_create','id',v_scope_id,
    'parent_id',CASE WHEN v_scope->>'mode'='child' THEN v_scope->'parent_id' ELSE 'null'::jsonb END,
@@ -586,17 +689,36 @@ DECLARE payload jsonb:=p_outcome->'body'->'payload'; v_scope jsonb:=payload->'sc
  v_install uuid:=(payload->>'install_id')::uuid; v_fiber uuid:=(payload->>'fiber_id')::uuid;
  v_created boolean:=v_scope->>'mode'<>'existing'; v_ops text[]; v_item jsonb; v_cnt int;
  v_child uuid; v_seq bigint; v_next int; v_owner_fiber uuid; v_owner_ep uuid;
+ inst v24_cordis.installs%ROWTYPE;
 BEGIN
  err:=v24_cordis.install_admission(payload);
  IF err IS NOT NULL THEN
   IF err->>'code'='0A000' THEN RAISE EXCEPTION '%',err->>'reason' USING ERRCODE='0A000'; END IF;
   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','install_admission'));
  END IF;
+ IF payload ? 'mode' THEN
+  SELECT * INTO inst FROM v24_cordis.installs WHERE id=v_install;
+  IF NOT FOUND THEN
+   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','install_admission')); END IF;
+  v_owner:=jsonb_build_object('fiber_id',to_jsonb(inst.owner_fiber_id),
+   'episode_id',to_jsonb(inst.owner_episode_id));
+  v_scope_id:=inst.scope_id; v_created:=false;
+ END IF;
  IF v_owner<>'null'::jsonb THEN
   v_owner_fiber:=(v_owner->>'fiber_id')::uuid; v_owner_ep:=(v_owner->>'episode_id')::uuid;
  END IF;
  v_ops:=ARRAY(SELECT x->>'op' FROM jsonb_array_elements(p_delta->'domain') x);
- IF v_created THEN
+ IF payload ? 'mode' THEN
+  -- A reuse delta is fiber-only: no scope/install create, exactly one child ledger entry.
+  IF (SELECT count(*) FROM unnest(v_ops) o
+      WHERE o NOT IN ('fiber_create','contribution_append','episode_progress'))<>0
+   OR (SELECT count(*) FROM unnest(v_ops) o WHERE o='fiber_create')<>1
+   OR (SELECT count(*) FROM unnest(v_ops) o WHERE o='contribution_append')<>1
+   OR (SELECT count(*) FROM unnest(v_ops) o WHERE o='episode_progress')<>1 THEN
+   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','install_rows'));
+  END IF;
+ ELSE
+  IF v_created THEN
   IF (SELECT count(*) FROM unnest(v_ops) o WHERE o='scope_create')<>1 THEN
    RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','install_scope'));
   END IF;
@@ -634,6 +756,7 @@ BEGIN
   OR v_item->'policy_ref' IS DISTINCT FROM payload->'policy_ref'
   OR v_item->'overlay' IS DISTINCT FROM payload->'overlay' THEN
   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','install_rows'));
+  END IF;
  END IF;
  SELECT value INTO v_item FROM jsonb_array_elements(p_delta->'domain') x
   WHERE x.value->>'op'='fiber_create' LIMIT 1;
@@ -686,7 +809,17 @@ BEGIN
   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','event_cardinality'));
  END IF;
  v_item:=p_delta->'events'->0;
- IF v_item->>'entity_type'<>'install' OR (v_item->>'entity_id')::uuid<>v_install
+ IF payload ? 'mode' THEN
+  IF v_item->>'entity_type'<>'install' OR (v_item->>'entity_id')::uuid<>v_install
+   OR v_item->>'event_kind'<>'install_reused'
+   OR v_item->'payload'->'scope_id' IS DISTINCT FROM to_jsonb(v_scope_id)
+   OR v_item->'payload'->'fiber_id' IS DISTINCT FROM to_jsonb(v_fiber)
+   OR v_item->'payload'->'owner_fiber_id' IS DISTINCT FROM to_jsonb(v_owner_fiber)
+   OR v_item->'payload'->'owner_episode_id' IS DISTINCT FROM to_jsonb(v_owner_ep)
+   OR v_item->'payload'->'child_contribution_id' IS DISTINCT FROM to_jsonb(v_child) THEN
+   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','event_shape'));
+  END IF;
+ ELSIF v_item->>'entity_type'<>'install' OR (v_item->>'entity_id')::uuid<>v_install
   OR v_item->>'event_kind'<>'install_created'
   OR v_item->'payload'->'scope_id' IS DISTINCT FROM to_jsonb(v_scope_id)
   OR v_item->'payload'->'scope_created' IS DISTINCT FROM to_jsonb(v_created)
@@ -707,8 +840,35 @@ END $$;
 CREATE FUNCTION v24_cordis.install_command_seed(p_payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE result jsonb:='[]'; item jsonb; v_scope jsonb:=p_payload->'scope'; v_owner jsonb:=p_payload->'owner';
- v_scope_id uuid; v_owner_ep uuid;
+ v_scope_id uuid; v_owner_ep uuid; v_install uuid; inst v24_cordis.installs%ROWTYPE;
 BEGIN
+ -- A reuse payload has no scope object: seed the immutable declaration and every
+ -- current/former instance so admission's sibling drain check is locked and rechecked.
+ IF p_payload ? 'mode' THEN
+  IF v24_cordis.json_uuid(p_payload->'install_id') THEN
+   v_install:=(p_payload->>'install_id')::uuid;
+   result:=result||jsonb_build_array(jsonb_build_object('t','installs','id',v_install::text));
+   SELECT * INTO inst FROM v24_cordis.installs WHERE id=v_install;
+   IF FOUND THEN
+    result:=result||jsonb_build_array(jsonb_build_object('t','scopes','id',inst.scope_id::text));
+    IF inst.owner_fiber_id IS NOT NULL THEN
+     result:=result||jsonb_build_array(jsonb_build_object('t','fibers','id',inst.owner_fiber_id::text),
+      jsonb_build_object('t','episodes','id',inst.owner_episode_id::text));
+     FOR item IN SELECT jsonb_build_object('t','contributions','id',c.id)
+      FROM v24_cordis.contributions c WHERE c.episode_id=inst.owner_episode_id LOOP
+      result:=result||jsonb_build_array(item);
+     END LOOP;
+    END IF;
+    FOR item IN SELECT jsonb_build_object('t','fibers','id',f.id)
+     FROM v24_cordis.fibers f WHERE f.install_id=v_install LOOP
+     result:=result||jsonb_build_array(item);
+    END LOOP;
+   END IF;
+   RETURN (SELECT coalesce(jsonb_agg(x ORDER BY x->>'t',x->>'id'),'[]')
+    FROM (SELECT DISTINCT value x FROM jsonb_array_elements(result)) s);
+  END IF;
+  RETURN '[]';
+ END IF;
  IF jsonb_typeof(p_payload)<>'object' OR jsonb_typeof(v_scope)<>'object' THEN RETURN '[]'; END IF;
  IF v24_cordis.json_uuid(v_scope->'id') THEN
   v_scope_id:=(v_scope->>'id')::uuid;
@@ -864,10 +1024,28 @@ BEGIN
 END $$;
 CREATE FUNCTION v24_cordis.install_preflight(p_payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE ref text;
+DECLARE ref text; inst v24_cordis.installs%ROWTYPE;
 BEGIN
  IF NOT coalesce(v24_cordis.install_payload_valid(p_payload),false) THEN
   RETURN jsonb_build_object('code','invalid_args','reason','install_payload');
+ END IF;
+ IF p_payload ? 'mode' THEN
+  SELECT * INTO inst FROM v24_cordis.installs WHERE id=(p_payload->>'install_id')::uuid;
+  IF NOT FOUND THEN
+   RETURN jsonb_build_object('code','not_found_or_denied','reason','install_reuse_install'); END IF;
+  IF inst.artifact_digest IS DISTINCT FROM p_payload->>'expected_digest' THEN
+   RETURN jsonb_build_object('code','install_identity_conflict','reason','install_reuse_digest'); END IF;
+  IF inst.state<>'installed' THEN
+   RETURN jsonb_build_object('code','install_not_ready','reason','install_reuse_state'); END IF;
+  IF inst.owner_fiber_id IS NULL THEN
+   RETURN jsonb_build_object('code','invalid_args','reason','install_reuse_root'); END IF;
+  IF EXISTS(SELECT 1 FROM v24_cordis.fibers WHERE id=(p_payload->>'fiber_id')::uuid) THEN
+   RETURN jsonb_build_object('code','invalid_args','reason','fiber_id'); END IF;
+  IF NOT EXISTS(SELECT 1 FROM v24_cordis.scopes WHERE id=inst.scope_id) THEN
+   RETURN jsonb_build_object('code','not_found_or_denied','reason','install_reuse_scope'); END IF;
+  IF NOT EXISTS(SELECT 1 FROM v24_cordis.fibers WHERE id=inst.owner_fiber_id) THEN
+   RETURN jsonb_build_object('code','not_found_or_denied','reason','install_reuse_owner'); END IF;
+  RETURN NULL;
  END IF;
  ref:=v24_cordis.install_references(p_payload);
  IF ref IS NOT NULL THEN
@@ -876,19 +1054,45 @@ BEGIN
  RETURN NULL;
 END $$;
 CREATE FUNCTION v24_cordis.command_binding(p_body jsonb) RETURNS jsonb
-LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
- SELECT CASE p_body->>'kind'
-  WHEN 'command_install' THEN CASE WHEN p_body->'payload'->'owner'='null'::jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE inst v24_cordis.installs%ROWTYPE;
+BEGIN
+ IF p_body->>'kind'='command_install' THEN
+  IF p_body->'payload' ? 'mode' THEN
+   -- A reuse effect is bound to the immutable install's owner, exactly like the
+   -- original install command was; it never impersonates the target instance.
+   IF NOT v24_cordis.json_uuid(p_body->'payload'->'install_id') THEN
+    RETURN jsonb_build_object('fiber',NULL,'episode',NULL); END IF;
+   SELECT * INTO inst FROM v24_cordis.installs
+    WHERE id=(p_body->'payload'->>'install_id')::uuid;
+   IF NOT FOUND THEN RETURN jsonb_build_object('fiber',NULL,'episode',NULL); END IF;
+   RETURN jsonb_build_object('fiber',inst.owner_fiber_id::text,
+    'episode',inst.owner_episode_id::text);
+  END IF;
+  RETURN CASE WHEN p_body->'payload'->'owner'='null'::jsonb
    THEN jsonb_build_object('fiber',p_body->'payload'->>'fiber_id','episode',NULL)
    ELSE jsonb_build_object('fiber',p_body->'payload'->'owner'->>'fiber_id',
-    'episode',p_body->'payload'->'owner'->>'episode_id') END
-  WHEN 'command_reconcile' THEN jsonb_build_object('fiber',p_body->'payload'->>'fiber_id','episode',NULL)
-  ELSE jsonb_build_object('fiber',NULL,'episode',NULL) END
-$$;
+    'episode',p_body->'payload'->'owner'->>'episode_id') END;
+ ELSIF p_body->>'kind'='command_reconcile' THEN
+  RETURN jsonb_build_object('fiber',p_body->'payload'->>'fiber_id','episode',NULL);
+ END IF;
+ RETURN jsonb_build_object('fiber',NULL,'episode',NULL);
+END $$;
 CREATE FUNCTION v24_cordis.install_references(p_payload jsonb) RETURNS text
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
-DECLARE s jsonb:=p_payload->'scope'; o jsonb:=p_payload->'owner';
+DECLARE s jsonb:=p_payload->'scope'; o jsonb:=p_payload->'owner'; inst v24_cordis.installs%ROWTYPE;
 BEGIN
+ IF p_payload ? 'mode' THEN
+  SELECT * INTO inst FROM v24_cordis.installs WHERE id=(p_payload->>'install_id')::uuid;
+  IF NOT FOUND THEN RETURN 'install_reuse_install'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM v24_cordis.scopes WHERE id=inst.scope_id) THEN
+   RETURN 'install_reuse_scope'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM v24_cordis.fibers WHERE id=inst.owner_fiber_id) THEN
+   RETURN 'install_reuse_owner'; END IF;
+  IF EXISTS(SELECT 1 FROM v24_cordis.fibers WHERE id=(p_payload->>'fiber_id')::uuid) THEN
+   RETURN 'fiber_id'; END IF;
+  RETURN NULL;
+ END IF;
  IF s->>'mode'='existing' AND NOT EXISTS(SELECT 1 FROM v24_cordis.scopes WHERE id=(s->>'id')::uuid) THEN RETURN 'install_scope'; END IF;
  IF s->>'mode'='child' AND NOT EXISTS(SELECT 1 FROM v24_cordis.scopes WHERE id=(s->>'parent_id')::uuid) THEN RETURN 'install_parent'; END IF;
  IF jsonb_typeof(o)='object' THEN

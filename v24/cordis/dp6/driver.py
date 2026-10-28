@@ -1,4 +1,4 @@
-"""Cordis v2 DP6 W1: single-host fair rediscovery / maintenance scanner.
+"""Cordis v2 DP6: single-host fair rediscovery / maintenance scanner.
 
 The scanner is deliberately not a lifecycle engine.  It reads raw facts through a
 least-privilege observer connection, pages every topic with its own lossable keyset
@@ -10,8 +10,13 @@ cursor, and calls the existing ``advance`` protocol for every decision and write
 * external effects, expired claims, unknown effects and inverse-unknown debt are
   reported only.  W2 owns claim/receipt/crash recovery and external execution.
 
-No handler is invoked in W1.  A Fake handler may be injected by a gate solely to
-prove that ``host_io``/unsupported/unknown items never reach it.
+No handler is invoked by the W1 scanner.  A Fake handler may be injected by a gate
+solely to prove that ``host_io``/unsupported/unknown items never reach it.
+
+W4 adds the drain-based switch driver (``SwitchDriver``) and the pre-deployed HMR
+trigger (``HmrTrigger``).  They never write lifecycle columns directly: the switch
+submits the existing ``command_install``/``command_reconcile`` commands at frozen
+request keys, and every drain step stays in the W1 scanner/``advance`` path.
 """
 from __future__ import annotations
 
@@ -1074,3 +1079,790 @@ class Maintainer:
 
     def run(self, rounds=1):
         return [self.run_once() for _ in range(rounds)]
+
+
+# ------------------------------------------------------- W4 drain-based switch
+
+SWITCH_KEY_PREFIX = 'cordis/dp6/switch/v1'
+SWITCH_KINDS = ('U', 'R')
+SWITCH_DECLARATION_KEYS = frozenset((
+    'install_id', 'fiber_id', 'scope', 'owner', 'identity', 'version', 'manifest',
+    'artifact_digest', 'contracts', 'policy_ref', 'overlay'))
+HMR_DESCRIPTOR_KEYS = frozenset((
+    'identity', 'version', 'artifact_digest', 'operation_uuid', 'source_fiber_id',
+    'install_id', 'target_fiber_id', 'manifest', 'contracts', 'policy_ref', 'overlay'))
+TERMINAL_PHASES = ('complete', 'failed', 'blocked')
+
+
+class SwitchStateError(Exception):
+    """A switch cannot be admitted, resumed or advanced without guessing."""
+
+    def __init__(self, code, reason, detail=None):
+        super().__init__(f'{code}/{reason}')
+        self.code = code
+        self.reason = reason
+        self.detail = detail or {}
+
+
+def _uid(value):
+    return str(uuid.UUID(str(value)))
+
+
+@dataclass(frozen=True)
+class SwitchPlan:
+    """Frozen switch identity: operation, actor, source/target and fixed payload.
+
+    The plan is derived only from the trusted caller's intent before the first
+    commit.  Afterwards the committed ``requests`` rows are the authority; the
+    driver reconstructs source/target/seq from the request key and re-verifies the
+    declaration bytes instead of inventing a new step.
+    """
+
+    kind: str
+    operation: str
+    actor: str
+    source_fiber: str
+    target_fiber: str
+    source_seq: int
+    source_install: str
+    target_install: str
+    expected_digest: str
+    payload: dict = field(compare=False)
+    provides: tuple = ()
+    target_version: str = ''
+
+    def _base(self):
+        return (f'{SWITCH_KEY_PREFIX}/{self.kind}/{self.operation}/'
+                f'{self.source_fiber}/{self.target_fiber}')
+
+    def start_key(self):
+        return f'{self._base()}/{self.source_seq}/start'
+
+    def off_key(self):
+        return f'{self._base()}/off/{self.source_seq}'
+
+    def on_key(self):
+        return f'{self._base()}/on/0'
+
+    def off_payload(self):
+        return {'fiber_id': self.source_fiber, 'action': 'off',
+                'expected_control_seq': int(self.source_seq)}
+
+    def on_payload(self):
+        return {'fiber_id': self.target_fiber, 'action': 'on',
+                'expected_control_seq': 0}
+
+    def as_dict(self):
+        return {'kind': self.kind, 'operation': self.operation, 'actor': self.actor,
+                'source_fiber': self.source_fiber, 'target_fiber': self.target_fiber,
+                'source_seq': self.source_seq, 'source_install': self.source_install,
+                'target_install': self.target_install,
+                'expected_digest': self.expected_digest, 'payload': self.payload,
+                'provides': list(self.provides), 'target_version': self.target_version}
+
+    @classmethod
+    def from_dict(cls, value):
+        return cls(kind=value['kind'], operation=value['operation'], actor=value['actor'],
+                   source_fiber=value['source_fiber'],
+                   target_fiber=value['target_fiber'],
+                   source_seq=int(value['source_seq']),
+                   source_install=value['source_install'],
+                   target_install=value['target_install'],
+                   expected_digest=value['expected_digest'],
+                   payload=value['payload'],
+                   provides=tuple(value.get('provides') or ()),
+                   target_version=value.get('target_version') or '')
+
+
+class SwitchDriver:
+    """Submit and resume one drain-based upgrade or rollback.
+
+    Every write is an existing ``command_install``/``command_reconcile`` through
+    ``advance`` under the frozen request key.  Drain progress is produced only by
+    the W1 ``Maintainer``.  No phase table or in-memory cursor is trusted across a
+    restart: ``status`` reads the committed requests/fibers/installs/episodes.
+    """
+
+    def __init__(self, *, observer_connect, actor_connect, maintainer=None):
+        self._observer_connect = observer_connect
+        self._actor_connect = actor_connect
+        self.maintainer = maintainer
+        self.plan = None
+
+    # ---- read discipline --------------------------------------------------
+
+    @staticmethod
+    def _select(conn, statement, params=()):
+        if not statement.lstrip().upper().startswith('SELECT'):
+            raise AssertionError('switch driver may only execute SELECT: ' + statement)
+        with conn.cursor() as cur:
+            cur.execute(statement, params) if params else cur.execute(statement)
+            return cur.fetchall() if cur.description else None
+
+    def _rows(self, statement, params=()):
+        conn = self._observer_connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
+            rows = self._select(conn, statement, params)
+            conn.commit()
+            return rows
+        finally:
+            conn.close()
+
+    def _one(self, statement, params=()):
+        rows = self._rows(statement, params)
+        return rows[0] if rows else None
+
+    def _fiber(self, fiber):
+        row = self._one(
+            'SELECT id,install_id,owner_id,owner_episode_id,scope_id,want_on,control_seq,'
+            'current_episode_id,failure,retire_started_at,dispose_requested_at,disposed_at '
+            'FROM v24_cordis.fibers WHERE id=%s', (fiber,))
+        if row is None:
+            return None
+        return dict(id=_uid(row[0]), install_id=_uid(row[1]),
+                    owner_id=_uid(row[2]) if row[2] else None,
+                    owner_episode_id=_uid(row[3]) if row[3] else None,
+                    scope_id=_uid(row[4]), want_on=row[5], control_seq=int(row[6]),
+                    current_episode_id=_uid(row[7]) if row[7] else None,
+                    failure=row[8], retire_started_at=row[9],
+                    dispose_requested_at=row[10], disposed_at=row[11])
+
+    def _install(self, install):
+        row = self._one(
+            'SELECT id,scope_id,owner_fiber_id,owner_episode_id,identity,version,'
+            'artifact_digest,state FROM v24_cordis.installs WHERE id=%s', (install,))
+        if row is None:
+            return None
+        return dict(id=_uid(row[0]), scope_id=_uid(row[1]),
+                    owner_fiber_id=_uid(row[2]) if row[2] else None,
+                    owner_episode_id=_uid(row[3]) if row[3] else None,
+                    identity=row[4], version=row[5], artifact_digest=row[6], state=row[7])
+
+    def _episode(self, episode):
+        if episode is None:
+            return None
+        row = self._one('SELECT id,fiber_id,epoch,state,closed_at FROM v24_cordis.episodes '
+                        'WHERE id=%s', (episode,))
+        if row is None:
+            return None
+        return dict(id=_uid(row[0]), fiber_id=_uid(row[1]), epoch=int(row[2]),
+                    state=row[3], closed_at=row[4])
+
+    def _slot_open(self, fiber):
+        return self._one("SELECT id FROM v24_cordis.effects WHERE fiber_id=%s "
+                         "AND kind='command_reconcile' AND status IN ('ready','claimed') "
+                         'LIMIT 1', (fiber,)) is not None
+
+    def _service_keys(self, fiber):
+        """Service addresses a fiber has contributed (history is retained)."""
+        rows = self._rows('SELECT DISTINCT key FROM v24_cordis.contributions '
+                          "WHERE fiber_id=%s AND kind='service' AND key IS NOT NULL "
+                          'ORDER BY key', (fiber,))
+        return tuple(row[0] for row in rows)
+
+    def _request(self, key, actor):
+        row = self._one(
+            'SELECT rq.request_key,rq.request_bytes,rq.response,e.request_actor,e.id '
+            'FROM v24_cordis.requests rq LEFT JOIN v24_cordis.effects e ON e.id=rq.effect_id '
+            'WHERE rq.principal_id=%s AND rq.request_key=%s',
+            (principal_id(actor), key))
+        if row is None:
+            return None
+        return {'key': row[0], 'bytes': bytes(row[1]), 'response': row[2],
+                'actor': row[3], 'effect_id': _uid(row[4]) if row[4] else None}
+
+    def _canonical(self, payload):
+        return self._select_for_literal(payload)
+
+    def _select_for_literal(self, payload):
+        conn = self._observer_connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
+            rows = self._select(conn, 'SELECT %s::jsonb::text', (Json(payload),))
+            conn.commit()
+            return rows[0][0]
+        finally:
+            conn.close()
+
+    def _matches(self, request, payload, actor):
+        return (request is not None and request['actor'] == actor
+                and request['bytes'] == self._canonical(payload).encode())
+
+    # ---- writer discipline ------------------------------------------------
+
+    def _actor(self, login):
+        conn = self._actor_connect(login)
+        try:
+            with conn.cursor() as cur:
+                cur.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
+            got = self._select(conn, 'SELECT session_user')[0][0]
+            if got != login:
+                raise WrongActor((login, got))
+            return conn
+        except BaseException:
+            conn.close()
+            raise
+
+    def _advance(self, login, key, payload, kind):
+        effect = effect_id_for(login, key, kind)
+        conn = self._actor(login)
+        try:
+            text = self._select(conn, 'SELECT %s::jsonb::text', (Json(payload),))[0][0]
+            body = {'op': 'admit_and_apply', 'kind': kind, 'request_key': key,
+                    'canonical_bytes': base64.b64encode(text.encode()).decode(),
+                    'payload': payload}
+            outcome = {'v': 1, 'class': 'command', 'claim': None, 'body': body}
+            result = self._select(conn, 'SELECT v24_cordis.advance(%s,%s)',
+                                  (effect, Json(outcome)))[0][0]
+            conn.commit()
+            if conn.get_transaction_status() != TRANSACTION_STATUS_IDLE:
+                raise AssertionError('advance left the connection outside IDLE')
+            return result
+        except BaseException:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # ---- planning ---------------------------------------------------------
+
+    def plan_upgrade(self, *, operation, actor, source_fiber, install_id, target_fiber,
+                     declaration, expected_digest=None, provides=None):
+        operation = _uid(operation)
+        source_fiber = _uid(source_fiber)
+        target_fiber = _uid(target_fiber)
+        install_id = _uid(install_id)
+        if source_fiber == target_fiber:
+            raise SwitchStateError('invalid_args', 'switch_self_target')
+        if not isinstance(declaration, dict) or set(declaration) != SWITCH_DECLARATION_KEYS:
+            raise SwitchStateError('invalid_args', 'switch_declaration')
+        if _uid(declaration['install_id']) != install_id:
+            raise SwitchStateError('invalid_args', 'switch_declaration_target')
+        if _uid(declaration['fiber_id']) != target_fiber:
+            raise SwitchStateError('invalid_args', 'switch_declaration_fiber')
+        src = self._fiber(source_fiber)
+        if src is None:
+            raise SwitchStateError('not_found_or_denied', 'switch_source_fiber')
+        sinst = self._install(src['install_id'])
+        ep = self._episode(src['current_episode_id'])
+        if (sinst is None or sinst['state'] != 'installed' or not src['want_on']
+                or src['dispose_requested_at'] is not None or src['disposed_at'] is not None
+                or src['retire_started_at'] is not None or ep is None
+                or ep['state'] != 'active' or ep['closed_at'] is not None):
+            raise SwitchStateError('stale_generation', 'switch_source_not_live')
+        scope = declaration['scope'] if isinstance(declaration['scope'], dict) else {}
+        owner = declaration['owner'] if isinstance(declaration['owner'], dict) else {}
+        if scope.get('mode') != 'existing' or scope.get('id') != sinst['scope_id']:
+            raise SwitchStateError('invalid_args', 'switch_declaration_scope')
+        if (owner.get('fiber_id') != sinst['owner_fiber_id']
+                or owner.get('episode_id') != sinst['owner_episode_id']):
+            raise SwitchStateError('invalid_args', 'switch_declaration_owner')
+        if declaration['identity'] != sinst['identity']:
+            raise SwitchStateError('invalid_args', 'switch_declaration_identity')
+        if declaration['version'] == sinst['version']:
+            raise SwitchStateError('install_identity_conflict', 'switch_version')
+        digest = declaration['artifact_digest']
+        if expected_digest is not None and digest != expected_digest:
+            raise SwitchStateError('install_identity_conflict', 'switch_digest')
+        if provides is None:
+            manifest = declaration['manifest'] if isinstance(declaration['manifest'], dict) else {}
+            provides = [item.get('key') for item in manifest.get('provides') or []
+                        if isinstance(item, dict) and isinstance(item.get('key'), str)]
+        plan = SwitchPlan(kind='U', operation=operation, actor=actor,
+                          source_fiber=source_fiber, target_fiber=target_fiber,
+                          source_seq=src['control_seq'], source_install=sinst['id'],
+                          target_install=install_id, expected_digest=digest,
+                          payload=declaration, provides=tuple(provides),
+                          target_version=declaration['version'])
+        # Operation/slot identity is checked before target absence so another actor
+        # reusing the operation UUID is reported as an actor conflict, not a new start.
+        self._check_slot(plan, sinst)
+        if self._fiber(target_fiber) is not None:
+            raise SwitchStateError('invalid_args', 'switch_target_fiber_exists')
+        if self._install(install_id) is not None:
+            raise SwitchStateError('invalid_args', 'switch_target_install_exists')
+        self.plan = plan
+        return plan
+
+    def plan_rollback(self, *, operation, actor, source_fiber, target_install,
+                      target_fiber, expected_digest, provides=None):
+        operation = _uid(operation)
+        source_fiber = _uid(source_fiber)
+        target_fiber = _uid(target_fiber)
+        target_install = _uid(target_install)
+        if source_fiber == target_fiber:
+            raise SwitchStateError('invalid_args', 'switch_self_target')
+        src = self._fiber(source_fiber)
+        if src is None:
+            raise SwitchStateError('not_found_or_denied', 'switch_source_fiber')
+        sinst = self._install(src['install_id'])
+        tinst = self._install(target_install)
+        if sinst is None or tinst is None:
+            raise SwitchStateError('not_found_or_denied', 'switch_install')
+        if tinst['state'] != 'installed':
+            raise SwitchStateError('install_not_ready', 'switch_rollback_state')
+        if sinst['id'] == tinst['id']:
+            raise SwitchStateError('invalid_args', 'switch_rollback_same_install')
+        if (tinst['scope_id'], tinst['identity']) != (sinst['scope_id'], sinst['identity']):
+            raise SwitchStateError('invalid_args', 'switch_rollback_slot')
+        if ((tinst['owner_fiber_id'], tinst['owner_episode_id'])
+                != (sinst['owner_fiber_id'], sinst['owner_episode_id'])):
+            raise SwitchStateError('invalid_args', 'switch_rollback_owner')
+        if tinst['version'] == sinst['version']:
+            raise SwitchStateError('invalid_args', 'switch_rollback_version')
+        if tinst['artifact_digest'] != expected_digest:
+            raise SwitchStateError('install_identity_conflict', 'switch_rollback_digest')
+        if src['dispose_requested_at'] is not None or src['disposed_at'] is not None:
+            raise SwitchStateError('stale_generation', 'switch_source_terminal')
+        if self._fiber(target_fiber) is not None:
+            raise SwitchStateError('invalid_args', 'switch_target_fiber_exists')
+        payload = {'mode': 'reuse', 'install_id': target_install,
+                   'fiber_id': target_fiber, 'expected_digest': expected_digest}
+        if provides is None:
+            provides = self._service_keys(source_fiber)
+        plan = SwitchPlan(kind='R', operation=operation, actor=actor,
+                          source_fiber=source_fiber, target_fiber=target_fiber,
+                          source_seq=src['control_seq'], source_install=sinst['id'],
+                          target_install=target_install, expected_digest=expected_digest,
+                          payload=payload,
+                          provides=tuple(provides or ()), target_version=tinst['version'])
+        self._check_slot(plan, sinst)
+        self.plan = plan
+        return plan
+
+    def _check_slot(self, plan, our_install):
+        rows = self._rows('SELECT request_key FROM v24_cordis.requests '
+                          'WHERE request_key LIKE %s AND request_key LIKE %s',
+                          (SWITCH_KEY_PREFIX + '/%', '%/start'))
+        for (key,) in rows:
+            parts = key.split('/')
+            if len(parts) != 10:
+                continue
+            kind, operation, source, target = parts[4], parts[5], parts[6], parts[7]
+            if (kind == plan.kind and operation == plan.operation
+                    and source == plan.source_fiber and target == plan.target_fiber):
+                if key != plan.start_key():
+                    raise SwitchStateError('stale_generation', 'switch_operation_conflict',
+                                           {'operation': operation})
+                existing = self._request(key, plan.actor)
+                if existing is None or existing['actor'] != plan.actor:
+                    raise SwitchStateError('effect_id_conflict', 'switch_actor',
+                                           {'operation': operation})
+                continue
+            other_source = self._fiber(source)
+            other_install = self._install(other_source['install_id']) if other_source else None
+            if other_install is None:
+                continue
+            if ((other_install['scope_id'], other_install['identity'])
+                    != (our_install['scope_id'], our_install['identity'])):
+                continue
+            if (plan.kind == 'R' and target == plan.source_fiber
+                    and other_install['id'] == plan.target_install):
+                continue
+            if self._terminal_target(target):
+                continue
+            raise SwitchStateError('stale_generation', 'switch_slot_busy',
+                                   {'operation': operation})
+        return None
+
+    def _terminal_target(self, fiber):
+        target = self._fiber(fiber)
+        if target is None:
+            return False
+        failure = self._failure_at(target)
+        if failure is not None:
+            return True
+        episode = self._episode(target['current_episode_id'])
+        return (episode is not None and episode['state'] == 'active'
+                and episode['closed_at'] is None and target['want_on']
+                and not self._slot_open(target['id']))
+
+    @staticmethod
+    def _failure_at(fiber):
+        failure = fiber.get('failure')
+        if not isinstance(failure, dict):
+            return None
+        if failure.get('control_seq') != fiber['control_seq']:
+            return None
+        return {'code': failure.get('code'), 'reason': failure.get('reason'),
+                'phase': failure.get('phase'), 'key': failure.get('key')}
+
+    # ---- committed-fact status -------------------------------------------
+
+    def _drain(self, fiber):
+        row = self._one(
+            'SELECT f.want_on,f.current_episode_id IS NOT NULL,f.retire_started_at,'
+            '(SELECT count(*) FROM v24_cordis.episodes e WHERE e.fiber_id=f.id AND e.closed_at IS NULL),'
+            '(SELECT count(*) FROM v24_cordis.contributions c WHERE c.fiber_id=f.id AND c.released_at IS NULL),'
+            '(SELECT count(*) FROM v24_cordis.pins p WHERE p.released_at IS NULL AND '
+            ' (p.consumer_fiber_id=f.id OR p.contribution_id IN '
+            '  (SELECT id FROM v24_cordis.contributions WHERE fiber_id=f.id))),'
+            '(SELECT count(*) FROM v24_cordis.runs r WHERE r.owner_fiber_id=f.id AND r.ended_at IS NULL),'
+            '(SELECT count(*) FROM v24_cordis.effects x WHERE x.status IN (\'ready\',\'claimed\',\'unknown\') AND '
+            ' (x.fiber_id=f.id OR x.episode_id IN (SELECT id FROM v24_cordis.episodes WHERE fiber_id=f.id) OR '
+            '  x.run_id IN (SELECT id FROM v24_cordis.runs WHERE owner_fiber_id=f.id))) '
+            'FROM v24_cordis.fibers f WHERE f.id=%s', (fiber,))
+        if row is None:
+            return {'drained': False, 'reasons': ['missing']}
+        reasons = []
+        if row[0]:
+            reasons.append('want_on')
+        if row[1]:
+            reasons.append('episode')
+        if row[2] is not None:
+            reasons.append('retire')
+        if row[3]:
+            reasons.append('open_episode')
+        if row[4]:
+            reasons.append('contribution')
+        if row[5]:
+            reasons.append('pin')
+        if row[6]:
+            reasons.append('run')
+        if row[7]:
+            reasons.append('effect')
+        return {'drained': not reasons, 'reasons': reasons,
+                'want_on': row[0], 'episodes': row[3], 'contributions': row[4],
+                'pins': row[5], 'runs': row[6], 'effects': row[7]}
+
+    def _address_owned(self, plan, target):
+        if not plan.provides:
+            return True, []
+        rows = self._rows("SELECT key,episode_id FROM v24_cordis.contributions "
+                          "WHERE fiber_id=%s AND kind='service' AND released_at IS NULL",
+                          (target['id'],))
+        live = {row[0] for row in rows if _uid(row[1]) == target['current_episode_id']}
+        missing = [key for key in plan.provides if key not in live]
+        return not missing, sorted(missing)
+
+    def status(self, plan=None):
+        plan = plan or self.plan
+        if plan is None:
+            raise SwitchStateError('invalid_args', 'switch_plan')
+        base = {'kind': plan.kind, 'operation': plan.operation,
+                'source_fiber': plan.source_fiber, 'target_fiber': plan.target_fiber,
+                'source_seq': plan.source_seq}
+        start = self._request(plan.start_key(), plan.actor)
+        if start is None:
+            return dict(base, phase='start_pending')
+        if not self._matches(start, plan.payload, plan.actor):
+            return dict(base, phase='blocked', reason='switch_operation_payload')
+        src = self._fiber(plan.source_fiber)
+        target = self._fiber(plan.target_fiber)
+        sinst = self._install(plan.source_install)
+        tinst = self._install(plan.target_install)
+        if None in (src, target, sinst, tinst):
+            return dict(base, phase='blocked', reason='switch_invariant')
+        if target['install_id'] != tinst['id'] or src['install_id'] != sinst['id']:
+            return dict(base, phase='blocked', reason='switch_invariant')
+        if ((tinst['scope_id'], tinst['identity'], tinst['owner_fiber_id'],
+             tinst['owner_episode_id']) != (sinst['scope_id'], sinst['identity'],
+                                            sinst['owner_fiber_id'], sinst['owner_episode_id'])
+                or tinst['id'] == sinst['id']):
+            return dict(base, phase='blocked', reason='switch_identity')
+        if tinst['artifact_digest'] != plan.expected_digest:
+            return dict(base, phase='blocked', reason='switch_digest')
+        off = self._request(plan.off_key(), plan.actor)
+        if off is None:
+            if src['disposed_at'] is not None or src['dispose_requested_at'] is not None:
+                return dict(base, phase='blocked', reason='switch_source_terminal')
+            if src['control_seq'] != plan.source_seq:
+                return dict(base, phase='blocked', reason='stale_control_seq',
+                            control_seq=src['control_seq'])
+            if not src['want_on']:
+                return dict(base, phase='blocked', reason='switch_source_not_live')
+            return dict(base, phase='off_pending', control_seq=src['control_seq'])
+        if not self._matches(off, plan.off_payload(), plan.actor):
+            return dict(base, phase='blocked', reason='switch_operation_payload')
+        drain = self._drain(src['id'])
+        if not drain['drained']:
+            return dict(base, phase='draining', drain=drain)
+        on = self._request(plan.on_key(), plan.actor)
+        if on is None:
+            if (target['control_seq'] != 0 or target['want_on']
+                    or target['current_episode_id'] is not None
+                    or target['dispose_requested_at'] is not None
+                    or target['disposed_at'] is not None):
+                return dict(base, phase='blocked', reason='switch_target_moved')
+            return dict(base, phase='on_pending')
+        if not self._matches(on, plan.on_payload(), plan.actor):
+            return dict(base, phase='blocked', reason='switch_operation_payload')
+        failure = self._failure_at(target)
+        if failure is not None:
+            return dict(base, phase='failed', failure=failure)
+        episode = self._episode(target['current_episode_id'])
+        if (episode is None or episode['state'] != 'active'
+                or episode['closed_at'] is not None or not target['want_on']):
+            return dict(base, phase='activating', drain=drain)
+        if self._slot_open(target['id']):
+            return dict(base, phase='activating', drain=drain,
+                        reason='pending_reconcile')
+        verified, missing = self._address_owned(plan, target)
+        if not verified:
+            return dict(base, phase='blocked', reason='switch_address_missing',
+                        missing=missing)
+        return dict(base, phase='complete', episode_id=episode['id'],
+                    address=plan.provides)
+
+    # ---- actions ----------------------------------------------------------
+
+    def start(self, plan=None):
+        plan = plan or self.plan
+        if plan is None:
+            raise SwitchStateError('invalid_args', 'switch_plan')
+        self.plan = plan
+        existing = self._request(plan.start_key(), plan.actor)
+        if existing is not None:
+            if not self._matches(existing, plan.payload, plan.actor):
+                raise SwitchStateError('request_conflict', 'switch_operation_payload')
+            state = self.status(plan)
+            return {'action': 'start_replay', 'phase': state['phase'], 'state': state}
+        result = self._advance(plan.actor, plan.start_key(), plan.payload, 'command_install')
+        self._raise_protocol(result, 'start')
+        state = self.status(plan)
+        return {'action': 'start', 'phase': state['phase'], 'result': result, 'state': state}
+
+    def _submit(self, plan, phase):
+        key = plan.off_key() if phase == 'off' else plan.on_key()
+        payload = plan.off_payload() if phase == 'off' else plan.on_payload()
+        existing = self._request(key, plan.actor)
+        if existing is not None:
+            if not self._matches(existing, payload, plan.actor):
+                raise SwitchStateError('request_conflict', 'switch_operation_payload')
+            state = self.status(plan)
+            return {'action': phase + '_replay', 'phase': state['phase'], 'state': state}
+        result = self._advance(plan.actor, key, payload, 'command_reconcile')
+        self._raise_protocol(result, phase)
+        state = self.status(plan)
+        return {'action': phase, 'phase': state['phase'], 'result': result, 'state': state}
+
+    @staticmethod
+    def _raise_protocol(result, step):
+        if not isinstance(result, dict):
+            raise SwitchStateError('invalid_outcome', 'switch_' + step)
+        if 'error' in result:
+            error = result['error'] or {}
+            detail = error.get('detail') or {}
+            raise SwitchStateError(error.get('code', 'invalid_outcome'),
+                                   detail.get('reason', 'switch_' + step), detail)
+
+    def step(self, plan=None):
+        plan = plan or self.plan
+        if plan is None:
+            raise SwitchStateError('invalid_args', 'switch_plan')
+        state = self.status(plan)
+        phase = state['phase']
+        if phase == 'start_pending':
+            return self.start(plan)
+        if phase == 'off_pending':
+            return self._submit(plan, 'off')
+        if phase == 'on_pending':
+            return self._submit(plan, 'on')
+        if phase in ('draining', 'activating'):
+            report = self.maintainer.run_once() if self.maintainer is not None else None
+            return {'action': 'drive', 'phase': phase,
+                    'report': report, 'state': self.status(plan)}
+        return {'action': 'none', 'phase': phase, 'state': state}
+
+    def drive(self, plan=None, limit=64):
+        plan = plan or self.plan
+        actions = []
+        for _ in range(limit):
+            outcome = self.step(plan)
+            actions.append(outcome)
+            if outcome['action'] == 'none':
+                return {'phase': outcome['phase'], 'state': outcome['state'],
+                        'actions': actions}
+        raise SwitchStateError('budget_exceeded', 'switch_drive_limit',
+                               {'limit': limit})
+
+    def resume(self, kind, operation, actor):
+        if kind not in SWITCH_KINDS:
+            raise SwitchStateError('invalid_args', 'switch_kind')
+        operation = _uid(operation)
+        prefix = f'{SWITCH_KEY_PREFIX}/{kind}/{operation}/'
+        rows = self._rows('SELECT request_key FROM v24_cordis.requests '
+                          'WHERE request_key LIKE %s AND request_key LIKE %s',
+                          (prefix + '%', '%/start'))
+        if not rows:
+            return None
+        if len(rows) > 1:
+            raise SwitchStateError('stale_generation', 'switch_operation_conflict')
+        key = rows[0][0]
+        parts = key.split('/')
+        if len(parts) != 10:
+            raise SwitchStateError('stale_generation', 'switch_operation_conflict')
+        source_fiber, target_fiber, source_seq = parts[6], parts[7], int(parts[8])
+        request = self._request(key, actor)
+        if request is None or request['actor'] != actor:
+            raise SwitchStateError('effect_id_conflict', 'switch_actor')
+        try:
+            payload = json.loads(request['bytes'].decode('utf-8'))
+        except (ValueError, UnicodeDecodeError):
+            raise SwitchStateError('invalid_args', 'switch_operation_payload')
+        source = self._fiber(source_fiber)
+        if source is None:
+            raise SwitchStateError('not_found_or_denied', 'switch_source_fiber')
+        if kind == 'U':
+            target_install = _uid(payload['install_id'])
+            tinst = self._install(target_install)
+            if tinst is None:
+                raise SwitchStateError('not_found_or_denied', 'switch_target_install')
+            plan = SwitchPlan(kind='U', operation=operation, actor=actor,
+                              source_fiber=source_fiber, target_fiber=target_fiber,
+                              source_seq=source_seq, source_install=source['install_id'],
+                              target_install=target_install,
+                              expected_digest=payload['artifact_digest'],
+                              payload=payload,
+                              provides=tuple(item.get('key') for item in
+                                             (payload.get('manifest') or {}).get('provides') or []
+                                             if isinstance(item, dict)),
+                              target_version=payload['version'])
+        else:
+            target_install = _uid(payload['install_id'])
+            tinst = self._install(target_install)
+            if tinst is None:
+                raise SwitchStateError('not_found_or_denied', 'switch_target_install')
+            plan = SwitchPlan(kind='R', operation=operation, actor=actor,
+                              source_fiber=source_fiber, target_fiber=target_fiber,
+                              source_seq=source_seq, source_install=source['install_id'],
+                              target_install=target_install,
+                              expected_digest=payload['expected_digest'],
+                              payload=payload,
+                              provides=self._service_keys(source_fiber),
+                              target_version=tinst['version'])
+        self.plan = plan
+        return plan
+
+
+class HmrTrigger:
+    """Pre-deployed descriptor watcher: it only submits the same switch request.
+
+    No code is downloaded, imported or hot-swapped.  One JSON descriptor per
+    managed identity names the already-deployed digest plus the fixed operation /
+    target UUIDs; a tick compares the running source install's version+digest and
+    calls ``SwitchDriver.start`` with the identical request when they differ.
+    """
+
+    def __init__(self, driver, directory, actor):
+        self.driver = driver
+        self.directory = Path(directory)
+        self.actor = actor
+
+    def descriptors(self):
+        found = []
+        for path in sorted(self.directory.glob('*.json')):
+            try:
+                value = read_json(path)
+            except (OSError, ValueError) as exc:
+                raise SwitchStateError('invalid_args', 'hmr_descriptor_corrupt',
+                                       {'path': path.name, 'error': str(exc)})
+            if not isinstance(value, dict) or set(value) != HMR_DESCRIPTOR_KEYS:
+                raise SwitchStateError('invalid_args', 'hmr_descriptor_shape',
+                                       {'path': path.name})
+            found.append(value)
+        return found
+
+    def tick(self):
+        results = []
+        try:
+            descriptors = self.descriptors()
+        except SwitchStateError as exc:
+            return [{'driver': 'hmr_descriptor_invalid', 'code': exc.code,
+                     'reason': exc.reason, 'detail': exc.detail}]
+        for descriptor in descriptors:
+            source_fiber = _uid(descriptor['source_fiber_id'])
+            source = self.driver._fiber(source_fiber)
+            if source is None:
+                results.append({'driver': 'hmr_source_missing',
+                                'source_fiber_id': source_fiber})
+                continue
+            source_install = self.driver._install(source['install_id'])
+            if source_install is None:
+                results.append({'driver': 'hmr_source_missing',
+                                'source_fiber_id': source_fiber})
+                continue
+            if source_install['identity'] != descriptor['identity']:
+                results.append({'driver': 'hmr_identity_mismatch',
+                                'source_fiber_id': source_fiber})
+                continue
+            if (source_install['version'] == descriptor['version']
+                    and source_install['artifact_digest'] == descriptor['artifact_digest']):
+                results.append({'driver': 'hmr_current',
+                                'identity': descriptor['identity'],
+                                'version': descriptor['version']})
+                continue
+            try:
+                committed = self.driver.resume('U', descriptor['operation_uuid'], self.actor)
+            except (SwitchStateError, CredentialMissing, WrongActor) as exc:
+                results.append({'driver': 'hmr_blocked',
+                                'identity': descriptor.get('identity'),
+                                'reason': getattr(exc, 'reason', str(exc)),
+                                'code': getattr(exc, 'code', None)})
+                continue
+            if committed is not None:
+                # A repeated tick reuses the committed operation bytes; a different
+                # descriptor under the same identity is a conflict, never a new intent.
+                if (committed.target_fiber != _uid(descriptor['target_fiber_id'])
+                        or committed.target_install != _uid(descriptor['install_id'])
+                        or committed.payload.get('version') != descriptor['version']
+                        or committed.payload.get('artifact_digest') != descriptor['artifact_digest']):
+                    results.append({'driver': 'hmr_blocked',
+                                    'identity': descriptor.get('identity'),
+                                    'reason': 'switch_operation_conflict',
+                                    'code': 'stale_generation'})
+                    continue
+                try:
+                    outcome = self.driver.start(committed)
+                except (SwitchStateError, CredentialMissing, WrongActor) as exc:
+                    results.append({'driver': 'hmr_blocked',
+                                    'identity': descriptor.get('identity'),
+                                    'reason': getattr(exc, 'reason', str(exc)),
+                                    'code': getattr(exc, 'code', None)})
+                    continue
+                results.append({'driver': 'hmr_inflight',
+                                'identity': descriptor['identity'],
+                                'operation': committed.operation,
+                                'action': outcome['action']})
+                continue
+            try:
+                plan = self.driver.plan_upgrade(
+                    operation=descriptor['operation_uuid'],
+                    actor=self.actor,
+                    source_fiber=source_fiber,
+                    install_id=descriptor['install_id'],
+                    target_fiber=descriptor['target_fiber_id'],
+                    declaration={
+                        'install_id': descriptor['install_id'],
+                        'fiber_id': descriptor['target_fiber_id'],
+                        'scope': {'mode': 'existing', 'id': source_install['scope_id']},
+                        'owner': {'fiber_id': source_install['owner_fiber_id'],
+                                  'episode_id': source_install['owner_episode_id']},
+                        'identity': descriptor['identity'],
+                        'version': descriptor['version'],
+                        'manifest': descriptor['manifest'],
+                        'artifact_digest': descriptor['artifact_digest'],
+                        'contracts': descriptor['contracts'],
+                        'policy_ref': descriptor['policy_ref'],
+                        'overlay': descriptor['overlay']},
+                    expected_digest=descriptor['artifact_digest'])
+                outcome = self.driver.start(plan)
+                results.append({'driver': 'hmr_started',
+                                'identity': descriptor['identity'],
+                                'operation': plan.operation,
+                                'action': outcome['action']})
+            except (SwitchStateError, CredentialMissing, WrongActor) as exc:
+                results.append({'driver': 'hmr_blocked',
+                                'identity': descriptor.get('identity'),
+                                'reason': getattr(exc, 'reason', str(exc)),
+                                'code': getattr(exc, 'code', None)})
+        return results
