@@ -396,6 +396,8 @@ B0 与 W5 必须串行实跑 DP3 收尾的全部命令（`docs/reviews/cordis-v2
 
 纯 reducer、model receipt、`run_state`/`run_budget`、tool 后继、digests 校验、`already_terminal`。验收 `CDP4-M`（M1–M5）；`model_failed` 封口与 M6 随 W4 的 `run_seal` 一起交付。
 
+**Result**（2026-10-27）：在 W1 commit `e8b6cce` 之上完成。28 条命令（26 条旧 gate + `CDP4-R` + `CDP4-M`）逐条独立启动并等待退出，全部 exit 0，总耗时 121 秒。CDP4-M1–M5 全部通过：e8 的 `3→2` 预算与冻结 batch、三条摘要逐字节比对与三种漂移零写、schema/usage/text 负例零写、reducer 纯度与读表探针检测、receipt/event/successor 三处注入回滚且 effect 仍为 claimed。`model_failed`/final/budget 的 `close_run` 在 W2 返回 `invalid_outcome{reason:run_seal_unimplemented}`，M6 与封口按计划留在 W4。四文件 helper **4216≤5000**（40=1546、41=1211、42=1000、43=459），DDL 461，manifest 18，十表，唯一 `SECURITY DEFINER` 仍为 `advance`。W2 只做本地 commit，不 push。
+
 ### W3 — tool 结算与批次屏障
 
 tool receipt、pin/key/liveness、sibling 查询、唯一 continuation、unknown 兄弟结算、claim 阻断。验收 `CDP4-T`。

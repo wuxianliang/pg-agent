@@ -154,3 +154,54 @@ Same worktree and branch `v24`, HEAD `17c855d` (B0) plus W1 changes before stagi
 - `run_seal`, budget exhaustion, final/model_failed closure, pin release on run terminal, and e7→e13 are W4.
 - The source-level run-writer assertion in DP3-B6 was replaced by the W1 production writer; `host_io` settlement remains `0A000` and no scanner exists.
 - W1 was committed locally only; no push.
+
+## W2 / CDP4-M (2026-10-27)
+
+Same worktree and branch `v24`, HEAD `e8b6cce` (W1) plus W2 changes before staging. W3-only code (`tool_receipt_valid`, `tool_delta`, the `run_delta` tool dispatch, `tool_body`, `test_loop.py`) was removed from this tree before the run; the pure reducer keeps its complete tool branch. The 26 legacy commands, `CDP4-R` and `CDP4-M` were launched one process at a time; all 28 exited 0, total 121 seconds.
+
+| # | Command | Exit | Duration (s) | Evidence |
+|---:|---|---:|---:|---|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 1 | canonical loader, 18 entries |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 2 | fixture/role/OID cleanup |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1 | CDP1-E, exact 18-entry manifest |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 2 | CDP1-D, DDL 461 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 14 | CDP1-K; helper 4216, 5000/5001 proof; service ACL for four effect kinds |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3 | CDP2-K continuation/typed delta/closure |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 5 | CDP2-I |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3 | CDP2-A |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 4 | CDP2-B, `helpers=4216 40=1546 41=1211 42=1000 43=459 ddl=461` |
+| 10 | `uv run python v24/load.py` | 0 | 1 | v24 loader |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1 | v24/s1 setup |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 2 | G1-O |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2 | G1 kernel/commands/ACL |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 2 | S2 W1-W6 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 6 | S3 W1-W7 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 4 | S4 W1-W6 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3 | S5 W1-W4 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 4 | S6 W1-W4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2 | S8 W1-W3 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 7 | S7 W1-W2 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 10 | G8, 23 cases |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3 | CDP3-P |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 11 | CDP3-L |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 6 | CDP3-T |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 5 | CDP3-D |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 7 | CDP3-B1…B13; `host_io` settlement still `0A000` |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 5 | CDP4-R1…R7 regression |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 5 | CDP4-M1…M5 |
+
+| W2 invariant | Actual evidence |
+|---|---|
+| Model settlement | e8 claim→success spends `3→2`, stores `step=1, phase='tools'`, and freezes `batch=[{ordinal:0,key:'tool',call_id:'c1'}]`. One `tool_call` successor has the model effect as parent, ordinal 0, and exactly `{v,run_id,pin_id,key,descriptor_digest,call_id,args,contract}`. One `run_progress` carries step=1, remaining=2, phase=`tools`. CDP4-M1 |
+| Digests | `policy`, `schema` and `toolset` equal `run_digests(run)` byte-for-byte. Tampering any one is `invalid_outcome` with an unchanged ten-table snapshot. CDP4-M2 |
+| Schema negatives | Unknown result key, non-null `interaction`, `final` plus tool calls, 17 tool calls, unknown tool key, duplicate `call_id`, negative usage, non-string text: each is `invalid_outcome` and leaves the effect claimed with zero write. CDP4-M3 |
+| Reducer purity | `reduce_chat_tool` is `IMMUTABLE`; its recursive `pg_depend` closure contains no `pg_class`. A deliberately reading `BEGIN ATOMIC` probe exposes `pg_class`, proving the detector is live. CDP4-M4 |
+| Rollback | Failure injected on the receipt (events insert), the event (effects insert with parent) and the successor (after effects insert with parent) rolls back the whole advance: ten-table plus `requests` snapshot equals pre-call and the model effect remains `claimed`. CDP4-M5 |
+| Capacity | 40=1546, 41=1211, 42=1000, 43=459, sum **4216≤5000**; DDL 461; manifest 18; 10 tables; one DEFINER (`advance`) |
+
+### W2 not covered
+
+- Tool receipt, tool settlement, sibling/lease facts, the batch barrier, continuation uniqueness, unknown siblings and tool pin liveness are W3. `test_loop.py` was not run and is not part of W2.
+- `run_seal`, final/budget/model_failed terminal closure, pin release and e7→e13 are W4; M6 is deferred with them. In W2 a `close_run` intent returns `invalid_outcome{reason:run_seal_unimplemented}`.
+- The frozen-batch decision stands: W2 never shrinks `batch`; the intermediate sibling settlement state is a W3 T1 check.
+- W2 was committed locally only; no push.

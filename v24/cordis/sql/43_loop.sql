@@ -69,6 +69,106 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
    AND v24_cordis.json_text(p_body->'error'->'code')
   ELSE false END,false)
 $$;
+CREATE FUNCTION v24_cordis.model_receipt_valid(p_class text,p_body jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+ SELECT coalesce(CASE p_class
+  WHEN 'success' THEN v24_cordis.exact_keys(p_body,ARRAY['kind','result'])
+   AND p_body->>'kind'='model_call'
+   AND coalesce(v24_cordis.exact_keys(p_body->'result',ARRAY['text','tool_calls','interaction','final','usage']),false)
+   AND jsonb_typeof(p_body->'result'->'text')='string'
+   AND jsonb_typeof(p_body->'result'->'interaction')='null'
+   AND jsonb_typeof(p_body->'result'->'final')='boolean'
+   AND jsonb_typeof(p_body->'result'->'tool_calls')='array'
+   AND jsonb_array_length(p_body->'result'->'tool_calls')<=16
+   AND (p_body->'result'->'final'<>'true'::jsonb OR jsonb_array_length(p_body->'result'->'tool_calls')=0)
+   AND (p_body->'result'->'usage'='null'::jsonb OR (jsonb_typeof(p_body->'result'->'usage')='object'
+    AND NOT EXISTS(SELECT 1 FROM jsonb_each(p_body->'result'->'usage') u
+     WHERE jsonb_typeof(u.value)<>'number' OR (u.value#>>'{}')!~'^(0|[1-9][0-9]*)$')))
+   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_body->'result'->'tool_calls') x
+    WHERE NOT coalesce(v24_cordis.exact_keys(x,ARRAY['call_id','key','args']),false)
+     OR NOT v24_cordis.json_text(x->'call_id') OR NOT v24_cordis.json_text(x->'key')
+     OR jsonb_typeof(x->'args')<>'object')
+   AND (SELECT count(DISTINCT x->>'key') FROM jsonb_array_elements(p_body->'result'->'tool_calls') x)
+    =jsonb_array_length(p_body->'result'->'tool_calls')
+   AND (SELECT count(DISTINCT x->>'call_id') FROM jsonb_array_elements(p_body->'result'->'tool_calls') x)
+    =jsonb_array_length(p_body->'result'->'tool_calls')
+  WHEN 'failure' THEN v24_cordis.exact_keys(p_body,ARRAY['kind','error'])
+   AND p_body->>'kind'='model_call' AND jsonb_typeof(p_body->'error')='object'
+   AND ((p_body->'error') ? 'code') AND ((p_body->'error')-ARRAY['code','detail']='{}'::jsonb)
+   AND v24_cordis.json_text(p_body->'error'->'code')
+   AND (NOT ((p_body->'error') ? 'detail') OR jsonb_typeof(p_body->'error'->'detail')='object')
+  ELSE false END,false)
+$$;
+CREATE FUNCTION v24_cordis.reduce_chat_tool(p_state jsonb,p_fact jsonb) RETURNS jsonb
+LANGUAGE sql IMMUTABLE STRICT SET search_path=pg_catalog,v24_cordis,pg_temp
+BEGIN ATOMIC
+ WITH b AS (
+  SELECT (p_state->>'step')::int AS step,
+   (p_fact->>'remaining_steps')::int AS r,
+   coalesce((p_fact->>'live_siblings')::int,0) AS live,
+   coalesce((p_fact->>'unknown_in_run')::boolean,false) AS unknown_run,
+   p_fact->>'effect_kind' AS kind, p_fact->>'class' AS cls,
+   p_fact->'receipt'->'result' AS res,
+   CASE WHEN jsonb_typeof(p_fact->'receipt'->'result'->'tool_calls')='array'
+    THEN p_fact->'receipt'->'result'->'tool_calls' ELSE '[]'::jsonb END AS tc,
+   CASE WHEN jsonb_typeof(p_fact->'receipt'->'result'->'tool_calls')='array'
+    THEN jsonb_array_length(p_fact->'receipt'->'result'->'tool_calls') ELSE 0 END AS n,
+   coalesce(p_fact->'receipt'->'result'->'final','false'::jsonb)='true'::jsonb AS final,
+   CASE WHEN jsonb_typeof(p_fact->'tools')='array' THEN p_fact->'tools' ELSE '[]'::jsonb END AS tools
+ ), v AS (
+  SELECT b.*,
+   NOT (cls='success' AND (jsonb_typeof(res)<>'object' OR jsonb_typeof(res->'tool_calls')<>'array'
+    OR n>16 OR jsonb_typeof(res->'interaction')<>'null' OR jsonb_typeof(res->'final')<>'boolean'
+    OR jsonb_typeof(res->'text')<>'string'
+    OR NOT (res->'usage'='null'::jsonb OR (jsonb_typeof(res->'usage')='object'
+     AND NOT EXISTS(SELECT 1 FROM jsonb_each(res->'usage') u
+      WHERE jsonb_typeof(u.value)<>'number' OR (u.value#>>'{}')!~'^(0|[1-9][0-9]*)$')))
+    OR (final AND n>0)
+    OR EXISTS(SELECT 1 FROM jsonb_array_elements(tc) x
+     WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(tools) t WHERE t->>'key'=x->>'key')
+      OR jsonb_typeof(x->'key')<>'string' OR jsonb_typeof(x->'call_id')<>'string'
+      OR length(x->>'key') NOT BETWEEN 1 AND 128 OR length(x->>'call_id') NOT BETWEEN 1 AND 128
+      OR jsonb_typeof(x->'args')<>'object')
+    OR (SELECT count(DISTINCT x->>'key') FROM jsonb_array_elements(tc) x)<>n
+    OR (SELECT count(DISTINCT x->>'call_id') FROM jsonb_array_elements(tc) x)<>n)) AS valid
+  FROM b
+ )
+ SELECT CASE
+  WHEN kind='model_call' AND cls='failure' THEN
+   jsonb_build_object('v',1,'state',p_state||jsonb_build_object('step',step+1,'phase','sealed','batch','[]'::jsonb,'final',false),
+    'intents',jsonb_build_array(jsonb_build_object('type','close_run','reason','model_failed','text','','dropped_tool_calls',0)))
+  WHEN kind='model_call' AND cls='success' AND NOT valid THEN '{"invalid":true}'::jsonb
+  WHEN kind='model_call' AND cls='success' AND final THEN
+   jsonb_build_object('v',1,'state',p_state||jsonb_build_object('step',step+1,'phase','sealed','batch','[]'::jsonb,'final',true),
+    'intents',jsonb_build_array(jsonb_build_object('type','close_run','reason','final','text',coalesce(res->>'text',''),'dropped_tool_calls',0)))
+  WHEN kind='model_call' AND cls='success' AND r=0 THEN
+   jsonb_build_object('v',1,'state',p_state||jsonb_build_object('step',step+1,'phase','sealed','batch','[]'::jsonb,'final',false),
+    'intents',jsonb_build_array(jsonb_build_object('type','close_run','reason','budget_exhausted','text','','dropped_tool_calls',n)))
+  WHEN kind='model_call' AND cls='success' AND n=0 THEN '{"invalid":true}'::jsonb
+  WHEN kind='model_call' AND cls='success' AND n>r THEN
+   jsonb_build_object('v',1,'state',p_state||jsonb_build_object('step',step+1,'phase','sealed','batch','[]'::jsonb,'final',false),
+    'intents',jsonb_build_array(jsonb_build_object('type','close_run','reason','budget_exhausted','text','','dropped_tool_calls',n)))
+  WHEN kind='model_call' AND cls='success' THEN
+   jsonb_build_object('v',1,'state',p_state||jsonb_build_object('step',step+1,'phase','tools','batch',
+     (SELECT jsonb_agg(jsonb_build_object('ordinal',ord-1,'key',x->>'key','call_id',x->>'call_id') ORDER BY ord)
+      FROM jsonb_array_elements(tc) WITH ORDINALITY t(x,ord))),
+    'intents',(SELECT jsonb_agg(jsonb_build_object('type','emit_tool','ordinal',ord-1,
+      'key',x->>'key','call_id',x->>'call_id','args',x->'args') ORDER BY ord)
+      FROM jsonb_array_elements(tc) WITH ORDINALITY t(x,ord)))
+  WHEN kind='tool_call' AND cls IN ('success','failure') AND live>0 THEN
+   jsonb_build_object('v',1,'state',p_state||jsonb_build_object('step',step+1,'phase','tools'),'intents','[]'::jsonb)
+  WHEN kind='tool_call' AND cls IN ('success','failure') AND unknown_run THEN
+   jsonb_build_object('v',1,'state',p_state||jsonb_build_object('step',step+1,'phase','tools'),'intents','[]'::jsonb)
+  WHEN kind='tool_call' AND cls IN ('success','failure') AND r=0 THEN
+   jsonb_build_object('v',1,'state',p_state||jsonb_build_object('step',step+1,'phase','sealed','batch','[]'::jsonb,'final',false),
+    'intents',jsonb_build_array(jsonb_build_object('type','close_run','reason','budget_exhausted','text','','dropped_tool_calls',0)))
+  WHEN kind='tool_call' AND cls IN ('success','failure') THEN
+   jsonb_build_object('v',1,'state',p_state||jsonb_build_object('step',step+1,'phase','model','batch','[]'::jsonb),
+    'intents',jsonb_build_array(jsonb_build_object('type','emit_model')))
+  ELSE '{"invalid":true}'::jsonb
+ END
+ FROM v;
+END;
 CREATE FUNCTION v24_cordis.run_bindings(p_episode uuid) RETURNS jsonb
 LANGUAGE sql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
  SELECT coalesce(jsonb_agg(jsonb_build_object(
@@ -140,6 +240,81 @@ BEGIN
    'contract',jsonb_build_object('contract_version',c->>'contract_version',
     'handler_digest',c->>'handler_digest'))));
 END $$;
+CREATE FUNCTION v24_cordis.model_delta(p_effect_id uuid,p_outcome jsonb) RETURNS jsonb
+LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+DECLARE eff v24_cordis.effects%ROWTYPE; r v24_cordis.runs%ROWTYPE; pin v24_cordis.pins%ROWTYPE;
+ c v24_cordis.contributions%ROWTYPE; i v24_cordis.installs%ROWTYPE; fact jsonb; red jsonb;
+ intents jsonb; newstate jsonb; succs jsonb:='[]'::jsonb; it jsonb; body jsonb:=p_outcome->'body';
+ newr int; tools jsonb; ev jsonb; tpin v24_cordis.pins%ROWTYPE; cc v24_cordis.contributions%ROWTYPE;
+BEGIN
+ SELECT * INTO eff FROM v24_cordis.effects WHERE id=p_effect_id;
+ IF NOT FOUND OR eff.run_id IS NULL THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ SELECT * INTO r FROM v24_cordis.runs WHERE id=eff.run_id;
+ IF NOT FOUND THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ IF r.ended_at IS NOT NULL OR r.result IS NOT NULL THEN RETURN v24_cordis.error_v1('already_terminal'); END IF;
+ IF p_outcome->>'class'='unknown' THEN
+  RETURN jsonb_build_object('domain','[]'::jsonb,'receipt',jsonb_build_object('status','unknown'),
+   'events','[]'::jsonb,'successors','[]'::jsonb);
+ END IF;
+ IF p_outcome->>'class' NOT IN ('success','failure')
+  OR NOT coalesce(v24_cordis.exact_keys(eff.input,ARRAY['v','run_id','pin_id','key','digests','contract']),false)
+  OR eff.input->'v'<>'1'::jsonb OR NOT v24_cordis.json_uuid(eff.input->'run_id')
+  OR (eff.input->>'run_id')::uuid<>r.id OR NOT v24_cordis.json_uuid(eff.input->'pin_id')
+  OR NOT v24_cordis.json_text(eff.input->'key')
+  OR NOT coalesce(v24_cordis.exact_keys(eff.input->'digests',ARRAY['policy','schema','toolset']),false)
+  OR NOT v24_cordis.json_hex64(eff.input->'digests'->'policy')
+  OR NOT v24_cordis.json_hex64(eff.input->'digests'->'schema')
+  OR NOT v24_cordis.json_hex64(eff.input->'digests'->'toolset')
+  OR NOT coalesce(v24_cordis.exact_keys(eff.input->'contract',ARRAY['contract_version','handler_digest']),false)
+  OR eff.input->'digests' IS DISTINCT FROM v24_cordis.run_digests(r.id)
+  OR NOT v24_cordis.run_state_valid(r.state) THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ SELECT * INTO pin FROM v24_cordis.pins WHERE id=(eff.input->>'pin_id')::uuid
+  AND consumer_run_id=r.id AND released_at IS NULL AND key=eff.input->>'key';
+ IF NOT FOUND THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ IF NOT v24_cordis.pin_readable(pin.id) THEN RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
+ IF NOT v24_cordis.model_receipt_valid(p_outcome->>'class',body) THEN
+  RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ IF r.remaining_steps<1 THEN RETURN v24_cordis.error_v1('budget_exceeded'); END IF;
+ newr:=r.remaining_steps-1;
+ SELECT coalesce(jsonb_agg(jsonb_build_object('key',p.key,'pin_id',p.id) ORDER BY p.key),'[]'::jsonb)
+  INTO tools FROM v24_cordis.pins p WHERE p.consumer_run_id=r.id AND p.released_at IS NULL;
+ fact:=jsonb_build_object('v',1,'effect_kind','model_call','class',p_outcome->>'class',
+  'receipt',body,'remaining_steps',newr,'tools',tools,'live_siblings',0,
+  'unknown_in_run',EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.run_id=r.id AND x.status='unknown'));
+ red:=v24_cordis.reduce_chat_tool(r.state,fact);
+ IF red ? 'invalid' THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+ newstate:=red->'state'; intents:=red->'intents';
+ IF intents @> '[{"type":"close_run"}]'::jsonb THEN
+  RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_seal_unimplemented')); END IF;
+ FOR it IN SELECT value FROM jsonb_array_elements(intents) LOOP
+  IF it->>'type'='emit_tool' THEN
+   SELECT * INTO tpin FROM v24_cordis.pins WHERE consumer_run_id=r.id AND key=it->>'key'
+    AND released_at IS NULL;
+   IF NOT FOUND THEN RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
+   SELECT * INTO cc FROM v24_cordis.contributions WHERE id=tpin.contribution_id;
+   IF NOT FOUND OR cc.released_at IS NOT NULL OR cc.descriptor->>'capability'<>'tool_call' THEN
+    RETURN v24_cordis.error_v1('dependency_unresolved'); END IF;
+   SELECT * INTO i FROM v24_cordis.installs
+    WHERE id=(SELECT install_id FROM v24_cordis.fibers WHERE id=cc.fiber_id);
+   IF NOT FOUND OR i.contracts->'tool_call' IS NULL THEN RETURN v24_cordis.error_v1('invalid_outcome'); END IF;
+   succs:=succs||jsonb_build_array(jsonb_build_object('ordinal',(it->>'ordinal')::int,'kind','tool_call',
+    'input',jsonb_build_object('v',1,'run_id',to_jsonb(r.id),'pin_id',to_jsonb(tpin.id),'key',tpin.key,
+     'descriptor_digest',encode(sha256(convert_to(cc.descriptor::text,'UTF8')),'hex'),
+     'call_id',it->>'call_id','args',it->'args',
+     'contract',jsonb_build_object('contract_version',i.contracts->'tool_call'->>'contract_version',
+      'handler_digest',i.contracts->'tool_call'->>'handler_digest'))));
+  END IF;
+ END LOOP;
+ ev:=jsonb_build_object('entity_type','run','entity_id',to_jsonb(r.id),'event_kind','run_progress',
+  'payload',jsonb_build_object('run_id',to_jsonb(r.id),'effect_id',to_jsonb(eff.id),
+   'effect_kind','model_call','step',(newstate->>'step')::int,'remaining_steps',newr,
+   'phase',newstate->>'phase','sealed',false,'reason','null'::jsonb));
+ RETURN jsonb_build_object('domain',jsonb_build_array(
+   jsonb_build_object('op','run_state','run_id',to_jsonb(r.id),'state',newstate),
+   jsonb_build_object('op','run_budget','run_id',to_jsonb(r.id),'remaining_steps',newr)),
+  'receipt',jsonb_build_object('status',CASE p_outcome->>'class' WHEN 'success' THEN 'succeeded' ELSE 'failed' END),
+  'events',jsonb_build_array(ev),'successors',succs);
+END $$;
 CREATE FUNCTION v24_cordis.run_delta(p_effect_id uuid,p_outcome jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
 DECLARE eff v24_cordis.effects%ROWTYPE; f v24_cordis.fibers%ROWTYPE;
@@ -149,6 +324,7 @@ DECLARE eff v24_cordis.effects%ROWTYPE; f v24_cordis.fibers%ROWTYPE;
 BEGIN
  SELECT * INTO eff FROM v24_cordis.effects WHERE id=p_effect_id;
  IF NOT FOUND THEN RETURN v24_cordis.error_v1('not_found_or_denied'); END IF;
+ IF eff.kind='model_call' THEN RETURN v24_cordis.model_delta(p_effect_id,p_outcome); END IF;
  IF eff.kind<>'run_start' THEN
   RETURN v24_cordis.error_v1('invalid_outcome',jsonb_build_object('reason','run_settlement_unimplemented'));
  END IF;

@@ -4,7 +4,7 @@ DP4 delivers the run lifecycle on the DP1/DP2/DP3 Cordis v2 kernel: production `
 
 ## Current status
 
-**B0=`17c855d` is committed locally. W1 is implemented and committed locally. W2–W5 are unstarted.** B0 fixes HEAD `4b34bf2`, registers `sql/43_loop.sql` as the 18th manifest entry, extends the shared helper budget to four files, and records the 26-command pre-DP4 baseline in the DP4 conformance matrix. At B0 the 43 module was a behavior-free scaffold; W1 replaces it with the run_start planner primitives.
+**B0=`17c855d` and W1=`e8b6cce` are committed locally. W2 is implemented and committed locally. W3–W5 are unstarted.** B0 fixes HEAD `4b34bf2`, registers `sql/43_loop.sql` as the 18th manifest entry, extends the shared helper budget to four files, and records the 26-command pre-DP4 baseline in the DP4 conformance matrix. At B0 the 43 module was a behavior-free scaffold; W1 replaces it with the run_start planner primitives.
 
 B0 evidence:
 
@@ -15,7 +15,9 @@ B0 evidence:
 
 W1 adds the production `run_start` path. A real chat_tool P4 emits one ordinal-0 `run_start`; claim returns frozen `input`; success creates the run, run pins, one model_call successor and one run_progress event. Owner-closing, P0401, forged p4 successors, provider capability mismatch and both missing replay rights are zero-write refusal paths. CDP4-R1–R7 pass, and the 27-command W1 sequence (26 legacy + CDP4-R) is green in 117 seconds.
 
-W1 capacity: 40=1546, 41=1211, 42=1000, 43=283, sum **4040≤5000**; DDL 461; manifest 18; 10 tables; one `SECURITY DEFINER`. Model/tool settlement, the reducer, budget/seal and e7→e13 remain W2–W4.
+W2 adds model settlement and the restricted `chat_tool` reducer. `CDP4-M1`–`M5` pass: an e8 model success spends 3→2, stores `step=1, phase='tools'` with the frozen batch, and emits one exact ordinal-0 `tool_call` successor; the three digests are compared byte-for-byte and drift in any one is `invalid_outcome` with zero write; schema negatives are zero-write; the reducer is `IMMUTABLE` with no `pg_class` dependency and a reading `BEGIN ATOMIC` probe is detected; receipt/event/successor injection points all roll back with the effect still claimed. The 28-command W2 sequence (26 legacy + CDP4-R + CDP4-M) is green in 121 seconds.
+
+W2 capacity: 40=1546, 41=1211, 42=1000, 43=459, sum **4216≤5000**; DDL 461; manifest 18; 10 tables; one `SECURITY DEFINER`. Tool settlement/barrier (W3), budget/seal (W4) and e7→e13 remain.
 
 ## DP4 gates
 

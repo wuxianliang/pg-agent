@@ -91,6 +91,31 @@ def agent(db, requires=('model', 'tool'), *, policy='chat_tool', run_contract=Tr
                                              if result.get('emitted') else None))
 
 
+def prepare_run(db, steps=3, tool_keys=('tool',)):
+    provider(db, 'model_call', 'model')
+    for key in tool_keys:
+        provider(db, 'tool_call', key)
+    chat = agent(db, requires=('model',) + tuple(tool_keys))
+    rs = run_start_effect(db, chat['p4_result'])
+    c = claim(db, rs)
+    settled = settle(db, rs, {'v': 1, 'request': {}, 'steps': steps}, c['claim'])
+    assert settled['disposition'] == 'committed', settled
+    run_id = q1(db, 'SELECT v24_cordis.run_id_for(%s)', (rs,))
+    model_effect = uuid.UUID(settled['emitted'][0])
+    return dict(chat=chat, run_start=rs, claim=c, settled=settled,
+                run_id=run_id, model_effect=model_effect)
+
+
+def model_body(tool_calls=(), *, final=False, text='ok', usage=None, interaction=None):
+    return {'kind': 'model_call', 'result': {
+        'text': text, 'tool_calls': list(tool_calls), 'interaction': interaction,
+        'final': bool(final), 'usage': usage}}
+
+
+def tool_call(call_id='c1', key='tool', args=None):
+    return {'call_id': call_id, 'key': key, 'args': {} if args is None else args}
+
+
 def run_start_effect(db, result):
     if not result.get('emitted'):
         return None

@@ -36,3 +36,21 @@ Same worktree, B0 `17c855d` plus W1 changes. The 27-command sequence (26 legacy 
 ### W1 not covered
 
 Model/tool settlement, reducer, `run_seal`, budget exhaustion, final/model_failed terminal states, run pin release on terminal, and e7→e13 remain unimplemented.
+
+## W2 observations (2026-10-27)
+
+Same worktree, W1 `e8b6cce` plus W2 changes. The 28-command sequence (26 legacy + CDP4-R + CDP4-M) is green; this section does not rewrite B0/W1.
+
+| Date | Item | Plan / baseline | W2 treatment | Evidence |
+|---|---|---|---|---|
+| 2026-10-27 | W2/W3 boundary repair | Plan W2 includes the complete pure reducer; W3 owns tool receipt/settlement | `tool_receipt_valid`, `tool_delta`, the `run_delta` tool dispatch, `tool_body` and `test_loop.py` were removed before the W2 gate run. The reducer keeps its complete tool branch. Full W3 work is preserved in `/tmp/dp4-w3-backup-20261028-151753` with SHA-256; W2 tree has 43=459, restoring W3 yields 554≤560 | W2 43 function list; CDP4-M; backup `SHA256SUMS` |
+| 2026-10-27 | 40/42 plumbing already committed | Plan lists 40/42 as W2 key files | W1's commit had already landed the generic run plumbing (`run_state`/`run_budget` ops and appliers, model/tool successor exact-shape checks, ACL, claim `input`). W2 needed no 40/42 edit and does not re-claim it; W2 adds the 43 interpreter/reducer, support helpers and test | `git show e8b6cce -- v24/cordis/sql/40_advance.sql v24/cordis/sql/42_teardown.sql`; W2 `git diff --stat` |
+| 2026-10-27 | Extra `model_delta` planner | §3.2 describes one `run_delta` planner with three branches | Implementation dispatches `model_call` to a private `model_delta` (and W3 will add `tool_delta`) from `run_delta`. No table, writer, kind or public surface is added; behavior is identical and 43 stays 459 (W2) / 554 (W3) ≤560 | 43 function list; CDP4-M1/M5 |
+| 2026-10-27 | Close intents deferred | M6 and sealing are W4 | `final`, `budget_exhausted` and `model_failed` intents return `invalid_outcome{reason:run_seal_unimplemented}` in W2. The reducer already produces the closed intent; W4 wires `run_seal`/pin release | CDP4-M does not claim M6; plan W4 |
+| 2026-10-27 | Frozen batch | §3.5 batch is the original frozen list; `p_fact` has no current item | W2 M1 asserts the full one-element batch and never shrinks it. The intermediate sibling state remains W3 T1; W1's ledger row owns the semantic decision | CDP4-M1 |
+| 2026-10-27 | Capacity | Four-file sum ≤5000, 43 ≤560 | W2 actual 40=1546, 41=1211, 42=1000, 43=459, sum **4216≤5000**; DDL 461; manifest 18; 10 tables; one DEFINER | CDP1-K0, CDP2-B |
+| 2026-10-27 | Publication | Local commits only until target confirmed | W2 committed locally; no push and `main` untouched | W2 commit |
+
+### W2 not covered
+
+Tool receipt/settlement/barrier and continuation (W3); `run_seal`, terminal closure, pin release and e7→e13 (W4); closeout gates and CDP4-B (W5).
