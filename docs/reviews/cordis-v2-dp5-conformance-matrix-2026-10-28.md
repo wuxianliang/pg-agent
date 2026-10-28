@@ -1,6 +1,6 @@
 # Cordis v2 DP5 Conformance Matrix
 
-B0 re-adjudication executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, at HEAD `ba66776` plus the user's uncommitted `41_lifecycle.sql` refactor and `helper_budget.py` 5500 cap. W1 was then implemented on the same HEAD and verified by the inherited 31 commands plus `CDP5-R`; W2 was implemented on W1 HEAD `c3ddd94` and verified by the 31 inherited commands plus `CDP5-R` and `CDP5-E`. This matrix records B0, W1, W2 and W3: DP4 handoff inspection, the current `43_loop.sql` stability check, the relaxed 5500 capacity contract, the 31-command pre-DP5 regression, the admission decision, the W1 overlay/intercept/effective-descriptor implementation, the W2 listener registration/withdrawal implementation, the 33-command W2 regression, and the W3 atomic event producer/execution closure with the 34-command serial regression. W4–W5 do not exist yet.
+B0 re-adjudication executed on 2026-10-28 in worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`, at HEAD `ba66776` plus the user's uncommitted `41_lifecycle.sql` refactor and `helper_budget.py` 5500 cap. W1 was then implemented on the same HEAD and verified by the inherited 31 commands plus `CDP5-R`; W2 was implemented on W1 HEAD `c3ddd94` and verified by the 31 inherited commands plus `CDP5-R` and `CDP5-E`; W3 was implemented on W2 HEAD `20599f6` and verified by the 34-command serial regression. This matrix records B0, W1, W2, W3 and W4: DP4 handoff inspection, the current `43_loop.sql` stability check, the relaxed 5500 capacity contract, the 31-command pre-DP5 regression, the admission decision, the W1 overlay/intercept/effective-descriptor implementation, the W2 listener registration/withdrawal implementation, the 33-command W2 regression, the W3 atomic event producer/execution closure, and the W4 refinement evidence (R5–R7, mixed generation, host premises and the no-config DP4 digest) on HEAD `184938e`. W5 does not exist yet.
 
 The prior blocked-at-5000 B0 record is retained in the plan §9 as history; it is superseded by this re-adjudication. DP1–DP4 historical acceptance records are not rewritten.
 
@@ -705,3 +705,109 @@ W3 does **not** claim W4's independent Python five-mode reference/purity/host le
 - W5: `CDP5-B` all-boundary gate, full old+new serial closeout, final frozen/hash/ACL/manifest record, push-ready result.
 - DP6: scanner/fair recovery, external unknown reconciliation, upgrade/HMR, cancel/steer/respond, spawn/child runs, multi-host, cell/reservation production writers, realm ACL, `thisArg`, synchronous disposer chains.
 - Publication: W3 is local only; the target remains unresolved.
+
+## W4 implementation (2026-10-28, HEAD `184938e` plus W4)
+
+W4 is a local, verified refinement milestone. It adds no helper, table, DDL, loader entry or public function. `listener_exec` changed from a string SQL body to `IMMUTABLE STRICT BEGIN ATOMIC` with no net line change (44 remains 622); the helper total stays exactly 5500. The change is what makes R5's `pg_depend` proof non-vacuous: a string SQL body records no parsed execution dependencies, while the `BEGIN ATOMIC` body does. The deliberately reading probe and the forbidden-token scan are the negative controls.
+
+### W4 environment
+
+| Item | Observed value |
+|---|---|
+| `pwd -P` | `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` |
+| branch / upstream | `v24` / `origin/v24` |
+| HEAD at W4 start | `184938e16a7742a6bb5c9cb267fa6699ae450cdf`, subject `v24: implement Cordis DP5 W3 atomic event dispatch execution` |
+| W4 changed helper | `v24/cordis/sql/44_events.sql` (`listener_exec` body form only) |
+| W4 changed gate | `v24/cordis/dp5/test_resolution.py` (R5–R7, R6b, R3b digest) |
+| W4 changed artifacts | DP5 README, this matrix, deviation ledger, plan W4 Result |
+| helper budget | **5500** (40=1685, 41=1473, 42=1020, 43=700, 44=622), `R=0` |
+| frozen `v24/sql` / `v24/s1`–`s12` | `git diff --exit-code 57e2c1e -- ...` exit 0; `git diff --check` exit 0 |
+
+### W4 capacity
+
+| Item | Value |
+|---|---|
+| `40_advance.sql` | 1685 |
+| `41_lifecycle.sql` | 1473 |
+| `42_teardown.sql` | 1020 |
+| `43_loop.sql` | 700 |
+| `44_events.sql` | 622 |
+| helper total | **5500** |
+| `R = 5500 − total` | **0** |
+| DDL prefix | **465≤900** |
+| manifest | **19** |
+| domain tables | **10** |
+| private functions | **162** |
+| unique `SECURITY DEFINER` | **`advance`** |
+| public EXECUTE | **0** |
+| no VIEW / EXTENSION | **yes** |
+
+`[CDP1-K0] helper budget 5500<=5500`; the temporary five-file predicate still admits exactly 5500 and rejects 5501. No mode, validator, limit or test was removed.
+
+### W4 34-command serial regression
+
+One `uv run python` process at a time, no concurrency, no joined commands, stopping on the first non-zero exit; s8 before s7. **34/34 exit 0, 177 s.** Summary `/tmp/dp5-w4-gates/gates.tsv`; per-command logs `/tmp/dp5-w4-gates/gate-01..34.log`. The refined `CDP5-R` gate then ran again on the final tree; exit 0 (`/tmp/dp5-w4-gates/final-resolution.log`).
+
+| # | Command | Exit | Seconds |
+|---:|---|---:|---:|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0 |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 2 |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1 |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 2 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 13 |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 4 |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4 |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3 |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 4 |
+| 10 | `uv run python v24/load.py` | 0 | 0 |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 2 |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1 |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 3 |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 2 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 3 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 7 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 10 |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3 |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 10 |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 6 |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 6 |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 6 |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 6 |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 5 |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 11 |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 9 |
+| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 15 |
+| 32 | `uv run python v24/cordis/dp5/test_resolution.py` | 0 | 9 |
+| 33 | `uv run python v24/cordis/dp5/test_listeners.py` | 0 | 5 |
+| 34 | `uv run python v24/cordis/dp5/test_dispatch.py` | 0 | 11 |
+
+### W4 evidence
+
+| Item | Evidence |
+|---|---|
+| R5 pure body | `listener_exec` is `IMMUTABLE STRICT` with `prosqlbody` present and `BEGIN ATOMIC` in `pg_get_functiondef`; no net line change |
+| R5 dependency closure | transitive `pg_depend` closure has `relations=0` and `missing_sql_body=0`; a `BEGIN ATOMIC` probe reading `v24_cordis.effects` has `relations>0` |
+| R5 source scan | `event_policy`, `listener_exec`, `listener_contract`, `listener_call_input`, `listener_available`, `dispatch_fold` contain no `EXECUTE`, `RAISE`, `dblink`, HTTP, file/COPY or large-object primitive |
+| R6 sort/filter | Python sort by `priority DESC`; filter evaluated against event params; production snapshot and child ordinals compared with Python |
+| R6 emit | parent exactly `{v,mode:'emit',generated:[...]}`; generated order compared; children still executed and audited |
+| R6 parallel/serial/bail | `acc`, `joined`, actual called list and multiset compared; serial/bail stop on JSON boolean `true` only; bail no-hit returns null |
+| R6 waterfall | final `acc` and each child input `acc` compared with the Python acc chain; failure and `invalid_acc` carried as error values; no `next` control asserted |
+| R6 multiset | two providers declare the same `listener_id`; both appear in `called` and child rows, compared with `Counter` |
+| R6 empty identity | Python identity and deployed `dispatch_fold` empty branch agree for all five modes (`joined=0`, `called=[]`, `bailed=false`, correct `acc`) |
+| R6b mixed generation | after close/drain/reactivate, the source snapshot contains only the new contribution id and one `r6gen`; the released contribution is absent |
+| R7 host | emit parent unchanged after settlement; parallel parent null until settlement then exact `acc/joined/called`; claim execution descriptor/digest; closing provider drains a created child; future activation excludes the withdrawn listener |
+| R7 premises | P7.1/P7.3 and E1–E3 are documented as external; `sync_reads=false` is asserted as a declaration, not external isolation; no timing-equivalence assertion |
+| R3b no-config | DP4 claim shape retained; policy/schema/toolset rehashed independently in Python (`policy=06267903…`, `schema=0f782569…`) |
+| R8 preserved | scope realm/intercept UPDATE guard, close tombstone, install overlay immutability and private-helper ACL still pass |
+
+W4 does **not** claim W5's `CDP5-B`, the final all-boundary closeout, or any push. The W3 event path and `CDP5-D` assertions are unchanged; only the pure operator body form was corrected.
+
+## W4 not covered
+
+- W5: `CDP5-B` all-boundary gate, full old+new serial closeout, final frozen/hash/ACL/manifest record, push-ready result.
+- DP6: scanner/fair recovery, external unknown reconciliation, upgrade/HMR, cancel/steer/respond, spawn/child runs, multi-host, cell/reservation production writers, realm ACL, `thisArg`, synchronous disposer chains.
+- Publication: W4 is local only; the target remains unresolved.

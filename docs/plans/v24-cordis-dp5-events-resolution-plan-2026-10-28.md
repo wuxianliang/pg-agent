@@ -1,6 +1,6 @@
 # Cordis v2 DP5：事件派发与描述符解析 Deep Plan
 
-> 状态：规划完成；B0 已于 2026-10-28 在 DP4 HEAD `ba66776` 上完成重裁并通过容量准入；W1/W2 已在该 HEAD 上实施并分别通过 32/32、33/33 命令（W2 为 31 继承 + `CDP5-R` + `CDP5-E`）并本地提交；W3 已在 W2 HEAD `20599f6` 上实施，交付 `44_events.sql`、原子 producer/execution 闭环与 `CDP5-D`，34/34 命令串行通过并本地提交。W4/W5 未启动。本文相对路径以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含 Cordis。DP1–DP4 已完成；DP4 W5 及两次收尾补正已本地提交，DP5 在 B0 重裁后接续。本文把 W1/W2/W3 写成有实跑证据的已交付里程碑，W4+ 仍只写实施合同。
+> 状态：规划完成；B0 已于 2026-10-28 在 DP4 HEAD `ba66776` 上完成重裁并通过容量准入；W1/W2 已在该 HEAD 上实施并分别通过 32/32、33/33 命令（W2 为 31 继承 + `CDP5-R` + `CDP5-E`）并本地提交；W3 已在 W2 HEAD `20599f6` 上实施，交付 `44_events.sql`、原子 producer/execution 闭环与 `CDP5-D`，34/34 命令串行通过并本地提交；W4 已在 W3 HEAD `184938e` 上实施，交付 `CDP5-R` R5–R7、独立五 mode Python 参考、R6b 混代激活、R7 host 前提与显式 emit/waterfall 偏差，34/34 命令串行通过并本地提交。W5 未启动。本文相对路径以 `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99` 为根；main checkout 不含 Cordis。DP1–DP4 已完成；DP4 W5 及两次收尾补正已本地提交，DP5 在 B0 重裁后接续。本文把 W1/W2/W3/W4 写成有实跑证据的已交付里程碑，W5 仍只写实施合同。
 >
 > 文中“现状”是规划快照，不是执行时 HEAD；“拟新增”是实施合同，不代表代码已存在。执行前重新记录 HEAD、工作区和所有引用符号，禁止把另一个会话的未提交工作作为 DP5 已完成事实。
 
@@ -521,7 +521,17 @@ Goal/Done when/Key files/Dependencies/Size见§3。先只读确认DP4 W5已交�
 
 独立Python同步参考验证五mode对应观察、纯度依赖闭包/读表探针、host条件性证明、emit与waterfall具名偏差；补混代激活回归和无配置DP4摘要证据。R全绿及全旧stage通过后工件/独立commit+push。
 
-Result：未执行。
+Result（2026-10-28，HEAD `184938e` 加 W4）：**已执行并本地提交。**
+
+- **R5 纯度修复与证明。** W3 的 `listener_exec` 是 string SQL body，`prosqlbody` 为空，`pg_depend` 不记录执行依赖，R5 的零 `pg_class` 断言会是空洞的。W4 只把同一 `CASE` 改成 `IMMUTABLE STRICT BEGIN ATOMIC`，44 仍 622 行、总 helper 仍 5500，未新增 helper/模式/validator。`pg_depend` 传递闭包 `relations=0`、`missing_sql_body=0`；临时 `BEGIN ATOMIC` 读表探针必须出现 `relations>0` 才通过，随后在 `finally` 删除；纯 helper 集合无 `EXECUTE`/`RAISE`/外呼/文件/COPY/large-object 原语。
+- **R6 独立 Python 参考。** Python 侧独立实现 `priority DESC` sort、filter、四 `in_db` op 和 mode fold，不使用 `event_delta` 或 planner 作为答案；与 production snapshot、parent result、child ordinal/outcome 比较：emit 比 `generated`；parallel/serial/bail 比 `acc`/`joined`/实际 called；serial/bail 只对 success 且 `result.value.bail` 为 JSON boolean `true` 短路；跨 provider 重复 `listener_id` 用 `Counter` 多重集；waterfall 只比收窄的 acc 链和最终 acc；五 mode 空集 identity 单独断言，并只对 deployed empty branch 做辅助核对。
+- **R6b 混代激活。** provider close/drain 后重新激活同名 listener，source dispatch snapshot 只含新 contribution id 和一条当前代 listener，旧 released generation 不出现；补足 E3 注册侧复用之外的 producer 侧证据。
+- **R7 host 前提。** host emit 在 settle 前只 `generated` 且 settle 后 parent 字节不变；host parallel 在 settle 前 parent 为 null，settle 后得到精确 `acc/joined/called`；claim 暴露冻结 `execution`；closing provider 仍可排空已创建 child；后续激活排除已撤销 listener。P7.1/P7.3 与 E1–E3 明确为 host 外部前提；`sync_reads=false` 只是声明，不证明外部隔离；不声明时序等价。
+- **R3b DP4 摘要。** 无配置 run 保持 DP4 claim shape（无 `execution`）；`policy`/`schema` 用 shipped DP4 文本在 Python 重算（`06267903…`、`0f782569…`），`toolset` 用 raw model/tool descriptor digest 重算，而不是 effective overlay/intercept。
+- **显式偏差。** 仅 p4 `fiber.activated` 有 producer；emit 只保证生成，不保证 host 已调用；waterfall 只传 acc/error，不恢复同步 `next` 调用栈；`sync_reads=false` 不冒充 host 独立性；unknown 外部对账仍归 DP6。
+- **容量。** 40=1685、41=1473、42=1020、43=700、44=622，合计 **5500≤5500**，`R=0`；DDL 465≤900；manifest 19；十表；162 私有函数；唯一 `SECURITY DEFINER` 为 `advance`，public EXECUTE 0；十二份冻结 `v24/sql` SHA-256、`v24/load.py` 与 `v24/s1`–`s12` 未变；`git diff --check` exit 0。
+- **回归。** 31 条继承命令逐条独立进程串行后依次跑 `CDP5-R`/`CDP5-E`/`CDP5-D`，**34/34 exit 0，177 秒**（`/tmp/dp5-w4-gates/gates.tsv`、`gate-01..34.log`）；最终树再跑一次 refined `CDP5-R`，exit 0。W3 的 D 断言与 E 的注册/撤销断言未削弱。
+- **发布。** W4 为本地 commit；没有 force、没有推断 `origin/main` 或 `origin/v24`、没有 push。发布目标仍由 orchestration/用户点名。
 
 ### W5 — 全量验收
 
@@ -570,4 +580,4 @@ Result：未执行。
 
 没有留给实现者临场选择的核心算法问题。以下是显式交接条件：DP4 HEAD `ba66776` 的实际接口与31条gate已由B0接收；5500/900准入已在`R=1162`实测通过；用户核准的远程/分支目标仍未解决，发布留给orchestration。scope向祖先路由与仅fiber.activated producer是可被用户覆盖的Oracle保守假设。任何新证据推翻已裁决合同，先更新计划/预算/测试，不能在实现中悄悄扩大或缩减。
 
-推荐下一步`rp-build`进入 W4（R5–R7 与 refinement 偏差），随后 W5 全量 `CDP5-B` 收尾；共享 40–44 与同名 gate DB 的实现/测试仍串行，不能把四 typed op 与 producer 拆成独立不完整里程碑。截至 2026-10-28，B0-revised、W1、W2、W3 已有实跑 Result；W4/W5 仍未执行。
+推荐下一步`rp-build`进入 W5（全量 `CDP5-B` 与最终收尾），共享 40–44 与同名 gate DB 的实现/测试仍串行，不能把四 typed op 与 producer 拆成独立不完整里程碑。截至 2026-10-28，B0-revised、W1、W2、W3、W4 已有实跑 Result；W5 仍未执行。

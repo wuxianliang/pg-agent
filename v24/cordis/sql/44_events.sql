@@ -6,7 +6,8 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
  SELECT jsonb_build_object('listeners',16,'created',16,'cascade',16,'depth',4, 'modes',jsonb_build_array('emit','parallel','serial','bail','waterfall'))
 $$;
 CREATE FUNCTION v24_cordis.listener_exec(p_exec jsonb,p_params jsonb,p_acc jsonb) RETURNS jsonb
-LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
+LANGUAGE sql IMMUTABLE STRICT SET search_path=pg_catalog,v24_cordis,pg_temp
+BEGIN ATOMIC
  SELECT CASE
   WHEN p_exec->>'type'<>'in_db' THEN jsonb_build_object('ok',false,'error',jsonb_build_object('code','invalid_exec'))
   WHEN p_exec->>'op'='const' THEN jsonb_build_object('ok',true,'value',p_exec->'value')
@@ -15,8 +16,7 @@ LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
    THEN jsonb_build_object('ok',true,'value',p_acc||jsonb_build_array(p_exec->'value'))
    ELSE jsonb_build_object('ok',false,'error',jsonb_build_object('code','invalid_acc')) END
   WHEN p_exec->>'op'='fail' THEN jsonb_build_object('ok',false,'error',jsonb_build_object('code',p_exec->>'code'))
-  ELSE jsonb_build_object('ok',false,'error',jsonb_build_object('code','invalid_exec')) END
-$$;
+  ELSE jsonb_build_object('ok',false,'error',jsonb_build_object('code','invalid_exec')) END; END;
 CREATE FUNCTION v24_cordis.listener_facts(p_contribution uuid) RETURNS jsonb
 LANGUAGE sql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
  SELECT jsonb_build_object('found',true,'contribution_id',c.id,'fiber_id',c.fiber_id, 'episode_id',c.episode_id,'epoch',e.epoch,'seq',c.seq,'descriptor',c.descriptor,
