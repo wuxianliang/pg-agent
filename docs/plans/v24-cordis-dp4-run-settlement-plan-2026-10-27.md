@@ -402,6 +402,8 @@ B0 与 W5 必须串行实跑 DP3 收尾的全部命令（`docs/reviews/cordis-v2
 
 tool receipt、pin/key/liveness、sibling 查询、唯一 continuation、unknown 兄弟结算、claim 阻断。验收 `CDP4-T`。
 
+**Result**（2026-10-27）：在 W2 commit `8cbc5f3` 之上完成。29 条命令（26 条旧 gate + `CDP4-R`/`M`/`T`）逐条独立启动并等待退出，全部 exit 0，总耗时 134 秒。CDP4-T1–T7 全部通过：N 个 tool 串行结算时最后一个才发恰一条 `model_call`（parent 为该 tool）；双连接竞态恰好一个响应 `emitted` 为 1、另一个为零，且 continuation 的 parent 是关闭 batch 的 tool；过期 lease 仍计 live sibling；withdrawn 未 release 的 pin 可结算，released 则 `dependency_unresolved` 零写；unknown 兄弟接受可信 receipt 并扣预算，但不发 continuation/不封口/不释放 pin，新 claim 与 P6 均 `blocked_unknown`；tool failure 正常关闭 batch；过期原 receipt 重放/重领/new token 与 `stale_claim`/`receipt_conflict` 均符合合同。W3 按 §3.2 把 model/tool 结算合并回单一 `run_delta` planner，移除 W2 的 `model_delta` 与 W3 的 `tool_delta`，43 为 **509**（预备态 555），无压行或搬文件；四文件 helper **4266≤5000**（40=1546、41=1211、42=1000、43=509），DDL 实测 **461**（W1 的 state CHECK 是原行内追加，不增物理行），manifest 18，十表，唯一 `SECURITY DEFINER` 仍为 `advance`。W3 只做本地 commit，不 push。
+
 ### W4 — 预算与终止
 
 `run_seal`（含 `effect_id`）、final/budget/model_failed、`pins_release` 与 current-effect 排除、e7→e13。验收 `CDP4-X`（含 M6）。

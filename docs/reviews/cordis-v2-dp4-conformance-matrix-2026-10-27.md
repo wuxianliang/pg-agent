@@ -205,3 +205,65 @@ Same worktree and branch `v24`, HEAD `e8b6cce` (W1) plus W2 changes before stagi
 - `run_seal`, final/budget/model_failed terminal closure, pin release and e7→e13 are W4; M6 is deferred with them. In W2 a `close_run` intent returns `invalid_outcome{reason:run_seal_unimplemented}`.
 - The frozen-batch decision stands: W2 never shrinks `batch`; the intermediate sibling settlement state is a W3 T1 check.
 - W2 was committed locally only; no push.
+
+## W3 / CDP4-T (2026-10-27)
+
+Same worktree and branch `v24`, HEAD `8cbc5f3` (W2) plus W3 changes before staging. The 26 legacy commands, `CDP4-R`, `CDP4-M` and `CDP4-T` were launched one process at a time; all 29 exited 0, total 134 seconds.
+
+| # | Command | Exit | Duration (s) | Evidence |
+|---:|---|---:|---:|---|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 1 | canonical loader, 18 entries |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1 | fixture/role/OID cleanup |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 2 | CDP1-E, exact 18-entry manifest |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 2 | CDP1-D, `DDL lines 461` |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 13 | CDP1-K; helper 4266, 5000/5001 proof; service ACL |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 4 | CDP2-K continuation/typed delta/closure |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4 | CDP2-I |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 4 | CDP2-A |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 4 | CDP2-B, `helpers=4266 40=1546 41=1211 42=1000 43=509 ddl=461` |
+| 10 | `uv run python v24/load.py` | 0 | 0 | v24 loader |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 2 | v24/s1 setup |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1 | G1-O |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 3 | G1 kernel/commands/ACL |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 2 | S2 W1-W6 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 6 | S3 W1-W7 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 5 | S4 W1-W6 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 4 | S5 W1-W4 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 3 | S6 W1-W4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 3 | S8 W1-W3 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 7 | S7 W1-W2 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 11 | G8, 23 cases |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3 | CDP3-P |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 11 | CDP3-L |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 6 | CDP3-T |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 5 | CDP3-D |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 7 | CDP3-B1…B13; `tables=10 manifest=18 helpers=4266 ... ddl=461 definer=advance` |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 6 | CDP4-R1…R7 regression |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 5 | CDP4-M1…M5 regression |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 9 | CDP4-T1…T7 |
+
+| W3 invariant | Actual evidence |
+|---|---|
+| Batch barrier | With two tools, the first settlement returns `emitted=[]`, keeps the frozen two-entry batch and spends budget 3→2. The second returns one `emitted` id and closes the batch (`phase='model'`, `batch=[]`, budget 2→1). The single ready continuation is ordinal 0, parent is the second tool, key `model`, digests equal `run_digests(run)`, pin is the model run pin. Replay returns `replay` with `emitted=[]` and no second continuation. CDP4-T1/T2a |
+| Two-connection race | Two threads pass one barrier and settle the two claimed siblings. Exactly one response has `emitted` length 1 and the other zero; the single continuation's parent is the effect from the emitting response; both tools are `succeeded`, batch is empty, budget is 1. CDP4-T2b |
+| Expired lease | Both leases are expired before settlement (`bool_and(lease_until < clock_timestamp())`). The first settlement still sees the other `claimed` tool as a live sibling, so it emits nothing and keeps batch entry `c0`; the second emits the continuation. CDP4-T3 |
+| Withdrawn pin | A tool contribution is `withdrawn_at IS NOT NULL` while its pin is `released_at IS NULL`; claim and settlement still commit and emit the model continuation. CDP4-T4a |
+| Released pin | The pin is released after claim; settlement returns `dependency_unresolved`, the ten-table snapshot is unchanged and the effect remains `claimed`. CDP4-T4b |
+| pin/key mismatch | Both directions (model pin with `key='tool'`; tool pin with `key='nope'`) are `invalid_outcome` with an unchanged snapshot and the effect still `ready`. The planner is called as `run_delta`, the single W3 entry point. CDP4-T4c |
+| Unknown sibling | The first tool settles `unknown`: status `unknown`, step and budget unchanged, frozen batch retained, no continuation. A third ready tool on the same parent is `blocked_unknown` with zero write. The second sibling's trusted receipt is accepted, spends budget 3→2, leaves `phase='tools'` and the two-entry batch, emits no continuation, leaves the run pin unreleased and the run non-terminal; `p6_plan` returns `blocked_unknown`. CDP4-T5 |
+| Tool failure | A `failure` receipt is committed, marks the effect `failed`, closes the batch, increments step and emits one ordinal-0 model continuation. CDP4-T6 |
+| Receipt replay | An expired original token still settles once; one continuation exists. Same token with different bytes is `receipt_conflict` with an unchanged snapshot and still one continuation. CDP4-T7a |
+| Reclaim | Reclaim advances `attempt` to 2 and `fence` upward; the old token is `stale_claim` with zero write and the effect stays `claimed`; the new token settles and spends budget 2→1. CDP4-T7b |
+| Missing replay right | A provider with `repeat=true, concurrent=false` is used through an owner fixture: first claim succeeds, the expired lease cannot be reclaimed (`blocked_unknown`) and the attempt stays 1 with zero write. This is fixture evidence, as B3 anticipates. CDP4-T7c |
+
+### DDL count verification
+
+W1 changed `16_runs.sql` by extending the existing `state` CHECK with `octet_length(state::text)<=65536` on the same physical line (`+1/-1` diff). `test_ddl.py` computes `sum(len(path.read_text().splitlines()) for the 10 prefix files)`; the measured value is **461** and includes the CHECK. The plan's “`16_runs.sql` (+1 行)” describes the predicate, not an added line, so 461 is correct and must not be replaced by 462.
+
+| Capacity | 40=1546, 41=1211, 42=1000, 43=509, sum **4266≤5000**; 43=509≤560 (down from the 555-line pre-merge state); DDL 461; manifest 18; 10 tables; one DEFINER (`advance`) |
+
+### W3 not covered
+
+- `run_seal`, final/budget/model_failed terminal closure, run pin release on terminal and e7→e13 are W4; M6 is tested there.
+- CDP4-B layout/ACL/frozen-surface closeout and the full 31-command serial closeout are W5.
+- W3 was committed locally only; no push.

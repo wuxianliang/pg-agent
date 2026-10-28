@@ -54,3 +54,22 @@ Same worktree, W1 `e8b6cce` plus W2 changes. The 28-command sequence (26 legacy 
 ### W2 not covered
 
 Tool receipt/settlement/barrier and continuation (W3); `run_seal`, terminal closure, pin release and e7→e13 (W4); closeout gates and CDP4-B (W5).
+
+## W3 observations (2026-10-27)
+
+Same worktree, W2 `8cbc5f3` plus W3 changes. The 29-command sequence (26 legacy + CDP4-R/M/T) is green; this section does not rewrite B0/W1/W2.
+
+| Date | Item | Plan / baseline | W3 treatment | Evidence |
+|---|---|---|---|---|
+| 2026-10-27 | Planner consolidation | §3.2 requires one `run_delta` with the three run interpreters; W2 shipped an extra `model_delta` and the W3 draft added `tool_delta` | W3 merges model/tool settlement into the single `run_delta` branch, removes both helpers, and keeps `run_start` in the same function. 43 goes 555→509 with no line squeezing, test deletion or file move. CDP4-M and CDP4-T re-run green after the merge | 43 function list; CDP1-K0 `43=509`; CDP4-M/T |
+| 2026-10-27 | DDL count | Plan §3.2 says `16_runs.sql` “+1 行”; B0/W1/W2 cited 461 | The W1 CHECK was appended to the existing `state` line (`+1/-1`), so no physical line was added. `test_ddl.py` sums `splitlines()` over the ten prefix files and reports **461**, which includes the CHECK. The later capacity text must use 461, not 462 | CDP1-D `DDL lines 461`; `git show e8b6cce -- v24/cordis/sql/16_runs.sql` |
+| 2026-10-27 | T2b strength | Plan T2: only the latter connection observes batch closure | The test now records each connection's `emitted`: exactly one is 1, the other is 0; the single continuation's parent is the emitting effect. It no longer relies on an aggregate ready-count alone | CDP4-T2b |
+| 2026-10-27 | T5 strength | Plan T5: trusted sibling receipt accepted and budget charged, but no continuation/seal/pin release; new claim and P6 blocked | Asserts status `unknown`, step/budget unchanged, frozen batch; third claim `blocked_unknown` zero-write; sibling settles with budget 3→2, step 2, phase tools, batch 2, no continuation, pin unreleased, run non-terminal; `p6_plan` `blocked_unknown` | CDP4-T5 |
+| 2026-10-27 | T4c entry point | Plan: pin/key mismatch is `invalid_outcome` | After removing `tool_delta`, the test calls the production `run_delta`; both mismatch directions (wrong pin, wrong key) are zero-write `invalid_outcome` | CDP4-T4c |
+| 2026-10-27 | T7c fixture evidence | Production `run_start` refuses a provider without both replay rights (R7), so reclaim cannot be reached through the real path | The reclaim `blocked_unknown` case uses an owner-fixture `model_call` and a `repeat=true/concurrent=false` provider; the claim attempt stays 1 and the snapshot is unchanged. This is fixture evidence, as B3 permits | CDP4-T7c; CDP4-R7 |
+| 2026-10-27 | Capacity | 43 ≤560, four-file sum ≤5000 | Measured 40=1546, 41=1211, 42=1000, 43=509, sum **4266≤5000**; DDL 461; manifest 18; 10 tables; one DEFINER | CDP1-K0, CDP2-B, CDP3-B |
+| 2026-10-27 | Publication | Local commits only until target confirmed | W3 committed locally; no push and `main` untouched | W3 commit |
+
+### W3 not covered
+
+`run_seal`, terminal closure, pin release and e7→e13 (W4); CDP4-B and the full closeout (W5).

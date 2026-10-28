@@ -116,6 +116,11 @@ def tool_call(call_id='c1', key='tool', args=None):
     return {'call_id': call_id, 'key': key, 'args': {} if args is None else args}
 
 
+def tool_body(status='ok', output=None, usage=None):
+    return {'kind': 'tool_call', 'result': {
+        'status': status, 'output': {} if output is None else output, 'usage': usage}}
+
+
 def run_start_effect(db, result):
     if not result.get('emitted'):
         return None
