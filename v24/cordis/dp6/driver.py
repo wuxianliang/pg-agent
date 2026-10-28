@@ -771,12 +771,21 @@ class Maintainer:
                   "FROM v24_cordis.effects WHERE status='claimed' AND lease_until<clock_timestamp() "
                   'AND id>%s ORDER BY id LIMIT %s'),
             Topic('unknown',
-                  "SELECT id,kind,fiber_id,episode_id,run_id FROM v24_cordis.effects "
-                  "WHERE status='unknown' AND id>%s ORDER BY id LIMIT %s"),
+                  "SELECT x.id,x.kind,x.fiber_id,x.episode_id,x.run_id,f.disposed_at,"
+                  "f.current_episode_id,f.dispose_requested_at,i.state,r.ended_at "
+                  "FROM v24_cordis.effects x "
+                  "LEFT JOIN v24_cordis.fibers f ON f.id=x.fiber_id "
+                  "LEFT JOIN v24_cordis.installs i ON i.id=f.install_id "
+                  "LEFT JOIN v24_cordis.runs r ON r.id=x.run_id "
+                  "WHERE x.status='unknown' AND x.id>%s ORDER BY x.id LIMIT %s"),
             Topic('inverse_unknown',
-                  "SELECT id,fiber_id,episode_id,inverse FROM v24_cordis.contributions "
-                  "WHERE released_at IS NULL AND inverse->>'op'='unknown' "
-                  'AND id>%s ORDER BY id LIMIT %s'),
+                  "SELECT c.id,c.fiber_id,c.episode_id,c.inverse,f.disposed_at,"
+                  "f.current_episode_id,f.dispose_requested_at,i.state "
+                  "FROM v24_cordis.contributions c "
+                  "LEFT JOIN v24_cordis.fibers f ON f.id=c.fiber_id "
+                  "LEFT JOIN v24_cordis.installs i ON i.id=f.install_id "
+                  "WHERE c.released_at IS NULL AND c.inverse->>'op'='unknown' "
+                  'AND c.id>%s ORDER BY c.id LIMIT %s'),
         )
 
     # ---- connection and statement discipline -----------------------------
@@ -930,12 +939,51 @@ class Maintainer:
         return {'driver': 'expired_claim_pending', 'effect_id': str(row[0]),
                 'kind': row[1], 'claim_owner': row[2]}
 
+    @staticmethod
+    def _debt_blocks(current_episode, dispose_requested, install_state, run, run_ended):
+        """Raw-fact observation only: which obligations this terminal debt touches.
+
+        This is a diagnostic label, never a scheduling decision and never a probe of
+        a private planner.  A debt with an empty list is still reported.
+        """
+        blocks = []
+        if install_state == 'dispose_pending':
+            blocks.append('install_dispose')
+        if dispose_requested is not None:
+            blocks.append('fiber_dispose')
+        if current_episode is not None:
+            blocks.append('fiber_drain')
+        if run is not None and run_ended is None:
+            blocks.append('run_settlement')
+        return blocks
+
     def _unknown(self, row):
-        return {'driver': 'unknown_effect_debt', 'effect_id': str(row[0]),
-                'kind': row[1]}
+        (effect, kind, fiber, episode, run, disposed, current, dispose_requested,
+         install_state, run_ended) = row
+        return {'driver': 'unknown_effect_debt', 'effect_id': str(effect), 'kind': kind,
+                'fiber_id': _uuid_text(fiber) if fiber else None,
+                'episode_id': _uuid_text(episode) if episode else None,
+                'run_id': _uuid_text(run) if run else None,
+                'fiber_disposed': disposed is not None,
+                'install_state': install_state,
+                'blocks': self._debt_blocks(current, dispose_requested,
+                                            install_state, run, run_ended)}
 
     def _inverse_unknown(self, row):
-        return {'driver': 'inverse_unknown_debt', 'contribution_id': str(row[0])}
+        (contribution, fiber, episode, inverse, disposed, current, dispose_requested,
+         install_state) = row
+        debt = inverse.get('debt') if isinstance(inverse, dict) else None
+        return {'driver': 'inverse_unknown_debt', 'contribution_id': str(contribution),
+                'fiber_id': _uuid_text(fiber) if fiber else None,
+                'episode_id': _uuid_text(episode) if episode else None,
+                'inverse_op': 'unknown',
+                # Stable identity for manual reconciliation; the resource/compensation
+                # descriptor itself is trusted-host data and is never copied here.
+                'debt_digest': sha256_hex(debt) if debt is not None else None,
+                'fiber_disposed': disposed is not None,
+                'install_state': install_state,
+                'blocks': self._debt_blocks(current, dispose_requested,
+                                            install_state, None, None)}
 
     def _handle(self, topic, row):
         if topic == 'disposes':

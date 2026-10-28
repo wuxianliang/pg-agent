@@ -26,11 +26,11 @@ The original blocked-at-admission analysis below is preserved as historical evid
 | B0 | **baseline + capacity done** |
 | W1 `CDP6-S` | **complete** (Oracle semantic admission with corrections; corrected `test_scanner.py` and final 36-command serial run) |
 | W2 `CDP6-R` | **complete** (external executor, receipt journal, `run_start` source, dispatch recovery; `test_recovery.py` and final 37-command serial run) |
-| W3 `CDP6-U/D` | not started |
+| W3 `CDP6-U/D` | **complete** (unknown/inverse debt diagnostics, sealed-subtree inverse barrier, zero-write in-flight slot, `test_dispose.py` and final 38-command serial run) |
 | W4 `CDP6-H` | not started |
 | W5 `CDP6-B` | not started |
 
-W1 gate `v24/cordis/dp6/test_scanner.py` and W2 gate `v24/cordis/dp6/test_recovery.py` exist and passed. The remaining three DP6 command names (`test_dispose.py`, `test_upgrade.py`, `test_boundaries.py`) are still not implemented/not run.
+W1 gate `v24/cordis/dp6/test_scanner.py`, W2 gate `v24/cordis/dp6/test_recovery.py` and W3 gate `v24/cordis/dp6/test_dispose.py` exist and passed. The remaining two DP6 command names (`test_upgrade.py`, `test_boundaries.py`) are still not implemented/not run.
 
 ## Environment
 
@@ -714,6 +714,181 @@ pre-existing 10 modified + 26 untracked paths are not staged, and no design/SQL/
 staged. Per the parent handoff, this session does **not** commit or push; the normal milestone
 commit/push is performed after that verification. W3–W5 are not started.
 
+## W3 implementation and gate evidence
+
+### Implemented surfaces
+
+| Surface | File | Contract |
+|---|---|---|
+| effect-unknown debt | `v24/cordis/dp6/driver.py` | the `unknown` topic reads raw fiber/episode/run/install facts and reports `unknown_effect_debt` with owner scope, `fiber_disposed`, `install_state` and a raw-fact `blocks` list. No decision, no write, no handler call. |
+| inverse-unknown debt | `v24/cordis/dp6/driver.py` | the `inverse_unknown` topic reports `inverse_unknown_debt` with owner scope, `inverse_op`, `install_state`, `blocks` and a canonical `debt_digest`; the trusted resource/compensation descriptor is never copied into diagnostics. |
+| sealed-subtree inverse barrier | `v24/cordis/sql/42_teardown.sql` (`dispose_plan`) | an unreleased `inverse='unknown'` contribution anywhere in the sealed subtree returns `blocked_unknown / inverse` after the host_io/effect-unknown checks and before the ready-effect/run checks, so no doomed successor is scheduled and the debt is reported at the dispose barrier. |
+| W3 gate | `v24/cordis/dp6/test_dispose.py` | CDP6-U1–U6 and D1–D4 (10 labelled cases) driven through `advance`, the scanner and one SIGKILLed child process; Fake handlers only, no network. |
+
+W3 changed no loader, permission, manifest or frozen file. No command kind, table, column, protocol
+error code, interpreter, second scheduler or second writer was added. `advance` is still the only
+`SECURITY DEFINER` writer and terminal effect/contribution/tombstone facts remain immutable.
+
+### Audit-first findings
+
+1. **Proven defect: inverse-unknown dispose churn.** A production tree with an unreleased
+   `inverse='unknown'` contribution and `install.state='dispose_pending'` produced, over five quiet
+   scan passes, **+5 `command_dispose` effects, +9 requests and +3 events**. `dispose_plan` did not
+   see the inverse debt; it returned `wait_slot`, wrote a committed empty receipt, and the ready P6
+   successor was rejected forever. The subtree predicate makes the same tree a stable
+   `blocked_unknown / inverse` with ten-table zero write (`[CDP6-U2]`, `[CDP6-U6]`).
+2. **Rejected candidate: `wait_slot` → `deferred / slot`.** This was implemented to make an
+   in-flight slot zero-write for the dispose refresh, then the inherited
+   `v24/cordis/dp3/test_dispose.py` `[CDP3-D5]` fixture failed (`gate 25 exit=1`) because the
+   coalesced dispose refresh is contractually a committed no-op with an empty emitted set. The
+   predicate was reverted; the residual per-pass receipt for a permanently stuck slot is recorded as
+   deviation DP6-D41/D44, not silently changed.
+3. **Cycles are structurally unreachable in committed state.** `fibers_owner_id_fkey` is immediate,
+   owner re-parenting is `55000`, and the deferred `fibers_graph` constraint trigger rejects
+   pin/mixed cycles with `23514 'fiber graph cycle'` and a 512-edge path with
+   `23514 'fiber graph validation limit'`. No speculative cycle guard was added to
+   `dispose_subtree`; `[CDP6-D4]` proves the four rejections and a legal 64-deep chain terminating.
+4. **`dispose_subtree` path rows.** The function emits one row per path, so a raw `count(*)` exceeds
+   the distinct fiber count. Callers use `IN (SELECT id ...)`/`GROUP BY install_id`, so this is
+   harmless; a `min(depth)` dedupe was proven wrong (base rows are depth 0) and reverted. Recorded as
+   DP6-D45.
+
+### CDP6-U/D assertions passed
+
+- `[CDP6-U1]` a terminal effect unknown (judged both on a sealed install and on a live descendant)
+  is discovered as `unknown_effect_debt` with stable identity and owner scope; `dispose_plan` and
+  `p6_plan` return `blocked_unknown/effect`; repeated quiet scans create no command/effect row;
+  the outcome cannot be re-claimed (`receipt_conflict`) or rewritten (`55000`); a fresh empty-memory
+  scanner sees the same debt.
+- `[CDP6-U2]` an unreleased inverse-unknown contribution is a separate debt with a stable
+  `debt_digest`; dispose returns `blocked_unknown/inverse`; the contribution is never released or
+  re-inverted; the descriptor content is absent from diagnostics; restart is idempotent.
+- `[CDP6-U3]` under a terminal debt, an expired claim with `repeat+concurrent` is reclaimed exactly
+  once (fence 2) by the W2 executor and settles; the debt itself remains terminal and unclaimable.
+- `[CDP6-U4]` elapsed time, four repeated scans and a quiet return never upgrade an unknown outcome
+  or emit a reducer/event; the effect row (status/outcome/settled_at/attempt/fence) is byte-stable.
+- `[CDP6-U5]` service/operator/admin cannot UPDATE/DELETE a debt row or INSERT a pin; the observer
+  cannot read the manifest, call `advance`, or insert; a forged success receipt is
+  `receipt_conflict` with a ten-table byte-equal snapshot.
+- `[CDP6-U6]` an out-of-band "compensated" marker cannot clear the debt: no approved resolution ABI
+  exists, so the install stays `dispose_pending` and the design gate is recorded, not faked.
+- `[CDP6-D1]` a ready host listener, an open run and two consumers sharing one provider contribution
+  each defer the sealed subtree; releasing one of the two pins is insufficient and a coalesced
+  dispose refresh changes nothing; after both pins release, the grandchild install/fiber completes
+  before the child install/fiber, history rows and tombstones are retained, and the non-subtree root
+  is untouched.
+- `[CDP6-D2]` one dispose key replays byte-identically (`committed`, no new event/request), a
+  conflicting payload is `request_conflict` zero-write, a post-tombstone command is
+  `already_terminal`, and the tombstone is not rewritten.
+- `[CDP6-D3]` a real dispose step committed and followed by SIGKILL leaves one request/receipt and no
+  duplicate event; a brand-new maintainer converges the subtree from committed facts only.
+- `[CDP6-D4]` owner re-parent (`55000`), dangling owner (`23503`), two-node pin cycle and mixed
+  owner+pin cycle (`23514` at COMMIT) are rejected; a 64-deep chain terminates under a statement
+  timeout; the 512-edge extension is rejected; a 257-contribution withdraw closure stays a stable
+  `retry_with_closure` with no release/close/tombstone.
+
+### Contract audit
+
+- `p6_plan`/`dispose_plan`/`dispose_delta` are unchanged apart from the one `dispose_plan` predicate;
+  no kind, reason or error-code surface changed. `42` gained 7 physical lines.
+- The scanner still reads only observer-granted raw columns and calls only `advance`; the new joins
+  are `fibers`/`installs`/`runs` columns already granted in W1. Every read/advance transaction ends
+  `IDLE` before close (the W1 `[CDP6-S14]` gate remains in the 38-command run).
+- Terminal unknown, inverse unknown, dispose tombstones, contribution inverse and effect receipts are
+  all protected by the inherited `guard_immutable`/`fibers_graph` triggers; the gate exercises both.
+- No real socket, adapter or network call; the only child process is the gate's own SIGKILLed
+  service-login `advance` process.
+
+### 38-command serial gate evidence (2026-10-29)
+
+One `uv run python` process per command, launched only after the previous exited; no concurrency, no
+joined commands, no skip. The runner stopped on the first non-zero exit; the final attempt had none.
+**38/38 exit 0; per-command sum 257.8 s; wall ≈258.5 s.** Logs:
+`/tmp/dp6_w3/gates/gate-01..38.log`; summary `/tmp/dp6_w3/gates.tsv`. The 35 inherited commands retain
+the B0/DP5 order (including s8-before-s7); `test_scanner.py`, `test_recovery.py` and
+`test_dispose.py` are appended in delivery order.
+
+| # | Command | Exit | Seconds |
+|---:|---|---:|---:|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 0.6 |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1.6 |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 1.6 |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 1.7 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 14.1 |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 3.4 |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4.1 |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3.3 |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 3.6 |
+| 10 | `uv run python v24/load.py` | 0 | 0.5 |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 1.6 |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 1.6 |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2.5 |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 1.8 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5.1 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 3.7 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 3.1 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 3.7 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2.4 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 6.2 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 10.4 |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 3.0 |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 10.3 |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 5.9 |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 5.7 |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 6.4 |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 6.5 |
+| 28 | `uv run python v24/cordis/dp4/test_reducer.py` | 0 | 5.3 |
+| 29 | `uv run python v24/cordis/dp4/test_loop.py` | 0 | 11.5 |
+| 30 | `uv run python v24/cordis/dp4/test_boundaries.py` | 0 | 8.7 |
+| 31 | `uv run python v24/cordis/dp4/test_closeout.py` | 0 | 14.1 |
+| 32 | `uv run python v24/cordis/dp5/test_resolution.py` | 0 | 8.8 |
+| 33 | `uv run python v24/cordis/dp5/test_listeners.py` | 0 | 5.1 |
+| 34 | `uv run python v24/cordis/dp5/test_dispatch.py` | 0 | 11.5 |
+| 35 | `uv run python v24/cordis/dp5/test_boundaries.py` | 0 | 5.3 |
+| 36 | `uv run python v24/cordis/dp6/test_scanner.py` | 0 | 14.6 |
+| 37 | `uv run python v24/cordis/dp6/test_recovery.py` | 0 | 43.4 |
+| 38 | `uv run python v24/cordis/dp6/test_dispose.py` | 0 | 15.1 |
+
+**Attempt history (honest, not hidden).** The first full attempt stopped at gate 16
+`v24/s4/test_g2b.py` with `pg_blocking_pids` not yet listing a waiter (`23514`-healthy file, frozen
+surface untouched); that gate passed 3/3 isolated retries and in the final run. The second attempt
+stopped at gate 25 `v24/cordis/dp3/test_dispose.py` because the candidate `wait_slot` change broke
+`[CDP3-D5]`; the change was reverted and DP3 passed. The final attempt above is the clean 38/38 after
+the revert. Evidence is preserved in `/tmp/dp6_w3/gates-attempt1.tsv`,
+`gate-16-attempt1-fail.log`, `gates-attempt2.tsv`, `gate-25-attempt2-fail.log` and
+`g2b-retry-1..3.log`.
+
+### Measured W3 baseline
+
+Measured at the W3 gate (physical lines, `str.splitlines()`, same count as the gates):
+
+```text
+40_advance.sql  1685
+41_lifecycle.sql 1481
+42_teardown.sql 1119
+43_loop.sql      700
+44_events.sql    622
+40-49 total     5607      (report-only; 2026-10-28 authorization, no cap)
+domain DDL       465      (report-only; bookkeeping 18+19 = 22 separate)
+manifest 19 / tables 10 / pg_proc 172 (164 private helpers + 8 trigger guards)
+one DEFINER advance / public EXECUTE 0 / command kinds 3 / protocol errors 24
+closure 512 / successor 16 unchanged
+dp6/test_scanner.py 1311 / dp6/test_recovery.py 1737 / dp6/driver.py 1076 / dp6/test_dispose.py 956
+                  (report-only; no cap)
+```
+
+The twelve frozen `v24/sql` SHA-256 values, the `57e2c1e` frozen diff and `git diff --check` all exit
+0 (the inherited DP4/DP5 boundary gates ran in the 38-command run).
+
+### W3 publication and staging
+
+The W3 stage contains exactly `v24/cordis/sql/42_teardown.sql`, `v24/cordis/dp6/driver.py`,
+`v24/cordis/dp6/test_dispose.py`, `v24/cordis/dp6/README.md`, this matrix, the deviation ledger and
+the DP6 plan W3 Result. The user's pre-existing 10 modified + 26 untracked paths are not staged; no
+design/loader/frozen/DP1–DP5 file is staged. Per the parent handoff, this session does **not** commit
+or push; the normal milestone commit/push is performed after that verification. W4/W5 are not
+started.
+
 ## Staging and DP5 handoff
 
 **Mixed-file staging warning.** `docs/designs/cordis-plugin-system-2026-10-25.md` already carries user modifications. Stage only the §10.1 authorization hunk (`git add -p` or an equivalent patch), then inspect `git diff --cached -- docs/designs/cordis-plugin-system-2026-10-25.md`; never `git add` the whole file. The DP6 plan is untracked and contains only the planning file plus the B0 Result/addendum. No commit/push was performed.
@@ -788,10 +963,10 @@ b047be95cd539ccac45f3e128fb88a979ecd63abc81314e80341ddc2ce2d4fa4  ?? docs/review
 
 ## Not covered
 
-- **W1 and W2 are implemented and gated.** `ensure`, the fair scanner, observer ACL/fixture, `CDP6-S`, the external executor, receipt journal, `run_start` source binding, dispatch recovery and `CDP6-R` are covered above; `test_scanner.py` and `test_recovery.py` passed in the final 37-command serial run.
-- **W3–W5 are still future milestones.** Terminal-unknown resolution, the full dispose-tree convergence matrix and drain upgrade/rollback/HMR are not implemented. `test_dispose.py`, `test_upgrade.py` and `test_boundaries.py` are **not implemented and not run**.
+- **W1, W2 and W3 are implemented and gated.** `ensure`, the fair scanner, observer ACL/fixture, `CDP6-S`, the external executor, receipt journal, `run_start` source binding, dispatch recovery, `CDP6-R`, the unknown/inverse debt diagnostics and the sealed-subtree inverse barrier are covered above; `test_scanner.py`, `test_recovery.py` and `test_dispose.py` passed in the final 38-command serial run.
+- **W4–W5 are still future milestones.** Drain upgrade/rollback, the HMR trigger and `CDP6-B` are not implemented. `test_upgrade.py` and `test_boundaries.py` are **not implemented and not run**; `test_dispose.py` is implemented and passed.
 - Reuse-declaration install/rollback is **not** implemented; W4 semantic admission remains pending. The 2026-10-28 capacity authorization does not admit it.
-- W2 does not resolve terminal unknown: unknown effect outcomes and inverse-unknown contributions stay debt/`blocked_unknown`; `host_io` remains unsupported/`0A000`; no real adapter is used.
-- No persisted W2 Oracle review result existed at acceptance start; the prior wrapper was stopped before writing one, so this session did not launch a duplicate review. Acceptance is the direct code audit plus the 37-command run.
+- DP6 does not resolve terminal unknown: unknown effect outcomes and inverse-unknown contributions stay debt/`blocked_unknown`; the manual-reconciliation ABI remains a design gate (CDP6-U6); `host_io` remains unsupported/`0A000`; no real adapter is used.
+- No persisted W2 or W3 Oracle review result exists. W3 hit no true design blocker (the two SQL candidates were decided by production-path probes and the inherited DP3 gate), so no scoped Oracle design was launched; acceptance is the direct code audit plus the 38-command run. A second opinion remains a new review, not a recovery of a W2/W3 artifact.
 - No real provider socket, no network, no external adapter; all gate DBs were disposable pgembed instances and all handlers were Fake or absent.
-- W3–W5 will be handled in later fresh sessions; this W2 publication does not claim them.
+- W4/W5 will be handled in later fresh sessions; this W3 publication does not claim them.

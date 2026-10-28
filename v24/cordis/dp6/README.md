@@ -1,11 +1,12 @@
 # Cordis v2 DP6 — fair maintenance, crash recovery and receipt journal
 
-Status 2026-10-28: **W1 fair scanner and W2 external-effect crash recovery are implemented and
-gated; the final 37-command serial run is recorded in the conformance matrix. W3–W5 remain future
-milestones.** This directory contains the single-host maintenance scanner, the `ensure` wake-up
-command, the independent observer ACL, the W2 claim/receipt/journal executor and the `CDP6-S`/
-`CDP6-R` gates. It does not contain terminal-unknown resolution, dispose-tree convergence evidence
-or upgrade/rollback; those are W3–W5.
+Status 2026-10-28: **W1 fair scanner, W2 external-effect crash recovery and W3 unknown debt /
+dispose convergence are implemented and gated; the final 38-command serial run is recorded in the
+conformance matrix. W4–W5 remain future milestones.** This directory contains the single-host
+maintenance scanner, the `ensure` wake-up command, the independent observer ACL, the W2
+claim/receipt/journal executor, the W3 debt diagnostics and dispose convergence evidence, and the
+`CDP6-S`/`CDP6-R`/`CDP6-U-D` gates. It does not contain drain upgrade/rollback or the final
+boundary closeout; those are W4–W5.
 
 - Plan: `docs/plans/v24-cordis-dp6-recovery-maintenance-plan-2026-10-28.md`
 - Conformance matrix: `docs/reviews/cordis-v2-dp6-conformance-matrix-2026-10-28.md`
@@ -38,6 +39,69 @@ or upgrade/rollback; those are W3–W5.
 W2 changed no SQL, loader, manifest or frozen surface. No command kind, table, column, protocol
 error code, second scheduler or second writer was added. `advance` remains the only
 `SECURITY DEFINER` function and the only domain writer.
+
+## W3 deliverables
+
+| Surface | File | Contract |
+|---|---|---|
+| effect-unknown debt | `v24/cordis/dp6/driver.py` | the `unknown` topic now reads the raw fiber/episode/run/install facts and reports `unknown_effect_debt` with `fiber_id`, `episode_id`, `run_id`, `fiber_disposed`, `install_state` and a raw-fact `blocks` list; no decision or write |
+| inverse-unknown debt | `v24/cordis/dp6/driver.py` | the `inverse_unknown` topic reports `inverse_unknown_debt` with the owner scope, `inverse_op`, `install_state`, `blocks` and a stable `debt_digest` (the trusted resource/compensation descriptor is never copied) |
+| sealed-subtree inverse barrier | `v24/cordis/sql/42_teardown.sql` (`dispose_plan`) | an unreleased `inverse='unknown'` contribution anywhere in the sealed subtree returns `blocked_unknown / inverse` before any progress write |
+| W3 gate | `v24/cordis/dp6/test_dispose.py` | CDP6-U1–U6 and D1–D4: debt discovery/immutability/safe replay, restart, multi-level owner/provider/listener/run/pin convergence, repeat dispose/replay, SIGKILL after COMMIT, graph/closure bounds and permission negatives |
+
+W3 changed only `42_teardown.sql` (one predicate), `driver.py` diagnostics and the new gate. No
+command kind, table, column, protocol error code, second scheduler, second writer or second
+interpreter was added. `advance` remains the only `SECURITY DEFINER` writer, and terminal
+effect/contribution/tombstone facts remain immutable.
+
+## Unknown-debt contract
+
+Two distinct debts are discovered by the scanner and neither is ever guessed into a result:
+
+1. **Effect outcome unknown.** A terminal `effects.status='unknown'` row carries the debt. The
+   diagnostic is `unknown_effect_debt` (stable `effect_id`, owner fiber/episode/run, own install
+   state, `blocks`). `p6_plan` and `dispose_plan` return `blocked_unknown`; a claim returns
+   `receipt_conflict`; no lease expiry, process death, empty handler response or elapsed time
+   changes the outcome or writes a reducer/event. Repeating a quiet scan creates no command/effect
+   row.
+2. **Contribution inverse unknown.** An unreleased contribution whose `inverse` op is `unknown`
+   carries the debt. The diagnostic is `inverse_unknown_debt` (stable contribution id, owner scope,
+   `debt_digest`, `blocks`). `p6_plan` blocks on the batch and `dispose_plan` blocks the sealed
+   subtree as `blocked_unknown / inverse`; the contribution is never released, re-inverted or
+   deleted, and the owner never reports completion.
+
+`blocks` is a diagnostic label computed only from raw observer columns
+(`installs.state`, `fibers.current_episode_id/dispose_requested_at`, `runs.ended_at`): it names the
+obligation classes this terminal debt touches, never a scheduling decision. A debt on a descendant
+fiber reports its own install state; the sealed ancestor remains visible through `dispose_plan` and
+the `disposes` topic.
+
+**Manual reconciliation remains a design gate.** If an operator verifies and compensates an external
+resource out of band, the database has no approved ABI to record that fact, so W3 keeps the debt
+blocked instead of inventing a state transition, a table, a column or a terminal rewrite (CDP6-U6,
+deviation ledger DP6-D40).
+
+## Dispose convergence contract
+
+`dispose_subtree`, `dispose_plan`, `dispose_delta`, `p6_plan` and `p6_delta` remain the only dispose
+planners. W3 changes one predicate: an unreleased inverse-unknown contribution blocks the sealed
+subtree before any successor is scheduled, so a permanently blocked install is a stable
+`blocked_unknown` rather than an endless stream of committed no-op dispose receipts. The existing
+coalesced refresh (`wait_slot` → committed empty receipt) is retained because DP3-D5 gates it; a
+candidate `deferred / slot` replacement was implemented, rejected by that inherited gate and
+reverted (deviation ledger DP6-D41).
+
+The convergence order is unchanged and gated: listener call and open run defer the plan; external
+consumer pins defer P6 until every pin is released; a child install/fiber tombstones before its
+owner; episodes/contributions/pins/effects history is retained; a committed dispose step replays
+byte-identically; a COMMIT followed by SIGKILL leaves one receipt and an empty-memory restart
+converges.
+
+The committed owner graph is acyclic and depth-bounded by the existing deferred `fibers_graph`
+constraint trigger (pin/run/owner cycles → `23514 'fiber graph cycle'`; a 512-edge path →
+`23514 'fiber graph validation limit'`; owner re-parenting → `55000`; a dangling owner insert →
+`23503`). No new cycle guard was added to `dispose_subtree` because committed cycles are
+unreachable; the gate proves those rejections instead.
 
 ## `ensure` command contract
 
@@ -234,41 +298,64 @@ rollback; install, withdraw and dispose COMMIT-ack loss restart convergence; all
 after a committed child, unknown-child non-join and the settled-parent invariant; unknown debt;
 missing/wrong actor credentials; corrupt/duplicate journal blocking; and IDLE/no-network discipline.
 
-## Verified W2 baseline
+## CDP6-U/D gate
 
-Measured at the W2 gate (physical lines, `str.splitlines()`, same count as the gates):
+```bash
+uv run python v24/cordis/dp6/test_dispose.py
+```
+
+The gate covers: a terminal effect unknown and an unreleased inverse-unknown contribution built
+separately, each reported as stable debt with owner scope and zero-write `blocked_unknown` barriers
+at dispose and P6; repeated quiet scans creating no command/effect row and no reducer/event; terminal
+immutability and `receipt_conflict` instead of a fabricated claim; an unrelated expiry-reclaimable
+effect settling once under the debt; a real dispose COMMIT followed by SIGKILL and an empty-memory
+restart converging; one dispose key replaying byte-identically with a conflicting payload rejected
+and post-tombstone commands `already_terminal`; a ready listener, an open run and two consumers
+sharing one provider contribution each deferring the sealed subtree, with grandchild-install/fiber
+completion ordered before the child install/fiber and all history retained; owner re-parent/dangling
+owner, pin-cycle, mixed owner+pin-cycle and over-depth rejections at COMMIT; a >256 withdraw closure
+and an in-flight slot staying stable and zero-write; and service/operator/admin/observer negatives
+proving no LOGIN can rewrite, release or insert around a debt.
+
+## Verified W3 baseline
+
+Measured at the W3 gate (physical lines, `str.splitlines()`, same count as the gates):
 
 ```text
 40_advance.sql  1685
 41_lifecycle.sql 1481
-42_teardown.sql 1112
+42_teardown.sql 1119
 43_loop.sql      700
 44_events.sql    622
-40-49 total     5600      (report-only; 2026-10-28 authorization, no cap)
+40-49 total     5607      (report-only; 2026-10-28 authorization, no cap)
 domain DDL       465      (report-only; bookkeeping 18+19 = 22 separate)
 manifest 19 / tables 10 / pg_proc 172 (164 private helpers + 8 trigger guards)
 one DEFINER advance / public EXECUTE 0 / command kinds 3 / protocol errors 24
 closure 512 / successor 16 unchanged
-dp6/test_scanner.py 1311 / dp6/driver.py 1028 / dp6/test_recovery.py 1737  (report-only; no cap)
+dp6/test_scanner.py 1311 / dp6/test_recovery.py 1737 / dp6/driver.py 1076 / dp6/test_dispose.py 956
+                  (report-only; no cap)
 ```
 
-W2 changed no SQL, loader, manifest or frozen surface, so the W1 SQL measurements above are unchanged.
-
-The 37-command serial gate evidence (35 inherited + `test_scanner.py` + `test_recovery.py`) is recorded
-in the conformance matrix with exit code and elapsed time. No real provider socket, external adapter or
-network call was used; every gate used a disposable pgembed database and Fake handlers. The W1
-corrected gate was reviewed once by Oracle group `6B696214-99CB-48A0-BEC6-131CBDE8508F` (both lanes:
-accept with corrections). No W2 Oracle review result was persisted before the prior review wrapper was
-stopped; this acceptance session therefore did not launch a duplicate review and records the direct
-code audit plus the 37-command run instead.
+The 38-command serial gate evidence (35 inherited + `test_scanner.py` + `test_recovery.py` +
+`test_dispose.py`) is recorded in the conformance matrix with exit code and elapsed time. No real
+provider socket, external adapter or network call was used; every gate used a disposable pgembed
+database and Fake handlers. The W1 corrected gate was reviewed once by Oracle group
+`6B696214-99CB-48A0-BEC6-131CBDE8508F` (both lanes: accept with corrections). No W2 or W3 Oracle
+review result was persisted; this acceptance session therefore did not launch a duplicate review and
+records the direct code audit plus the 38-command run instead.
 
 ## Known limitations / non-claims
 
-- W2 is not W3–W5 evidence. Terminal-unknown resolution, the full dispose-tree convergence matrix and
-  drain upgrade/rollback/HMR remain unimplemented.
+- W3 is not W4–W5 evidence. Drain upgrade/rollback, the HMR trigger and the final `CDP6-B` boundary
+  matrix remain unimplemented.
+- Automatic terminal-unknown resolution is a design gate, not a W3 deliverable: an out-of-band
+  compensation has no approved ABI, so the debt stays blocked (CDP6-U6).
+- Below a debt, `blocks` names the obligation classes touched by raw facts; it is a diagnostic
+  label, not a planner verdict, and a descendant debt reports its own install state rather than an
+  ancestor's `dispose_pending`.
 - `host_io` and non-host listener execution remain unsupported/blocked; no real adapter is used by any
   gate.
-- Unknown effect outcomes and inverse-unknown contributions remain debt/`blocked_unknown`; W2 never
+- Unknown effect outcomes and inverse-unknown contributions remain debt/`blocked_unknown`; DP6 never
   converts lease expiry, process death or an empty response into success/failure.
 - A journal entry whose DB receipt is `stale_claim`/`receipt_conflict` is quarantined as `.dead` for
   manual inspection; the host does not silently resolve or delete it, and does not retry it.
@@ -282,5 +369,8 @@ code audit plus the 37-command run instead.
   liveness bound; the scanner relies on the documented E1/E2 operational assumptions and does not
   claim unconditional fairness.
 - The observer has no `events` SELECT; if a later diagnostic needs it, add exact columns with a gate.
+- A coalesced dispose refresh while a reconcile slot is open keeps the inherited `wait_slot` →
+  committed empty-receipt contract (DP3-D5). It is not claimed as zero-write; the inverse-unknown
+  debt path is the one proven to be write-free.
 - No new finite line cap was set. The old 5500/700/900 assertions are measurement-only; all required
   file/manifest and semantic/ACL/boundary negatives remain.

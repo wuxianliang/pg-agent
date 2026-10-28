@@ -1006,6 +1006,13 @@ BEGIN
   OR x.run_id IN (SELECT r.id FROM v24_cordis.runs r
    WHERE r.owner_fiber_id IN (SELECT id FROM v24_cordis.dispose_subtree(p_install))))) THEN
   RETURN jsonb_build_object('kind','blocked_unknown','reason','effect'); END IF;
+ -- An unverifiable external inverse is the same terminal debt for the sealed subtree:
+ -- no tombstone can be honest while it is unreleased, so block before any progress
+ -- write instead of re-scheduling a successor that P6 must reject forever.
+ IF EXISTS(SELECT 1 FROM v24_cordis.contributions c WHERE c.released_at IS NULL
+  AND c.inverse->>'op'='unknown'
+  AND c.fiber_id IN (SELECT id FROM v24_cordis.dispose_subtree(p_install))) THEN
+  RETURN jsonb_build_object('kind','blocked_unknown','reason','inverse'); END IF;
  IF EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.status IN ('ready','claimed')
   AND x.kind<>'command_reconcile' AND (
   x.fiber_id IN (SELECT id FROM v24_cordis.dispose_subtree(p_install))

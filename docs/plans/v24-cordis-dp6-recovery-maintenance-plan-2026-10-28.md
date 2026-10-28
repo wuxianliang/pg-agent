@@ -484,3 +484,37 @@ CDP6-R 覆盖（`test_recovery.py`，真实子进程 kill/restart，Fake handler
 审查状态：验收开始时未发现已落盘的 W2 Oracle review（`docs/reviews/` 最新仍为 W1 工件，无 W2 export）；上一 review wrapper 在写出结果前被停止，故本会话未重复启动 review，记录直接代码审计 + 37 条实跑。现有 W2 残余限制：terminal unknown/inverse unknown 仍为 W3 债务；`host_io`/非 host listener 仍 unsupported；journal `.dead` 隔离文件未单独 gate 覆盖，属人工对账面；`run_start` handler 无可发布 receipt 时保持 claimed，不伪造 unknown 终态。
 
 发布状态：W2 仅 stage 本里程碑 6 个文件（driver、test_recovery、DP6 README、matrix、ledger、本 Result）。用户既有 10 modified + 26 untracked 路径不 stage；无 SQL/设计/loader 变更。按父级本轮指令，**本会话尚未 commit/push**；父级验证后按仓库规则普通提交并 push `origin/v24`（不 force、不 `--no-verify`）。
+
+### W3 Result（2026-10-29，unknown/inverse 债务与 dispose 全收敛）
+
+**结论：W3 Done-when 与 CDP6-U/D 已实现；最终 38/38 gate 串行 exit 0；W4/W5 未开始。** 起点 HEAD `4aa1390`，分支 `v24`。仅改 `v24/cordis/sql/42_teardown.sql`（+7 物理行）、`v24/cordis/dp6/driver.py`（债务诊断）并新增 `v24/cordis/dp6/test_dispose.py`；未改 40/41/43/44、loader、permission、manifest、设计稿或冻结面；未新增 command kind/表/列/错误码/解释器/第二 writer。
+
+审计先行（以生产路径证伪，不凭猜测改 SQL）：
+
+- **实证缺陷：inverse-unknown 的 dispose 反复写。** 一棵生产树（child install 的 grandchild fiber 上有未释放 `inverse='unknown'` 贡献）在 `dispose_pending` 后 5 次 quiet pass 产生 **+5 个 `command_dispose` effect、+9 个 request、+3 个 event**：`dispose_plan` 看不到 inverse 债务，返回 `wait_slot` 写空 receipt，而 P6 successor 永久被 `blocked_unknown` 拒绝。加 `dispose_plan` 的 sealed-subtree inverse 谓词后，同一树稳定为 `blocked_unknown/inverse` 且十表零写（`[CDP6-U2]`、`[CDP6-U6]`）。
+- **候选修复被既有 gate 否决：`wait_slot → deferred/slot`。** 该候选让 in-flight slot 的 dispose refresh 也零写，但 `v24/cordis/dp3/test_dispose.py` `[CDP3-D5]` 断言 coalesced dispose refresh 必须是 committed no-op（空 emitted）。完整串行在第 25 条 `dp3/test_dispose.py` 失败（`gate 25 exit=1`），因此回退该谓词，不改既有生命周期断言；残余的每 pass 空 receipt 记入台账 DP6-D41/D44，不隐藏。
+- **环在 committed 状态不可达。** `fibers_owner_id_fkey` 为立即 FK、owner 身份不可变（55000）、延迟 `fibers_graph` constraint trigger 拒绝 pin/owner/mixed 环（23514 `fiber graph cycle`）与 512 边深链（23514 `fiber graph validation limit`）。因此未给 `dispose_subtree` 加防御性环 guard；`[CDP6-D4]` 证明四种拒绝 + 64 深合法链在 statement timeout 内终止。
+- **`dispose_subtree` 的 path-row 计数。** 函数按路径出行，原始 `count(*)` 大于 distinct fiber 数；callers 用 `IN (SELECT id ...)`/`GROUP BY install_id`，语义无害。`min(depth)` 去重被证明错误（base row 恒为 0）并回退；记录为 DP6-D45，未改 SQL。
+
+实现面：
+
+- **driver**：`unknown`/`inverse_unknown` topic 仅读 observer 已授权的原始列（fiber/episode/run/install/runs），诊断含 owner scope、`fiber_disposed`、`install_state`、raw-fact `blocks` 与 `debt_digest`；debt 资源/补偿内容不复制到诊断，不做调度决策。
+- **42**：`dispose_plan` 在 host_io/effect-unknown 之后、ready/run 之前，对整个 sealed subtree 的未释放 `inverse='unknown'` 返回 `blocked_unknown/inverse`；`dispose_delta` 在 barrier 处零写。
+- **测试**：CDP6-U1–U6、D1–D4，共 10 个标签；真实 `advance`/scanner/单个 SIGKILL 子进程，Fake handler，无网络。
+
+实跑：
+
+- `uv run python v24/cordis/dp6/test_dispose.py` exit 0，10 个 U/D 标签。
+- 之后 38 条命令（35 继承 + `test_scanner.py` + `test_recovery.py` + `test_dispose.py`）逐条独立 `uv run python` 串行，**38/38 exit 0**；per-command 合计 **257.8 s**，wall ≈**258.5 s**；日志 `/tmp/dp6_w3/gates/`，汇总 `/tmp/dp6_w3/gates.tsv`。逐条命令/退出码/耗时见矩阵 §38-command serial gate evidence。
+- **Attempt 1**：第 16 条 `v24/s4/test_g2b.py` 出现锁等待可见性 flake（`pg_blocking_pids` 尚未记录 waiter；冻结面未改）；该 gate 单独 3/3 通过且最终全量通过。**Attempt 2**：第 25 条 `dp3/test_dispose.py` 抓到候选 `wait_slot` 改动的真实回归，回退后通过。**Attempt 3（最终）** 为回退后的干净 38/38；三次证据均保留在 `/tmp/dp6_w3/`，未用重跑掩盖回归。
+
+实测：40=1685、41=1481、42=**1119**、43=700、44=622，total **5607**（report-only，无替代上限）；领域 DDL **465**；簿记 18+19=**22** 分列；manifest 19、tables 10、`pg_proc` 172（164 private helpers + 8 trigger guards）、唯一 DEFINER `advance`、public EXECUTE 0、3 command kinds、24 错误码、closure 512/B=16。`driver.py` **1076**、`test_dispose.py` **956**（report-only）。冻结 `v24/load.py`、`v24/sql/**`、`v24/s1`–`s12` 与 `57e2c1e` diff 仍 exit 0，`git diff --check` exit 0。
+
+剩余限制：
+
+- **terminal unknown 自动解析仍为设计闸门。** 人工核验/补偿无批准 ABI，W3 保持 blocked 并记录（`[CDP6-U6]`、DP6-D40），不新增状态列/表/命令，不改写 terminal outcome。
+- **>256 withdraw closure 的 coalesced refresh 仍有写放大。** `wait_slot` 契约保留，因此永久 stuck slot 每 pass 写一条空 `command_dispose` receipt；无 release/close/tombstone，非债务伪造，记 DP6-D44。
+- **`dispose_subtree` path-row 计数语义未改**（DP6-D45）；owner/pin/mixed 环在 committed 状态不可达，故未加环 guard。
+- `host_io`/非 host listener 仍 unsupported；无真实 adapter/socket。W3 未触发 scoped Oracle design（无真正设计阻塞），也未启动 Oracle review；验收为直接代码审计 + 38 条实跑（DP6-D47）。
+
+发布状态：仅 stage 本 W3 的 6 个文件（`42_teardown.sql`、`driver.py`、`test_dispose.py`、DP6 README、matrix、ledger）与本 Result；用户既有 10 modified + 26 untracked 不 stage；未 commit/push，父级验收后按仓库规则普通提交并 push `origin/v24`（不 force、不 `--no-verify`）。
