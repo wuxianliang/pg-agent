@@ -416,3 +416,18 @@ Oracle review export `prompt-exports/oracle-review-2026-10-28-173620-new-chat-c8
 | Gates | 31/31 serial independent processes exit 0, 176s, `/tmp/dp4-review-fix-gates-commit-20261028.log` |
 
 External parallel work: during this task the worktree gained uncommitted edits to `41_lifecycle.sql`, `helper_budget.py`, `dp1/test_kernel.py`, `dp2/test_install.py`, `dp2/test_kernel.py`, `dp2/test_support.py`, `dp3/test_boundaries.py`, and `dp4/test_closeout.py`. They are not part of this fix. They were preserved; the 31-gate run temporarily restored them to HEAD to verify the exact commit tree and restored them byte-identically afterwards (SHA-256 compared). The commit stages only the review-fix paths.
+
+
+## Review-fix readability follow-up (2026-10-28)
+
+The user authorized relaxing the per-file 43 cap. The settlement helpers were split for readability without weakening the exact comparisons; the validator still recomputes from DB/receipt/reducer facts and never calls `run_delta` for expected values.
+
+| Review invariant | Actual evidence |
+|---|---|
+| Readable independent projections | `run_settle_facts` is facts/intents only; `run_successors` + `run_successor_binding` construct successors; `unknown_body_valid`/`unknown_delta` encode the P2 contract; `run_refused` deduplicates refusal events |
+| P2 validator proof | T8a replaces `run_delta` with a function returning the otherwise-valid empty unknown delta; a wrong-kind unknown body is still rejected as `run_unknown` with zero write |
+| P1-1 extra forged cases | X6 adds `state_final`, `event_sealed_tools`, `event_missing_tools`, and `successor_extra`; all are `invalid_outcome` with `run_state_delta` and unchanged ten-table snapshots |
+| Capacity | 43=592, per-file cap **700**; 40=1549, 41=1211, 42=1000, sum **4352≤5000** (safety line, not a compression target); DDL **461≤900**; 5000/5001 helper-tree boundary |
+| Gates | 31/31 serial independent processes exit 0, 201s, `/tmp/dp4-readability-gates-20261028.log` |
+
+External parallel work: the uncommitted `41_lifecycle.sql`, `helper_budget.py`, dp1/dp2/dp3 test, and `dp4/test_closeout.py` edits remain preserved and unstaged. The commit-tree run restored them to HEAD (with the clean `test_closeout.py` cap change) and restored them byte-identically afterwards.

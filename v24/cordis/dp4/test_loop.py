@@ -1,6 +1,7 @@
 """CDP4-T: tool settlement, batch barrier, pin semantics and unknown siblings."""
 from __future__ import annotations
 import contextlib
+import json
 import threading
 import time
 import uuid
@@ -8,7 +9,7 @@ import uuid
 from psycopg2.extras import Json
 from dp4_support import (Server, TestDB, snapshot, query, api, env, claim, settle,
                          prepare_run, model_body, tool_call, tool_body, q1, rows, no_write,
-                         provider, agent)
+                         provider, agent, replace_function)
 
 
 def _snap(db):
@@ -408,6 +409,22 @@ def test_t8_model_unknown(db):
     with contextlib.closing(db.connect('service')) as conn:
         no_write(db, conn, x['model_effect'], env('unknown', [], c['claim']), 'invalid_args')
     assert _snap(db) == before
+    # Even a forged planner returning the otherwise-valid empty unknown delta
+    # cannot persist a wrong-kind body: the validator enforces P2 independently.
+    original = q1(db, "SELECT pg_get_functiondef('v24_cordis.run_delta(uuid,jsonb)'::regprocedure)")
+    replace_function(db, """CREATE OR REPLACE FUNCTION v24_cordis.run_delta(p_effect_id uuid,p_outcome jsonb)
+      RETURNS jsonb LANGUAGE sql STABLE AS $$ SELECT current_setting('dp4.forged')::jsonb $$""")
+    try:
+        forged = {'domain': [], 'receipt': {'status': 'unknown'}, 'events': [], 'successors': []}
+        with contextlib.closing(db.connect('service')) as conn:
+            query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))
+            no_write(db, conn, x['model_effect'], env('unknown', {'kind': 'tool_call'}, c['claim']),
+                     'invalid_outcome', detail={'reason': 'run_unknown'})
+        assert _snap(db) == before
+        assert q1(db, 'SELECT status FROM v24_cordis.effects WHERE id=%s',
+                  (x['model_effect'],)) == 'claimed'
+    finally:
+        replace_function(db, original)
     state, budget = _batch(db, x['run_id']), _budget(db, x['run_id'])
     u = settle(db, x['model_effect'], {'kind': 'model_call'}, c['claim'], 'unknown')
     assert u['disposition'] == 'committed' and u['emitted'] == [], u

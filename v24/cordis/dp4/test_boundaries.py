@@ -279,6 +279,18 @@ def test_validator(db):
         bad['domain'][0]['state']['batch'][0]['call_id'] = 'forged'
         cases.append(('state_batch', bad, tool_out))
         bad = json.loads(json.dumps(final_delta))
+        bad['domain'][0]['state']['final'] = False
+        cases.append(('state_final', bad, final_out))
+        bad = json.loads(json.dumps(tool_delta))
+        bad['events'][0]['payload']['sealed'] = True
+        cases.append(('event_sealed_tools', bad, tool_out))
+        bad = json.loads(json.dumps(tool_delta))
+        bad['events'] = []
+        cases.append(('event_missing_tools', bad, tool_out))
+        bad = json.loads(json.dumps(tool_delta))
+        bad['successors'].append(dict(bad['successors'][0], ordinal=1))
+        cases.append(('successor_extra', bad, tool_out))
+        bad = json.loads(json.dumps(final_delta))
         bad['domain'][2]['result']['output'] = {'forged': True}
         cases.append(('seal_output', bad, final_out))
         bad = json.loads(json.dumps(final_delta))
@@ -309,10 +321,11 @@ def test_validator(db):
             cases.append(('successor_' + label, bad, tool_out))
         proof = {'event_missing', 'event_run_id', 'event_effect_id', 'event_effect_kind',
                  'event_step', 'event_remaining', 'event_phase', 'event_sealed', 'event_reason',
-                 'state_origin', 'state_step', 'state_batch', 'seal_output', 'seal_reason',
+                 'state_origin', 'state_step', 'state_batch', 'state_final',
+                 'event_sealed_tools', 'event_missing_tools', 'seal_output', 'seal_reason',
                  'seal_dropped', 'successor_contract_version',
                  'successor_contract_digest', 'successor_descriptor', 'successor_args',
-                 'successor_call_id', 'successor_key', 'successor_ordinal'}
+                 'successor_call_id', 'successor_key', 'successor_ordinal', 'successor_extra'}
         for label, forged, outcome in cases:
             with contextlib.closing(db.connect('service')) as conn:
                 query(conn, "SELECT set_config('dp4.forged',%s,false)", (json.dumps(forged),))

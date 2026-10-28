@@ -73,7 +73,7 @@ def test_b1_b2_layout(db):
     total, counts = assert_helper_budget(SQL)
     assert set(counts) == set(HELPERS), counts
     assert counts == {name: len((SQL / name).read_text().splitlines()) for name in HELPERS}
-    assert counts['43_loop.sql'] <= 560, counts
+    assert counts['43_loop.sql'] <= 700, counts
     assert total <= 5000, total
     ddl = sum(len((SQL / name).read_text().splitlines()) for name in DDL)
     assert ddl == 461, ddl
@@ -106,7 +106,7 @@ def test_b1_b2_layout(db):
             assert allowed == [('advance',)], (alias, allowed)
     print(f'[CDP4-B1] tables=10 manifest=18 helpers={total} 43={counts["43_loop.sql"]} '
           f'ddl={ddl} definer=advance public_execute=0 views/extensions=0')
-    print('[CDP4-B2] 5000/5001 helper-tree predicate reran; DDL 461<=900; 43<=560')
+    print('[CDP4-B2] 5000/5001 helper-tree predicate reran; DDL 461<=900; 43<=700')
 
 
 def test_b3_acl(db, other):

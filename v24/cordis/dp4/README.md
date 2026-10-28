@@ -53,3 +53,15 @@ Oracle review export `prompt-exports/oracle-review-2026-10-28-173620-new-chat-c8
 Regression coverage was added to `test_boundaries.py` (X6 event/state/seal/successor mutations; X7 run_start event mutations; X1b continuation ordinal=0/contract/digests) and `test_loop.py` (T8a model unknown, T8b tool unknown, T8c run_start unknown). Each forged case asserts `invalid_outcome` with a specific `run_state_delta`/`run_start_delta` reason and an unchanged ten-table snapshot; the legal unknown positives assert empty domain/events/successors and unchanged step/budget/pin.
 
 Final commit-tree verification: all 31 commands ran serially in independent processes and exited 0 (176s, log `/tmp/dp4-review-fix-gates-commit-20261028.log`). 40=1549, 41=1211, 42=1000, 43=560, sum **4320≤5000**; DDL **461≤900**; 43 **560≤560**; manifest 18; 10 tables; one `SECURITY DEFINER` (`advance`); public EXECUTE 0; 5000/5001 helper-tree boundary. Parallel uncommitted changes to `41_lifecycle.sql`, `helper_budget.py`, and several dp1/dp2/dp3/test_closeout files appeared in the worktree during this task; they are preserved, not staged, and not part of this commit. The 31-gate run temporarily restored them to HEAD to verify the commit tree and restored them byte-identically afterwards. Local commit only; no push; `main` untouched.
+
+
+## Review-fix readability follow-up (2026-10-28)
+
+The user authorized relaxing the per-file 43 cap. This supersedes the `43=560` capacity line above; behavior is unchanged except the added regression cases. The settlement code was split into readable canonical helpers:
+
+- `run_settle_facts` now only validates the receipt/pin/input, computes the reducer facts and intents, and returns state/budget/status.
+- `run_successors` + `run_successor_binding` build the exact model/tool successor projection; `unknown_body_valid`/`unknown_delta` make the P2 contract explicit; `run_refused` deduplicates the refusal event.
+- The validator still calls these projections directly from DB/receipt/reducer facts; it never asks `run_delta` for expected values.
+- Tests add T8a forged-planner wrong-kind unknown (an empty unknown delta returned by a replaced `run_delta` is still rejected as `run_unknown`) plus X6 `state_final`, non-sealed event sealed flip, missing non-sealed event, and extra tool successor.
+
+Capacity: 43=592, per-file cap 700; 40=1549, 41=1211, 42=1000, sum **4352≤5000** (kept as a safety line, not a compression target); DDL 461; manifest 18; 10 tables; one `SECURITY DEFINER` (`advance`); 5000/5001 helper-tree boundary. The final commit-tree run: 31/31 serial independent processes exit 0 in 201s, log `/tmp/dp4-readability-gates-20261028.log`. The external parallel uncommitted files remain preserved and unstaged; the commit-tree run restored them to HEAD and restored them byte-identically afterwards. Local follow-up commit only; no push; `main` untouched.

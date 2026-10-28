@@ -141,3 +141,23 @@ Same worktree, base `f119429`, plus the review-fix changes. The authority is `pr
 
 - No new Oracle review was run after the fix (per the user's instruction).
 - Push target selection remains open.
+
+
+## Readability follow-up (2026-10-28)
+
+The user authorized relaxing the 43 per-file cap; this section supersedes the earlier `43=560` capacity line for the review-fix commit. Behavior is unchanged except the added forged-planner/unknown coverage.
+
+| Date | Item | Baseline / review | Treatment | Evidence |
+|---|---|---|---|---|
+| 2026-10-28 | Readable settlement helpers | 43≤560 forced the facts, successor loop, and event/refusal construction into dense shared bodies | Split into `run_settle_facts` (facts/intents only), `run_successors` + `run_successor_binding` (successor projection), `unknown_body_valid`/`unknown_delta` (P2 contract), and `run_refused` (refusal event). The validator still calls the projections directly from DB/receipt/reducer facts, never via `run_delta` | 43=592; X6/X7/X1b/T8 remain green |
+| 2026-10-28 | P2 validator-side proof | T8 wrong-kind cases used the real planner, so they did not prove the validator's own P2 check | T8a now replaces `run_delta` with a function returning the otherwise-valid empty unknown delta; a wrong-kind `tool_call` body is still rejected as `invalid_outcome{reason:run_unknown}` with an unchanged ten-table snapshot and effect still claimed | CDP4-T8a |
+| 2026-10-28 | P1-1 extra forged cases | Prior X6 covered event fields, origin/step/batch, seal result, and successor fields, but not `state.final`, a non-sealed event flip, a missing non-sealed event, or an extra successor | Added `state_final`, `event_sealed_tools`, `event_missing_tools`, and `successor_extra`; each is rejected with `run_state_delta` and zero write | CDP4-X6 |
+| 2026-10-28 | Capacity | User authorized relaxing 43≤560 and the 5000 compression target | 43=592, per-file cap **700**; 40=1549, 41=1211, 42=1000, sum **4352≤5000** (safety line, not a compression target); DDL 461; manifest 18; 10 tables; one DEFINER; 5000/5001 boundary | CDP4-B1/B2; CDP1-K0/CDP2-K0/CDP2-I0 |
+| 2026-10-28 | Gate evidence | 31 serial independent commands on the exact commit tree | All exit 0; total 201s. Log `/tmp/dp4-readability-gates-20261028.log` | 31/31 |
+| 2026-10-28 | External parallel work | Preserve the dirty boundary and do not stage unrelated files | External edits to 41, helper_budget, dp1/dp2/dp3 tests, and test_closeout remain unstaged. The commit-tree run restored them to HEAD plus the clean 700-cap `test_closeout.py`, then restored the external versions byte-identically (SHA-256 compared) | `RESTORE_OK=1`; `/tmp/dp4_external_backup2` |
+| 2026-10-28 | Publication | Local commit only until target confirmed | Follow-up commit is local; no push and `main` untouched | `v24`; staged paths are the review-fix files |
+
+### Readability follow-up not covered
+
+- No new Oracle review was run after the follow-up (per the user's instruction).
+- Push target selection remains open.
