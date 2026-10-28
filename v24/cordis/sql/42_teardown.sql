@@ -22,12 +22,18 @@ BEGIN
   FOR pair IN SELECT * FROM (VALUES
     ('scope_id','scopes'),('install_id','installs'),('parent_id','scopes'),
     ('owner_id','fibers'),('owner_fiber_id','fibers'),('owner_episode_id','episodes'),
+    ('run_id','runs'),('effect_id','effects'),
     ('prev_contribution_id','contributions')) pairs(col,t) LOOP
    IF item->>pair.col IS NOT NULL THEN
     refs:=refs||jsonb_build_array(jsonb_build_object('t',pair.t,'id',item->pair.col)); END IF;
   END LOOP;
   IF item->>'op'='episode_begin' THEN
    SELECT refs||coalesce(jsonb_agg(jsonb_build_object('t','contributions','id',value->'contribution_id')),'[]'::jsonb)
+    INTO refs FROM jsonb_array_elements(item->'pins');
+  END IF;
+  IF item->>'op'='run_pin_bind' THEN
+   SELECT refs||coalesce(jsonb_agg(jsonb_build_object('t','contributions','id',value->'contribution_id')),'[]'::jsonb)
+     ||coalesce(jsonb_agg(jsonb_build_object('t','episodes','id',value->'provider_episode_id')),'[]'::jsonb)
     INTO refs FROM jsonb_array_elements(item->'pins');
   END IF;
   FOR ref IN SELECT value FROM jsonb_array_elements(refs) LOOP
@@ -126,6 +132,34 @@ BEGIN
       WHERE owner_fiber_id=(item->>'fiber_id')::uuid AND owner_episode_id=(item->>'episode_id')::uuid))),true)
     INTO ok FROM v24_cordis.pins
     WHERE id IN (SELECT jsonb_array_elements_text(item->'pin_ids')::uuid);
+  WHEN 'run_create' THEN
+   SELECT state=item->'state' AND remaining_steps=(item->>'remaining_steps')::int
+    AND owner_fiber_id=(item->>'owner_fiber_id')::uuid
+    AND owner_episode_id=(item->>'owner_episode_id')::uuid
+    AND scope_id=(item->>'scope_id')::uuid AND ended_at IS NULL
+    INTO ok FROM v24_cordis.runs WHERE id=(item->>'id')::uuid;
+  WHEN 'run_pin_bind' THEN
+   SELECT count(*)=jsonb_array_length(item->'pins') AND coalesce(bool_and(
+    p.released_at IS NULL AND p.consumer_run_id=(item->>'run_id')::uuid
+    AND p.key=x->>'key' AND p.contribution_id=(x->>'contribution_id')::uuid
+    AND p.provider_epoch=(x->>'provider_epoch')::int
+    AND c.released_at IS NULL AND e.epoch=p.provider_epoch
+    AND c.id=p.contribution_id AND e.id=c.episode_id),true)
+    INTO ok FROM jsonb_array_elements(item->'pins') x
+    JOIN v24_cordis.pins p ON p.id=(x->>'id')::uuid
+    JOIN v24_cordis.contributions c ON c.id=p.contribution_id
+    JOIN v24_cordis.episodes e ON e.id=c.episode_id;
+  WHEN 'run_state' THEN
+   SELECT state=item->'state' INTO ok FROM v24_cordis.runs WHERE id=(item->>'run_id')::uuid;
+  WHEN 'run_budget' THEN
+   SELECT remaining_steps=(item->>'remaining_steps')::int AND remaining_steps>=0
+    INTO ok FROM v24_cordis.runs WHERE id=(item->>'run_id')::uuid;
+  WHEN 'run_seal' THEN
+   SELECT ended_at IS NOT NULL AND result=item->'result'
+    AND NOT EXISTS(SELECT 1 FROM v24_cordis.effects x WHERE x.run_id=r.id
+     AND x.id IS DISTINCT FROM (item->>'effect_id')::uuid
+     AND (x.kind='host_io' OR x.status IN ('ready','claimed','unknown')))
+    INTO ok FROM v24_cordis.runs r WHERE r.id=(item->>'run_id')::uuid;
   WHEN 'episode_close' THEN
    SELECT e.closed_at IS NOT NULL AND e.state='closing'
     AND f.current_episode_id IS NULL AND f.retire_started_at IS NULL

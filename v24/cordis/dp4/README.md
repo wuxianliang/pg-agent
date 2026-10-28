@@ -4,7 +4,7 @@ DP4 delivers the run lifecycle on the DP1/DP2/DP3 Cordis v2 kernel: production `
 
 ## Current status
 
-**B0 is implemented and committed locally. W1–W5 are unstarted.** B0 fixes HEAD `4b34bf2`, registers `sql/43_loop.sql` as the 18th manifest entry, extends the shared helper budget to four files, and records the 26-command pre-DP4 baseline in the DP4 conformance matrix. The 43 module is a behavior-free scaffold.
+**B0=`17c855d` is committed locally. W1 is implemented and committed locally. W2–W5 are unstarted.** B0 fixes HEAD `4b34bf2`, registers `sql/43_loop.sql` as the 18th manifest entry, extends the shared helper budget to four files, and records the 26-command pre-DP4 baseline in the DP4 conformance matrix. At B0 the 43 module was a behavior-free scaffold; W1 replaces it with the run_start planner primitives.
 
 B0 evidence:
 
@@ -13,7 +13,9 @@ B0 evidence:
 - DDL prefix 461≤900; manifest 18; 10 tables; only `advance` is `SECURITY DEFINER`; source VIEW/EXTENSION 0.
 - The twelve frozen `v24/sql` hashes are unchanged.
 
-No DP4 behavior is claimed at B0: `host_io` and settlement still refuse with `0A000`, `dispatch`/`listener_call` remain unwired, and there is no scanner.
+W1 adds the production `run_start` path. A real chat_tool P4 emits one ordinal-0 `run_start`; claim returns frozen `input`; success creates the run, run pins, one model_call successor and one run_progress event. Owner-closing, P0401, forged p4 successors, provider capability mismatch and both missing replay rights are zero-write refusal paths. CDP4-R1–R7 pass, and the 27-command W1 sequence (26 legacy + CDP4-R) is green in 117 seconds.
+
+W1 capacity: 40=1546, 41=1211, 42=1000, 43=283, sum **4040≤5000**; DDL 461; manifest 18; 10 tables; one `SECURITY DEFINER`. Model/tool settlement, the reducer, budget/seal and e7→e13 remain W2–W4.
 
 ## DP4 gates
 

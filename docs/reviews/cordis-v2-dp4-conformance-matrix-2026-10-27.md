@@ -102,3 +102,55 @@ Order 19 then 20 follows the plan: s8 before s7. No command was concurrent, join
 - No `run_start`, model/tool settlement, reducer, budget/seal, run writer, or DP4 gate exists yet. CDP4-R/M/T/X/B are not claimed.
 - `host_io` and settlement remain `0A000`; `dispatch`/`listener_call` remain unwired; no scanner exists. These are DP3 facts, not DP4 evidence.
 - B0 did not push. Publication remains blocked on the user naming a remote/branch (plan §3.10 decision 8).
+
+## W1 / CDP4-R (2026-10-27)
+
+Same worktree and branch `v24`, HEAD `17c855d` (B0) plus W1 changes before staging. The 26 legacy commands and `CDP4-R` were launched one process at a time; all 27 exited 0, total 117 seconds.
+
+| # | Command | Exit | Duration (s) | Evidence |
+|---:|---|---:|---:|---|
+| 1 | `uv run python v24/cordis/load.py` | 0 | 1 | canonical loader, 18 entries |
+| 2 | `uv run python v24/cordis/dp1/setup_db.py --self-check` | 0 | 1 | fixture/role/OID cleanup |
+| 3 | `uv run python v24/cordis/dp1/test_environment.py` | 0 | 2 | CDP1-E, exact 18-entry manifest |
+| 4 | `uv run python v24/cordis/dp1/test_ddl.py` | 0 | 2 | CDP1-D, DDL 461 |
+| 5 | `uv run python v24/cordis/dp1/test_kernel.py` | 0 | 14 | CDP1-K; helper 4040, 5000/5001 proof; service ACL for four effect kinds |
+| 6 | `uv run python v24/cordis/dp2/test_kernel.py` | 0 | 4 | CDP2-K continuation/typed delta/closure |
+| 7 | `uv run python v24/cordis/dp2/test_install.py` | 0 | 4 | CDP2-I |
+| 8 | `uv run python v24/cordis/dp2/test_activation.py` | 0 | 3 | CDP2-A |
+| 9 | `uv run python v24/cordis/dp2/test_boundaries.py` | 0 | 4 | CDP2-B, manifest 18 |
+| 10 | `uv run python v24/load.py` | 0 | 0 | v24 loader |
+| 11 | `uv run python v24/s1/setup_db.py --self-check` | 0 | 2 | v24/s1 setup |
+| 12 | `uv run python v24/s1/test_ddl.py` | 0 | 2 | G1-O |
+| 13 | `uv run python v24/s1/test_g1.py` | 0 | 2 | G1 kernel/commands/ACL |
+| 14 | `uv run python v24/s2/test_g3a.py` | 0 | 2 | S2 W1-W6 |
+| 15 | `uv run python v24/s3/test_g2.py` | 0 | 5 | S3 W1-W7 |
+| 16 | `uv run python v24/s4/test_g2b.py` | 0 | 4 | S4 W1-W6 |
+| 17 | `uv run python v24/s5/test_g4.py` | 0 | 4 | S5 W1-W4 |
+| 18 | `uv run python v24/s6/test_g5.py` | 0 | 4 | S6 W1-W4 |
+| 19 | `uv run python v24/s8/test_g7.py` | 0 | 2 | S8 W1-W3 |
+| 20 | `uv run python v24/s7/test_g6.py` | 0 | 7 | S7 W1-W2 |
+| 21 | `uv run python v24/s9/test_g8.py` | 0 | 10 | G8, 23 cases |
+| 22 | `uv run python v24/cordis/dp3/test_protocol.py` | 0 | 4 | CDP3-P |
+| 23 | `uv run python v24/cordis/dp3/test_live.py` | 0 | 10 | CDP3-L |
+| 24 | `uv run python v24/cordis/dp3/test_teardown.py` | 0 | 6 | CDP3-T |
+| 25 | `uv run python v24/cordis/dp3/test_dispose.py` | 0 | 6 | CDP3-D |
+| 26 | `uv run python v24/cordis/dp3/test_boundaries.py` | 0 | 7 | CDP3-B1…B13; host_io settlement still `0A000` |
+| 27 | `uv run python v24/cordis/dp4/test_run.py` | 0 | 5 | CDP4-R1…R7 |
+
+| W1 invariant | Actual evidence |
+|---|---|
+| Production run_start | Real install→P0→P1→P2→P4 on a chat_tool agent emits exactly one ordinal-0 `run_start`; a non-chat_tool install emits none. Producer requires `reloading` + activation totality, not `active`. CDP4-R1 |
+| Binding | Claim returns frozen `input`; success creates one `runs` row, two run pins, one ordinal-0 `model_call` with three digests, and one `run_progress` step=0 event. CDP4-R2 |
+| Replay | Same receipt returns `disposition=replay, emitted=[]` with unchanged ten-table snapshot; different bytes is `receipt_conflict`. CDP4-R3 |
+| Forged p4 | Two successors, ordinal 1, extra input key and non-chat_tool each yield `invalid_outcome` with zero write. CDP4-R4 |
+| Refusal | Owner-closing success settles without run/pins/successor and emits one `run_refused{owner_closing}`; a `P0401` probe yields `retry_with_closure` and leaves the effect claimed. CDP4-R5 |
+| Contract subject | Owner declares only `run_start`; model/tool claims read provider contracts. A tool effect bound to a model pin is `invalid_outcome` zero-write. CDP4-R6 |
+| Replay rights | `repeat=false` and `concurrent=false` providers install normally but `run_start` refuses with `replay_right_missing`, no run/pins, one event, replay-consistent. CDP4-R7 |
+| Capacity | 40=1546, 41=1211, 42=1000, 43=283, sum **4040≤5000**; DDL 461; manifest 18; 10 tables; one DEFINER |
+
+### W1 not covered
+
+- Model/tool settlement and the reducer are not implemented. A model_call can be claimed but not settled.
+- `run_seal`, budget exhaustion, final/model_failed closure, pin release on run terminal, and e7→e13 are W4.
+- The source-level run-writer assertion in DP3-B6 was replaced by the W1 production writer; `host_io` settlement remains `0A000` and no scanner exists.
+- W1 was committed locally only; no push.

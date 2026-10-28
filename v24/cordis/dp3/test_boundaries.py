@@ -274,13 +274,12 @@ def test_settlement_and_unwired(db, root):
             no_write(db, conn, effect, outcome, code='invalid_args')
 
     text = source_sql()
-    assert 'INSERT INTO v24_cordis.runs' not in text
-    assert 'UPDATE v24_cordis.runs' not in text
+    assert 'INSERT INTO v24_cordis.runs' in text and 'UPDATE v24_cordis.runs' in text
     assert re.search(r'\b(recover|scanner|sweep)\w*\s*\(', text, re.I) is None
     with contextlib.closing(db.connect('owner')) as conn:
         body = query(conn, "SELECT pg_get_functiondef('v24_cordis.run_pin_release_delta(uuid)'::regprocedure)")[0][0]
         assert re.search(r'\b(INSERT|UPDATE|DELETE)\b', body, re.I) is None
-    print('[CDP3-B6] settlement is 0A000; dispatch/intercept/overlay are unwired; no run_start writer or recovery')
+    print('[CDP3-B6] host_io settlement is 0A000; dispatch/intercept/overlay are unwired; run DML exists only behind the typed applier; no recovery')
 
 
 def test_limits_history_and_batch(db, root):

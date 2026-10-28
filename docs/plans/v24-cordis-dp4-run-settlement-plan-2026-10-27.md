@@ -384,11 +384,13 @@ B0 与 W5 必须串行实跑 DP3 收尾的全部命令（`docs/reviews/cordis-v2
 
 固定 `git rev-parse HEAD`、upstream、工作区、工具链、frozen hash/diff；建空 `43_loop.sql`；`load.py`/`helper_budget.py`/三处 gate 的 18 号 manifest 与四文件预算。**B0 不改 ACL 断言**：`dp1/test_kernel.py:307-309` 的 `unauthorized` 断言保持到 W1（ACL 与 run_start 同里程碑落地时一起替换）。`dp3/test_boundaries.py:239-283` 的「settlement 0A000 / 无 run writer」两条在 W1 替换；`host_io` `0A000`、无 scanner、`run_pin_release_delta` 只读三条从头保留。
 
-**Result**（2026-10-27）：在 worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`、分支 `v24`、HEAD `4b34bf28e83791a7af3356f8036237afca78b67a` 上完成。26 条旧命令逐条独立启动并等待退出，全部 exit 0，总耗时 118 秒。`43_loop.sql` 为 2 行无行为脚手架（注释 + `DO` 空块，因为 psycopg2 拒绝空查询）；四文件 helper 合计 **3552≤5000**，临时 5000/5001 边界由 CDP1-K0 实跑通过；DDL 461≤900，manifest 18，十表，唯一 `SECURITY DEFINER` 仍为 `advance`。冻结 SQL 12 个 hash 不变。B0 只做本地 commit，不 push。
+**Result**（2026-10-27）：在 worktree `/Users/wxl/Projects/pg-agent/.claude/worktrees/v99`、分支 `v24`、HEAD `4b34bf28e83791a7af3356f8036237afca78b67a` 上完成。26 条旧命令逐条独立启动并等待退出，全部 exit 0，总耗时 118 秒。`43_loop.sql` 为 2 行无行为脚手架（注释 + `DO` 空块，因为 psycopg2 拒绝空查询）；四文件 helper 合计 **3552≤5000**，临时 5000/5001 边界由 CDP1-K0 实跑通过；DDL 461≤900，manifest 18，十表，唯一 `SECURITY DEFINER` 仍为 `advance`。冻结 SQL 12 个 hash 不变。B0 只做本地 commit，不 push；B0 commit 为 `17c855d`。
 
 ### W1 — `run_start` 生产与绑定
 
 43 的 policy/schema/digests/id 派生/`claim_contract`/`run_start_successor`/`settlement_seed`；41 的 p4 后继；40 的 ACL、claim（含 `input` 回传与 unknown guard）、`validate_delta` kind、p4 闸、后继 applier、`run_create`/`run_pin_bind`、`run_refused`/`run_progress`；42 的闭包 pair/refs 与两个 postcondition。同时替换 `dp1/test_kernel.py:307-309` 的 unauthorized 断言（service 获准、admin/operator 仍拒）。验收 `CDP4-R`（含 R5 owner-closing；该路径不依赖 `run_seal`，可在 W1 交付）。
+
+**Result**（2026-10-27）：在 B0 commit `17c855d` 之上完成。27 条命令（26 条旧 gate + CDP4-R）逐条独立启动并等待退出，全部 exit 0，总耗时 117 秒。CDP4-R1–R7 全部通过：p4 对 chat_tool 恰发一条 ordinal 0 `run_start`，非 chat_tool 为零；claim 携带冻结 `input`；run/pin/model 后继/事件精确；原 receipt replay 零写、异 bytes `receipt_conflict`；伪造 p4 后继、owner-closing、P0401、provider capability 错配均零写；repeat=false 与 concurrent=false 两种 provider 都安装成功但在 `run_start` 被 `replay_right_missing` 拒绝。四文件 helper **4040≤5000**（40=1546、41=1211、42=1000、43=283），DDL 461，manifest 18，十表，唯一 DEFINER 仍为 `advance`。本里程碑只做本地 commit，不 push。
 
 ### W2 — model 结算与 reducer
 

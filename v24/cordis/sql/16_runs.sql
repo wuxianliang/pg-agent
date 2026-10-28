@@ -5,7 +5,7 @@ CREATE TABLE v24_cordis.runs (
   scope_id uuid NOT NULL,
   parent_run_id uuid,
   spawn_key text,
-  state jsonb NOT NULL DEFAULT '{}' CHECK(jsonb_typeof(state)='object'),
+  state jsonb NOT NULL DEFAULT '{}' CHECK(jsonb_typeof(state)='object' AND octet_length(state::text)<=65536),
   remaining_steps int NOT NULL CHECK(remaining_steps>=0),
   ended_at timestamptz,
   result jsonb

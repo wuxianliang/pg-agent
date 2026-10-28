@@ -16,3 +16,23 @@ B0 is a baseline/scaffold milestone. Rows below are observations from the 2026-1
 ## Final scope
 
 B0 claims only the 26-command pre-DP4 baseline and the 18-entry scaffold. DP4 run settlement, reducer, budget/seal, CDP4-R/M/T/X/B, and all DP5/DP6 surfaces remain unclaimed until their milestones.
+
+## W1 observations (2026-10-27)
+
+Same worktree, B0 `17c855d` plus W1 changes. The 27-command sequence (26 legacy + CDP4-R) is green; this section does not rewrite B0.
+
+| Date | Item | Plan / baseline | W1 treatment | Evidence |
+|---|---|---|---|---|
+| 2026-10-27 | Batch semantics | §3.5 called `batch` both the original frozen list and a list with the current tool removed; `p_fact` has no current ordinal/key/call_id | Resolved to **frozen original batch**. The reducer only uses `live_siblings`; a continuation clears `batch`, sealing requires `batch=[]`, and an unknown wall keeps the frozen list. No current-tool fact is smuggled into the reducer | Plan §3.5 amended; `reduce_chat_tool` contract; W3 will test the intermediate state |
+| 2026-10-27 | Claim read channel | Protocol roles have no table SELECT; service needs prompt/args | Success claim responses now include frozen top-level `input`. DP1-K exact-key assertion was updated. This is the only read channel; no table grant was added | CDP4-R2/R6; DP1-K2 |
+| 2026-10-27 | P4 phase | Plan/critique split producer liveness from settlement | Producer requires current episode `reloading` plus activation totality; settlement requires current active episode plus `fiber_live_resolve_ok`. `P0401` is caught and returned as `retry_with_closure` | CDP4-R1/R5 |
+| 2026-10-27 | Owner contract ownership | Critique: owner must not declare model/tool contracts | Agent install declares only `run_start`; model/tool contracts are read through each run pin's provider install. A capability mismatch is `invalid_outcome` | CDP4-R6 |
+| 2026-10-27 | Refusal response reason | Plan says owner-closing refusal returns the reason | `validate_and_apply_delta` adds `reason` only when the one event is `run_refused`; normal responses keep the original five keys | CDP4-R5/R7 |
+| 2026-10-27 | DP1 ACL assertion | Old gate asserted service unauthorized for model/tool/run_start | Replaced with service admitted for `host_io/run_start/model_call/tool_call` claim/settle; admin/operator still unauthorized. Claim response now includes `input` | DP1-K1/K2 |
+| 2026-10-27 | DP3 B6 writer assertion | Old gate asserted no source `INSERT/UPDATE runs` and settlement `0A000` | Host-io settlement remains `0A000`; source run DML now exists behind typed ops, so the assertion checks presence and keeps scanner/recovery absence plus read-only `run_pin_release_delta` | CDP3-B6 |
+| 2026-10-27 | Capacity | Projected W1 43 ≤560, total ≤5000 | Actual 40=1546, 41=1211, 42=1000, 43=283, sum 4040≤5000; DDL 461 | CDP1-K0/CDP2-B/CDP3-B |
+| 2026-10-27 | Publication | Local commits only until target confirmed | W1 committed locally; no push and `main` untouched | W1 commit |
+
+### W1 not covered
+
+Model/tool settlement, reducer, `run_seal`, budget exhaustion, final/model_failed terminal states, run pin release on terminal, and e7→e13 remain unimplemented.

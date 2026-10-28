@@ -177,9 +177,9 @@ def test_vectors_acl(db,other):
         assert all(r[3]==owner_oid and 'search_path=pg_catalog, v24_cordis, pg_temp' in r[2] for r in rows)
         for alias in ('admin','service','operator','owner'):
             for cls in ('command','claim','success','failure','unknown','bad'):
-                for kind in ('command_install','command_reconcile','command_dispose','host_io','model_call'):
+                for kind in ('command_install','command_reconcile','command_dispose','host_io','model_call','tool_call','run_start'):
                     got=query(owner,'SELECT v24_cordis.role_allowed(%s,%s,%s,%s)',(db.roles[alias],cls,kind,'admit_and_apply' if cls=='command' else cls))[0][0]
-                    expected=(alias in ('admin','service','operator') and cls=='command' and kind.startswith('command_')) or (alias=='service' and cls in ('claim','success','failure','unknown') and kind=='host_io')
+                    expected=(alias in ('admin','service','operator') and cls=='command' and kind.startswith('command_')) or (alias=='service' and cls in ('claim','success','failure','unknown') and kind in ('host_io','model_call','tool_call','run_start'))
                     assert got==expected,(alias,cls,kind,got)
         for alias in ('admin','service','operator'):
             role=db.roles[alias]
@@ -266,7 +266,7 @@ def test_preflight_claim(db):
         no_write(db,conn,uuid.uuid4(),env('claim',{'lease_ms':1}),'not_found_or_denied')
         before=snapshot(owner); owner.rollback()
         got=api(conn,seed['effect'],env('claim',{'lease_ms':300000}))
-        assert got['disposition']=='claimed' and set(got)=={'v','disposition','effect_id','emitted','revision','claim'}
+        assert got['disposition']=='claimed' and set(got)=={'v','disposition','effect_id','emitted','revision','claim','input'}
         assert got['claim']==dict(attempt=1,fence=1,owner=db.roles['service'])
         assert query(owner,'SELECT status FROM v24_cordis.effects WHERE id=%s',(seed['effect'],))[0][0]=='ready'
         conn.rollback(); assert snapshot(owner)==before; owner.rollback()
@@ -307,7 +307,12 @@ def test_preflight_claim(db):
         no_write(db,conn,item['effect'],env('claim',{'lease_ms':100}),'invalid_args')
     for kind in ('model_call','tool_call','run_start'):
         item=host_seed(db,kind=kind)
-        with contextlib.closing(db.connect('service')) as conn: no_write(db,conn,item['effect'],env('claim',{'lease_ms':1}),'unauthorized')
+        with contextlib.closing(db.connect('service')) as conn:
+            got=api(conn,item['effect'],env('claim',{'lease_ms':1})); conn.rollback()
+            assert got['error']['code']=='invalid_outcome',got
+        for alias in ('admin','operator'):
+            with contextlib.closing(db.connect(alias)) as conn:
+                no_write(db,conn,item['effect'],env('claim',{'lease_ms':1}),'unauthorized')
     cancelled=host_seed(db,status='cancelled')
     with contextlib.closing(db.connect('service')) as conn:
         no_write(db,conn,cancelled['effect'],env('success',{},dict(attempt=0,fence=0,owner='x')),'receipt_conflict')

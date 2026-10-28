@@ -1040,7 +1040,7 @@ BEGIN
   'receipt',jsonb_build_object('status','succeeded'),
   'events',jsonb_build_array(jsonb_build_object('entity_type','fiber','entity_id',to_jsonb(f.id),
    'event_kind','episode_activated','payload',jsonb_build_object('episode_id',to_jsonb(ep.id),'epoch',to_jsonb(ep.epoch)))),
-  'successors','[]'::jsonb);
+  'successors',v24_cordis.run_start_successor(f.id));
 END $$;
 CREATE FUNCTION v24_cordis.reconcile_preflight(p_payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=pg_catalog,v24_cordis,pg_temp AS $$
