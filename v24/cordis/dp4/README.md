@@ -1,0 +1,67 @@
+# Cordis v2 DP4
+
+DP4 delivers the run lifecycle on the DP1/DP2/DP3 Cordis v2 kernel: production `run_start`, model/tool settlement, the restricted `chat_tool` reducer, run pin binding, the step budget, and terminal sealing. The authority is `docs/designs/cordis-plugin-system-2026-10-25.md`; the implementation plan is `docs/plans/v24-cordis-dp4-run-settlement-plan-2026-10-27.md`.
+
+## Current status
+
+**B0=`17c855d`, W1=`e8b6cce`, W2=`8cbc5f3`, W3=`dbd943d` and W4=`faccab4` are committed locally. W5 was committed locally as `348b9b8`, followed by the acceptance correction documented below.** B0 fixes HEAD `4b34bf2`, registers `sql/43_loop.sql` as the 18th manifest entry, extends the shared helper budget to four files, and records the 26-command pre-DP4 baseline in the DP4 conformance matrix. At B0 the 43 module was a behavior-free scaffold; W1 replaces it with the run_start planner primitives.
+
+B0 evidence:
+
+- 26 legacy commands ran serially, each in its own process; all exited 0, total 118 seconds.
+- Real helper tree: 40=1373, 41=1211, 42=966, 43=2, sum 3552≤5000. The temporary four-file predicate admits exactly 5000 and rejects 5001.
+- DDL prefix 461≤900; manifest 18; 10 tables; only `advance` is `SECURITY DEFINER`; source VIEW/EXTENSION 0.
+- The twelve frozen `v24/sql` hashes are unchanged.
+
+W1 adds the production `run_start` path. A real chat_tool P4 emits one ordinal-0 `run_start`; claim returns frozen `input`; success creates the run, run pins, one model_call successor and one run_progress event. Owner-closing, P0401, forged p4 successors, provider capability mismatch and both missing replay rights are zero-write refusal paths. CDP4-R1–R7 pass, and the 27-command W1 sequence (26 legacy + CDP4-R) is green in 117 seconds.
+
+W2 adds model settlement and the restricted `chat_tool` reducer. `CDP4-M1`–`M5` pass: an e8 model success spends 3→2, stores `step=1, phase='tools'` with the frozen batch, and emits one exact ordinal-0 `tool_call` successor; the three digests are compared byte-for-byte and drift in any one is `invalid_outcome` with zero write; schema negatives are zero-write; the reducer is `IMMUTABLE` with no `pg_class` dependency and a reading `BEGIN ATOMIC` probe is detected; receipt/event/successor injection points all roll back with the effect still claimed. The 28-command W2 sequence (26 legacy + CDP4-R + CDP4-M) is green in 121 seconds.
+
+W3 adds tool settlement and the batch barrier. `CDP4-T1`–`T7` pass: N tool settlements emit no continuation until the last sibling closes the batch, then exactly one ordinal-0 `model_call` whose parent is that tool; two connections racing two siblings yield exactly one continuation, observed by the batch closer only; expired leases still count as live siblings; a withdrawn-but-unreleased pin settles the old run while a released pin is `dependency_unresolved` zero-write; an unknown sibling accepts a trusted receipt and charges budget but emits no continuation or seal and keeps the pin, while a new claim and P6 are `blocked_unknown`; failure closes the batch; replay/reclaim follow the provider's repeat/concurrent rights. W3 merges model/tool settlement into the single `run_delta` planner (43=509, 555→509), removing the W2 `model_delta` and W3 `tool_delta` split. The 29-command sequence (26 legacy + CDP4-R/M/T) is green in 134 seconds.
+
+W4 adds terminal sealing. `CDP4-X1`–`X5` and `M6` pass: `final` seals and releases both run pins in one transaction; `budget_exhausted` seals at model N>budget (dropped=N, no partial tool batch) and at tool 1→0; `model_failed` seals with the error object; a completed run's pins are released while provider activation pins remain; P6 is no longer deferred/run. Terminal paths are split: the same receipt replays, different bytes conflict, a new effect on the sealed run is `already_terminal` zero-write, and direct DML reopen of a terminal effect is `55000`. API claim of the original terminal effect is replay-first `receipt_conflict`, not `55000`. A forged-planner probe proves the independent validator rejects wrong budget, seal `effect_id`, missing pin release, and successor key/capability spoofing. The model pin is selected by `descriptor.capability='model_call'` rather than the literal key `'model'`; `CDP4-X1b` carries a real provider key `'brain'` through run_start→model→tool→continuation→final. The e7→e13 walk retires the model provider (contribution withdrawn, pin readable, epoch 1), retires the agent, observes e11c/e12 `deferred` zero-write, then settles the continuation `final` and releases the run pins without re-resolving. W4 also completes the `validate_run_domain` model/tool checks (state step, old-minus-one budget, successor binding, seal `effect_id`, all live run pins). The 30-command sequence (26 legacy + CDP4-R/M/T/X) is green in 141.6 seconds.
+
+W4 capacity: 40=1546, 41=1211, 42=1000, 43=560, sum **4317≤5000**; 43=560≤560; DDL measured 461 (the `state` CHECK is inline); manifest 18; 10 tables; one `SECURITY DEFINER`.
+
+W5 adds `CDP4-B`. `B1`–`B6` pass: ten tables/manifest 18/one DEFINER/public EXECUTE 0; the 5000/5001 helper-tree predicate actually reran; 40=1549, 41=1211, 42=1000, 43=560, sum **4320≤5000**, DDL 461≤900; service claims host_io (settlement remains `0A000`) and claims/settles run_start/model/tool, admin/operator are denied all run-kind claim+settle, and a real foreign family is denied; `runs` is written only by four typed ops, `pins` only by `run_pin_bind`, `host_io` six states stay `0A000`, `dispatch`/`listener_call` are unclaimable, no scanner exists, and `run_pin_release_delta` is read-only; successor/batch/pins/closure 16/17, 16/17, 32/33, 512/513, 600 history effects and host_io seed bytes are covered. R4 now injects `interpret_command` through real `advance` for two/ordinal-1/bad-input/non-chat_tool/existing-run; T4c uses advance claim/settlement; X6/X1b replace `run_delta` and submit through `advance`. X7 now forges run_start initial state/budget, the pin set, model successor run/pin/key/capability/digests/contract/uniqueness and empty-domain refusals, plus forced creation after a real off/closing transition (20 negatives); each is `invalid_outcome` with an unchanged ten-table snapshot, and a legal failure refusal still commits. B5b now routes an owner-fixture run_start effect through `settlement_seed`/`discover_closure`: the 288-entry committed_view filters to 32 bindings, seed=97 and closure=137, both non-NULL and <512. The `tools` fact contains only `tool_call` capability, and a brain model key in `tool_calls` is `invalid_outcome` zero-write. M4 asserts every non-catalog callee in the reducer closure has a parsed `prosqlbody` and no `pg_class`; the 40 helpers `exact_keys/json_text/json_int` are `BEGIN ATOMIC`. The 224+32 production activation is recorded as `retry_with_closure` (seed expansion 224×3), while the 288-entry committed_view is explicitly an owner-injected, illegal-manifest fixture that filters to 32 bindings. `validate_run_domain` now independently re-derives the run_start initial state/remaining budget, the committed model/tool pin projection, the unique model successor's run/pin/key/digests/contract, and the empty-domain refusal event; no residual boundary remains. The 31-command sequence (26 legacy + CDP4-R/M/T/X/B) is green in 147.0 seconds.
+
+W5 capacity: 40=1549, 41=1211, 42=1000, 43=560, sum **4320≤5000**; 43=560≤560; DDL measured 461; manifest 18; 10 tables; one `SECURITY DEFINER` (`advance`). No push.
+
+W5 acceptance correction (2026-10-28): success receipts now independently recompute owner liveness and model/tool binding validity; creation requires both; `live_ok IS NOT TRUE` also rejects NULL. X7 executes a real off command, confirms the episode is closing, then submits the stale creation delta through `advance` and proves `invalid_outcome` with the ten-table snapshot unchanged. The final 31-command run above supersedes the earlier evidence because SQL changed during that earlier run. Log: `/tmp/dp4-w5-gates-verified.log`.
+
+## DP4 gates
+
+- `CDP4-R` — `run_start` production/binding.
+- `CDP4-M` — model settlement and reducer.
+- `CDP4-T` — tool settlement and batch barrier.
+- `CDP4-X` — budget, termination, e7→e13.
+- `CDP4-B` — layout, ACL, budget, frozen-surface regression.
+
+## Publication
+
+Per plan §3.10 decision 8, DP4 makes one local commit per milestone and does not push. A push requires the user to name the remote and branch first. `AGENTS.md`'s default `origin main` is not used for this branch.
+
+
+## Review fix (2026-10-28)
+
+Oracle review export `prompt-exports/oracle-review-2026-10-28-173620-new-chat-c89fc8-8a3d.md` (the primary lane failed on the provider input limit; Oracle 2 completed) reported two P1s and one P2. They are fixed in `sql/43_loop.sql` without changing the public surface or moving functions:
+
+- **P1-1**: `validate_run_domain` no longer trusts a planner-shaped delta. For non-unknown model/tool settlements it re-derives the complete settlement facts (old state, receipt, remaining budget, live siblings, tool pins, reducer intents), then compares the full expected `domain` (state/budget/seal result/pin release), the exact `run_progress` event, receipt, and successors against the submitted delta. `run_start` creation now also compares the full expected delta, including the ordinal-0 `run_progress` event and receipt. `run_seal.result` is rebuilt from the reducer intent and receipt (`reason/output/dropped_tool_calls`). Missing, extra, or field-mismatched facts are `invalid_outcome` zero-write.
+- **P1-2**: successor construction is a canonical builder in `run_settle_facts`; the validator compares every model/tool successor exactly. This covers provider `contract` (version/digest), contribution `descriptor_digest`, receipt `args`, `call_id`, `pin_id`/`key`, ordinals, and the continuation's `ordinal=0` plus `digests`. A forged pin/key/capability/digest/args/call_id/ordinal no longer reaches claim or execution.
+- **P2**: model/tool unknown receipts must be exactly `{kind}` and `kind` must equal the effect kind; wrong kind, extra keys, and non-object bodies are rejected before persistence. `run_start` still rejects every unknown receipt. The validator enforces the same unknown contract so a forged planner cannot bypass it.
+
+Regression coverage was added to `test_boundaries.py` (X6 event/state/seal/successor mutations; X7 run_start event mutations; X1b continuation ordinal=0/contract/digests) and `test_loop.py` (T8a model unknown, T8b tool unknown, T8c run_start unknown). Each forged case asserts `invalid_outcome` with a specific `run_state_delta`/`run_start_delta` reason and an unchanged ten-table snapshot; the legal unknown positives assert empty domain/events/successors and unchanged step/budget/pin.
+
+Final commit-tree verification: all 31 commands ran serially in independent processes and exited 0 (176s, log `/tmp/dp4-review-fix-gates-commit-20261028.log`). 40=1549, 41=1211, 42=1000, 43=560, sum **4320≤5000**; DDL **461≤900**; 43 **560≤560**; manifest 18; 10 tables; one `SECURITY DEFINER` (`advance`); public EXECUTE 0; 5000/5001 helper-tree boundary. Parallel uncommitted changes to `41_lifecycle.sql`, `helper_budget.py`, and several dp1/dp2/dp3/test_closeout files appeared in the worktree during this task; they are preserved, not staged, and not part of this commit. The 31-gate run temporarily restored them to HEAD to verify the commit tree and restored them byte-identically afterwards. Local commit only; no push; `main` untouched.
+
+
+## Review-fix readability follow-up (2026-10-28)
+
+The user authorized relaxing the per-file 43 cap. This supersedes the `43=560` capacity line above; behavior is unchanged except the added regression cases. The settlement code was split into readable canonical helpers:
+
+- `run_settle_facts` now only validates the receipt/pin/input, computes the reducer facts and intents, and returns state/budget/status.
+- `run_successors` + `run_successor_binding` build the exact model/tool successor projection; `unknown_body_valid`/`unknown_delta` make the P2 contract explicit; `run_refused` deduplicates the refusal event.
+- The validator still calls these projections directly from DB/receipt/reducer facts; it never asks `run_delta` for expected values.
+- Tests add T8a forged-planner wrong-kind unknown (an empty unknown delta returned by a replaced `run_delta` is still rejected as `run_unknown`) plus X6 `state_final`, non-sealed event sealed flip, missing non-sealed event, and extra tool successor.
+
+Capacity: 43=592, per-file cap 700; 40=1549, 41=1211, 42=1000, sum **4352≤5000** (kept as a safety line, not a compression target); DDL 461; manifest 18; 10 tables; one `SECURITY DEFINER` (`advance`); 5000/5001 helper-tree boundary. The final commit-tree run: 31/31 serial independent processes exit 0 in 201s, log `/tmp/dp4-readability-gates-20261028.log`. The external parallel uncommitted files remain preserved and unstaged; the commit-tree run restored them to HEAD and restored them byte-identically afterwards. Local follow-up commit only; no push; `main` untouched.
