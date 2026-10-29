@@ -107,8 +107,20 @@ INTERPRETERS = {
 }
 PURE = ('event_policy', 'listener_exec', 'listener_contract', 'listener_call_input',
         'listener_available', 'dispatch_fold')
-FORBIDDEN = ('EXECUTE ', 'RAISE ', 'dblink', 'http://', 'https://', 'pg_read_file',
-             'pg_write_file', 'lo_import', 'lo_export', 'COPY ')
+# B1 forbids the keyword/function tokens below in a PURE helper body.  SQL
+# keywords are case-insensitive and any whitespace may follow them, so the old
+# raw ``'EXECUTE ' in body`` test missed ``execute '...'`` and
+# ``EXECUTE\n'...'``.  A plain case-insensitive substring test would instead
+# flag those words when they occur in a comment or string literal.  The body is
+# therefore lexed: keyword/function tokens are matched against comment- and
+# string-free code, while URLs are matched against literal contents only (a URL
+# in a comment is not an access path, and a URL can only be executed from a
+# literal).
+FORBIDDEN_CODE = re.compile(
+    r'(?<![A-Za-z0-9_])(?:EXECUTE|RAISE|COPY|DBLINK(?:_[A-Za-z0-9_]+)?|'
+    r'PG_READ_FILE|PG_WRITE_FILE|LO_IMPORT|LO_EXPORT)(?![A-Za-z0-9_])',
+    re.I | re.ASCII)
+FORBIDDEN_URL = re.compile(r'https?://', re.I)
 
 
 def snap(db):
@@ -133,11 +145,12 @@ def first_columns(conn):
         ('v24_cordis.' + table,))[0][0] for table in sorted(TABLES)}
 
 
-def allowed_columns(conn, login, table):
+def allowed_columns(conn, login, table, privilege='SELECT'):
     return {row[0] for row in query(
         conn, 'SELECT a.attname FROM pg_attribute a WHERE a.attrelid=%s::regclass '
-              "AND a.attnum>0 AND NOT a.attisdropped AND has_column_privilege(%s,%s,"
-              "a.attname,'SELECT')", ('v24_cordis.' + table, login, 'v24_cordis.' + table))}
+              'AND a.attnum>0 AND NOT a.attisdropped AND has_column_privilege(%s,%s,'
+              'a.attname,%s)', ('v24_cordis.' + table, login, 'v24_cordis.' + table,
+                                privilege))}
 
 
 def measured_lines():
@@ -145,6 +158,109 @@ def measured_lines():
     ddl = sum(len((SQL / name).read_text().splitlines()) for name in DDL)
     book = sum(len((SQL / name).read_text().splitlines()) for name in BOOK)
     return counts, ddl, book
+
+
+def function_body(definition, source):
+    """Return the body text of a ``pg_get_functiondef`` result.
+
+    ``prosrc`` holds the body for an ``AS`` function.  When it is empty, a
+    SQL-standard ``BEGIN ATOMIC`` body is taken from the deparsed definition
+    starting at ``BEGIN ATOMIC``.  This keeps the quoting wrapper that
+    ``pg_get_functiondef`` adds around the body from being mistaken for a
+    string literal, which would hide the whole body from the token scan.
+    """
+    if source and source.strip():
+        return source
+    match = re.search(r'\bBEGIN\s+ATOMIC\b', definition, re.I)
+    assert match is not None, definition
+    return definition[match.start():]
+
+
+def code_and_literals(text):
+    """Split SQL text into executable code and string-literal contents.
+
+    Comments, quoted identifiers and string literals are not code, so a
+    forbidden word mentioned in prose or data is not a hit.  The scanner
+    follows PostgreSQL quoting: nested ``/* */`` comments, doubled quotes
+    inside strings/identifiers, backslash escapes in ``E'...'``, and
+    dollar-quoted strings.
+    """
+    code, literals = [], []
+    i, n = 0, len(text)
+    while i < n:
+        if text.startswith('--', i):
+            stop = text.find('\n', i)
+            stop = n if stop < 0 else stop
+            code.append(' ' * (stop - i))
+            i = stop
+        elif text.startswith('/*', i):
+            stop, depth = i + 2, 1
+            while stop < n and depth:
+                if text.startswith('/*', stop):
+                    depth, stop = depth + 1, stop + 2
+                elif text.startswith('*/', stop):
+                    depth, stop = depth - 1, stop + 2
+                else:
+                    stop += 1
+            code.append(' ' * (stop - i))
+            i = stop
+        elif text[i] == "'" or (
+                text[i] in 'eE' and text.startswith("'", i + 1)
+                and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == '_'))):
+            start, escape = i, text[i] in 'eE'
+            i += 2 if escape else 1
+            value = []
+            while i < n:
+                if text[i] == "'":
+                    if text.startswith("''", i):
+                        value.append("'")
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                if escape and text[i] == '\\' and i + 1 < n:
+                    value.append(text[i:i + 2])
+                    i += 2
+                    continue
+                value.append(text[i])
+                i += 1
+            literals.append(''.join(value))
+            code.append(' ' * (i - start))
+        elif text[i] == '"':
+            start = i
+            i += 1
+            while i < n:
+                if text[i] == '"':
+                    if text.startswith('""', i):
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                i += 1
+            code.append(' ' * (i - start))
+        elif text[i] == '$':
+            tag = re.match(r'\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$', text[i:])
+            close = text.find(tag.group(0), i + len(tag.group(0))) if tag else -1
+            if close < 0:
+                code.append(text[i])
+                i += 1
+                continue
+            start = i
+            i = close + len(tag.group(0))
+            literals.append(text[start + len(tag.group(0)):close])
+            code.append(' ' * (i - start))
+        else:
+            code.append(text[i])
+            i += 1
+    return ''.join(code), literals
+
+
+def forbidden_hits(definition, source):
+    code, literals = code_and_literals(function_body(definition, source))
+    hits = [match.group(0).upper() for match in FORBIDDEN_CODE.finditer(code)]
+    hits.extend(match.group(0).upper() for literal in literals
+                for match in FORBIDDEN_URL.finditer(literal))
+    return hits
 
 
 # ---------------------------------------------------------------- CDP6-B1
@@ -266,15 +382,16 @@ def test_b1_layout(db):
 
         # Read-only helper purity: the six frozen IMMUTABLE helpers stay
         # immutable and contain no execute/RAISE/network/file/COPY token.
-        definitions = {name: (volatility, body) for name, volatility, body in query(
-            conn, 'SELECT proname,provolatile,pg_get_functiondef(oid) FROM pg_proc '
+        definitions = {name: (volatility, definition, source) for name, volatility, definition,
+                       source in query(
+            conn, 'SELECT proname,provolatile,pg_get_functiondef(oid),prosrc FROM pg_proc '
                   "WHERE pronamespace='v24_cordis'::regnamespace AND proname=ANY(%s)",
             (list(PURE),))}
         assert set(definitions) == set(PURE), definitions
-        assert all(volatility == 'i' for volatility, _ in definitions.values())
-        for name, (_, body) in definitions.items():
-            for token in FORBIDDEN:
-                assert token not in body, (name, token)
+        assert all(volatility == 'i' for volatility, _, _ in definitions.values())
+        for name, (_, definition, source) in definitions.items():
+            hits = forbidden_hits(definition, source)
+            assert not hits, (name, hits)
 
         interpreters = {row[0] for row in query(
             conn, "SELECT proname FROM pg_proc WHERE pronamespace='v24_cordis'::regnamespace "
@@ -360,11 +477,20 @@ def test_b2_acl(db):
                              (observer, 'v24_cordis.' + table, privilege))[0][0] is False
             allowed = allowed_columns(conn, observer, table)
             assert allowed == set(OBSERVER_COLUMNS.get(table, ())), (table, allowed)
+            # Table-level negatives do not cover column-level grants.
+            for privilege in ('INSERT', 'UPDATE', 'REFERENCES'):
+                assert allowed_columns(conn, observer, table, privilege) == set(), \
+                    (table, privilege)
         for table, column in OBSERVER_DENIED_COLUMN.items():
             assert query(conn, 'SELECT has_column_privilege(%s,%s,%s,\'SELECT\')',
                          (observer, 'v24_cordis.' + table, column))[0][0] is False, table
         assert query(conn, 'SELECT has_function_privilege(%s,%s,%s)',
                      (observer, 'v24_cordis.advance(uuid,jsonb)', 'EXECUTE'))[0][0] is False
+        # No EXECUTE on any private helper, not just the one public entry point.
+        assert query(conn, 'SELECT p.proname FROM pg_proc p WHERE '
+                           "p.pronamespace='v24_cordis'::regnamespace AND "
+                           "has_function_privilege(%s,p.oid,'EXECUTE') "
+                           'ORDER BY p.proname', (observer,)) == []
         assert query(conn, "SELECT has_database_privilege(%s,current_database(),'TEMP')",
                      (observer,))[0][0] is False
         assert query(conn, "SELECT has_schema_privilege(%s,'v24_cordis','CREATE')",
@@ -424,6 +550,11 @@ def test_b2_acl(db):
                              (login, 'v24_cordis.' + table, 'SELECT'))[0][0] is False
                 assert query(conn, 'SELECT has_any_column_privilege(%s,%s,%s)',
                              (login, 'v24_cordis.' + table, 'SELECT'))[0][0] is False
+                # Table-level negatives do not cover column-level grants; these
+                # actors hold no column DML/REFERENCES either.
+                for privilege in ('INSERT', 'UPDATE', 'REFERENCES'):
+                    assert allowed_columns(conn, login, table, privilege) == set(), \
+                        (alias, table, privilege)
             for kind in tuple(INTERPRETERS) + ('command_unknown',):
                 expected = kind in INTERPRETERS
                 assert query(conn, 'SELECT v24_cordis.role_allowed(%s,%s,%s,%s)',
@@ -441,10 +572,11 @@ def test_b2_acl(db):
             sqlstate(conn, 'TRUNCATE v24_cordis.events', code='42501')
             sqlstate(conn, f'SET ROLE {db.groups["owner"]}', code='42501')
     assert snap(db) == before
-    print('[CDP6-B2] observer: exact 8-table column whitelist, no table SELECT/DML/TEMP/'
-          'CREATE/advance, no protocol role; admin/service/operator: no table or column '
-          'privilege, only advance EXECUTE, no owner membership, all direct DML 42501 '
-          'with ten-table zero write')
+    print('[CDP6-B2] observer: exact 8-table column whitelist, no table SELECT, no column '
+          'DML/REFERENCES, no TEMP/CREATE, zero function EXECUTE, no protocol role; '
+          'admin/service/operator: no table privilege, no column SELECT/DML/REFERENCES, '
+          'only advance EXECUTE, no owner membership, all direct DML 42501 with ten-table '
+          'zero write')
 
 
 # ---------------------------------------------------------------- CDP6-B3
@@ -548,12 +680,10 @@ def test_b4_terminal(db):
             db, conn, 'service', 'command_reconcile',
             reconcile_payload(fiber, 'advance', sequence + 1), key=key, effect=successor)
         no_write(db, conn, conflict_effect, conflict_outcome, code='request_conflict')
-    before = snap(db)
+    # The foreign rejection is committed, not rolled back: a rollback would
+    # discard exactly the writes the zero-write snapshot is meant to detect.
     with contextlib.closing(db.connect('admin')) as conn:
-        foreign = api(conn, effect, outcome)
-        conn.rollback()
-    assert foreign.get('error', {}).get('code') == 'effect_id_conflict', foreign
-    assert snap(db) == before
+        no_write(db, conn, effect, outcome, code='effect_id_conflict')
 
     # Terminal effect and request receipts are immutable; a second live
     # reconcile successor is refused by the unique slot index.
@@ -656,7 +786,19 @@ def test_b6_frozen():
     for name, want in FROZEN.items():
         got = hashlib.sha256((ROOT / 'v24' / 'sql' / name).read_bytes()).hexdigest()
         assert got == want, (name, got)
-    assert subprocess.run(['git', 'diff', '--check'], cwd=ROOT).returncode == 0
+    # Scope the whitespace check to this closeout's paths and inspect both the
+    # index and the worktree.  An unqualified ``git diff --check`` also reads
+    # unrelated user dirty files, while a plain ``git diff`` alone misses the
+    # staged closeout diff that is about to become the DP6 commit.
+    dp6_paths = ('v24/cordis/dp6/test_boundaries.py',
+                 'v24/cordis/dp6/README.md',
+                 'docs/plans/v24-cordis-dp6-recovery-maintenance-plan-2026-10-28.md',
+                 'docs/reviews/cordis-v2-dp6-conformance-matrix-2026-10-28.md',
+                 'docs/reviews/cordis-v2-dp6-deviation-ledger-2026-10-28.md')
+    for extra in ((), ('--cached',)):
+        whitespace = subprocess.run(['git', 'diff', '--check', *extra, '--', *dp6_paths],
+                                    cwd=ROOT, capture_output=True, text=True)
+        assert whitespace.returncode == 0, whitespace.stdout + whitespace.stderr
     frozen_paths = ['v24/load.py', 'v24/sql'] + [f'v24/s{i}' for i in range(1, 13)]
     assert subprocess.run(['git', 'diff', '--exit-code', '57e2c1e', '--'] + frozen_paths,
                           cwd=ROOT).returncode == 0
@@ -670,9 +812,9 @@ def test_b6_frozen():
 
     counts, ddl, book = measured_lines()
     print(f'[CDP6-B6] twelve frozen v24/sql hashes, frozen v24/load.py + v24/s1-s12 vs '
-          f'57e2c1e and git diff --check hold; v24 loader manifest=12 with its five refusal '
-          f'probes; helpers={sum(counts.values())} ddl={ddl} bookkeeping={book} '
-          '(report-only, no cap)')
+          f'57e2c1e and scoped staged+unstaged whitespace checks hold; v24 loader manifest=12 '
+          f'with its five refusal probes; helpers={sum(counts.values())} ddl={ddl} '
+          f'bookkeeping={book} (report-only, no cap)')
 
 
 def main():
