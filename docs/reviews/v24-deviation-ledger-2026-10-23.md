@@ -343,7 +343,7 @@ Fake-only；无真实 provider/网络；无跨主机 lease；无 starvation/fair
 | D-MR-5 | `max_output_tokens` 默认 256、clamp [1,512] | 非整数/bool → `failure`；整数先 clamp 到 [1,512] 再按 reserve 截断 | 避免配置越界被误判为 host 失败；`G9-A` 断言 1≤max_tokens≤64 |
 | D-MR-6 | journal 事件集封闭、两边界 fsync、未知版本失败、秘密/DSN 拒绝 | `HostJournal` 只接受 `effect_prepared`/`dispatch_started`/`dispatch_finished`/`settlement_committed`/`journal_conflict`；目录 0700、文件 0600、POSIX flock、逐条 fsync + read-back；截断尾只裁最后不完整行 | `G9-L` 实测 0700/0600、第二写者拒绝、version 2 与内部 corruption 失败、截断尾恢复、secret 拒绝 |
 | D-MR-7 | `process_io.py` 为 M-P scaffolding | 提供 `ProcessSpec`/`ProcessResult`/`run_process`：无 shell、固定 cwd/env、有界 stdin/stdout/stderr、进程组 kill + reap、timeout 标记；G9 只做静态/间接检查 | M-R 不实现 plugin host；边界写入 `v24/s10/README.md` 与矩阵 §0.6 |
-| D-MR-8 | 真实 provider 只允许显式 opt-in | `v24/host/smoke.py` 无 flag 打印 `not_requested` exit 0；flag 无 key 打印 `credentials_absent` exit 2，且不构造 adapter、不打开 DB；有 key 才执行一次短 start→model→final | 2026-10-24 实跑两条无 key 路径，退出码 0/2；有 key 路径未运行（环境无 key），不作为 gate 证据 |
+| D-MR-8 | 真实 provider 只允许显式 opt-in | `v24/host/smoke.py` 无 flag 打印 `not_requested` exit 0；flag 无 key 打印 `credentials_absent` exit 2，且不构造 adapter、不打开 DB；有 key 才执行一次短 start→model→final | 2026-10-24 实跑两条无 key 路径，退出码 0/2；2026-10-29 有 key 路径已实跑一次并通过（`live_success`，exit 0，见 §Post-closeout M-E live），入口仍非 gate |
 | D-MR-9 | `AGENTS.md` 历史上只列两个真实套接字入口 | 按 M-R 要求追加第三个 `v24/host/smoke.py --real-provider-smoke` | 用户本轮明确要求；入口仍非 gate、调用时不得有打开事务。`AGENTS.md` diff 仅该条 |
 | D-MR-10 | `timeout_s` 是 deadline，但不保证硬上界 | 沿用 `StdlibTransport`：socket timeout 只在打开连接时按剩余时间设置一次，`read_bounded` 只在每次读前后检查 deadline；慢速滴灌响应可超出约 2× `timeout_s`，DNS 解析不受 socket timeout 覆盖。host 侧仍以“剩余租约 ≥ timeout + 5s”作启发式前置检查 | 正确性不依赖硬 deadline：结算不查 `lease_until`，host 在飞时不 sweep，挂死进程经 journal 与 `command_recover` 收敛 unknown；只影响活性。计划明确要求把该点登记为披露 |
 
@@ -369,6 +369,8 @@ credentials_absent             # exit 2
 starvation/fairness（D-S7-2 保持未关闭）、跨主机 lease、多主机或 M-P
 plugin/registry。`v24/host/process_io.py` 只是 scaffolding，G9 不把它当作
 plugin host 的运行时证明。
+
+（2026-10-29 更新：有 key 的真实 provider 路径已实跑一次并通过，`live_success`/exit 0，见 §Post-closeout M-E live；上述「未运行」是 2026-10-24 当次状态，本段其余边界继续有效。）
 
 
 ### 1.18 M-P 落地（2026-10-24；G10 8/8、Node 独立通过、multilingual smoke 通过）
@@ -507,7 +509,7 @@ S6/S8 收尾轮十个 gate 依序退出 0/0/0/0/0/0/0/0/0/0（load、`s1/setup_d
 - **FakeLLM/FakeTool/FakeCleanupHost/FakeCrashHost/FakeHost 不是 transport 证明**：纯进程内、无套接字；S5 没有 FakeCleanupHost 文件（§2.2），S6 的 `CrashHost` 只写 JSONL 与 `v24_fake.journal`；S8 的 G7 同样无 socket/HTTP，`v24_fake.journal` 新增 0 行；真实 IO 不在 gate 内。
 - **仍未关闭的披露**：**D-S7-2 仍为显式债务（无 starvation/fairness 证明）**；A-S5-1…9 的逐条理由见 §1.6，A-S6-1…9 见 §1.10，A-S8-1…6 见 §1.13；G7-G 的 owner-pinned child 首 model 公共 claim 已由 D-S8-12 修复，不再列为未关闭债务。**D-S6-12 已由 `G8-D1a` 关闭，D-S8-7 已由 `G8-D2` 关闭（见 §1.16）**；D-S5-8 与 D-S5-10 的旧披露已由 S7 评估关闭：N7 + L1/L2 未发现 lock-order/deadlock bug（D-S7-1 未触发），N7 以真实跨 scope child install 补足证据（D-S7-3 未触发）；见 §1.5、§1.15。
 - **M-H 验收（2026-10-24）**：G8 **23/23** exit 0；`B=3`、`H_ok=509`、`H_bad=510`、`C=512/513`；H13 64.00 MiB；ACL 17 DEFINER / 27 GRANT / 26-27-27；九个冻结内核 SQL diff 为空；11 条既有 closeout 复跑 **11/11**。G10 后续由 M-P 完成（§0.7/§1.18）；G8 不改变历史 closeout 计数，也不提供 starvation/fairness 或 host worker 证据（§1.16）。
-- **M-R 验收（2026-10-24）**：G9 **11/11** exit 0；脚本化 transport、零真实套接字；无 key smoke `not_requested` 0 / `credentials_absent` 2；九个冻结内核 SQL、`v15/**`、`v13/**`、`v99/**` diff 为空；11 条既有 closeout 复跑 **11/11**。真实 provider 有 key 路径未运行；G9 不改变历史 closeout 计数，也不提供 starvation/fairness、跨主机 lease 或 M-P 证据（§1.17）。
+- **M-R 验收（2026-10-24）**：G9 **11/11** exit 0；脚本化 transport、零真实套接字；无 key smoke `not_requested` 0 / `credentials_absent` 2；九个冻结内核 SQL、`v15/**`、`v13/**`、`v99/**` diff 为空；11 条既有 closeout 复跑 **11/11**。真实 provider 有 key 路径当次未运行（2026-10-29 已补一次 live 证据，见 §Post-closeout M-E live）；G9 不改变历史 closeout 计数，也不提供 starvation/fairness、跨主机 lease 或 M-P 证据（§1.17）。
 - **M-P 验收（2026-10-24）**：G10 **8/8** exit 0（G10-A…H）；`test_node.py --node` 独立 **exit 0**（Node v24.13.1）；`plugin_smoke.py --multilingual-smoke` **exit 0**：同一 run 内 Python → Node → final，Unicode/转义换行/空字符串/exit 3 全覆盖，两个 install disposed、scope closed；九个冻结内核 SQL、`v15/**`、`v13/**`、`v99/**` diff 为空；11 条既有 closeout 复跑 **11/11**。G10 不改变历史 closeout 计数；D-MP-1 为显式 §9.1 偏差（真实本地子进程），D-MP-3 记录三个 digest 负例的隔离方式（§1.18）。
 - **历史口径更新**：S4 的「22 个有生产者、1 个未产生」由本节更新为 23/0；S8 再更新为 **24/0**；S1–S4 的其它验收结论与边界（FakeLLM/FakeTool、真实 IO、S6/S7）继续有效。
 - **R6/R7 规格修订已入账**（D-R6-1…4，§1.8；D-S8-1…12，§1.12）：D-R6-1 仍为规格层（S6 未改变十窗口）；D-R6-2 已由 S8/G7 实施；D-R6-3/4 已由 S6 W1–W4 实施并由 G5 证明；D-S8-12 为 W3 评审修复的产品缺陷（非规格修订）。**G5、G6 与 G7 已完成**（G6 由 S7 W1–W2 证明：30/30 ID、11/11），S7 已结项，S1–S8 全部收口。
@@ -528,7 +530,7 @@ D3：v24 固定 `deepseek-flash`；无运行时 allowlist，不消费 v15 allowl
 
 **M-S 测试偏差与补强**：G9 仍只有 11 个顶层 ID，完整 smoke 子场景集中在 G9-B/F/L；新增空 final、同进程唯一 request key、malformed history/分页/journal、结算后 active list 为空、取消后的 late success、初始化/close/fixture/delete/partial-delete 失败，以及 cleanup 期间普通异常与 `KeyboardInterrupt` 的关闭顺序。`HostDB.close()` 只关闭 control 后抛错时，raw service connection 仍由外层 cleanup 关闭；evidence path 探测异常被 best-effort 脱敏。该补强不改变生产 SQL、journal 格式、worker 或 transport。
 
-M-S 在 source `6df64440299b4e6035e9e587bebd5f09eb9d9cbe` 的未提交树上重跑冻结 closeout 11/11 与 G9 11/11，全部 exit 0；逐命令时间、结果行和日志路径见正式后续计划执行记录。真实 provider 仍未授权、未执行；D-S7-2 继续开启。
+M-S 在 source `6df64440299b4e6035e9e587bebd5f09eb9d9cbe` 的未提交树上重跑冻结 closeout 11/11 与 G9 11/11，全部 exit 0；逐命令时间、结果行和日志路径见正式后续计划执行记录。真实 provider 当次仍未授权、未执行（2026-10-29 已授权并实跑一次，见 §Post-closeout M-E live）；D-S7-2 继续开启。
 
 ## Post-closeout M-E（2026-10-25）
 
@@ -541,6 +543,18 @@ M-S 在 source `6df64440299b4e6035e9e587bebd5f09eb9d9cbe` 的未提交树上重�
 | `live_attempt` | `not_executed` | `e869e81` | 拟执行：`UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | `not_run` | `not_authorized` | `not_executed` |
 
 该记录只关闭入口短路证据，不证明当前环境本来没有 key，不关闭真实 provider、性能、质量、费用、跨主机或公平性债务。live attempt 的成功摘要（endpoint/model/run/effect/tokens/finish/provider wall_ms）和外部耗时均为 `not_executed`，证明范围为空。
+
+## Post-closeout M-E live（2026-10-29）
+
+`recorded_at=2026-10-29`。用户明确授权一次真实 provider 调用；`live_attempt` 已运行并通过，不再是 `not_executed`。
+
+| record_group | executed_at | source_sha | command | status | reason | exit_code |
+|---|---|---|---|---|---|---|
+| `live_attempt` | 2026-10-29T16:31:07+08:00 Asia/Shanghai | `45886fe` | `UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | passed | `live_success` | 0 |
+
+唯一输出：`[smoke] endpoint=api.deepseek.com model=deepseek-flash run=bd944a8f-e2b4-4859-a97b-46d7de40bbdd effect=fc328faf-5312-ef02-e16d-d2ab92262c69 tokens=57 finish=stop wall_ms=1206 result=completed`；外部耗时 `real 4.30`。
+
+该记录只关闭「有 key 的真实 provider 路径能否跑通」这一项；真实网络延迟/可用性/费用/模型质量、D-S7-2、跨主机 lease、第二批语言仍未证明。D-MR-8 的三态合同不变，入口仍非 gate、调用时不得有打开事务。
 
 ## Post-closeout M-F（2026-10-25）
 

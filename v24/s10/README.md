@@ -96,7 +96,7 @@ D3：v24 固定 `deepseek-flash`；无运行时 allowlist，不消费 v15 allowl
 
 M-S 修复完整 smoke 的终态核验：`_bootstrap()` 保存已提交的 scope/run/model handles，完成后从 `host_runs` 与 `host_run_effects` 历史读取面核对终态、usage 和 outcome，再绑定核对 journal 的 `dispatch_started`/`dispatch_finished` 与 reply metadata。成功摘要在泄漏检查、资源关闭、fixture 退出、临时目录删除并确认不存在之后才输出；删除启动前失败保留完整 journal，部分删除失败报告仍可读取的证据，不重试。失败与 `KeyboardInterrupt` 路径不打印请求、响应正文、Authorization 或 key。
 
-G9 仍保持 11 个顶层 ID；G9-B/F/L 的既有 smoke 子场景覆盖模型离开 active work list、空 final、唯一 request key、未完成/取消后的 late success、malformed history、分页与 journal 不匹配、初始化/关闭/fixture/删除失败、部分删除，以及 cleanup 期间 interrupt。所有响应继续来自 ScriptTransport，网络 deny 和 borrowed fixture 约束不变。M-S 的 11 条 closeout 与 G9 11/11 均 exit 0；真实 provider smoke 仍是 opt-in，当前未授权且未执行。
+G9 仍保持 11 个顶层 ID；G9-B/F/L 的既有 smoke 子场景覆盖模型离开 active work list、空 final、唯一 request key、未完成/取消后的 late success、malformed history、分页与 journal 不匹配、初始化/关闭/fixture/删除失败、部分删除，以及 cleanup 期间 interrupt。所有响应继续来自 ScriptTransport，网络 deny 和 borrowed fixture 约束不变。M-S 的 11 条 closeout 与 G9 11/11 均 exit 0；真实 provider smoke 仍是 opt-in，当次未授权且未执行。（2026-10-29 更新：已取得授权并实跑一次 live 并通过，见下文「M-E live provider 证据（2026-10-29）」；M-S 本轮证据范围不变。）
 
 ## M-E 真实 provider 证据（2026-10-25）
 
@@ -110,6 +110,26 @@ G9 仍保持 11 个顶层 ID；G9-B/F/L 的既有 smoke 子场景覆盖模型离
 
 负控只证明入口短路行为，不证明当前环境本来没有 key，也不证明真实 provider 的成功、失败、延迟、费用或质量。live attempt 的成功摘要（endpoint/model/run/effect/tokens/finish/provider wall_ms）和外部耗时均为 `not_executed`，证明范围为空；D-S7-2 继续开启。
 
+## M-E live provider 证据（2026-10-29）
+
+`recorded_at=2026-10-29`。用户明确授权一次真实 provider 调用；同日复跑两条负控仍为 `not_requested`/0 与 `credentials_absent`/2。`live_attempt` 由未运行更新为已运行并通过：
+
+| record_group | executed_at | source_sha | command | status | reason | exit_code |
+|---|---|---|---|---|---|---|
+| `live_attempt` | 2026-10-29T16:31:07+08:00 Asia/Shanghai | `45886fe` | `UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | passed | `live_success` | 0 |
+
+smoke 唯一输出行（泄漏检查、资源关闭、临时 journal 目录删除并确认不存在之后才打印）：
+
+```text
+[smoke] endpoint=api.deepseek.com model=deepseek-flash run=bd944a8f-e2b4-4859-a97b-46d7de40bbdd effect=fc328faf-5312-ef02-e16d-d2ab92262c69 tokens=57 finish=stop wall_ms=1206 result=completed
+```
+
+`/usr/bin/time -p` 实测 `real 4.30`、`user 1.14`、`sys 0.24`。
+
+本次证明：`DeepSeekAdapter` → `https://api.deepseek.com/chat/completions` → v24 映射 → `advance` 结算 → run `completed`、model effect `succeeded` 的真实链路可用；终态由 `host_runs`/`host_run_effects` 历史读面与 journal 的 `dispatch_started`/`dispatch_finished` 逐项核对，`tokens=57`、`finish=stop`、provider `wall_ms=1206` 均取自真实响应；外呼前已 COMMIT 且事务 IDLE，符合「外部 IO 不进数据库事务」。
+
+本次不证明：仅一次调用，不能推出延迟/可用性/成本/质量的统计结论；未评模型质量；不关闭 D-S7-2、跨主机租约、第二批语言或 provider 性能/质量债务；live smoke 仍不是 gate，也不改变 closeout 11/11 与 G9 11/11 计数。
+
 ## M-F 后续范围登记（2026-10-25）
 
 四项后续范围分别登记：第二批 Go/Swift/DuckDB 语言接入、D-S7-2 公平性、跨主机租约、provider 延迟与质量实验。本轮不创建占位实现、不修改 scheduler/registry；这些范围仍未验证。当前源 `74b3c30` 的 G10 Python、Node 和同 run multilingual 检查均 exit 0，发布候选仍须重跑 Node 两条命令。
@@ -117,7 +137,7 @@ G9 仍保持 11 个顶层 ID；G9-B/F/L 的既有 smoke 子场景覆盖模型离
 
 ## M-P release-candidate verification (2026-10-25)
 
-On the clean merge candidate (`origin/main=ab34d6972a17f688c4a11adba89e363d74adbe81` plus source `6d53a2d05a2e5439e7694125d4751ba053acb147`), the 11 closeout commands and G9 (11/11) exited 0. The credential-cleared G9 command used ScriptTransport and did not open a real provider socket. The opt-in live attempt remains `not_run`, reason `not_authorized`, exit `not_executed`; no live provider request was made.
+On the clean merge candidate (`origin/main=ab34d6972a17f688c4a11adba89e363d74adbe81` plus source `6d53a2d05a2e5439e7694125d4751ba053acb147`), the 11 closeout commands and G9 (11/11) exited 0. The credential-cleared G9 command used ScriptTransport and did not open a real provider socket. The opt-in live attempt remains `not_run`, reason `not_authorized`, exit `not_executed`; no live provider request was made. (2026-10-29 update: this paragraph still describes the 2026-10-25 candidate run only; one live call was later authorized, executed and passed — see the M-E live record above.)
 
 The candidate was also checked with the Node and multilingual commands required by M-P; both exited 0.
 

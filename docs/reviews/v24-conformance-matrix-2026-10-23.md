@@ -562,7 +562,7 @@ M-S 修复 smoke 终态核验：保存 `start` 已提交的 scope/run/model hand
 | closeout | 11 条冻结命令（见正式计划执行记录） | **通过 11/11，exit 0** | source `6df64440299b4e6035e9e587bebd5f09eb9d9cbe` 的 M-S 树；各结果行见计划 |
 | G9 | `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s10/test_g9.py` | **通过 11/11，exit 0** | 同上；无真实网络、无 API key |
 
-M-S 不改变九个冻结 SQL、host worker/journal/transport 格式或 closeout 计数；真实 provider smoke 仍为 opt-in，当前未授权且未执行。
+M-S 不改变九个冻结 SQL、host worker/journal/transport 格式或 closeout 计数；真实 provider smoke 仍为 opt-in，当次未授权且未执行。（2026-10-29 更新：已取得授权并实跑一次 live 并通过，见下文「Post-closeout M-E live」。）
 
 ## Post-closeout M-E（2026-10-25）
 
@@ -575,6 +575,18 @@ M-S 不改变九个冻结 SQL、host worker/journal/transport 格式或 closeout
 | `live_attempt` | `not_executed` | `e869e81` | 拟执行：`UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | `not_run` | `not_authorized` | `not_executed` |
 
 这组结果证明入口短路行为，不证明当前环境本来没有 key，也不证明真实 provider 成功、失败、延迟、费用或模型质量。live attempt 的成功摘要（endpoint/model/run/effect/tokens/finish/provider wall_ms）和外部耗时均为 `not_executed`，证明范围为空；D-S7-2 继续开启。
+
+## Post-closeout M-E live（2026-10-29）
+
+`recorded_at=2026-10-29`。用户明确授权一次真实 provider 调用；`live_attempt` 由 `not_run/not_authorized/not_executed` 更新为已运行并通过。同日复跑两条负控仍为 `not_requested`/0 与 `credentials_absent`/2。
+
+| record_group | executed_at | source_sha | command | status | reason | exit_code |
+|---|---|---|---|---|---|---|
+| `live_attempt` | 2026-10-29T16:31:07+08:00 Asia/Shanghai | `45886fe` | `UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | passed | `live_success` | 0 |
+
+唯一输出行：`[smoke] endpoint=api.deepseek.com model=deepseek-flash run=bd944a8f-e2b4-4859-a97b-46d7de40bbdd effect=fc328faf-5312-ef02-e16d-d2ab92262c69 tokens=57 finish=stop wall_ms=1206 result=completed`；外部耗时 `real 4.30`。
+
+证明边界：只证明一次真实 `start → model → final` 链路可用、终态核验正确；不证明延迟/可用性/成本/质量的统计结论，也不评模型质量。D-S7-2、跨主机租约、第二批语言与 provider 性能/质量债务保持开启；live smoke 不是 gate，不改变 closeout 11/11、G8 23/23、G9 11/11、G10 8/8 计数。
 
 ## Post-closeout M-F（2026-10-25）
 

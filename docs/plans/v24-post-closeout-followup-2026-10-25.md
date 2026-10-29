@@ -347,7 +347,7 @@ v24 **没有运行时 allowlist**。引入 v4-pro 需要新增模型配置、验
 - 外部拒绝、超时等按既有映射正确收口，不升级为确定性 gate；失败当步停止，不自动重试。归因和证据登记是后续独立步骤。暴露 host 缺陷或无法归因的失败，须先完成修复与归因再发布。
 - 一次成功不关闭真实工具调用、thinking 历史、性能、质量或计费准确性的证据缺口。
 
-**当前状态（2026-10-25）**：本计划阶段未查询 key 是否存在、未取得真实调用授权，也未发起请求；因此先验状态为 `not_run/not_executed`，不是实测 `credentials_absent`。实施时用实际日期登记，记录实际命令或明确标注拟执行命令；不从本计划文件名推导执行日期。
+**当前状态（2026-10-25）**：本计划阶段未查询 key 是否存在、未取得真实调用授权，也未发起请求；因此先验状态为 `not_run/not_executed`，不是实测 `credentials_absent`。实施时用实际日期登记，记录实际命令或明确标注拟执行命令；不从本计划文件名推导执行日期。（2026-10-29 更新：已取得授权并实跑一次 live，见下方「执行记录 — M-E live」。）
 
 **Done-when**：11 条 closeout 与 G9 通过；三处证据一致。里程碑可以以“证据登记完成、live 未验证”结束，不把可选项改写为通过。
 
@@ -365,6 +365,18 @@ v24 **没有运行时 allowlist**。引入 v4-pro 需要新增模型配置、验
 | `live_attempt` | `not_executed` | `e869e81` | 拟执行：`UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | `not_run` | `not_authorized` | `not_executed` |
 
 `not_requested` 与 `credentials_absent` 仅证明入口短路行为；它们不证明当前环境本来没有 key，也不证明真实 provider。live attempt 的成功摘要（endpoint/model/run/effect/tokens/finish/provider wall_ms）和外部耗时均为 `not_executed`，证明范围为空。三处工件已同步记录同一组字段。D-S7-2 继续开启。
+
+### 执行记录 — M-E live（2026-10-29）
+
+用户明确授权一次真实 provider 调用。`live_attempt` 已运行并通过，三处工件（s10 README、覆盖矩阵、偏差台账）与发布记录同步追加同一份记录：
+
+| record_group | executed_at（Asia/Shanghai） | source_sha | command | status | reason | exit_code |
+|---|---|---|---|---|---|---|
+| `live_attempt` | 2026-10-29T16:31:07+08:00 | `45886fe` | `UV_NO_ENV_FILE=1 /usr/bin/time -p uv run python -m v24.host.smoke --real-provider-smoke` | passed | `live_success` | 0 |
+
+唯一输出：`[smoke] endpoint=api.deepseek.com model=deepseek-flash run=bd944a8f-e2b4-4859-a97b-46d7de40bbdd effect=fc328faf-5312-ef02-e16d-d2ab92262c69 tokens=57 finish=stop wall_ms=1206 result=completed`；外部耗时 `real 4.30`。
+
+本次只关闭「有 key 的真实 provider 路径能否跑通」一项；延迟/可用性/成本/质量的统计结论、模型质量、D-S7-2、跨主机租约、第二批语言仍未证明，M-E 的其余 done-when 判定不变。
 
 ### M-F — 登记独立后续计划
 
@@ -818,7 +830,7 @@ M-P 已在最新 `origin/main` 上创建干净的 `--no-ff --no-commit` 候选�
 
 前次候选 `/tmp/pg-agent-v24-release` 的首次直接 `uv run` 因项目相对本地 DuckDB wheel 不可用而 exit 2，未进入 gate；随后设置 `UV_NO_SYNC=1` 和现有 `UV_PROJECT_ENVIRONMENT=/Users/wxl/Projects/pg-agent/.claude/worktrees/v99/.venv`，18 条命令全绿。该环境恢复事实已记录，不把首次环境失败写成 gate 失败。
 
-候选验证时 M-P 状态为 **发布就绪、未发布**。随后用户已明确授权并完成 M-P 发布，见下方 M-P/M-A 执行记录。真实 provider 仍未调用；M-E 为 `not_run/not_authorized/not_executed`，D-S7-2 继续开启。
+候选验证时 M-P 状态为 **发布就绪、未发布**。随后用户已明确授权并完成 M-P 发布，见下方 M-P/M-A 执行记录。真实 provider 当次仍未调用；M-E 为 `not_run/not_authorized/not_executed`（2026-10-29 已执行一次 live 并通过，见上方「执行记录 — M-E live」），D-S7-2 继续开启。
 
 基线勘误：Background §1 中“主检出 HEAD 不含 v99”的提供材料与实际提交内容不符；`ab34d697…` 已包含 `v99/core` Phase 0，`bddeb815…` 为其祖先。最新 fetch 未改变 main 基点。本次入站 82 条源码/文档路径均无 `v99/**` 变化；另新增发布记录，最终为 83 条路径。此前候选 checkout 分支使 MERGE_HEAD 丢失，已放弃使用该候选；本次 `/tmp/pg-agent-v24-release-clean` 始终保留 MERGE_HEAD。
 
@@ -831,7 +843,7 @@ M-P 已完成：merge `d13391d27f9c7363906282af4cea4160c5aa97a8` 正常创建并
 
 M-A 仅补齐本计划与 [发布记录](../reviews/v24-release-2026-10-25.md)：提交前检查 merge → audit 差异只包含这两个文档，执行树与冻结 SQL 不变。按路径独立提交并立即正常推送 main；随后 fetch 核验 merge/audit 祖先关系及远端 audit SHA，实际结果在交付消息中报告，文档不预填自身提交 SHA。
 
-本轮发布状态为 **发布完成**。v99 Phase 0 已继承自 main，后续 W1–W4 未完成；真实 provider 未调用，M-E 为 `not_run/not_authorized/not_executed`；D-S7-2 继续开启，第二批语言、跨主机租约、provider 性能与质量仍移交后续独立计划。
+本轮发布状态为 **发布完成**。v99 Phase 0 已继承自 main，后续 W1–W4 未完成；真实 provider 未调用，M-E 为 `not_run/not_authorized/not_executed`（2026-10-29 已执行一次 live 并通过，见上方「执行记录 — M-E live」）；D-S7-2 继续开启，第二批语言、跨主机租约、provider 性能与质量仍移交后续独立计划。
 
 ## 执行记录 — M-A（2026-10-25）
 
