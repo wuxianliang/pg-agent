@@ -1,0 +1,62 @@
+{
+  "cases": [
+    {
+      "domain": "provider_request",
+      "expected_hex": "7b226d61785f746f6b656e73223a3235362c226d65737361676573223a5b7b22636f6e74656e74223a224230206669786564206563686f222c22726f6c65223a2275736572227d5d2c226d6f64656c223a22646565707365656b2d666c617368222c2273747265616d223a66616c73652c22746f6f6c73223a5b7b2266756e6374696f6e223a7b226465736372697074696f6e223a22763234207265666572656e6365206563686f20706c7567696e20286563686f2e707974686f6e29222c226e616d65223a226563686f5f707974686f6e5f3964353334336437222c22706172616d6574657273223a7b226164646974696f6e616c50726f70657274696573223a747275652c2270726f70657274696573223a7b2274657874223a7b2274797065223a22737472696e67227d7d2c2274797065223a226f626a656374227d7d2c2274797065223a2266756e6374696f6e227d5d7d",
+      "expected_length": 341,
+      "expected_sha256": "37ab4a8b8d5f2aae86689dd8f7703c33cc70acdb7c977a504a14d24d44ee3fec",
+      "expected_text": "{\"max_tokens\":256,\"messages\":[{\"content\":\"B0 fixed echo\",\"role\":\"user\"}],\"model\":\"deepseek-flash\",\"stream\":false,\"tools\":[{\"function\":{\"description\":\"v24 reference echo plugin (echo.python)\",\"name\":\"echo_python_9d5343d7\",\"parameters\":{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"type\":\"object\"}},\"type\":\"function\"}]}",
+      "id": "provider.success.request1",
+      "input_id": "success;request=1;fixed-script",
+      "producer": "DeepSeekAdapter.send -> ScriptedTransport.post body",
+      "semantic": {
+        "expected_tool_call_id": "call_b0_success",
+        "request_index": 1
+      }
+    },
+    {
+      "domain": "provider_request",
+      "expected_hex": "7b226d61785f746f6b656e73223a3235362c226d65737361676573223a5b7b22636f6e74656e74223a224230206669786564206563686f222c22726f6c65223a2275736572227d2c7b22636f6e74656e74223a22222c22726561736f6e696e675f636f6e74656e74223a224230206669786564222c22726f6c65223a22617373697374616e74222c22746f6f6c5f63616c6c73223a5b7b2266756e6374696f6e223a7b22617267756d656e7473223a227b5c22746578745c223a5c22736e6f7720e99baa5c222c5c227a65726f5c223a307d222c226e616d65223a226563686f5f707974686f6e5f3964353334336437227d2c226964223a2263616c6c5f62305f73756363657373222c2274797065223a2266756e6374696f6e227d5d7d2c7b22636f6e74656e74223a227b5c226563686f5c223a7b5c22746578745c223a5c22736e6f7720e99baa5c222c5c227a65726f5c223a307d2c5c226c616e67756167655c223a5c22707974686f6e5c227d222c22726f6c65223a22746f6f6c222c22746f6f6c5f63616c6c5f6964223a2263616c6c5f62305f73756363657373227d5d2c226d6f64656c223a22646565707365656b2d666c617368222c2273747265616d223a66616c73652c22746f6f6c73223a5b7b2266756e6374696f6e223a7b226465736372697074696f6e223a22763234207265666572656e6365206563686f20706c7567696e20286563686f2e707974686f6e29222c226e616d65223a226563686f5f707974686f6e5f3964353334336437222c22706172616d6574657273223a7b226164646974696f6e616c50726f70657274696573223a747275652c2270726f70657274696573223a7b2274657874223a7b2274797065223a22737472696e67227d7d2c2274797065223a226f626a656374227d7d2c2274797065223a2266756e6374696f6e227d5d7d",
+      "expected_length": 687,
+      "expected_sha256": "55b0520db96aaa118cfb253d5ef7ccc42c0c8260fd18894d1f53436389ead8c4",
+      "expected_text": "{\"max_tokens\":256,\"messages\":[{\"content\":\"B0 fixed echo\",\"role\":\"user\"},{\"content\":\"\",\"reasoning_content\":\"B0 fixed\",\"role\":\"assistant\",\"tool_calls\":[{\"function\":{\"arguments\":\"{\\\"text\\\":\\\"snow 雪\\\",\\\"zero\\\":0}\",\"name\":\"echo_python_9d5343d7\"},\"id\":\"call_b0_success\",\"type\":\"function\"}]},{\"content\":\"{\\\"echo\\\":{\\\"text\\\":\\\"snow 雪\\\",\\\"zero\\\":0},\\\"language\\\":\\\"python\\\"}\",\"role\":\"tool\",\"tool_call_id\":\"call_b0_success\"}],\"model\":\"deepseek-flash\",\"stream\":false,\"tools\":[{\"function\":{\"description\":\"v24 reference echo plugin (echo.python)\",\"name\":\"echo_python_9d5343d7\",\"parameters\":{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"type\":\"object\"}},\"type\":\"function\"}]}",
+      "id": "provider.success.request2",
+      "input_id": "success;request=2;fixed-script",
+      "producer": "DeepSeekAdapter.send -> ScriptedTransport.post body",
+      "semantic": {
+        "expected_tool_call_id": "call_b0_success",
+        "request_index": 2
+      }
+    },
+    {
+      "domain": "provider_request",
+      "expected_hex": "7b226d61785f746f6b656e73223a3235362c226d65737361676573223a5b7b22636f6e74656e74223a224230206669786564206563686f222c22726f6c65223a2275736572227d5d2c226d6f64656c223a22646565707365656b2d666c617368222c2273747265616d223a66616c73652c22746f6f6c73223a5b7b2266756e6374696f6e223a7b226465736372697074696f6e223a22763234207265666572656e6365206563686f20706c7567696e20286563686f2e707974686f6e29222c226e616d65223a226563686f5f707974686f6e5f3964353334336437222c22706172616d6574657273223a7b226164646974696f6e616c50726f70657274696573223a747275652c2270726f70657274696573223a7b2274657874223a7b2274797065223a22737472696e67227d7d2c2274797065223a226f626a656374227d7d2c2274797065223a2266756e6374696f6e227d5d7d",
+      "expected_length": 341,
+      "expected_sha256": "37ab4a8b8d5f2aae86689dd8f7703c33cc70acdb7c977a504a14d24d44ee3fec",
+      "expected_text": "{\"max_tokens\":256,\"messages\":[{\"content\":\"B0 fixed echo\",\"role\":\"user\"}],\"model\":\"deepseek-flash\",\"stream\":false,\"tools\":[{\"function\":{\"description\":\"v24 reference echo plugin (echo.python)\",\"name\":\"echo_python_9d5343d7\",\"parameters\":{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"type\":\"object\"}},\"type\":\"function\"}]}",
+      "id": "provider.known_error.request1",
+      "input_id": "known_error;request=1;fixed-script",
+      "producer": "DeepSeekAdapter.send -> ScriptedTransport.post body",
+      "semantic": {
+        "expected_tool_call_id": "call_b0_known_error",
+        "request_index": 1
+      }
+    },
+    {
+      "domain": "provider_request",
+      "expected_hex": "7b226d61785f746f6b656e73223a3235362c226d65737361676573223a5b7b22636f6e74656e74223a224230206669786564206563686f222c22726f6c65223a2275736572227d2c7b22636f6e74656e74223a22222c22726561736f6e696e675f636f6e74656e74223a224230206669786564222c22726f6c65223a22617373697374616e74222c22746f6f6c5f63616c6c73223a5b7b2266756e6374696f6e223a7b22617267756d656e7473223a227b5c225f5f746f6f6c5f6572726f725f5f5c223a747275657d222c226e616d65223a226563686f5f707974686f6e5f3964353334336437227d2c226964223a2263616c6c5f62305f6b6e6f776e5f6572726f72222c2274797065223a2266756e6374696f6e227d5d7d2c7b22636f6e74656e74223a227b5c22636f64655c223a5c226563686f5f746f6f6c5f6572726f725c222c5c226d6573736167655c223a5c22726571756573746564206b6e6f776e20746f6f6c206572726f725c227d222c22726f6c65223a22746f6f6c222c22746f6f6c5f63616c6c5f6964223a2263616c6c5f62305f6b6e6f776e5f6572726f72227d5d2c226d6f64656c223a22646565707365656b2d666c617368222c2273747265616d223a66616c73652c22746f6f6c73223a5b7b2266756e6374696f6e223a7b226465736372697074696f6e223a22763234207265666572656e6365206563686f20706c7567696e20286563686f2e707974686f6e29222c226e616d65223a226563686f5f707974686f6e5f3964353334336437222c22706172616d6574657273223a7b226164646974696f6e616c50726f70657274696573223a747275652c2270726f70657274696573223a7b2274657874223a7b2274797065223a22737472696e67227d7d2c2274797065223a226f626a656374227d7d2c2274797065223a2266756e6374696f6e227d5d7d",
+      "expected_length": 690,
+      "expected_sha256": "bd48617e3628fb2fc847519acf7f3d9e297a95566a8b06a1f071d2013562af40",
+      "expected_text": "{\"max_tokens\":256,\"messages\":[{\"content\":\"B0 fixed echo\",\"role\":\"user\"},{\"content\":\"\",\"reasoning_content\":\"B0 fixed\",\"role\":\"assistant\",\"tool_calls\":[{\"function\":{\"arguments\":\"{\\\"__tool_error__\\\":true}\",\"name\":\"echo_python_9d5343d7\"},\"id\":\"call_b0_known_error\",\"type\":\"function\"}]},{\"content\":\"{\\\"code\\\":\\\"echo_tool_error\\\",\\\"message\\\":\\\"requested known tool error\\\"}\",\"role\":\"tool\",\"tool_call_id\":\"call_b0_known_error\"}],\"model\":\"deepseek-flash\",\"stream\":false,\"tools\":[{\"function\":{\"description\":\"v24 reference echo plugin (echo.python)\",\"name\":\"echo_python_9d5343d7\",\"parameters\":{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"type\":\"object\"}},\"type\":\"function\"}]}",
+      "id": "provider.known_error.request2",
+      "input_id": "known_error;request=2;fixed-script",
+      "producer": "DeepSeekAdapter.send -> ScriptedTransport.post body",
+      "semantic": {
+        "expected_tool_call_id": "call_b0_known_error",
+        "request_index": 2
+      }
+    }
+  ],
+  "domain_file": "provider_requests_v1.json",
+  "format": "v24-tool-plugin-abi-v1-golden-1"
+}

@@ -603,3 +603,9 @@ Full candidate evidence and manifest: [release record](v24-release-2026-10-25.md
 ## Post-closeout M-F1（2026-10-25）
 
 M-F1 在 v24 未提交执行树上完成并通过 31/31 命令：G11 全量、G11-A…L 单 case、loader/DB/既有 gate、G8、G9、G10、Node、smoke 负控与 multilingual smoke。新增 S12 证明的是有限 opportunity-dense host-only FC 子合同及其 Fake-only 对抗证据；不改历史 closeout 11/11、G8 23/23、G9 11/11 或 G10 8/8 计数。完整命令、时间、source/tree 摘要和日志 SHA-256 见 [`v24-d-s7-2-fairness-execution-2026-10-25.md`](v24-d-s7-2-fairness-execution-2026-10-25.md)。D-S7-2 广义债务仍开启：开放到达、墙钟等待/debt 有界、跨崩溃/多主机和真实 provider 公平性未由本批次证明。
+
+## Post-closeout Tool/Plugin ABI B0 (2026-10-30)
+
+B0 independently accepted the existing v1 golden implementation and proved one same-realm install can provide two slots that one public run pins simultaneously. The fixed golden inventory is 34 byte cases plus six structural vectors; Python/PostgreSQL, Python+Node/PostgreSQL, and the DB-only multi-provides probe all exited 0. The final serial runbook passed all 18 commands: the frozen closeout remains **11/11**; B0 checks, G9 11/11, G10 8/8, Node, and multilingual smoke are extension evidence and do not change that count. Exact timestamps, source SHA, candidate fingerprint, commands, last lines, and merged-log hashes are in [`B0 execution record`](v24-tool-plugin-abi-b0-execution-2026-10-30.md).
+
+Boundary labels are explicit in the B0 README and plan. Current v1 bytes/parser/journal/lease facts are `observed-current`; the two-slot/two-pin SQL composition and vectors are `proved-by-B0`; Q1–Q5 pagination/byte-budget rules remain `contract-frozen/behavior-unverified` for W5/W6 after W1 design synchronization. W4 owns v2 lease precheck/zero-spawn and additive `model_text`/journal replay/resource compatibility. No host, SQL, s10, s11, loader, closeout helper, or external design file changed; no real provider was called.

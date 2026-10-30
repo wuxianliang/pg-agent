@@ -1,0 +1,386 @@
+{
+  "cases": [
+    {
+      "domain": "line_json_v1_request",
+      "expected_hex": "7b2261726773223a7b7d2c226f7065726174696f6e223a2270726570617265222c227265736572766174696f6e223a227632343a686f73745f707265706172653a62302d676f6c64656e2d7265736572766174696f6e222c2276223a317d0a",
+      "expected_length": 95,
+      "expected_sha256": "a2b59e9df51a2d7a5600ce7bbc1a6472046d9d97c3e8f6a3379f2b188e3ea704",
+      "expected_text": "{\"args\":{},\"operation\":\"prepare\",\"reservation\":\"v24:host_prepare:b0-golden-reservation\",\"v\":1}\n",
+      "id": "frame.prepare",
+      "input_id": "operation=prepare;fixed-reservation",
+      "producer": "line_json.build_frame",
+      "semantic": {
+        "args": {},
+        "operation": "prepare"
+      }
+    },
+    {
+      "domain": "line_json_v1_request",
+      "expected_hex": "7b2261726773223a7b22656d707479223a22222c226e6573746564223a7b2261223a6e756c6c2c227a223a5b312c7b2261223a747275657d5d7d2c226e65776c696e65223a226c696e65315c6e6c696e6532222c22736570617261746f72223a226c656674e280a87269676874222c22756e69636f6465223a22e99baaf09f9982222c227a65726f223a307d2c226f7065726174696f6e223a22696e766f6b65222c227265736572766174696f6e223a227632343a686f73745f707265706172653a62302d676f6c64656e2d7265736572766174696f6e222c2276223a317d0a",
+      "expected_length": 224,
+      "expected_sha256": "b5df900ca0769e5f78315fcf667813d4affd9fc8f8abf0e60dd9669d01bd7239",
+      "expected_text": "{\"args\":{\"empty\":\"\",\"nested\":{\"a\":null,\"z\":[1,{\"a\":true}]},\"newline\":\"line1\\nline2\",\"separator\":\"left right\",\"unicode\":\"雪🙂\",\"zero\":0},\"operation\":\"invoke\",\"reservation\":\"v24:host_prepare:b0-golden-reservation\",\"v\":1}\n",
+      "id": "frame.invoke",
+      "input_id": "operation=invoke;fixed-reservation",
+      "producer": "line_json.build_frame",
+      "semantic": {
+        "args": {
+          "empty": "",
+          "nested": {
+            "a": null,
+            "z": [
+              1,
+              {
+                "a": true
+              }
+            ]
+          },
+          "newline": "line1\nline2",
+          "separator": "left right",
+          "unicode": "雪🙂",
+          "zero": 0
+        },
+        "operation": "invoke"
+      }
+    },
+    {
+      "domain": "line_json_v1_request",
+      "expected_hex": "7b2261726773223a7b7d2c226f7065726174696f6e223a2272656c65617365222c227265736572766174696f6e223a227632343a686f73745f707265706172653a62302d676f6c64656e2d7265736572766174696f6e222c2276223a317d0a",
+      "expected_length": 95,
+      "expected_sha256": "9418c66c9b5dd311393dcd4117dcead723cb9f37b31095f89ed43c94d7365d25",
+      "expected_text": "{\"args\":{},\"operation\":\"release\",\"reservation\":\"v24:host_prepare:b0-golden-reservation\",\"v\":1}\n",
+      "id": "frame.release",
+      "input_id": "operation=release;fixed-reservation",
+      "producer": "line_json.build_frame",
+      "semantic": {
+        "args": {},
+        "operation": "release"
+      }
+    },
+    {
+      "domain": "line_json_v1_request",
+      "expected_hex": "7b2261726773223a7b7d2c226f7065726174696f6e223a22696e7370656374222c227265736572766174696f6e223a227632343a686f73745f707265706172653a62302d676f6c64656e2d7265736572766174696f6e222c2276223a317d0a",
+      "expected_length": 95,
+      "expected_sha256": "1398f1e9d14c40f4d5a0a5e76ceba32596f84e121e0e4796c0a430c3015aea5e",
+      "expected_text": "{\"args\":{},\"operation\":\"inspect\",\"reservation\":\"v24:host_prepare:b0-golden-reservation\",\"v\":1}\n",
+      "id": "frame.inspect",
+      "input_id": "operation=inspect;fixed-reservation",
+      "producer": "line_json.build_frame",
+      "semantic": {
+        "args": {},
+        "operation": "inspect"
+      }
+    },
+    {
+      "domain": "plugin_v1_stdout",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b5c226c616e67756167655c223a5c22707974686f6e5c222c5c2270726570617265645c223a747275652c5c227265736572766174696f6e5c223a5c227632343a686f73745f707265706172653a62302d676f6c64656e5c227d227d0a",
+      "expected_length": 114,
+      "expected_sha256": "b9bd23d331561675e810e23cdeea533e2b1a66bb347438c11a1a20b343226672",
+      "expected_text": "{\"ok\":true,\"result\":\"{\\\"language\\\":\\\"python\\\",\\\"prepared\\\":true,\\\"reservation\\\":\\\"v24:host_prepare:b0-golden\\\"}\"}\n",
+      "id": "stdout.python.prepare",
+      "input_id": "prepare;v24:host_prepare:b0-golden",
+      "producer": "python echo subprocess Invocation.stdout",
+      "semantic": {
+        "exit_class": "success",
+        "result": {
+          "language": "python",
+          "prepared": true,
+          "reservation": "v24:host_prepare:b0-golden"
+        },
+        "returncode": 0
+      }
+    },
+    {
+      "domain": "plugin_v1_stdout",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b5c226563686f5c223a7b5c22746578745c223a5c22736e6f7720e99baa5c222c5c227a65726f5c223a307d2c5c226c616e67756167655c223a5c22707974686f6e5c227d227d0a",
+      "expected_length": 93,
+      "expected_sha256": "1a771f87da2737b58b6437d600f78c941ae9a9f049e50473ac008fdac82a7dc3",
+      "expected_text": "{\"ok\":true,\"result\":\"{\\\"echo\\\":{\\\"text\\\":\\\"snow 雪\\\",\\\"zero\\\":0},\\\"language\\\":\\\"python\\\"}\"}\n",
+      "id": "stdout.python.invoke_success",
+      "input_id": "invoke_success;v24:tool_call:b0-golden",
+      "producer": "python echo subprocess Invocation.stdout",
+      "semantic": {
+        "exit_class": "success",
+        "result": {
+          "echo": {
+            "text": "snow 雪",
+            "zero": 0
+          },
+          "language": "python"
+        },
+        "returncode": 0
+      }
+    },
+    {
+      "domain": "plugin_v1_stdout",
+      "expected_hex": "7b226572726f72223a226563686f5f746f6f6c5f6572726f72222c226d657373616765223a22726571756573746564206b6e6f776e20746f6f6c206572726f72222c226f6b223a66616c73657d0a",
+      "expected_length": 78,
+      "expected_sha256": "a0cd4ddf8d8ad196d017906919a73ee849cbfeabc2dde96c8048783e4a6071f0",
+      "expected_text": "{\"error\":\"echo_tool_error\",\"message\":\"requested known tool error\",\"ok\":false}\n",
+      "id": "stdout.python.invoke_error",
+      "input_id": "invoke_error;v24:tool_call:b0-golden",
+      "producer": "python echo subprocess Invocation.stdout",
+      "semantic": {
+        "exit_class": "failure",
+        "result": {
+          "code": "echo_tool_error",
+          "message": "requested known tool error"
+        },
+        "returncode": 3
+      }
+    },
+    {
+      "domain": "plugin_v1_stdout",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b5c226c616e67756167655c223a5c22707974686f6e5c222c5c2272656c65617365645c223a747275652c5c227265736572766174696f6e5c223a5c227632343a686f73745f72656c656173653a62302d676f6c64656e5c227d227d0a",
+      "expected_length": 114,
+      "expected_sha256": "6390192e52ca498f60097d674fe1d68bb9c356c01e6d8ab0c153cd0ca98a0403",
+      "expected_text": "{\"ok\":true,\"result\":\"{\\\"language\\\":\\\"python\\\",\\\"released\\\":true,\\\"reservation\\\":\\\"v24:host_release:b0-golden\\\"}\"}\n",
+      "id": "stdout.python.release",
+      "input_id": "release;v24:host_release:b0-golden",
+      "producer": "python echo subprocess Invocation.stdout",
+      "semantic": {
+        "exit_class": "success",
+        "result": {
+          "language": "python",
+          "released": true,
+          "reservation": "v24:host_release:b0-golden"
+        },
+        "returncode": 0
+      }
+    },
+    {
+      "domain": "plugin_v1_stdout",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b5c226f627365727665645c223a5c226b6e6f776e5c222c5c227265736572766174696f6e5c223a5c227632343a686f73745f707265706172653a62302d676f6c64656e2d7265736572766174696f6e5c222c5c22765c223a317d227d0a",
+      "expected_length": 115,
+      "expected_sha256": "c22c34ec35aae4245658f5c208d0d1c61b715b4b71420ba0af8b558d70bab828",
+      "expected_text": "{\"ok\":true,\"result\":\"{\\\"observed\\\":\\\"known\\\",\\\"reservation\\\":\\\"v24:host_prepare:b0-golden-reservation\\\",\\\"v\\\":1}\"}\n",
+      "id": "stdout.python.inspect",
+      "input_id": "inspect;v24:host_prepare:b0-golden-reservation",
+      "producer": "python echo subprocess Invocation.stdout",
+      "semantic": {
+        "exit_class": "success",
+        "result": {
+          "observed": "known",
+          "reservation": "v24:host_prepare:b0-golden-reservation",
+          "v": 1
+        },
+        "returncode": 0
+      }
+    },
+    {
+      "domain": "plugin_v1_stdout",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b5c2270726570617265645c223a747275652c5c226c616e67756167655c223a5c226e6f64655c222c5c227265736572766174696f6e5c223a5c227632343a686f73745f707265706172653a62302d676f6c64656e5c227d227d0a",
+      "expected_length": 112,
+      "expected_sha256": "57d0371dc2cf88e3cca6ac90dc93c941adea726bb56851ba3a8db0575892145c",
+      "expected_text": "{\"ok\":true,\"result\":\"{\\\"prepared\\\":true,\\\"language\\\":\\\"node\\\",\\\"reservation\\\":\\\"v24:host_prepare:b0-golden\\\"}\"}\n",
+      "id": "stdout.node.prepare",
+      "input_id": "prepare;v24:host_prepare:b0-golden",
+      "producer": "node echo subprocess Invocation.stdout",
+      "semantic": {
+        "exit_class": "success",
+        "result": {
+          "language": "node",
+          "prepared": true,
+          "reservation": "v24:host_prepare:b0-golden"
+        },
+        "returncode": 0
+      }
+    },
+    {
+      "domain": "plugin_v1_stdout",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b5c226563686f5c223a7b5c22746578745c223a5c22736e6f7720e99baa5c222c5c227a65726f5c223a307d2c5c226c616e67756167655c223a5c226e6f64655c227d227d0a",
+      "expected_length": 91,
+      "expected_sha256": "1b49666f48c9e64a71fccd44f2efbbb0dd4376ecac557101461005f9bf1e1bdf",
+      "expected_text": "{\"ok\":true,\"result\":\"{\\\"echo\\\":{\\\"text\\\":\\\"snow 雪\\\",\\\"zero\\\":0},\\\"language\\\":\\\"node\\\"}\"}\n",
+      "id": "stdout.node.invoke_success",
+      "input_id": "invoke_success;v24:tool_call:b0-golden",
+      "producer": "node echo subprocess Invocation.stdout",
+      "semantic": {
+        "exit_class": "success",
+        "result": {
+          "echo": {
+            "text": "snow 雪",
+            "zero": 0
+          },
+          "language": "node"
+        },
+        "returncode": 0
+      }
+    },
+    {
+      "domain": "plugin_v1_stdout",
+      "expected_hex": "7b226f6b223a66616c73652c226572726f72223a226563686f5f746f6f6c5f6572726f72222c226d657373616765223a22726571756573746564206b6e6f776e20746f6f6c206572726f72227d0a",
+      "expected_length": 78,
+      "expected_sha256": "e6b2b51a0b602464101e67736fe918e0f2a0cb7d6f1957fcc1967e80a81bda98",
+      "expected_text": "{\"ok\":false,\"error\":\"echo_tool_error\",\"message\":\"requested known tool error\"}\n",
+      "id": "stdout.node.invoke_error",
+      "input_id": "invoke_error;v24:tool_call:b0-golden",
+      "producer": "node echo subprocess Invocation.stdout",
+      "semantic": {
+        "exit_class": "failure",
+        "result": {
+          "code": "echo_tool_error",
+          "message": "requested known tool error"
+        },
+        "returncode": 3
+      }
+    },
+    {
+      "domain": "plugin_v1_stdout",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b5c2272656c65617365645c223a747275652c5c226c616e67756167655c223a5c226e6f64655c222c5c227265736572766174696f6e5c223a5c227632343a686f73745f72656c656173653a62302d676f6c64656e5c227d227d0a",
+      "expected_length": 112,
+      "expected_sha256": "e9c7d266d9cf15a97b7e7cbcd18eef8494fcf02ac6fb9086cd0a1dca91a9a11a",
+      "expected_text": "{\"ok\":true,\"result\":\"{\\\"released\\\":true,\\\"language\\\":\\\"node\\\",\\\"reservation\\\":\\\"v24:host_release:b0-golden\\\"}\"}\n",
+      "id": "stdout.node.release",
+      "input_id": "release;v24:host_release:b0-golden",
+      "producer": "node echo subprocess Invocation.stdout",
+      "semantic": {
+        "exit_class": "success",
+        "result": {
+          "language": "node",
+          "released": true,
+          "reservation": "v24:host_release:b0-golden"
+        },
+        "returncode": 0
+      }
+    },
+    {
+      "domain": "plugin_v1_stdout",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b5c22765c223a312c5c226f627365727665645c223a5c226b6e6f776e5c222c5c227265736572766174696f6e5c223a5c227632343a686f73745f707265706172653a62302d676f6c64656e2d7265736572766174696f6e5c227d227d0a",
+      "expected_length": 115,
+      "expected_sha256": "6109a35d99981a80507dc968d17294b28899195c08101d51c3d10ead5e895370",
+      "expected_text": "{\"ok\":true,\"result\":\"{\\\"v\\\":1,\\\"observed\\\":\\\"known\\\",\\\"reservation\\\":\\\"v24:host_prepare:b0-golden-reservation\\\"}\"}\n",
+      "id": "stdout.node.inspect",
+      "input_id": "inspect;v24:host_prepare:b0-golden-reservation",
+      "producer": "node echo subprocess Invocation.stdout",
+      "semantic": {
+        "exit_class": "success",
+        "result": {
+          "observed": "known",
+          "reservation": "v24:host_prepare:b0-golden-reservation",
+          "v": 1
+        },
+        "returncode": 0
+      }
+    },
+    {
+      "domain": "line_json_v1_parser",
+      "expected_hex": "",
+      "expected_length": 0,
+      "expected_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "expected_text": null,
+      "id": "parser.eof",
+      "input_id": "eof",
+      "producer": "line_json._frames",
+      "semantic": {
+        "classification": "eof"
+      }
+    },
+    {
+      "domain": "line_json_v1_parser",
+      "expected_hex": "7b6261647d0a",
+      "expected_length": 6,
+      "expected_sha256": "9c1b9a81fd4dad8959a7e958eda355b060a24ae388be9abdd5ac1cfbea6fa538",
+      "expected_text": null,
+      "id": "parser.bad_json",
+      "input_id": "bad_json",
+      "producer": "line_json._frames",
+      "semantic": {
+        "classification": "bad_frame"
+      }
+    },
+    {
+      "domain": "line_json_v1_parser",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a225b5d227d0a",
+      "expected_length": 26,
+      "expected_sha256": "5062bc2761f024e1ced7f6c9b350512df14733dd3fd467b8d50adfaa1d120a91",
+      "expected_text": null,
+      "id": "parser.non_object_result",
+      "input_id": "non_object_result",
+      "producer": "line_json._frames",
+      "semantic": {
+        "classification": "bad_frame"
+      }
+    },
+    {
+      "domain": "line_json_v1_parser",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b7d227d",
+      "expected_length": 25,
+      "expected_sha256": "903a581fd96cb2cd3888f4d237b66fb94afb106d1ec42f26e13c11f762e2d3a1",
+      "expected_text": null,
+      "id": "parser.missing_lf",
+      "input_id": "missing_lf",
+      "producer": "line_json._frames",
+      "semantic": {
+        "classification": "accepted"
+      }
+    },
+    {
+      "domain": "line_json_v1_parser",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b7d227d0d0a",
+      "expected_length": 27,
+      "expected_sha256": "e4dae47d118a520af6c4609275908a6bdc2741fe87257fe5006c74987a25ef51",
+      "expected_text": null,
+      "id": "parser.crlf",
+      "input_id": "crlf",
+      "producer": "line_json._frames",
+      "semantic": {
+        "classification": "accepted"
+      }
+    },
+    {
+      "domain": "line_json_v1_parser",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b7d227d0a7b7d0a",
+      "expected_length": 29,
+      "expected_sha256": "671ee3b7c15d063b96996c03731061e0a922c937abc68d027c37c4a4426ca0ef",
+      "expected_text": null,
+      "id": "parser.extra_frame",
+      "input_id": "extra_frame",
+      "producer": "line_json._frames",
+      "semantic": {
+        "classification": "extra_frame"
+      }
+    },
+    {
+      "domain": "line_json_v1_parser",
+      "expected_hex": "fffe00",
+      "expected_length": 3,
+      "expected_sha256": "ba778c0261008c8f71ae4061ad0162ffcbe63b52c91f89f236738131d1217ec7",
+      "expected_text": null,
+      "id": "parser.non_utf8",
+      "input_id": "non_utf8",
+      "producer": "line_json._frames",
+      "semantic": {
+        "classification": "stdout_not_utf8"
+      }
+    },
+    {
+      "domain": "line_json_v1_parser",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b7d227de280a87b7d",
+      "expected_length": 30,
+      "expected_sha256": "1bcc8fc9a290aaf4ab66df79efcd93711410ea7c585318992d6d757c951d9c37",
+      "expected_text": null,
+      "id": "parser.u2028",
+      "input_id": "u2028",
+      "producer": "line_json._frames",
+      "semantic": {
+        "classification": "extra_frame"
+      }
+    },
+    {
+      "domain": "line_json_v1_parser",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a227b7d227de280a97b7d",
+      "expected_length": 30,
+      "expected_sha256": "4cc5d641b909e7265e9fcb3e2d8a6009787b206d777bedefd118a06ed2d20924",
+      "expected_text": null,
+      "id": "parser.u2029",
+      "input_id": "u2029",
+      "producer": "line_json._frames",
+      "semantic": {
+        "classification": "extra_frame"
+      }
+    }
+  ],
+  "domain_file": "frames_v1.json",
+  "format": "v24-tool-plugin-abi-v1-golden-1"
+}

@@ -582,3 +582,13 @@ The full main-to-candidate whitespace check reports three preexisting source-lin
 ## Post-closeout M-F1（2026-10-25）
 
 M-F1 31/31 命令 exit 0，结果覆盖 G11 全量及 A…L、既有 v24 回归、G8/G9/G10、Node、smoke 负控和 multilingual smoke。S12 的证据严格限定为有限 Fake-only host 调度合同；不关闭 D-S7-2 广义债务。执行日志与哈希见 [`v24-d-s7-2-fairness-execution-2026-10-25.md`](v24-d-s7-2-fairness-execution-2026-10-25.md)。
+
+## Post-closeout Tool/Plugin ABI B0（2026-10-30）
+
+B0 is an evidence baseline, not a production ABI implementation. The four golden files preserve distinct canonical authorities and fixed bytes; the checker has no re-bless path. B0 proved the SQL composition `one install → two same-realm slots → one run → two live pins`, including descriptor digests, provider fiber/episode/install identity, and an explicit zero-process assertion in `finally`. The cross-realm control remained `dependency_unresolved` with no run or pins. Historical B0 fixture failures and their corrections remain in the execution record; none weakened a gate or changed production code.
+
+- **D-B0-1 (observed-current / proved-by-B0):** v1 descriptor, frame, provider, and tool-message bytes are fixed by 34 byte cases plus six structural vectors. Python/PostgreSQL and Python+Node/PostgreSQL checks exit 0. Parser cases preserve current `splitlines()` behavior, including U+2028/U+2029; this is evidence of current behavior, not a v2 approval.
+- **D-B0-2 (contract-frozen/behavior-unverified; Q1/Q2; W5/W6 owner):** empty-page/offset and cursor-progress rules are candidate contracts only. B0 has no v2 tool and does not test empty files, empty directories, complete-search no-hit pages, offset overflow, or pagination convergence.
+- **D-B0-3 (contract-frozen/behavior-unverified; Q3/Q4/Q5; W5/W6 owner after W1 design synchronization):** args/value/content/meta byte domains, absent-meta `{}` normalization, and plugin-versus-renderer budget ownership remain downstream contracts. B0 does not verify them and does not modify the external design.
+- **D-B0-4 (contract-frozen/behavior-unverified; W4 owner):** v2 lease precheck, `lease_insufficient`, process-count zero spawn, additive `model_text`, journal-only no-rerender replay, and shared resource handler compatibility remain unimplemented and unverified. Current 30s tool lease, `dispatch_started` ordering, and journal transcript authority remain observed facts.
+- **D-B0-5 (scope):** the final 18-command serial runbook all exited 0 with credentials removed. Closeout remains 11/11; G9/G10/Node/multilingual and B0 checks are extension evidence. No Node or multilingual SKIP/exit 2 occurred. No real provider was called. No host, SQL, loader, s10, s11, or design file changed.

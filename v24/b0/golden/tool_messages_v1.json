@@ -1,0 +1,175 @@
+{
+  "cases": [
+    {
+      "domain": "tool_message",
+      "expected_hex": "7b226563686f223a7b2274657874223a22736e6f7720e99baa222c227a65726f223a307d2c226c616e6775616765223a22707974686f6e227d",
+      "expected_length": 57,
+      "expected_sha256": "6326aa7ff3787ae0a8f7d7360159359fbecee469f4cba03796118d6ff2e11446",
+      "expected_text": "{\"echo\":{\"text\":\"snow 雪\",\"zero\":0},\"language\":\"python\"}",
+      "id": "tool_message.success.content",
+      "input_id": "worker-journal;success;fixed-tool-call-id",
+      "producer": "dispatch_finished.payload.tool_message.content UTF-8",
+      "semantic": {
+        "dispatch_payload_keys": {
+          "dispatch_finished": [
+            "claim",
+            "kind",
+            "ordinal",
+            "outcome",
+            "parent_effect_id",
+            "reason",
+            "request",
+            "tool_message",
+            "tool_result"
+          ],
+          "dispatch_started": [
+            "claim",
+            "kind",
+            "provider_tool_call_id",
+            "request"
+          ]
+        },
+        "journal_event_types": [
+          "dispatch_finished",
+          "dispatch_started",
+          "effect_prepared",
+          "settlement_committed"
+        ],
+        "message": {
+          "content": "{\"echo\":{\"text\":\"snow 雪\",\"zero\":0},\"language\":\"python\"}",
+          "role": "tool",
+          "tool_call_id": "call_b0_success"
+        },
+        "message_shape": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "tool_lease_ms": 30000
+      }
+    },
+    {
+      "domain": "tool_message",
+      "expected_hex": "7b22636f6465223a226563686f5f746f6f6c5f6572726f72222c226d657373616765223a22726571756573746564206b6e6f776e20746f6f6c206572726f72227d",
+      "expected_length": 65,
+      "expected_sha256": "098197aae5be900957a78064c2d2c8f28cae2cce4816ac5cdccd9a5dd5ea3632",
+      "expected_text": "{\"code\":\"echo_tool_error\",\"message\":\"requested known tool error\"}",
+      "id": "tool_message.known_error.content",
+      "input_id": "worker-journal;known_error;fixed-tool-call-id",
+      "producer": "dispatch_finished.payload.tool_message.content UTF-8",
+      "semantic": {
+        "dispatch_payload_keys": {
+          "dispatch_finished": [
+            "claim",
+            "kind",
+            "ordinal",
+            "outcome",
+            "parent_effect_id",
+            "reason",
+            "request",
+            "tool_message",
+            "tool_result"
+          ],
+          "dispatch_started": [
+            "claim",
+            "kind",
+            "provider_tool_call_id",
+            "request"
+          ]
+        },
+        "journal_event_types": [
+          "dispatch_finished",
+          "dispatch_started",
+          "effect_prepared",
+          "settlement_committed"
+        ],
+        "message": {
+          "content": "{\"code\":\"echo_tool_error\",\"message\":\"requested known tool error\"}",
+          "role": "tool",
+          "tool_call_id": "call_b0_known_error"
+        },
+        "message_shape": [
+          "content",
+          "role",
+          "tool_call_id"
+        ],
+        "tool_lease_ms": 30000
+      }
+    },
+    {
+      "expected": {
+        "declared": [
+          "command_committed",
+          "command_prepared",
+          "dispatch_finished",
+          "dispatch_started",
+          "effect_prepared",
+          "settlement_committed"
+        ],
+        "observed": [
+          "dispatch_finished",
+          "dispatch_started",
+          "effect_prepared",
+          "settlement_committed"
+        ]
+      },
+      "id": "structure.journal_event_set",
+      "kind": "structural"
+    },
+    {
+      "expected": [
+        "content",
+        "role",
+        "tool_call_id"
+      ],
+      "id": "structure.tool_message_keys",
+      "kind": "structural"
+    },
+    {
+      "expected": {
+        "dispatch_finished": [
+          "claim",
+          "kind",
+          "ordinal",
+          "outcome",
+          "parent_effect_id",
+          "reason",
+          "request",
+          "tool_message",
+          "tool_result"
+        ],
+        "dispatch_started": [
+          "claim",
+          "kind",
+          "provider_tool_call_id",
+          "request"
+        ]
+      },
+      "id": "structure.dispatch_payload_keys",
+      "kind": "structural"
+    },
+    {
+      "expected": {
+        "observed_tool_effect_ms": 30000,
+        "worker_default_ms": 30000
+      },
+      "id": "structure.tool_lease_ms",
+      "kind": "structural"
+    },
+    {
+      "expected": {
+        "stderr": 16384,
+        "stdout": 65536
+      },
+      "id": "structure.transport_limits",
+      "kind": "structural"
+    },
+    {
+      "expected": "descriptor_invalid",
+      "id": "structure.descriptor_v2_rejected",
+      "kind": "structural"
+    }
+  ],
+  "domain_file": "tool_messages_v1.json",
+  "format": "v24-tool-plugin-abi-v1-golden-1"
+}
