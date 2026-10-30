@@ -1,0 +1,272 @@
+{
+  "cases": [
+    {
+      "descriptor_ref": "descriptor.v2.read",
+      "design_refs": [
+        "§6.4",
+        "§7.2"
+      ],
+      "domain": "provider_tool_projection",
+      "expected_hex": "7b226465736372697074696f6e223a22526561642061205554462d3820746578742066696c6520696e736964652074686520617070726f76656420776f726b73706163652e206f66667365742069732074686520312d696e6465786564206669727374206c696e65202864656661756c742031293b206c696d697420697320746865206d6178696d756d206e756d626572206f66206c696e6573202864656661756c7420323030302c206d61782032303030292e204966207472756e63617465642c20636f6e74696e75652077697468206e6578745f6f66667365742e222c226e616d65223a2272656164222c22706172616d6574657273223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b226c696d6974223a7b226d6178696d756d223a323030302c226d696e696d756d223a312c2274797065223a22696e7465676572227d2c226f6666736574223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2270617468223a7b226d61784c656e677468223a313032342c226d696e4c656e677468223a312c2274797065223a22737472696e67227d7d2c227265717569726564223a5b2270617468225d2c2274797065223a226f626a656374227d7d",
+      "expected_length": 482,
+      "expected_sha256": "b3acce24929aad9ef3fa2b40bd32a780b344d87bc07026d699f56fe0822785e0",
+      "expected_text": "{\"description\":\"Read a UTF-8 text file inside the approved workspace. offset is the 1-indexed first line (default 1); limit is the maximum number of lines (default 2000, max 2000). If truncated, continue with next_offset.\",\"name\":\"read\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"limit\":{\"maximum\":2000,\"minimum\":1,\"type\":\"integer\"},\"offset\":{\"minimum\":1,\"type\":\"integer\"},\"path\":{\"maxLength\":1024,\"minLength\":1,\"type\":\"string\"}},\"required\":[\"path\"],\"type\":\"object\"}}",
+      "first_production_stage": "M2",
+      "id": "provider.projection.read",
+      "input": {
+        "description": "Read a UTF-8 text file inside the approved workspace. offset is the 1-indexed first line (default 1); limit is the maximum number of lines (default 2000, max 2000). If truncated, continue with next_offset.",
+        "name": "read",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "limit": {
+              "maximum": 2000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "offset": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "path": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "input_id": "provider.projection.read",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "compact",
+      "status": "provisional_w2_pending"
+    },
+    {
+      "descriptor_ref": "descriptor.v2.list",
+      "design_refs": [
+        "§6.4",
+        "§7.2"
+      ],
+      "domain": "provider_tool_projection",
+      "expected_hex": "7b226465736372697074696f6e223a224c69737420656e747269657320756e6465722061206469726563746f727920696e736964652074686520617070726f76656420776f726b73706163652e204e6f6e2d7265637572736976652062792064656661756c743b2073796d6c696e6b7320617265206c697374656420627574206e6576657220666f6c6c6f7765643b20656e74726965732061726520736f72746564206279205554462d3820706174682062797465732e206f666673657420697320312d6261736564202864656661756c742031293b206c696d6974206d6178203530302e222c226e616d65223a226c697374222c22706172616d6574657273223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b22696e636c7564655f68696464656e223a7b2274797065223a22626f6f6c65616e227d2c226c696d6974223a7b226d6178696d756d223a3530302c226d696e696d756d223a312c2274797065223a22696e7465676572227d2c226f6666736574223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2270617468223a7b226d61784c656e677468223a313032342c226d696e4c656e677468223a312c2274797065223a22737472696e67227d2c22726563757273697665223a7b2274797065223a22626f6f6c65616e227d7d2c227265717569726564223a5b5d2c2274797065223a226f626a656374227d7d",
+      "expected_length": 550,
+      "expected_sha256": "e0dce40408343e45c0fb984d61161a93d406a0ac6ed9db8a84420c73c96654b7",
+      "expected_text": "{\"description\":\"List entries under a directory inside the approved workspace. Non-recursive by default; symlinks are listed but never followed; entries are sorted by UTF-8 path bytes. offset is 1-based (default 1); limit max 500.\",\"name\":\"list\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"include_hidden\":{\"type\":\"boolean\"},\"limit\":{\"maximum\":500,\"minimum\":1,\"type\":\"integer\"},\"offset\":{\"minimum\":1,\"type\":\"integer\"},\"path\":{\"maxLength\":1024,\"minLength\":1,\"type\":\"string\"},\"recursive\":{\"type\":\"boolean\"}},\"required\":[],\"type\":\"object\"}}",
+      "first_production_stage": "M2",
+      "id": "provider.projection.list",
+      "input": {
+        "description": "List entries under a directory inside the approved workspace. Non-recursive by default; symlinks are listed but never followed; entries are sorted by UTF-8 path bytes. offset is 1-based (default 1); limit max 500.",
+        "name": "list",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "include_hidden": {
+              "type": "boolean"
+            },
+            "limit": {
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "offset": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "path": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "recursive": {
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "input_id": "provider.projection.list",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "compact",
+      "status": "provisional_w2_pending"
+    },
+    {
+      "descriptor_ref": "descriptor.v2.search",
+      "design_refs": [
+        "§6.4",
+        "§7.2"
+      ],
+      "domain": "provider_tool_projection",
+      "expected_hex": "7b226465736372697074696f6e223a22536561726368205554462d3820746578742066696c657320756e6465722061206469726563746f727920696e736964652074686520617070726f76656420776f726b7370616365207573696e67206c69746572616c20737562737472696e67206d61746368696e672e204869747320666f6c6c6f7720444653207072652d6f726465722077697468207369626c696e677320736f72746564206279205554462d38206e616d652062797465732c207468656e206c696e652c207468656e20636f6c756d6e2e206f666673657420697320312d6261736564202864656661756c742031293b206c696d6974206d6178203230302e204966207472756e63617465642c20636f6e74696e75652077697468206e6578745f6f66667365742e222c226e616d65223a22736561726368222c22706172616d6574657273223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b22636f6e74657874223a7b226d6178696d756d223a322c226d696e696d756d223a302c2274797065223a22696e7465676572227d2c22676c6f62223a7b226d61784c656e677468223a3235362c226d696e4c656e677468223a312c2274797065223a22737472696e67227d2c2269676e6f72655f63617365223a7b2274797065223a22626f6f6c65616e227d2c22696e636c7564655f68696464656e223a7b2274797065223a22626f6f6c65616e227d2c226c696d6974223a7b226d6178696d756d223a3230302c226d696e696d756d223a312c2274797065223a22696e7465676572227d2c226f6666736574223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2270617468223a7b226d61784c656e677468223a313032342c226d696e4c656e677468223a312c2274797065223a22737472696e67227d2c227175657279223a7b226d61784c656e677468223a3531322c226d696e4c656e677468223a312c2274797065223a22737472696e67227d7d2c227265717569726564223a5b227175657279225d2c2274797065223a226f626a656374227d7d",
+      "expected_length": 796,
+      "expected_sha256": "7668117b5ba29be2db0bc5759edfd84d9cf75871f311c7f06aff60161c31b4fc",
+      "expected_text": "{\"description\":\"Search UTF-8 text files under a directory inside the approved workspace using literal substring matching. Hits follow DFS pre-order with siblings sorted by UTF-8 name bytes, then line, then column. offset is 1-based (default 1); limit max 200. If truncated, continue with next_offset.\",\"name\":\"search\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"context\":{\"maximum\":2,\"minimum\":0,\"type\":\"integer\"},\"glob\":{\"maxLength\":256,\"minLength\":1,\"type\":\"string\"},\"ignore_case\":{\"type\":\"boolean\"},\"include_hidden\":{\"type\":\"boolean\"},\"limit\":{\"maximum\":200,\"minimum\":1,\"type\":\"integer\"},\"offset\":{\"minimum\":1,\"type\":\"integer\"},\"path\":{\"maxLength\":1024,\"minLength\":1,\"type\":\"string\"},\"query\":{\"maxLength\":512,\"minLength\":1,\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}}",
+      "first_production_stage": "M2",
+      "id": "provider.projection.search",
+      "input": {
+        "description": "Search UTF-8 text files under a directory inside the approved workspace using literal substring matching. Hits follow DFS pre-order with siblings sorted by UTF-8 name bytes, then line, then column. offset is 1-based (default 1); limit max 200. If truncated, continue with next_offset.",
+        "name": "search",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "context": {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "glob": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "ignore_case": {
+              "type": "boolean"
+            },
+            "include_hidden": {
+              "type": "boolean"
+            },
+            "limit": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "offset": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "path": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "query": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      },
+      "input_id": "provider.projection.search",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "compact",
+      "status": "provisional_w2_pending"
+    },
+    {
+      "design_refs": [
+        "§6.4",
+        "§7.2"
+      ],
+      "expected": {
+        "projection_keys": [
+          "name",
+          "description",
+          "parameters"
+        ]
+      },
+      "first_production_stage": "M2",
+      "id": "provider.safe_name_mapping",
+      "input": [
+        {
+          "descriptor_key": "read",
+          "expected": "accepted",
+          "name": "read",
+          "pin_key": "read"
+        },
+        {
+          "descriptor_key": "list",
+          "expected": "accepted",
+          "name": "list",
+          "pin_key": "list"
+        },
+        {
+          "descriptor_key": "search",
+          "expected": "accepted",
+          "name": "search",
+          "pin_key": "search"
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§6.4",
+        "§7.2"
+      ],
+      "expected": {
+        "check_before_projection": true
+      },
+      "first_production_stage": "M2",
+      "id": "provider.key_mismatch",
+      "input": [
+        {
+          "descriptor_key": "read",
+          "expected": "descriptor_invalid",
+          "name": "read",
+          "pin_key": "list"
+        },
+        {
+          "descriptor_key": "agent.spawn",
+          "expected": "descriptor_invalid",
+          "name": "agent.spawn",
+          "pin_key": "agent.spawn"
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§6.4",
+        "§7.2"
+      ],
+      "expected": {
+        "policy": "read_only_baseline",
+        "source": "v24/b0/golden/provider_requests_v1.json"
+      },
+      "first_production_stage": "M2",
+      "id": "provider.v1_bytes_unchanged",
+      "input": [
+        {
+          "expected_length": 341,
+          "expected_sha256": "37ab4a8b8d5f2aae86689dd8f7703c33cc70acdb7c977a504a14d24d44ee3fec",
+          "id": "provider.success.request1"
+        },
+        {
+          "expected_length": 687,
+          "expected_sha256": "55b0520db96aaa118cfb253d5ef7ccc42c0c8260fd18894d1f53436389ead8c4",
+          "id": "provider.success.request2"
+        },
+        {
+          "expected_length": 341,
+          "expected_sha256": "37ab4a8b8d5f2aae86689dd8f7703c33cc70acdb7c977a504a14d24d44ee3fec",
+          "id": "provider.known_error.request1"
+        },
+        {
+          "expected_length": 690,
+          "expected_sha256": "bd48617e3628fb2fc847519acf7f3d9e297a95566a8b06a1f071d2013562af40",
+          "id": "provider.known_error.request2"
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    }
+  ],
+  "domain_file": "provider_projection_v2.json",
+  "format": "v24-tool-plugin-abi-w1-vectors-1"
+}

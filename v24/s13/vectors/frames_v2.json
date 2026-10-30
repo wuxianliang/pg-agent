@@ -1,0 +1,675 @@
+{
+  "cases": [
+    {
+      "design_refs": [
+        "§5.1"
+      ],
+      "domain": "line_json_v2_request",
+      "expected_hex": "7b2261726773223a7b226f6666736574223a312c2270617468223a22524541444d452e6d64227d2c226f7065726174696f6e223a22696e766f6b65222c227265736572766174696f6e223a227632343a746f6f6c5f63616c6c3a7731222c22746f6f6c223a2272656164222c2276223a327d0a",
+      "expected_length": 115,
+      "expected_sha256": "67632bc3eaffc5427e09d7161efa63d7ebcfa6d4f7b6b11bfe8a589bdadc757c",
+      "expected_text": "{\"args\":{\"offset\":1,\"path\":\"README.md\"},\"operation\":\"invoke\",\"reservation\":\"v24:tool_call:w1\",\"tool\":\"read\",\"v\":2}\n",
+      "first_production_stage": "M2",
+      "id": "frame.request.invoke",
+      "input": {
+        "args": {
+          "offset": 1,
+          "path": "README.md"
+        },
+        "operation": "invoke",
+        "reservation": "v24:tool_call:w1",
+        "tool": "read"
+      },
+      "input_id": "frame.request.invoke",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "frame_request",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.1"
+      ],
+      "domain": "line_json_v2_request",
+      "expected_hex": "7b2261726773223a7b22696e7374616c6c5f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303031227d2c226f7065726174696f6e223a2270726570617265222c227265736572766174696f6e223a227632343a707265706172653a7731222c2276223a327d0a",
+      "expected_length": 122,
+      "expected_sha256": "bb25867b11ac8179126f531834448462146feda23f0417f7190b522e5a224953",
+      "expected_text": "{\"args\":{\"install_id\":\"00000000-0000-0000-0000-000000000001\"},\"operation\":\"prepare\",\"reservation\":\"v24:prepare:w1\",\"v\":2}\n",
+      "first_production_stage": "M2",
+      "id": "frame.request.prepare",
+      "input": {
+        "args": {
+          "install_id": "00000000-0000-0000-0000-000000000001"
+        },
+        "operation": "prepare",
+        "reservation": "v24:prepare:w1"
+      },
+      "input_id": "frame.request.prepare",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "frame_request",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.1"
+      ],
+      "domain": "line_json_v2_request",
+      "expected_hex": "7b2261726773223a7b22696e7374616c6c5f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303031227d2c226f7065726174696f6e223a2272656c65617365222c227265736572766174696f6e223a227632343a72656c656173653a7731222c2276223a327d0a",
+      "expected_length": 122,
+      "expected_sha256": "9c9b81e211a5a5761f445f10bf317b5387119178d91c1eece8828df6af446798",
+      "expected_text": "{\"args\":{\"install_id\":\"00000000-0000-0000-0000-000000000001\"},\"operation\":\"release\",\"reservation\":\"v24:release:w1\",\"v\":2}\n",
+      "first_production_stage": "M2",
+      "id": "frame.request.release",
+      "input": {
+        "args": {
+          "install_id": "00000000-0000-0000-0000-000000000001"
+        },
+        "operation": "release",
+        "reservation": "v24:release:w1"
+      },
+      "input_id": "frame.request.release",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "frame_request",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.1"
+      ],
+      "domain": "line_json_v2_request",
+      "expected_hex": "7b2261726773223a7b22696e7374616c6c5f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030303031227d2c226f7065726174696f6e223a22696e7370656374222c227265736572766174696f6e223a227632343a696e73706563743a7731222c2276223a327d0a",
+      "expected_length": 122,
+      "expected_sha256": "e2008403fd7873dc32fab9c71d8f6ff09ec89931e65baa1e63bb45ca24c930ea",
+      "expected_text": "{\"args\":{\"install_id\":\"00000000-0000-0000-0000-000000000001\"},\"operation\":\"inspect\",\"reservation\":\"v24:inspect:w1\",\"v\":2}\n",
+      "first_production_stage": "M2",
+      "id": "frame.request.inspect",
+      "input": {
+        "args": {
+          "install_id": "00000000-0000-0000-0000-000000000001"
+        },
+        "operation": "inspect",
+        "reservation": "v24:inspect:w1"
+      },
+      "input_id": "frame.request.inspect",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "frame_request",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.1"
+      ],
+      "domain": "line_json_v2_request",
+      "expected_hex": "7b2261726773223a7b2261223a332c22ee8080223a312c22f0908080223a327d2c226f7065726174696f6e223a22696e766f6b65222c227265736572766174696f6e223a227632343a746f6f6c5f63616c6c3a736f7274222c22746f6f6c223a2272656164222c2276223a327d0a",
+      "expected_length": 110,
+      "expected_sha256": "b358802fe19c6646238b6584cd39d2d15981c0dfbc560106a819effc3bb88c48",
+      "expected_text": "{\"args\":{\"a\":3,\"\":1,\"𐀀\":2},\"operation\":\"invoke\",\"reservation\":\"v24:tool_call:sort\",\"tool\":\"read\",\"v\":2}\n",
+      "first_production_stage": "M2",
+      "id": "frame.request.utf8_sort_trap",
+      "input": {
+        "args": {
+          "a": 3,
+          "": 1,
+          "𐀀": 2
+        },
+        "operation": "invoke",
+        "reservation": "v24:tool_call:sort",
+        "tool": "read"
+      },
+      "input_id": "frame.request.utf8_sort_trap",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "frame_request",
+      "status": "m2_pending"
+    },
+    {
+      "classification": "success",
+      "design_refs": [
+        "§5.1"
+      ],
+      "domain": "line_json_v2_response",
+      "expected_hex": "7b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d0a",
+      "expected_length": 68,
+      "expected_sha256": "0e91695d22a8ff26c33ef7d00f1ff5fafcdf6fd1360badf5de1c7dc76e05f0b2",
+      "expected_text": "{\"ok\":true,\"result\":{\"meta\":{},\"value\":{\"path\":\"README.md\"}},\"v\":2}\n",
+      "first_production_stage": "M2",
+      "id": "frame.response.success",
+      "input": {
+        "exit_code": 0,
+        "operation": "invoke"
+      },
+      "input_id": "frame.response.success",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "fixed_corpus",
+      "status": "m2_pending"
+    },
+    {
+      "classification": "known_error",
+      "design_refs": [
+        "§5.1"
+      ],
+      "domain": "line_json_v2_response",
+      "expected_hex": "7b226572726f72223a7b22636f6465223a226e6f745f666f756e64222c226d657373616765223a2246696c65206e6f7420666f756e642e227d2c226f6b223a66616c73652c2276223a327d0a",
+      "expected_length": 76,
+      "expected_sha256": "63576a0d89380412c8e59692e5cd929e0f2c33e6be6c7efd6160de4df24bfca2",
+      "expected_text": "{\"error\":{\"code\":\"not_found\",\"message\":\"File not found.\"},\"ok\":false,\"v\":2}\n",
+      "first_production_stage": "M2",
+      "id": "frame.response.known_error",
+      "input": {
+        "exit_code": 3,
+        "operation": "invoke"
+      },
+      "input_id": "frame.response.known_error",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "fixed_corpus",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.1"
+      ],
+      "expected": {
+        "accept_json_whitespace": "SP HT CR",
+        "single_terminal_raw_lf": true
+      },
+      "first_production_stage": "M2",
+      "id": "frame.response.whitespace_corpus",
+      "input": [
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "207b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d0a",
+          "id": "leading_sp",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "097b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d0a",
+          "id": "leading_ht",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d0d0a",
+          "id": "trailing_crlf",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "20097b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d20090d0a",
+          "id": "sp_ht_cr",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b2276616c7565223a7b2274657874223a2261e280a862e280a963227d7d2c2276223a327d0a",
+          "id": "u2028_string",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b227072657061726564223a747275657d2c2276223a327d0a",
+          "id": "prepare_True",
+          "operation": "prepare"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b2272656c6561736564223a747275657d2c2276223a327d0a",
+          "id": "release_True",
+          "operation": "release"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226f62736572766564223a226b6e6f776e227d2c2276223a327d0a",
+          "id": "inspect_known",
+          "operation": "inspect"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226f62736572766564223a22616273656e74227d2c2276223a327d0a",
+          "id": "inspect_absent",
+          "operation": "inspect"
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.1"
+      ],
+      "expected": {
+        "reasons": [
+          "eof",
+          "extra_frame",
+          "bad_frame",
+          "version_mismatch",
+          "stdout_not_utf8"
+        ]
+      },
+      "first_production_stage": "M2",
+      "id": "frame.response.invalid_corpus",
+      "input": [
+        {
+          "classification": "eof",
+          "exit_code": 0,
+          "hex": "",
+          "id": "eof",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "0a",
+          "id": "empty_prefix",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "efbbbf7b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d0a",
+          "id": "bom",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d",
+          "id": "missing_lf",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d0a20",
+          "id": "nonfinal_lf",
+          "operation": "invoke"
+        },
+        {
+          "classification": "extra_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d0a0a",
+          "id": "double_lf",
+          "operation": "invoke"
+        },
+        {
+          "classification": "extra_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d0a7b7d0a",
+          "id": "extra_frame",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d580a",
+          "id": "tail_junk",
+          "operation": "invoke"
+        },
+        {
+          "classification": "stdout_not_utf8",
+          "exit_code": 0,
+          "hex": "ff0a",
+          "id": "invalid_utf8",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c226f6b223a747275652c2276223a322c22726573756c74223a7b2276616c7565223a7b7d7d7d0a",
+          "id": "duplicate_keys",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c2276223a322c22726573756c74223a7b2276616c7565223a7b2278223a4e614e7d7d7d0a",
+          "id": "nan",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c2276223a322c22726573756c74223a7b2276616c7565223a7b2278223a496e66696e6974797d7d7d0a",
+          "id": "infinity",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c2276223a322c22726573756c74223a7b2276616c7565223a7b2278223a225c7564383030227d7d7d0a",
+          "id": "lone_surrogate",
+          "operation": "invoke"
+        },
+        {
+          "classification": "version_mismatch",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c2276223a312c22726573756c74223a7b2276616c7565223a7b7d7d7d0a",
+          "id": "wrong_v",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c2276223a322c22726573756c74223a7b2276616c7565223a7b7d7d2c226578747261223a317d0a",
+          "id": "wrong_keys",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a312c2276223a322c22726573756c74223a7b2276616c7565223a7b7d7d7d0a",
+          "id": "wrong_ok",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c2276223a322c22726573756c74223a5b5d7d0a",
+          "id": "wrong_result",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a66616c73652c2276223a322c226572726f72223a7b22636f6465223a2241222c226d657373616765223a2278227d7d0a",
+          "id": "wrong_error",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652ce280a82276223a322c22726573756c74223a7b2276616c7565223a7b7d7d7d0a",
+          "id": "u2028_outside",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226d657461223a7b7d2c2276616c7565223a7b2270617468223a22524541444d452e6d64227d7d2c2276223a327d0a",
+          "id": "exit_mismatch",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b2276616c7565223a6e756c6c7d2c2276223a327d0a",
+          "id": "generic_value_20",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b2276616c7565223a5b5d7d2c2276223a327d0a",
+          "id": "generic_value_21",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b2276616c7565223a5b312c325d7d2c2276223a327d0a",
+          "id": "generic_value_22",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b2276616c7565223a2274657874227d2c2276223a327d0a",
+          "id": "generic_value_23",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b2276616c7565223a317d2c2276223a327d0a",
+          "id": "generic_value_24",
+          "operation": "invoke"
+        },
+        {
+          "classification": "success",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b2276616c7565223a747275657d2c2276223a327d0a",
+          "id": "generic_value_25",
+          "operation": "invoke"
+        },
+        {
+          "classification": "known_error",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a222e2f612f62227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "safe_error_26",
+          "operation": "invoke"
+        },
+        {
+          "classification": "known_error",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a22312f322f78227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "safe_error_27",
+          "operation": "invoke"
+        },
+        {
+          "classification": "known_error",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a2272656c61746976652f66696c65227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "safe_error_28",
+          "operation": "invoke"
+        },
+        {
+          "classification": "known_error",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a2278787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "safe_error_29",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a22222c226d657373616765223a2278227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "empty_code",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a226161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c226d657373616765223a2278227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "long_code",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a227878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "message_1025",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a222f707269766174652f746d702f66696c65227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "absolute_path",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a222f657463227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "unix_single",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a22433a5c5c707269766174655c5c66696c65227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "windows",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a225c5c5c5c686f73745c5c7368617265227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "unc",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a2254726163656261636b202863616c6c29227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "stack",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a224f50454e41495f4150495f4b45593d7265646163746564227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "env",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226d657373616765223a22785c7530303030227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "nul_message",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 3,
+          "hex": "7b226572726f72223a7b22636f6465223a2278222c226578747261223a747275652c226d657373616765223a2278227d2c226f6b223a66616c73652c2276223a327d0a",
+          "id": "extra_error",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b227072657061726564223a317d2c2276223a327d0a",
+          "id": "prepare_shape_41",
+          "operation": "prepare"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b2272656c6561736564223a66616c73657d2c2276223a327d0a",
+          "id": "release_shape_42",
+          "operation": "release"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226f62736572766564223a226d61796265227d2c2276223a327d0a",
+          "id": "inspect_shape_43",
+          "operation": "inspect"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b226d657461223a5b5d2c2276616c7565223a7b7d7d2c2276223a327d0a",
+          "id": "invoke_shape_44",
+          "operation": "invoke"
+        },
+        {
+          "classification": "bad_frame",
+          "exit_code": 0,
+          "hex": "7b226f6b223a747275652c22726573756c74223a7b2276616c7565223a7b7d7d2c2276223a327d0a",
+          "id": "prepare_shape_45",
+          "operation": "prepare"
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.1"
+      ],
+      "expected": {
+        "class": "unknown",
+        "runtime_evidence": "M2_pending"
+      },
+      "first_production_stage": "M2",
+      "id": "frame.process.unknown_outcomes",
+      "input": {
+        "limits": {
+          "stderr": 16384,
+          "stdin": 1048576,
+          "stdout": 65536
+        },
+        "outcomes": [
+          "timeout",
+          "stdout_limit",
+          "stderr_limit",
+          "abnormal_exit"
+        ],
+        "preflight": [
+          {
+            "expected": "bad_request",
+            "id": "prepare_with_tool",
+            "input": {
+              "args": {},
+              "operation": "prepare",
+              "reservation": "w1",
+              "tool": "read"
+            }
+          },
+          {
+            "expected": "bad_request",
+            "id": "invoke_missing_tool",
+            "input": {
+              "args": {},
+              "operation": "invoke",
+              "reservation": "w1"
+            }
+          },
+          {
+            "expected": "bad_request",
+            "id": "reserved_tool_agent.spawn",
+            "input": {
+              "args": {},
+              "operation": "invoke",
+              "reservation": "w1",
+              "tool": "agent.spawn"
+            }
+          },
+          {
+            "expected": "bad_request",
+            "id": "invalid_tool",
+            "input": {
+              "args": {},
+              "operation": "invoke",
+              "reservation": "w1",
+              "tool": "A"
+            }
+          },
+          {
+            "expected": "bad_request",
+            "id": "args_not_object",
+            "input": {
+              "args": [],
+              "operation": "invoke",
+              "reservation": "w1",
+              "tool": "read"
+            }
+          }
+        ]
+      },
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    }
+  ],
+  "domain_file": "frames_v2.json",
+  "format": "v24-tool-plugin-abi-w1-vectors-1"
+}

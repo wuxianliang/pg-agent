@@ -1,0 +1,473 @@
+{
+  "format": "v24-tool-plugin-abi-w1-vectors-1",
+  "inventory_version": 1,
+  "design_input": {
+    "path": "docs/designs/v24-tool-plugin-abi-v1-2026-10-30.md",
+    "sha256_at_review": "976567da3f7a381f488200bfc11b0ce933b3924b2bd9551c50846742081eb951",
+    "source_sha256_imported_from_primary": "bdfe65dcd7f1a445671d9754fd99d2642edfee516b35c9f17ba84c7c15d90c70"
+  },
+  "vocabulary": {
+    "status": [
+      "planned",
+      "design_resolved",
+      "pending_vectors",
+      "pending_reference",
+      "provisional_w2_pending",
+      "m2_pending",
+      "m3_pending",
+      "m4_pending",
+      "not_run"
+    ],
+    "owner": [
+      "W1-VECTORS",
+      "W1-REFERENCE",
+      "W1-CHECKER",
+      "M2-DESCRIPTOR",
+      "M2-FRAMES",
+      "M2-RENDERER",
+      "M2-RESULTS",
+      "M2-SCHEMA",
+      "M3-TOOLS",
+      "M4-LIFECYCLE"
+    ],
+    "first_production_stage": [
+      "M2",
+      "M3",
+      "M4"
+    ]
+  },
+  "immutable_required_suites": [
+    {
+      "id": "canonical_descriptor_bytes",
+      "file": "descriptor_v2.json",
+      "required_case_ids": [
+        "canon.pg.v1",
+        "canon.pg.v2",
+        "canon.pg.empty_object",
+        "canon.key_order_utf8",
+        "canon.escape_and_unicode",
+        "canon.safe_integer_edges"
+      ],
+      "design_refs": [
+        "§4.2",
+        "§4.3"
+      ],
+      "status": "m2_pending",
+      "owner": "W1-VECTORS",
+      "first_production_stage": "M2",
+      "design_sections": [
+        {
+          "ref": "§4.2",
+          "line_start": 481,
+          "line_end": 495,
+          "heading": "### 4.2 Canonical descriptor 与 digest",
+          "sha256": "57ff9ddf9d6518952aa724449d8e59a9e7567401a4384e96d8b4251f811942f4"
+        },
+        {
+          "ref": "§4.3",
+          "line_start": 496,
+          "line_end": 519,
+          "heading": "### 4.3 跨语言向量（已实算）",
+          "sha256": "3c06f8d89f8bb06262a1570512a9ea2ef0f7f1f7012ba81ecdea2285a8a1c164"
+        }
+      ]
+    },
+    {
+      "id": "descriptor_v2_contract",
+      "file": "descriptor_v2.json",
+      "required_case_ids": [
+        "descriptor.v2.read",
+        "descriptor.v2.list",
+        "descriptor.v2.search",
+        "descriptor.closed_sets",
+        "descriptor.key_and_provide_match",
+        "descriptor.description_boundaries",
+        "descriptor.render_registry_match",
+        "descriptor.limits_boundaries",
+        "descriptor.enums_annotations",
+        "descriptor.pg_size_depth_integer_unicode_boundaries"
+      ],
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "Appendix A"
+      ],
+      "status": "m2_pending",
+      "owner": "W1-VECTORS",
+      "first_production_stage": "M2",
+      "design_sections": [
+        {
+          "ref": "§3.1",
+          "line_start": 224,
+          "line_end": 286,
+          "heading": "### 3.1 精确形状",
+          "sha256": "001b2d8f8e28f7deb373c2b1004a386b84e0f7a8ea0f10201b99f24c116c85f1"
+        },
+        {
+          "ref": "§3.2",
+          "line_start": 287,
+          "line_end": 339,
+          "heading": "### 3.2 完整 `read` 示例",
+          "sha256": "40fce0583d9d80ee95f5c59e3a30505b1da54f906ef2c60c0e3c17d6f3c3fcbc"
+        },
+        {
+          "ref": "§3.3",
+          "line_start": 340,
+          "line_end": 408,
+          "heading": "### 3.3 完整 `list` 示例",
+          "sha256": "52a3dce447b252aa78eaf4751be40af925b9a198c37a781609fea97062b95d43"
+        },
+        {
+          "ref": "Appendix A",
+          "line_start": 1062,
+          "line_end": 1168,
+          "heading": "## 附录 A：`search` 完整 descriptor",
+          "sha256": "fe8af625a08a1b940f9d26b619989f612ebd4505552129e446de231471de8c7b"
+        }
+      ]
+    },
+    {
+      "id": "line_json_v2_frames",
+      "file": "frames_v2.json",
+      "required_case_ids": [
+        "frame.request.invoke",
+        "frame.request.prepare",
+        "frame.request.release",
+        "frame.request.inspect",
+        "frame.request.utf8_sort_trap",
+        "frame.response.success",
+        "frame.response.known_error",
+        "frame.response.whitespace_corpus",
+        "frame.response.invalid_corpus",
+        "frame.process.unknown_outcomes"
+      ],
+      "design_refs": [
+        "§5.1"
+      ],
+      "status": "m2_pending",
+      "owner": "W1-VECTORS",
+      "first_production_stage": "M2",
+      "design_sections": [
+        {
+          "ref": "§5.1",
+          "line_start": 531,
+          "line_end": 591,
+          "heading": "### 5.1 line-json.v2 帧",
+          "sha256": "b684580fffa94456a9e376a47d5836be141f66cd95ce0f15c40dbe9c9e53b738"
+        }
+      ]
+    },
+    {
+      "id": "adapter_manifest_v2",
+      "file": "manifest_adapter_v2.json",
+      "required_case_ids": [
+        "manifest.adapter.python_read",
+        "manifest.adapter.node_list_search",
+        "manifest.one_install_two_provides",
+        "manifest.five_field_key",
+        "manifest.artifact_digest_pending"
+      ],
+      "design_refs": [
+        "§2.3",
+        "§2.4",
+        "§4.4"
+      ],
+      "status": "m2_pending",
+      "owner": "W1-VECTORS",
+      "first_production_stage": "M2",
+      "design_sections": [
+        {
+          "ref": "§2.3",
+          "line_start": 163,
+          "line_end": 199,
+          "heading": "### 2.3 两个 v2 类型（为什么不是改 `ApprovedAdapter`）",
+          "sha256": "d5a031e74307ab5316fba1c410a7779258a48d38bfc5f1f0d19496759167fc5b"
+        },
+        {
+          "ref": "§2.4",
+          "line_start": 200,
+          "line_end": 221,
+          "heading": "### 2.4 多工具 install 的 manifest",
+          "sha256": "4fccd50500b47c923c00a5a6f3cb5770f0ee560000b6ccd93dca3e3d2249a829"
+        },
+        {
+          "ref": "§4.4",
+          "line_start": 520,
+          "line_end": 528,
+          "heading": "### 4.4 adapter digest / manifest digest",
+          "sha256": "f1dbbcdbd1bf60a6fbbfcb3f442904476d4abda23e92d7b71ee00eec313bf36c"
+        }
+      ]
+    },
+    {
+      "id": "provider_projection_v2",
+      "file": "provider_projection_v2.json",
+      "required_case_ids": [
+        "provider.projection.read",
+        "provider.projection.list",
+        "provider.projection.search",
+        "provider.safe_name_mapping",
+        "provider.key_mismatch",
+        "provider.v1_bytes_unchanged"
+      ],
+      "design_refs": [
+        "§6.4",
+        "§7.2"
+      ],
+      "status": "m2_pending",
+      "owner": "W1-VECTORS",
+      "first_production_stage": "M2",
+      "design_sections": [
+        {
+          "ref": "§6.4",
+          "line_start": 880,
+          "line_end": 887,
+          "heading": "### 6.4 工具面与 provider 投影",
+          "sha256": "e4918a17a1ce75ea046a1d461143fc5982fc729f75193364f275b86158c47f60"
+        },
+        {
+          "ref": "§7.2",
+          "line_start": 925,
+          "line_end": 932,
+          "heading": "### 7.2 v1 兼容与迁移",
+          "sha256": "710221b07eded60fb003ed8f03336c36c1f60bb6e11a0ccf3131e39bab1d7ce0"
+        }
+      ]
+    },
+    {
+      "id": "renderer_goldens_and_digest",
+      "file": "renderers.json",
+      "required_case_ids": [
+        "render.read.golden",
+        "render.list.golden",
+        "render.search.golden",
+        "render.manifest.read",
+        "render.manifest.list",
+        "render.manifest.search",
+        "render.digest.provisional_values"
+      ],
+      "design_refs": [
+        "§5.3",
+        "§5.3.1"
+      ],
+      "status": "provisional_w2_pending",
+      "owner": "W1-REFERENCE",
+      "first_production_stage": "M2",
+      "design_sections": [
+        {
+          "ref": "§5.3",
+          "line_start": 658,
+          "line_end": 687,
+          "heading": "### 5.3 Renderer",
+          "sha256": "2f1750e114aad097580de4926d1e193ad019b8a43cbe7912ca9ab1622655c1f5"
+        },
+        {
+          "ref": "§5.3.1",
+          "line_start": 688,
+          "line_end": 703,
+          "heading": "### 5.3.1 Q5：全域投影与精确预算计数",
+          "sha256": "ce8c31ea8c9ed097b40bcfdde4990bd799e22d4d0fa82cec7f55b796134e361b"
+        }
+      ]
+    },
+    {
+      "id": "result_model_text_budget_replay",
+      "file": "results_v2.json",
+      "required_case_ids": [
+        "result.success_envelope",
+        "result.failure_envelope",
+        "result.unknown_envelope",
+        "result.usage_wall_ms",
+        "result.model_text_join",
+        "result.meta_excluded_from_model_text",
+        "result.budget_domains",
+        "result.frame_60000_60001_65536_65537",
+        "result.replay_no_rerender"
+      ],
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "status": "m2_pending",
+      "owner": "W1-VECTORS",
+      "first_production_stage": "M2",
+      "design_sections": [
+        {
+          "ref": "§5.2",
+          "line_start": 592,
+          "line_end": 657,
+          "heading": "### 5.2 v2 `output` envelope",
+          "sha256": "bfff4f79ed6f4ddd434ec655d32fe372381501bd64480964563f55c90e19c181"
+        },
+        {
+          "ref": "§5.4",
+          "line_start": 704,
+          "line_end": 727,
+          "heading": "### 5.4 模型文本与 worker 接口",
+          "sha256": "4416503aa373ef3d1008e69085f759bdf756ee6e50d9ad6344001569c661acd8"
+        },
+        {
+          "ref": "§5.6",
+          "line_start": 765,
+          "line_end": 787,
+          "heading": "### 5.6 截断、分页与 64 KiB",
+          "sha256": "0c3d16fad11a6fcdf997b951ecad2d81aa2eaee8df66913aab8797948172053d"
+        },
+        {
+          "ref": "§8.2",
+          "line_start": 1004,
+          "line_end": 1015,
+          "heading": "### 8.2 K1：transcript 派生",
+          "sha256": "c23a3ab2fd89ea5c622588727eefb31106ccb1a4bb6fb6b738f5748353502c51"
+        }
+      ]
+    },
+    {
+      "id": "closed_schema_subset",
+      "file": "schema_v2.json",
+      "required_case_ids": [
+        "schema.keyword_allow_deny",
+        "schema.type_nullable",
+        "schema.required_additional_items",
+        "schema.enum_json_distinct",
+        "schema.schema_bounds",
+        "schema.instance_bounds",
+        "schema.root_parameters",
+        "schema.error_path_order",
+        "schema.no_default_injection"
+      ],
+      "design_refs": [
+        "§5.5"
+      ],
+      "status": "m2_pending",
+      "owner": "W1-VECTORS",
+      "first_production_stage": "M2",
+      "design_sections": [
+        {
+          "ref": "§5.5",
+          "line_start": 728,
+          "line_end": 764,
+          "heading": "### 5.5 封闭 JSON Schema 子集",
+          "sha256": "4687a3ce5b56f464b0dfade14f49310622c91dab926b6d3f87d26255e3fceb30"
+        }
+      ]
+    },
+    {
+      "id": "filesystem_tool_contracts",
+      "file": "tool_contracts.json",
+      "required_case_ids": [
+        "tool.shared_paths_encoding_order",
+        "tool.read.contract",
+        "tool.list.contract",
+        "tool.search.contract",
+        "tool.fixture_tree.portable_nodes",
+        "tool.search_budget_file_count",
+        "tool.search_budget_timing_m3_pending"
+      ],
+      "design_refs": [
+        "§6.1",
+        "§6.2",
+        "§6.3"
+      ],
+      "status": "m3_pending",
+      "owner": "W1-VECTORS",
+      "first_production_stage": "M3",
+      "design_sections": [
+        {
+          "ref": "§6.1",
+          "line_start": 790,
+          "line_end": 801,
+          "heading": "### 6.1 共享路径、编码、排序规则",
+          "sha256": "7f53353daa1b4aaf1f3baed46f7c9e6bbc67a85cf5630c04bf76877fb88c0411"
+        },
+        {
+          "ref": "§6.2",
+          "line_start": 802,
+          "line_end": 826,
+          "heading": "### 6.2 `read`（Python）",
+          "sha256": "1210f9c43214d02b4c6d6836d41418f68bb8c9c2bf9621edb9a69c495ba71db6"
+        },
+        {
+          "ref": "§6.3",
+          "line_start": 827,
+          "line_end": 879,
+          "heading": "### 6.3 `list` 与 `search`（同一 Node install）",
+          "sha256": "c950479b503185cbe996aaa2494577cae308aaf4813c559b48cb9dd7a26ac681"
+        }
+      ]
+    },
+    {
+      "id": "result_replay_lifecycle",
+      "file": "results_v2.json",
+      "required_case_ids": [
+        "lifecycle.journal_replay_no_rerender",
+        "lifecycle.tool_message_model_text_stable"
+      ],
+      "design_refs": [
+        "§5.4",
+        "§8.2",
+        "§8.3"
+      ],
+      "status": "m4_pending",
+      "owner": "M4-LIFECYCLE",
+      "first_production_stage": "M4",
+      "design_sections": [
+        {
+          "ref": "§5.4",
+          "line_start": 704,
+          "line_end": 727,
+          "heading": "### 5.4 模型文本与 worker 接口",
+          "sha256": "4416503aa373ef3d1008e69085f759bdf756ee6e50d9ad6344001569c661acd8"
+        },
+        {
+          "ref": "§8.2",
+          "line_start": 1004,
+          "line_end": 1015,
+          "heading": "### 8.2 K1：transcript 派生",
+          "sha256": "c23a3ab2fd89ea5c622588727eefb31106ccb1a4bb6fb6b738f5748353502c51"
+        },
+        {
+          "ref": "§8.3",
+          "line_start": 1016,
+          "line_end": 1023,
+          "heading": "### 8.3 `dispatch_started` 前移",
+          "sha256": "cb65227e899e7b466997e48b311926e05f015c77f5430507510e10d1e1ac5c36"
+        }
+      ]
+    }
+  ],
+  "compatibility": {
+    "b0_format_and_case_ids_unchanged": true,
+    "b0_descriptor_v2_rejected_is_malformed_pre_m2_observation": true,
+    "production_behavior_claimed": false,
+    "gate_pass_claimed": false
+  },
+  "reviewed_design_decisions": [
+    {
+      "id": "decision.q1_q4_and_frame_policy",
+      "design_refs": [
+        "§0.4",
+        "§5.1",
+        "§5.2",
+        "§5.6",
+        "§6.3"
+      ],
+      "status": "design_resolved",
+      "owner": "W1-VECTORS",
+      "first_production_stage": "M2"
+    },
+    {
+      "id": "decision.q5_budget_and_cursor_proof",
+      "design_refs": [
+        "§5.3.1",
+        "§5.6"
+      ],
+      "status": "design_resolved",
+      "owner": "W1-VECTORS",
+      "first_production_stage": "M2"
+    }
+  ]
+}
