@@ -648,3 +648,18 @@ The pre-hardening 24-command serial run at 2026-10-31T00:28–00:29 +08:00 exite
 Post-review hardening (2026-10-31) keeps the 40 W2 vector cases, 21 renderer goldens, four gate markers and closeout **11/11** unchanged. It fixes strict-decoder exception normalization, the `J` value domain, deep finite JSON and cycle classification, `ToolDispatchResult` outer-shape validation, renderer exception precedence, and the object-shaped-schema rule. The normative clarifications live in design Appendix C because §3.1/§5.2–§5.5 are pinned spans; §7.3 was expanded in place. The design SHA is now `2606aedc7135e7085219d0a9c99d1ccca5c22ee33baee6a82dd6f137ce7cac24`, all pinned span heading/line/content SHA values remain unchanged, and a second 24-command serial run over the hardened candidate exited 0 for every command. Evidence is in the “W2 hardening supplement” section of the [W2 execution record](v24-tool-plugin-abi-w2-execution-2026-10-30.md).
 
 W2 does not prove M2 completion, W3 registry/multi-tool/line-json v2, W4 dispatcher/worker/provider wiring, filesystem tool semantics, pagination convergence, 12-second scan budgets, journal replay, or real provider behavior. Per-command timestamps, source SHA, last lines, and merged-log hashes are in the [W2 execution record](v24-tool-plugin-abi-w2-execution-2026-10-30.md).
+
+## Post-closeout Tool/Plugin ABI W3 (2026-10-31)
+
+W3 implements registry approval and independent line-json v2 transport. The two W3 gates use stubs with no database/network/Node access; inherited PostgreSQL/Node/v1 subprocess checks remain separate evidence.
+
+| Gate | W3 cases | Actual result |
+|---|---:|---|
+| `v24/s13/test_registry.py` | 17 | exit 0; `[passed] W3 registry contract; cases=17; manifest_bytes=3; zero_spawn_paths=6; construction_reasons=14` |
+| `v24/s13/test_line_json.py` | 10 | exit 0; `[passed] W3 line-json v2 contract; cases=10; frame_bytes=7; parse_rows=55; preflight_rejections=5; unknown_outcomes=4; v1_bytes_unchanged=true` |
+
+The final 26-command serial run on base `e2a13349b894078a8127942f39d866f9dbb7cfb1`, started 2026-10-31T03:25:04+08:00, exited 0 for every command with its `[passed]` last line. No exit 2/SKIP occurred. Rows 12–22 are the frozen closeout commands: **11/11 unchanged**; W3 is extension evidence, not a twelfth closeout item or M2 completion. All 55 transport corpus rows (46 invalid + nine whitespace), seven frame byte cases, three manifest byte cases and all 14 construction tokens were checked.
+
+The exact scope audits for SQL, six W4 modules and five W2 modules each exited 0. The vectors stat audit exited 0 and lists only `design_conformance.json` (one insertion/one deletion). Design SHA `2606aedc7135e7085219d0a9c99d1ccca5c22ee33baee6a82dd6f137ce7cac24` → `269e6bada20c6c18331cc681f385808d638bd6ac9403dd7b484352175f57e4b0`; changes are append-only C.7–C.10. All 23 unique pinned spans retain original line ranges, headings and content SHA values; only whole-document pins changed. Frozen vector case/status/expected values remain unchanged, including `m2_pending` frames and `m3_pending` artifact evidence.
+
+W3 does not prove dispatcher/worker/provider v2 wiring, filesystem semantics, pagination convergence, 12-second budgets, live renderer dispatch, artifact digest computation, real v2 subprocess lifecycle, mixed-batch/restart/second-spawn/replay behavior, tool-message stability or W3 Node behavior. The existing `plugins.py` resource/inspect coupling and append-only §4.1/§7 clarification deviation are recorded as `D-ABI-W3-7/8` in the ledger. Full command times, actual last lines, hashes and proof boundaries are in the [W3 execution record](v24-tool-plugin-abi-w3-execution-2026-10-31.md); evidence directory: `/tmp/w3-20261031T032503/`.

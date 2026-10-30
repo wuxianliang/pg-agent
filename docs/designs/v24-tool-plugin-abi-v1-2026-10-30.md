@@ -1233,3 +1233,52 @@ W1 provisional digest：`fd2f51e8c3d7328b0af7ceafcbefc21418f799921e9e470f12b3f7b
 ### C.6 `J` 的深度与循环（补充 §5.3.1）
 
 `J` 的编码使用显式栈，不以 Python 调用栈递归；有限深度的 JSON 不因深度被拒绝，字节计数仍按 §5.3.1 的公式。循环引用不是合法 JSON，统一报 `circular_reference`：公开结果入口（`success_output`/`ToolDispatchResult`/`measure`/`frame_bytes`）归一为 `invalid_tool_output`；descriptor 原文解码来自 JSON，不会产生循环引用。帧的字节上限与语义预算不变。
+
+### C.7 LF 字节分帧（补充 §5.1）
+
+v2 stdout 只按 LF 字节分帧：UTF-8 严格解码通过后，`raw.count(b"\n") > 1` 一律为 `extra_frame`（unknown），包括第二个 LF 只构成尾部空行的 `double_lf`；不是 `bad_frame`。缺少末尾 LF、LF 后有尾部垃圾、BOM 或非法帧仍为 `bad_frame`。冻结向量 `frames_v2.json` 的 `double_lf` / `extra_frame` 分类是本条的字节权威；§5.1 关于“多一个空行……都是 `bad_frame`”的句子在此范围内被本条取代。
+
+v2 禁止复用 `str.splitlines()`；只计数 LF 字节、检查末尾 LF、移除该 LF，并仅剥除帧外 SP/HT/CR。字符串内的 U+2028/U+2029 不构成帧边界。v1 的 `splitlines()` 行为保留，两个协议使用独立解析路径。
+
+### C.8 transport 层 `J` 域不可达（补充 §5.2，修订 C.2）
+
+v2 transport 使用 `strict_loads` 解码：float、指数、unsafe integer、`NaN`/`Infinity`、孤立代理项与重复对象键在解码阶段即被拒绝，归为 `bad_frame`（unknown）。因此 transport 层不存在“语法合法但越出 `J` 域”的 success `value`；不得在严格解码后增加不可达的 `J` 域复检或 `invalid_tool_output` failure 分支，也不得为此换用宽松解码器。
+
+`J` 域不合法 → failure `invalid_tool_output` 的映射属于 W4 envelope 构造：该层的值来自 Python 对象，而非 transport 字节流，仍须执行 C.2 的 envelope 兜底。C.2 最后一句中“语法合法但数值越出 `J` 域的 success `value`，W3 按普通 failure `invalid_tool_output` 处理，不判 unknown”的映射在 transport 层由本条明确取代；其余 envelope 值域与 schema 要求不变。
+
+### C.9 Registry 构造合同补充（补充 §4.1）
+
+`ApprovedTool` 自己持有与冻结 descriptor 一致的 schema closure：`parameters_check` / `output_check` 均为 `field(init=False, default=None, compare=False, hash=False, repr=False)`。`ApprovedTool.__post_init__` 先校验并深冻结 v2 descriptor，再在内部调用 `compile_schema`，通过 `object.__setattr__` 装入两个 closure；不得由调用方通过构造参数注入校验器。closure 不参与 equality/hash/repr；`compile_schema` 不设进程级 cache，closure 生命周期由调用方（持有它的 `ApprovedTool`）管理。`dataclasses.replace` 必须重跑构造校验与编译；descriptor 与 digest/timeout/render/output_schema 不一致时拒绝。v1 合成项不编译 v2 schema，两个 closure 均为 `None`。
+
+v2 构造的 **14-token 词表只覆盖 W3 新增判定点**，不代表所有构造失败均被归一为 token。新增判定点使用 `RegistryError(token)`，且 `exc.args == (token,)`、`str(exc) == token`；不为 `RegistryError` 增加 `.reason`。
+
+| W3 新增的 8 个 token | 复用的 6 个 token |
+|---|---|
+| `approved_tool_invalid` | `invalid_descriptor` |
+| `protocol_invalid` | `descriptor_key_mismatch` |
+| `tools_invalid` | `renderer_not_approved` |
+| `duplicate_tool_key` | `renderer_digest_mismatch` |
+| `workspace_root_invalid` | `mixed_descriptor_versions` |
+| `timeout_cap_invalid` | `timeout_exceeds_cap` |
+| `manifest_invalid` | |
+| `adapter_digest_mismatch` | |
+
+`_hex64` 的格式校验、descriptor-digest 不一致，以及进程/制品字段校验继续沿用既有 v1 prose 消息，不强制纳入上述 token。reason 所有权如下：
+
+| 类别 | 异常与可见面 |
+|---|---|
+| v2 构造的 W3 新增判定点（`ApprovedTool` / `ApprovedPlugin` / `from_manifest`） | `RegistryError(token)`；上述 14-token 闭集 |
+| 既有构造校验、进程/制品字段、registry 类型检查 | `RegistryError(prose)`；既有 prose 不变 |
+| install/pin/tool 匹配 | `AdapterNotFound.reason`：`install_invalid`、`adapter_not_approved`、`pin_key_mismatch`、`tool_not_approved`、`descriptor_missing`、`descriptor_digest_missing`、`descriptor_mismatch`、`descriptor_digest_mismatch`、`protocol_mismatch`；另保留 §4.1 的五个 artifact reason |
+
+构造 token 只用于 host 内部构造合同，绝不进入 wire、SQL effect-code 闭集或 dispatcher reasons；与匹配期 reason 拼写相同的复用 token，也不改变各自异常类型与所属判定点。
+
+### C.10 §7 措辞修订
+
+§7.1、§7.3、§7.4 中仍沿用早期工作划分的文字，以本节为权威读法；原文保留用于 immutable span 的行号与内容校验。
+
+- **§7.1 文件职责与阶段**：W3 的生产改动仅为 `registry.py` 的审批模型/union/匹配与 `line_json.py` 的独立 v2 transport。registry 的 `environment()` 是既有共享行为，移入无字段 mixin；`ApprovedAdapter` 的 17 字段与 v1 行为不变，`match_pin` 仅新增对 v2 的 `protocol_mismatch` 拒绝分支。`ApprovedPlugin.from_manifest()` 属 W3 生产 API，不留给 fixture；manifest 为 bytes 时以原始字节计算 digest，为 str 时先 UTF-8 编码，为 dict 时以 `compact_json` 字节计算。`plugins.py` v2 分支、`worker.py` 的 `model_text` 与 `deepseek._tools` 接受 v2 均属 W4；插件文件、fixtures、`test_tools.py` / `test_lifecycle.py` / `test_node.py` 不由 W3 交付，artifact digest 实算属 M3。
+- **§7.3 registry 证据**：`match_tool` 的六类失败为 `tool_not_approved`、`pin_key_mismatch`、`descriptor_missing`、`descriptor_digest_missing`、`descriptor_mismatch`、`descriptor_digest_mismatch`，均须证明零 `require_artifact` 调用、零 `run_process` 调用。artifact 的五个失败 reason 独立验证，不是 `match_tool` 的一步；真正 spawn 前仍须执行 `require_artifact()`。构造探针同时覆盖 C.9 的 14 token 与保留的 prose，closure 自编译、v1 不编译、`replace` 重算；`match_pin(v2)` 拒绝不变。
+- **§7.3 transport 证据**：W3 执行冻结的 5 个请求与 2 个响应 byte case，逐行复现 46 条 invalid + 9 条 whitespace corpus，覆盖 5 条 build preflight、4 类进程 unknown、v1 字节/分类与静态协议分流。`double_lf` 为 `extra_frame`；float/unsafe-int success value 为 `bad_frame`，以 C.7/C.8 为准。v1 保留原解析器；W3 gate 使用 stub，不打开网络、数据库或 Node，也不证明真实子进程生命周期。
+- **§7.4 阶段 done-when**：W2 的四条 s13 gate、W3 的 `test_registry.py` / `test_line_json.py` 与后续工具/生命周期/Node gate 分阶段交付。W3 是 design §10 M2 的 registry/transport 子阶段，不等于 M2 完成；W3 验收为两条新 gate 加既有回归共 26 条串行命令全部通过，不把 §7.4 的完整 ABI done-when 当成 W3 已完成。真实生命周期、多工具 mixed batch、崩溃恢复与 provider/tool-message 字节接线仍须后续 gate 证明。冻结向量不得 re-bless；`frames_v2.json` 的 case 保持 `m2_pending`，五字段 key 的 artifact 证据保持 `m3_pending`。
+- **§7.4 gate 三态与范围**：exit 0 且命令专属 `[passed]` 末行才算通过；exit 2 / `[SKIP]` 为未验证，阻断完成；exit 1 或缺通过标记为失败。保留 SQL 零 diff、无真实 provider/网络、closeout 11/11，s13 仍是 extension evidence，不是第 12 条 closeout；本节规范修订本身不构成 gate 通过声明。
