@@ -1,0 +1,11 @@
+# W1 vector inventory contract
+
+Format ID: `v24-tool-plugin-abi-w1-vectors-1` (inventory version 1). This directory is independent of `v24/b0/golden/`; B0 format, pinned IDs, fixtures, checker, and bytes remain unchanged. `design_conformance.json` pins the required suites and case IDs, design input SHA, and exact design section spans. The read-only checker compares exact suite and case-ID sets; directory globbing never defines the inventory. Cases may not be added, removed, or renamed without a design/plan update and explicit review.
+
+The inventory contains 10 suites and 71 fixed case IDs. Byte cases use `expected_hex` as the only bytes authority; length and SHA-256 validate internal consistency. Semantic/table cases use fixed input and expected values. Capture candidates are generated outside the repository and are not gates; two independent outputs must match byte-for-byte before promotion. Checkers have no re-bless path.
+
+Byte authorities are domain-specific: descriptor canonical bytes use PostgreSQL `jsonb::text` / `registry.pg_jsonb_text`; request frames use compact sorted UTF-8 JSON plus one LF; provider projection, result/model text, renderer manifests, and other compact forms follow their cited ABI rule. Python, Node, and PostgreSQL producers compare directly to fixed expected bytes. Node PostgreSQL canonical key order uses UTF-8 byte length then unsigned-byte lexicographic order.
+
+The Python and Node helpers are independent test references only. `test_contracts.py` checks the fixed inventory and fixture-backed contract relations. `test_vectors.py` checks Python/PostgreSQL/Node bytes, renderer output, digest linkage, model text, budgets, and pagination decisions. Neither checker imports production validators/renderers or executes read/list/search tools. W1 vectors do not prove production behavior.
+
+Statuses remain explicit: renderer digests are `provisional_w2_pending`; plugin artifact digest and timing behavior are `m3_pending`; lifecycle replay is `m4_pending`. Q5 is design-resolved only; vectors and executable reference checks do not count as M2/M3/M4 production evidence. The 12-second search timing requirement remains an M3 timing gate, not a deterministic W1 pass. B0's malformed v2 rejection remains a pre-M2 observation. Closeout stays 11/11; W1 is extension evidence, not a twelfth closeout item.

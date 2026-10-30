@@ -1,0 +1,2610 @@
+{
+  "cases": [
+    {
+      "design_refs": [
+        "§5.5"
+      ],
+      "expected": {
+        "allow_keywords": [
+          "type",
+          "properties",
+          "required",
+          "additionalProperties",
+          "items",
+          "minItems",
+          "maxItems",
+          "minLength",
+          "maxLength",
+          "minimum",
+          "maximum",
+          "enum",
+          "description"
+        ],
+        "closed": true,
+        "deny_keywords": [
+          "$ref",
+          "$defs",
+          "definitions",
+          "$schema",
+          "$id",
+          "oneOf",
+          "anyOf",
+          "allOf",
+          "not",
+          "if",
+          "then",
+          "else",
+          "pattern",
+          "format",
+          "default",
+          "const",
+          "number",
+          "patternProperties",
+          "propertyNames",
+          "uniqueItems",
+          "minProperties",
+          "maxProperties",
+          "exclusiveMinimum",
+          "exclusiveMaximum",
+          "multipleOf",
+          "contentEncoding",
+          "readOnly",
+          "writeOnly",
+          "examples"
+        ]
+      },
+      "first_production_stage": "M2",
+      "id": "schema.keyword_allow_deny",
+      "input": {
+        "allowed": [
+          {
+            "expected": "accepted",
+            "keyword": "type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "properties",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "x": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "required",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "x": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "x"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "additionalProperties",
+            "schema": {
+              "additionalProperties": false,
+              "type": "object"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "items",
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "minItems",
+            "schema": {
+              "items": {},
+              "minItems": 0,
+              "type": "array"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "maxItems",
+            "schema": {
+              "items": {},
+              "maxItems": 1,
+              "type": "array"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "minLength",
+            "schema": {
+              "minLength": 0,
+              "type": "string"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "maxLength",
+            "schema": {
+              "maxLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "minimum",
+            "schema": {
+              "minimum": -1,
+              "type": "integer"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "maximum",
+            "schema": {
+              "maximum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "enum",
+            "schema": {
+              "enum": [
+                null,
+                true,
+                1,
+                "1"
+              ]
+            }
+          },
+          {
+            "expected": "accepted",
+            "keyword": "description",
+            "schema": {
+              "description": "note"
+            }
+          }
+        ],
+        "denied": [
+          {
+            "expected": "unsupported_schema",
+            "keyword": "$ref",
+            "schema": {
+              "$ref": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "$defs",
+            "schema": {
+              "$defs": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "definitions",
+            "schema": {
+              "definitions": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "$schema",
+            "schema": {
+              "$schema": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "$id",
+            "schema": {
+              "$id": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "oneOf",
+            "schema": {
+              "oneOf": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "anyOf",
+            "schema": {
+              "anyOf": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "allOf",
+            "schema": {
+              "allOf": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "not",
+            "schema": {
+              "not": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "if",
+            "schema": {
+              "if": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "then",
+            "schema": {
+              "then": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "else",
+            "schema": {
+              "else": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "pattern",
+            "schema": {
+              "pattern": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "format",
+            "schema": {
+              "format": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "default",
+            "schema": {
+              "default": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "const",
+            "schema": {
+              "const": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "number",
+            "schema": {
+              "number": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "patternProperties",
+            "schema": {
+              "patternProperties": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "propertyNames",
+            "schema": {
+              "propertyNames": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "uniqueItems",
+            "schema": {
+              "uniqueItems": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "minProperties",
+            "schema": {
+              "minProperties": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "maxProperties",
+            "schema": {
+              "maxProperties": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "exclusiveMinimum",
+            "schema": {
+              "exclusiveMinimum": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "exclusiveMaximum",
+            "schema": {
+              "exclusiveMaximum": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "multipleOf",
+            "schema": {
+              "multipleOf": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "contentEncoding",
+            "schema": {
+              "contentEncoding": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "readOnly",
+            "schema": {
+              "readOnly": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "writeOnly",
+            "schema": {
+              "writeOnly": true
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "examples",
+            "schema": {
+              "examples": true
+            }
+          }
+        ],
+        "invalid_allowed": [
+          {
+            "expected": "unsupported_schema",
+            "keyword": "type",
+            "schema": {
+              "type": 17
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "properties",
+            "schema": {
+              "additionalProperties": false,
+              "properties": [],
+              "type": "object"
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "required",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "x": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "absent"
+              ],
+              "type": "object"
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "additionalProperties",
+            "schema": {
+              "additionalProperties": {},
+              "type": "object"
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "items",
+            "schema": {
+              "items": [],
+              "type": "array"
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "minItems",
+            "schema": {
+              "items": {},
+              "minItems": -1,
+              "type": "array"
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "maxItems",
+            "schema": {
+              "items": {},
+              "maxItems": -1,
+              "type": "array"
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "minLength",
+            "schema": {
+              "minLength": -1,
+              "type": "string"
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "maxLength",
+            "schema": {
+              "maxLength": -1,
+              "type": "string"
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "minimum",
+            "schema": {
+              "minimum": 1.5,
+              "type": "integer"
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "maximum",
+            "schema": {
+              "maximum": true,
+              "type": "integer"
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "enum",
+            "schema": {
+              "enum": []
+            }
+          },
+          {
+            "expected": "unsupported_schema",
+            "keyword": "description",
+            "schema": {
+              "description": false
+            }
+          }
+        ]
+      },
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.5"
+      ],
+      "expected": {
+        "array_len": [
+          2,
+          4
+        ],
+        "types": [
+          "object",
+          "array",
+          "string",
+          "integer",
+          "boolean",
+          "null"
+        ]
+      },
+      "first_production_stage": "M2",
+      "id": "schema.type_nullable",
+      "input": [
+        {
+          "expected": "accepted",
+          "instance": null,
+          "schema": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "expected": "accepted",
+          "instance": 1,
+          "schema": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "expected": "minimum",
+          "instance": 0,
+          "schema": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "expected": "type",
+          "instance": "1",
+          "schema": {
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "expected": "accepted",
+          "schema": {
+            "additionalProperties": false,
+            "items": {},
+            "type": [
+              "object",
+              "array",
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "expected": "unsupported_schema",
+          "schema": {
+            "type": [
+              "string",
+              "string"
+            ]
+          }
+        },
+        {
+          "expected": "unsupported_schema",
+          "schema": {
+            "type": "number"
+          }
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.5"
+      ],
+      "expected": {
+        "array_requires_items": true,
+        "object_requires_explicit_additionalProperties": true
+      },
+      "first_production_stage": "M2",
+      "id": "schema.required_additional_items",
+      "input": [
+        {
+          "expected": {
+            "path": "$.x",
+            "rule": "required"
+          },
+          "instance": {},
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "x": {}
+            },
+            "required": [
+              "x"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "expected": "unsupported_schema",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "x": {}
+            },
+            "required": [
+              "x",
+              "x"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "expected": "unsupported_schema",
+          "schema": {
+            "additionalProperties": false,
+            "required": [
+              "x"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "expected": "unsupported_schema",
+          "schema": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        {
+          "expected": "unsupported_schema",
+          "schema": {
+            "type": "array"
+          }
+        },
+        {
+          "expected": "accepted",
+          "schema": {
+            "items": {},
+            "type": "array"
+          }
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.5"
+      ],
+      "expected": {
+        "array_order_preserved": true,
+        "json_types_distinct": true,
+        "object_key_order_ignored": true
+      },
+      "first_production_stage": "M2",
+      "id": "schema.enum_json_distinct",
+      "input": [
+        {
+          "expected": "duplicate_enum",
+          "values": [
+            {
+              "a": 1,
+              "b": 2
+            },
+            {
+              "a": 1,
+              "b": 2
+            }
+          ]
+        },
+        {
+          "expected": "accepted",
+          "values": [
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              1
+            ]
+          ]
+        },
+        {
+          "expected": "accepted",
+          "values": [
+            true,
+            1,
+            "1",
+            null
+          ]
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.5"
+      ],
+      "expected": {
+        "depth": 16,
+        "enum": 64,
+        "measure": "root schema node=1; each properties child/items is one schema node",
+        "nodes": 256,
+        "properties": 128
+      },
+      "first_production_stage": "M2",
+      "id": "schema.schema_bounds",
+      "input": [
+        {
+          "bound": "depth",
+          "count": 16,
+          "expected": "accepted",
+          "id": "depth_16",
+          "schema": {
+            "items": {
+              "items": {
+                "items": {
+                  "items": {
+                    "items": {
+                      "items": {
+                        "items": {
+                          "items": {
+                            "items": {
+                              "items": {
+                                "items": {
+                                  "items": {
+                                    "items": {
+                                      "items": {
+                                        "items": {},
+                                        "type": "array"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "type": "array"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "type": "array"
+                          },
+                          "type": "array"
+                        },
+                        "type": "array"
+                      },
+                      "type": "array"
+                    },
+                    "type": "array"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "bound": "depth",
+          "count": 17,
+          "expected": "unsupported_schema",
+          "id": "depth_17",
+          "schema": {
+            "items": {
+              "items": {
+                "items": {
+                  "items": {
+                    "items": {
+                      "items": {
+                        "items": {
+                          "items": {
+                            "items": {
+                              "items": {
+                                "items": {
+                                  "items": {
+                                    "items": {
+                                      "items": {
+                                        "items": {
+                                          "items": {},
+                                          "type": "array"
+                                        },
+                                        "type": "array"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "type": "array"
+                                },
+                                "type": "array"
+                              },
+                              "type": "array"
+                            },
+                            "type": "array"
+                          },
+                          "type": "array"
+                        },
+                        "type": "array"
+                      },
+                      "type": "array"
+                    },
+                    "type": "array"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "bound": "nodes",
+          "count": 256,
+          "expected": "accepted",
+          "id": "nodes_256",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "p000": {
+                "items": {},
+                "type": "array"
+              },
+              "p001": {
+                "items": {},
+                "type": "array"
+              },
+              "p002": {
+                "items": {},
+                "type": "array"
+              },
+              "p003": {
+                "items": {},
+                "type": "array"
+              },
+              "p004": {
+                "items": {},
+                "type": "array"
+              },
+              "p005": {
+                "items": {},
+                "type": "array"
+              },
+              "p006": {
+                "items": {},
+                "type": "array"
+              },
+              "p007": {
+                "items": {},
+                "type": "array"
+              },
+              "p008": {
+                "items": {},
+                "type": "array"
+              },
+              "p009": {
+                "items": {},
+                "type": "array"
+              },
+              "p010": {
+                "items": {},
+                "type": "array"
+              },
+              "p011": {
+                "items": {},
+                "type": "array"
+              },
+              "p012": {
+                "items": {},
+                "type": "array"
+              },
+              "p013": {
+                "items": {},
+                "type": "array"
+              },
+              "p014": {
+                "items": {},
+                "type": "array"
+              },
+              "p015": {
+                "items": {},
+                "type": "array"
+              },
+              "p016": {
+                "items": {},
+                "type": "array"
+              },
+              "p017": {
+                "items": {},
+                "type": "array"
+              },
+              "p018": {
+                "items": {},
+                "type": "array"
+              },
+              "p019": {
+                "items": {},
+                "type": "array"
+              },
+              "p020": {
+                "items": {},
+                "type": "array"
+              },
+              "p021": {
+                "items": {},
+                "type": "array"
+              },
+              "p022": {
+                "items": {},
+                "type": "array"
+              },
+              "p023": {
+                "items": {},
+                "type": "array"
+              },
+              "p024": {
+                "items": {},
+                "type": "array"
+              },
+              "p025": {
+                "items": {},
+                "type": "array"
+              },
+              "p026": {
+                "items": {},
+                "type": "array"
+              },
+              "p027": {
+                "items": {},
+                "type": "array"
+              },
+              "p028": {
+                "items": {},
+                "type": "array"
+              },
+              "p029": {
+                "items": {},
+                "type": "array"
+              },
+              "p030": {
+                "items": {},
+                "type": "array"
+              },
+              "p031": {
+                "items": {},
+                "type": "array"
+              },
+              "p032": {
+                "items": {},
+                "type": "array"
+              },
+              "p033": {
+                "items": {},
+                "type": "array"
+              },
+              "p034": {
+                "items": {},
+                "type": "array"
+              },
+              "p035": {
+                "items": {},
+                "type": "array"
+              },
+              "p036": {
+                "items": {},
+                "type": "array"
+              },
+              "p037": {
+                "items": {},
+                "type": "array"
+              },
+              "p038": {
+                "items": {},
+                "type": "array"
+              },
+              "p039": {
+                "items": {},
+                "type": "array"
+              },
+              "p040": {
+                "items": {},
+                "type": "array"
+              },
+              "p041": {
+                "items": {},
+                "type": "array"
+              },
+              "p042": {
+                "items": {},
+                "type": "array"
+              },
+              "p043": {
+                "items": {},
+                "type": "array"
+              },
+              "p044": {
+                "items": {},
+                "type": "array"
+              },
+              "p045": {
+                "items": {},
+                "type": "array"
+              },
+              "p046": {
+                "items": {},
+                "type": "array"
+              },
+              "p047": {
+                "items": {},
+                "type": "array"
+              },
+              "p048": {
+                "items": {},
+                "type": "array"
+              },
+              "p049": {
+                "items": {},
+                "type": "array"
+              },
+              "p050": {
+                "items": {},
+                "type": "array"
+              },
+              "p051": {
+                "items": {},
+                "type": "array"
+              },
+              "p052": {
+                "items": {},
+                "type": "array"
+              },
+              "p053": {
+                "items": {},
+                "type": "array"
+              },
+              "p054": {
+                "items": {},
+                "type": "array"
+              },
+              "p055": {
+                "items": {},
+                "type": "array"
+              },
+              "p056": {
+                "items": {},
+                "type": "array"
+              },
+              "p057": {
+                "items": {},
+                "type": "array"
+              },
+              "p058": {
+                "items": {},
+                "type": "array"
+              },
+              "p059": {
+                "items": {},
+                "type": "array"
+              },
+              "p060": {
+                "items": {},
+                "type": "array"
+              },
+              "p061": {
+                "items": {},
+                "type": "array"
+              },
+              "p062": {
+                "items": {},
+                "type": "array"
+              },
+              "p063": {
+                "items": {},
+                "type": "array"
+              },
+              "p064": {
+                "items": {},
+                "type": "array"
+              },
+              "p065": {
+                "items": {},
+                "type": "array"
+              },
+              "p066": {
+                "items": {},
+                "type": "array"
+              },
+              "p067": {
+                "items": {},
+                "type": "array"
+              },
+              "p068": {
+                "items": {},
+                "type": "array"
+              },
+              "p069": {
+                "items": {},
+                "type": "array"
+              },
+              "p070": {
+                "items": {},
+                "type": "array"
+              },
+              "p071": {
+                "items": {},
+                "type": "array"
+              },
+              "p072": {
+                "items": {},
+                "type": "array"
+              },
+              "p073": {
+                "items": {},
+                "type": "array"
+              },
+              "p074": {
+                "items": {},
+                "type": "array"
+              },
+              "p075": {
+                "items": {},
+                "type": "array"
+              },
+              "p076": {
+                "items": {},
+                "type": "array"
+              },
+              "p077": {
+                "items": {},
+                "type": "array"
+              },
+              "p078": {
+                "items": {},
+                "type": "array"
+              },
+              "p079": {
+                "items": {},
+                "type": "array"
+              },
+              "p080": {
+                "items": {},
+                "type": "array"
+              },
+              "p081": {
+                "items": {},
+                "type": "array"
+              },
+              "p082": {
+                "items": {},
+                "type": "array"
+              },
+              "p083": {
+                "items": {},
+                "type": "array"
+              },
+              "p084": {
+                "items": {},
+                "type": "array"
+              },
+              "p085": {
+                "items": {},
+                "type": "array"
+              },
+              "p086": {
+                "items": {},
+                "type": "array"
+              },
+              "p087": {
+                "items": {},
+                "type": "array"
+              },
+              "p088": {
+                "items": {},
+                "type": "array"
+              },
+              "p089": {
+                "items": {},
+                "type": "array"
+              },
+              "p090": {
+                "items": {},
+                "type": "array"
+              },
+              "p091": {
+                "items": {},
+                "type": "array"
+              },
+              "p092": {
+                "items": {},
+                "type": "array"
+              },
+              "p093": {
+                "items": {},
+                "type": "array"
+              },
+              "p094": {
+                "items": {},
+                "type": "array"
+              },
+              "p095": {
+                "items": {},
+                "type": "array"
+              },
+              "p096": {
+                "items": {},
+                "type": "array"
+              },
+              "p097": {
+                "items": {},
+                "type": "array"
+              },
+              "p098": {
+                "items": {},
+                "type": "array"
+              },
+              "p099": {
+                "items": {},
+                "type": "array"
+              },
+              "p100": {
+                "items": {},
+                "type": "array"
+              },
+              "p101": {
+                "items": {},
+                "type": "array"
+              },
+              "p102": {
+                "items": {},
+                "type": "array"
+              },
+              "p103": {
+                "items": {},
+                "type": "array"
+              },
+              "p104": {
+                "items": {},
+                "type": "array"
+              },
+              "p105": {
+                "items": {},
+                "type": "array"
+              },
+              "p106": {
+                "items": {},
+                "type": "array"
+              },
+              "p107": {
+                "items": {},
+                "type": "array"
+              },
+              "p108": {
+                "items": {},
+                "type": "array"
+              },
+              "p109": {
+                "items": {},
+                "type": "array"
+              },
+              "p110": {
+                "items": {},
+                "type": "array"
+              },
+              "p111": {
+                "items": {},
+                "type": "array"
+              },
+              "p112": {
+                "items": {},
+                "type": "array"
+              },
+              "p113": {
+                "items": {},
+                "type": "array"
+              },
+              "p114": {
+                "items": {},
+                "type": "array"
+              },
+              "p115": {
+                "items": {},
+                "type": "array"
+              },
+              "p116": {
+                "items": {},
+                "type": "array"
+              },
+              "p117": {
+                "items": {},
+                "type": "array"
+              },
+              "p118": {
+                "items": {},
+                "type": "array"
+              },
+              "p119": {
+                "items": {},
+                "type": "array"
+              },
+              "p120": {
+                "items": {},
+                "type": "array"
+              },
+              "p121": {
+                "items": {},
+                "type": "array"
+              },
+              "p122": {
+                "items": {},
+                "type": "array"
+              },
+              "p123": {
+                "items": {},
+                "type": "array"
+              },
+              "p124": {
+                "items": {},
+                "type": "array"
+              },
+              "p125": {
+                "items": {},
+                "type": "array"
+              },
+              "p126": {
+                "items": {},
+                "type": "array"
+              },
+              "p127": {}
+            },
+            "type": "object"
+          }
+        },
+        {
+          "bound": "nodes",
+          "count": 257,
+          "expected": "unsupported_schema",
+          "id": "nodes_257",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "p000": {
+                "items": {},
+                "type": "array"
+              },
+              "p001": {
+                "items": {},
+                "type": "array"
+              },
+              "p002": {
+                "items": {},
+                "type": "array"
+              },
+              "p003": {
+                "items": {},
+                "type": "array"
+              },
+              "p004": {
+                "items": {},
+                "type": "array"
+              },
+              "p005": {
+                "items": {},
+                "type": "array"
+              },
+              "p006": {
+                "items": {},
+                "type": "array"
+              },
+              "p007": {
+                "items": {},
+                "type": "array"
+              },
+              "p008": {
+                "items": {},
+                "type": "array"
+              },
+              "p009": {
+                "items": {},
+                "type": "array"
+              },
+              "p010": {
+                "items": {},
+                "type": "array"
+              },
+              "p011": {
+                "items": {},
+                "type": "array"
+              },
+              "p012": {
+                "items": {},
+                "type": "array"
+              },
+              "p013": {
+                "items": {},
+                "type": "array"
+              },
+              "p014": {
+                "items": {},
+                "type": "array"
+              },
+              "p015": {
+                "items": {},
+                "type": "array"
+              },
+              "p016": {
+                "items": {},
+                "type": "array"
+              },
+              "p017": {
+                "items": {},
+                "type": "array"
+              },
+              "p018": {
+                "items": {},
+                "type": "array"
+              },
+              "p019": {
+                "items": {},
+                "type": "array"
+              },
+              "p020": {
+                "items": {},
+                "type": "array"
+              },
+              "p021": {
+                "items": {},
+                "type": "array"
+              },
+              "p022": {
+                "items": {},
+                "type": "array"
+              },
+              "p023": {
+                "items": {},
+                "type": "array"
+              },
+              "p024": {
+                "items": {},
+                "type": "array"
+              },
+              "p025": {
+                "items": {},
+                "type": "array"
+              },
+              "p026": {
+                "items": {},
+                "type": "array"
+              },
+              "p027": {
+                "items": {},
+                "type": "array"
+              },
+              "p028": {
+                "items": {},
+                "type": "array"
+              },
+              "p029": {
+                "items": {},
+                "type": "array"
+              },
+              "p030": {
+                "items": {},
+                "type": "array"
+              },
+              "p031": {
+                "items": {},
+                "type": "array"
+              },
+              "p032": {
+                "items": {},
+                "type": "array"
+              },
+              "p033": {
+                "items": {},
+                "type": "array"
+              },
+              "p034": {
+                "items": {},
+                "type": "array"
+              },
+              "p035": {
+                "items": {},
+                "type": "array"
+              },
+              "p036": {
+                "items": {},
+                "type": "array"
+              },
+              "p037": {
+                "items": {},
+                "type": "array"
+              },
+              "p038": {
+                "items": {},
+                "type": "array"
+              },
+              "p039": {
+                "items": {},
+                "type": "array"
+              },
+              "p040": {
+                "items": {},
+                "type": "array"
+              },
+              "p041": {
+                "items": {},
+                "type": "array"
+              },
+              "p042": {
+                "items": {},
+                "type": "array"
+              },
+              "p043": {
+                "items": {},
+                "type": "array"
+              },
+              "p044": {
+                "items": {},
+                "type": "array"
+              },
+              "p045": {
+                "items": {},
+                "type": "array"
+              },
+              "p046": {
+                "items": {},
+                "type": "array"
+              },
+              "p047": {
+                "items": {},
+                "type": "array"
+              },
+              "p048": {
+                "items": {},
+                "type": "array"
+              },
+              "p049": {
+                "items": {},
+                "type": "array"
+              },
+              "p050": {
+                "items": {},
+                "type": "array"
+              },
+              "p051": {
+                "items": {},
+                "type": "array"
+              },
+              "p052": {
+                "items": {},
+                "type": "array"
+              },
+              "p053": {
+                "items": {},
+                "type": "array"
+              },
+              "p054": {
+                "items": {},
+                "type": "array"
+              },
+              "p055": {
+                "items": {},
+                "type": "array"
+              },
+              "p056": {
+                "items": {},
+                "type": "array"
+              },
+              "p057": {
+                "items": {},
+                "type": "array"
+              },
+              "p058": {
+                "items": {},
+                "type": "array"
+              },
+              "p059": {
+                "items": {},
+                "type": "array"
+              },
+              "p060": {
+                "items": {},
+                "type": "array"
+              },
+              "p061": {
+                "items": {},
+                "type": "array"
+              },
+              "p062": {
+                "items": {},
+                "type": "array"
+              },
+              "p063": {
+                "items": {},
+                "type": "array"
+              },
+              "p064": {
+                "items": {},
+                "type": "array"
+              },
+              "p065": {
+                "items": {},
+                "type": "array"
+              },
+              "p066": {
+                "items": {},
+                "type": "array"
+              },
+              "p067": {
+                "items": {},
+                "type": "array"
+              },
+              "p068": {
+                "items": {},
+                "type": "array"
+              },
+              "p069": {
+                "items": {},
+                "type": "array"
+              },
+              "p070": {
+                "items": {},
+                "type": "array"
+              },
+              "p071": {
+                "items": {},
+                "type": "array"
+              },
+              "p072": {
+                "items": {},
+                "type": "array"
+              },
+              "p073": {
+                "items": {},
+                "type": "array"
+              },
+              "p074": {
+                "items": {},
+                "type": "array"
+              },
+              "p075": {
+                "items": {},
+                "type": "array"
+              },
+              "p076": {
+                "items": {},
+                "type": "array"
+              },
+              "p077": {
+                "items": {},
+                "type": "array"
+              },
+              "p078": {
+                "items": {},
+                "type": "array"
+              },
+              "p079": {
+                "items": {},
+                "type": "array"
+              },
+              "p080": {
+                "items": {},
+                "type": "array"
+              },
+              "p081": {
+                "items": {},
+                "type": "array"
+              },
+              "p082": {
+                "items": {},
+                "type": "array"
+              },
+              "p083": {
+                "items": {},
+                "type": "array"
+              },
+              "p084": {
+                "items": {},
+                "type": "array"
+              },
+              "p085": {
+                "items": {},
+                "type": "array"
+              },
+              "p086": {
+                "items": {},
+                "type": "array"
+              },
+              "p087": {
+                "items": {},
+                "type": "array"
+              },
+              "p088": {
+                "items": {},
+                "type": "array"
+              },
+              "p089": {
+                "items": {},
+                "type": "array"
+              },
+              "p090": {
+                "items": {},
+                "type": "array"
+              },
+              "p091": {
+                "items": {},
+                "type": "array"
+              },
+              "p092": {
+                "items": {},
+                "type": "array"
+              },
+              "p093": {
+                "items": {},
+                "type": "array"
+              },
+              "p094": {
+                "items": {},
+                "type": "array"
+              },
+              "p095": {
+                "items": {},
+                "type": "array"
+              },
+              "p096": {
+                "items": {},
+                "type": "array"
+              },
+              "p097": {
+                "items": {},
+                "type": "array"
+              },
+              "p098": {
+                "items": {},
+                "type": "array"
+              },
+              "p099": {
+                "items": {},
+                "type": "array"
+              },
+              "p100": {
+                "items": {},
+                "type": "array"
+              },
+              "p101": {
+                "items": {},
+                "type": "array"
+              },
+              "p102": {
+                "items": {},
+                "type": "array"
+              },
+              "p103": {
+                "items": {},
+                "type": "array"
+              },
+              "p104": {
+                "items": {},
+                "type": "array"
+              },
+              "p105": {
+                "items": {},
+                "type": "array"
+              },
+              "p106": {
+                "items": {},
+                "type": "array"
+              },
+              "p107": {
+                "items": {},
+                "type": "array"
+              },
+              "p108": {
+                "items": {},
+                "type": "array"
+              },
+              "p109": {
+                "items": {},
+                "type": "array"
+              },
+              "p110": {
+                "items": {},
+                "type": "array"
+              },
+              "p111": {
+                "items": {},
+                "type": "array"
+              },
+              "p112": {
+                "items": {},
+                "type": "array"
+              },
+              "p113": {
+                "items": {},
+                "type": "array"
+              },
+              "p114": {
+                "items": {},
+                "type": "array"
+              },
+              "p115": {
+                "items": {},
+                "type": "array"
+              },
+              "p116": {
+                "items": {},
+                "type": "array"
+              },
+              "p117": {
+                "items": {},
+                "type": "array"
+              },
+              "p118": {
+                "items": {},
+                "type": "array"
+              },
+              "p119": {
+                "items": {},
+                "type": "array"
+              },
+              "p120": {
+                "items": {},
+                "type": "array"
+              },
+              "p121": {
+                "items": {},
+                "type": "array"
+              },
+              "p122": {
+                "items": {},
+                "type": "array"
+              },
+              "p123": {
+                "items": {},
+                "type": "array"
+              },
+              "p124": {
+                "items": {},
+                "type": "array"
+              },
+              "p125": {
+                "items": {},
+                "type": "array"
+              },
+              "p126": {
+                "items": {},
+                "type": "array"
+              },
+              "p127": {
+                "items": {},
+                "type": "array"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "bound": "properties",
+          "count": 128,
+          "expected": "accepted",
+          "id": "properties_128",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "p000": {},
+              "p001": {},
+              "p002": {},
+              "p003": {},
+              "p004": {},
+              "p005": {},
+              "p006": {},
+              "p007": {},
+              "p008": {},
+              "p009": {},
+              "p010": {},
+              "p011": {},
+              "p012": {},
+              "p013": {},
+              "p014": {},
+              "p015": {},
+              "p016": {},
+              "p017": {},
+              "p018": {},
+              "p019": {},
+              "p020": {},
+              "p021": {},
+              "p022": {},
+              "p023": {},
+              "p024": {},
+              "p025": {},
+              "p026": {},
+              "p027": {},
+              "p028": {},
+              "p029": {},
+              "p030": {},
+              "p031": {},
+              "p032": {},
+              "p033": {},
+              "p034": {},
+              "p035": {},
+              "p036": {},
+              "p037": {},
+              "p038": {},
+              "p039": {},
+              "p040": {},
+              "p041": {},
+              "p042": {},
+              "p043": {},
+              "p044": {},
+              "p045": {},
+              "p046": {},
+              "p047": {},
+              "p048": {},
+              "p049": {},
+              "p050": {},
+              "p051": {},
+              "p052": {},
+              "p053": {},
+              "p054": {},
+              "p055": {},
+              "p056": {},
+              "p057": {},
+              "p058": {},
+              "p059": {},
+              "p060": {},
+              "p061": {},
+              "p062": {},
+              "p063": {},
+              "p064": {},
+              "p065": {},
+              "p066": {},
+              "p067": {},
+              "p068": {},
+              "p069": {},
+              "p070": {},
+              "p071": {},
+              "p072": {},
+              "p073": {},
+              "p074": {},
+              "p075": {},
+              "p076": {},
+              "p077": {},
+              "p078": {},
+              "p079": {},
+              "p080": {},
+              "p081": {},
+              "p082": {},
+              "p083": {},
+              "p084": {},
+              "p085": {},
+              "p086": {},
+              "p087": {},
+              "p088": {},
+              "p089": {},
+              "p090": {},
+              "p091": {},
+              "p092": {},
+              "p093": {},
+              "p094": {},
+              "p095": {},
+              "p096": {},
+              "p097": {},
+              "p098": {},
+              "p099": {},
+              "p100": {},
+              "p101": {},
+              "p102": {},
+              "p103": {},
+              "p104": {},
+              "p105": {},
+              "p106": {},
+              "p107": {},
+              "p108": {},
+              "p109": {},
+              "p110": {},
+              "p111": {},
+              "p112": {},
+              "p113": {},
+              "p114": {},
+              "p115": {},
+              "p116": {},
+              "p117": {},
+              "p118": {},
+              "p119": {},
+              "p120": {},
+              "p121": {},
+              "p122": {},
+              "p123": {},
+              "p124": {},
+              "p125": {},
+              "p126": {},
+              "p127": {}
+            },
+            "type": "object"
+          }
+        },
+        {
+          "bound": "properties",
+          "count": 129,
+          "expected": "unsupported_schema",
+          "id": "properties_129",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "p000": {},
+              "p001": {},
+              "p002": {},
+              "p003": {},
+              "p004": {},
+              "p005": {},
+              "p006": {},
+              "p007": {},
+              "p008": {},
+              "p009": {},
+              "p010": {},
+              "p011": {},
+              "p012": {},
+              "p013": {},
+              "p014": {},
+              "p015": {},
+              "p016": {},
+              "p017": {},
+              "p018": {},
+              "p019": {},
+              "p020": {},
+              "p021": {},
+              "p022": {},
+              "p023": {},
+              "p024": {},
+              "p025": {},
+              "p026": {},
+              "p027": {},
+              "p028": {},
+              "p029": {},
+              "p030": {},
+              "p031": {},
+              "p032": {},
+              "p033": {},
+              "p034": {},
+              "p035": {},
+              "p036": {},
+              "p037": {},
+              "p038": {},
+              "p039": {},
+              "p040": {},
+              "p041": {},
+              "p042": {},
+              "p043": {},
+              "p044": {},
+              "p045": {},
+              "p046": {},
+              "p047": {},
+              "p048": {},
+              "p049": {},
+              "p050": {},
+              "p051": {},
+              "p052": {},
+              "p053": {},
+              "p054": {},
+              "p055": {},
+              "p056": {},
+              "p057": {},
+              "p058": {},
+              "p059": {},
+              "p060": {},
+              "p061": {},
+              "p062": {},
+              "p063": {},
+              "p064": {},
+              "p065": {},
+              "p066": {},
+              "p067": {},
+              "p068": {},
+              "p069": {},
+              "p070": {},
+              "p071": {},
+              "p072": {},
+              "p073": {},
+              "p074": {},
+              "p075": {},
+              "p076": {},
+              "p077": {},
+              "p078": {},
+              "p079": {},
+              "p080": {},
+              "p081": {},
+              "p082": {},
+              "p083": {},
+              "p084": {},
+              "p085": {},
+              "p086": {},
+              "p087": {},
+              "p088": {},
+              "p089": {},
+              "p090": {},
+              "p091": {},
+              "p092": {},
+              "p093": {},
+              "p094": {},
+              "p095": {},
+              "p096": {},
+              "p097": {},
+              "p098": {},
+              "p099": {},
+              "p100": {},
+              "p101": {},
+              "p102": {},
+              "p103": {},
+              "p104": {},
+              "p105": {},
+              "p106": {},
+              "p107": {},
+              "p108": {},
+              "p109": {},
+              "p110": {},
+              "p111": {},
+              "p112": {},
+              "p113": {},
+              "p114": {},
+              "p115": {},
+              "p116": {},
+              "p117": {},
+              "p118": {},
+              "p119": {},
+              "p120": {},
+              "p121": {},
+              "p122": {},
+              "p123": {},
+              "p124": {},
+              "p125": {},
+              "p126": {},
+              "p127": {},
+              "p128": {}
+            },
+            "type": "object"
+          }
+        },
+        {
+          "bound": "enum",
+          "count": 64,
+          "expected": "accepted",
+          "id": "enum_64",
+          "schema": {
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63
+            ]
+          }
+        },
+        {
+          "bound": "enum",
+          "count": 65,
+          "expected": "unsupported_schema",
+          "id": "enum_65",
+          "schema": {
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63,
+              64
+            ]
+          }
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.5"
+      ],
+      "expected": {
+        "first_error_only": true,
+        "string_count": "Unicode scalar"
+      },
+      "first_production_stage": "M2",
+      "id": "schema.instance_bounds",
+      "input": [
+        {
+          "expected": "accepted",
+          "instance": "😀a",
+          "schema": {
+            "maxLength": 2,
+            "minLength": 2,
+            "type": "string"
+          }
+        },
+        {
+          "expected": "min_length",
+          "instance": "😀",
+          "schema": {
+            "maxLength": 2,
+            "minLength": 2,
+            "type": "string"
+          }
+        },
+        {
+          "expected": "max_length",
+          "instance": "😀ab",
+          "schema": {
+            "maxLength": 2,
+            "minLength": 2,
+            "type": "string"
+          }
+        },
+        {
+          "expected": "minimum",
+          "instance": -1,
+          "schema": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        {
+          "expected": "maximum",
+          "instance": 2,
+          "schema": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        {
+          "expected": "min_items",
+          "instance": [],
+          "schema": {
+            "items": {},
+            "maxItems": 2,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        {
+          "expected": "max_items",
+          "instance": [
+            1,
+            2,
+            3
+          ],
+          "schema": {
+            "items": {},
+            "maxItems": 2,
+            "minItems": 1,
+            "type": "array"
+          }
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.5"
+      ],
+      "expected": {
+        "defaults_injected": false
+      },
+      "first_production_stage": "M2",
+      "id": "schema.root_parameters",
+      "input": [
+        {
+          "expected": "accepted",
+          "kind": "parameters",
+          "schema": {
+            "additionalProperties": false,
+            "type": "object"
+          }
+        },
+        {
+          "expected": "unsupported_schema",
+          "kind": "parameters",
+          "schema": {}
+        },
+        {
+          "expected": "accepted",
+          "kind": "output_schema",
+          "schema": {}
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.5"
+      ],
+      "expected": {
+        "order": [
+          "required_schema_array",
+          "extra_utf8_bytes",
+          "properties_utf8_bytes",
+          "array_index"
+        ],
+        "rules": [
+          "type",
+          "required",
+          "additional",
+          "enum",
+          "min_length",
+          "max_length",
+          "minimum",
+          "maximum",
+          "min_items",
+          "max_items"
+        ]
+      },
+      "first_production_stage": "M2",
+      "id": "schema.error_path_order",
+      "input": [
+        {
+          "first": {
+            "path": "$.z",
+            "rule": "required"
+          },
+          "instance": {},
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "a": {},
+              "z": {}
+            },
+            "required": [
+              "z",
+              "a"
+            ],
+            "type": "object"
+          }
+        },
+        {
+          "first": {
+            "path": "$[\"\"]",
+            "rule": "additional"
+          },
+          "instance": {
+            "": 1,
+            "𐀀": 2
+          },
+          "schema": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          }
+        },
+        {
+          "first": {
+            "path": "$[\"a-b\"]",
+            "rule": "additional"
+          },
+          "instance": {
+            "a-b": 1
+          },
+          "schema": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          }
+        },
+        {
+          "first": {
+            "path": "$.items[0]",
+            "rule": "type"
+          },
+          "instance": {
+            "items": [
+              0
+            ]
+          },
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "items": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          }
+        },
+        {
+          "first": {
+            "path": "$[\"\"]",
+            "rule": "type"
+          },
+          "instance": {
+            "": 0,
+            "𐀀": 0
+          },
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "": {
+                "type": "string"
+              },
+              "𐀀": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.5"
+      ],
+      "expected": {
+        "args_after_host_validation": {},
+        "default_keyword": "forbidden"
+      },
+      "first_production_stage": "M2",
+      "id": "schema.no_default_injection",
+      "input": {
+        "args": {},
+        "schema": {
+          "additionalProperties": false,
+          "properties": {
+            "limit": {
+              "description": "default 10",
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    }
+  ],
+  "domain_file": "schema_v2.json",
+  "format": "v24-tool-plugin-abi-w1-vectors-1"
+}

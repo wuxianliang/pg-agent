@@ -1,0 +1,623 @@
+{
+  "cases": [
+    {
+      "adapter_digest": "90c4dca5b11d830300e898129e2a6210cf694f5c1f31dd67985a444448a0f7cf",
+      "design_refs": [
+        "§2.4",
+        "§4.4"
+      ],
+      "domain": "adapter_declaration",
+      "expected_hex": "7b2261646170746572223a227632342e6c696e652d6a736f6e222c226c616e6775616765223a22707974686f6e222c2270726f746f636f6c223a227632342e6c696e652d6a736f6e2e7632222c2276657273696f6e223a327d",
+      "expected_length": 89,
+      "expected_sha256": "90c4dca5b11d830300e898129e2a6210cf694f5c1f31dd67985a444448a0f7cf",
+      "expected_text": "{\"adapter\":\"v24.line-json\",\"language\":\"python\",\"protocol\":\"v24.line-json.v2\",\"version\":2}",
+      "first_production_stage": "M2",
+      "id": "manifest.adapter.python_read",
+      "input": {
+        "adapter": "v24.line-json",
+        "language": "python",
+        "protocol": "v24.line-json.v2",
+        "version": 2
+      },
+      "input_id": "manifest.adapter.python_read",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "compact",
+      "status": "m2_pending"
+    },
+    {
+      "adapter_digest": "06451360abe502b96b23115973a5797af50954909a9555a8d4e0a0a9fd9a60ec",
+      "design_refs": [
+        "§2.4",
+        "§4.4"
+      ],
+      "domain": "adapter_declaration",
+      "expected_hex": "7b2261646170746572223a227632342e6c696e652d6a736f6e222c226c616e6775616765223a226e6f6465222c2270726f746f636f6c223a227632342e6c696e652d6a736f6e2e7632222c2276657273696f6e223a327d",
+      "expected_length": 87,
+      "expected_sha256": "06451360abe502b96b23115973a5797af50954909a9555a8d4e0a0a9fd9a60ec",
+      "expected_text": "{\"adapter\":\"v24.line-json\",\"language\":\"node\",\"protocol\":\"v24.line-json.v2\",\"version\":2}",
+      "first_production_stage": "M2",
+      "id": "manifest.adapter.node_list_search",
+      "input": {
+        "adapter": "v24.line-json",
+        "language": "node",
+        "protocol": "v24.line-json.v2",
+        "version": 2
+      },
+      "input_id": "manifest.adapter.node_list_search",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "compact",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§2.4",
+        "§4.4"
+      ],
+      "expected": {
+        "field_count": 5,
+        "fields": [
+          "identity",
+          "version",
+          "manifest_digest",
+          "artifact_digest",
+          "adapter_digest"
+        ]
+      },
+      "first_production_stage": "M3",
+      "id": "manifest.five_field_key",
+      "input": {
+        "adapter_digest": "90c4dca5b11d830300e898129e2a6210cf694f5c1f31dd67985a444448a0f7cf",
+        "artifact_digest": "M3-pending",
+        "identity": "v24.fs.python",
+        "manifest": {
+          "adapter_digest": "90c4dca5b11d830300e898129e2a6210cf694f5c1f31dd67985a444448a0f7cf",
+          "identity": "v24.fs.python",
+          "provides": [
+            {
+              "descriptor": {
+                "tool": {
+                  "annotations": {
+                    "destructive": false,
+                    "idempotent": true,
+                    "open_world": false,
+                    "read_only": true
+                  },
+                  "concurrency": "parallel",
+                  "description": "Read a UTF-8 text file inside the approved workspace. offset is the 1-indexed first line (default 1); limit is the maximum number of lines (default 2000, max 2000). If truncated, continue with next_offset.",
+                  "key": "read",
+                  "limits": {
+                    "max_args_bytes": 16384,
+                    "max_content_bytes": 41984,
+                    "max_meta_bytes": 4096,
+                    "max_value_bytes": 40960,
+                    "timeout_ms": 5000
+                  },
+                  "output_schema": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "end_line": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "final_newline": {
+                        "type": "boolean"
+                      },
+                      "next_offset": {
+                        "minimum": 1,
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "start_line": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "total_lines": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      },
+                      "truncated_by": {
+                        "enum": [
+                          "lines",
+                          "bytes",
+                          null
+                        ],
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "text",
+                      "start_line",
+                      "end_line",
+                      "total_lines",
+                      "final_newline",
+                      "truncated",
+                      "truncated_by",
+                      "next_offset"
+                    ],
+                    "type": "object"
+                  },
+                  "parameters": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "limit": {
+                        "maximum": 2000,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "offset": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "path": {
+                        "maxLength": 1024,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "type": "object"
+                  },
+                  "render": {
+                    "digest": "ca52198cf6c2edae798f2340ba4f370f658d422fa05f5d529c28510dea0a680c",
+                    "id": "v24.fs.read.text",
+                    "version": 1
+                  },
+                  "replay_class": "read_only"
+                },
+                "v": 2
+              },
+              "key": "read",
+              "realm": "w1-fixture"
+            }
+          ],
+          "requires": [],
+          "version": "1"
+        },
+        "manifest_digest": "9b6e43b4066227b9fa380f324f2457b93e1c9558cc436b55b752042a8726d3b3",
+        "manifest_expected_hex": "7b22616461707465725f646967657374223a2239306334646361356231316438333033303065383938313239653261363231306366363934663563316633316464363739383561343434343438613066376366222c226964656e74697479223a227632342e66732e707974686f6e222c2270726f7669646573223a5b7b2264657363726970746f72223a7b22746f6f6c223a7b22616e6e6f746174696f6e73223a7b226465737472756374697665223a66616c73652c226964656d706f74656e74223a747275652c226f70656e5f776f726c64223a66616c73652c22726561645f6f6e6c79223a747275657d2c22636f6e63757272656e6379223a22706172616c6c656c222c226465736372697074696f6e223a22526561642061205554462d3820746578742066696c6520696e736964652074686520617070726f76656420776f726b73706163652e206f66667365742069732074686520312d696e6465786564206669727374206c696e65202864656661756c742031293b206c696d697420697320746865206d6178696d756d206e756d626572206f66206c696e6573202864656661756c7420323030302c206d61782032303030292e204966207472756e63617465642c20636f6e74696e75652077697468206e6578745f6f66667365742e222c226b6579223a2272656164222c226c696d697473223a7b226d61785f617267735f6279746573223a31363338342c226d61785f636f6e74656e745f6279746573223a34313938342c226d61785f6d6574615f6279746573223a343039362c226d61785f76616c75655f6279746573223a34303936302c2274696d656f75745f6d73223a353030307d2c226f75747075745f736368656d61223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b22656e645f6c696e65223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c2266696e616c5f6e65776c696e65223a7b2274797065223a22626f6f6c65616e227d2c226e6578745f6f6666736574223a7b226d696e696d756d223a312c2274797065223a5b22696e7465676572222c226e756c6c225d7d2c2270617468223a7b2274797065223a22737472696e67227d2c2273746172745f6c696e65223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c2274657874223a7b2274797065223a22737472696e67227d2c22746f74616c5f6c696e6573223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c227472756e6361746564223a7b2274797065223a22626f6f6c65616e227d2c227472756e63617465645f6279223a7b22656e756d223a5b226c696e6573222c226279746573222c6e756c6c5d2c2274797065223a5b22737472696e67222c226e756c6c225d7d7d2c227265717569726564223a5b2270617468222c2274657874222c2273746172745f6c696e65222c22656e645f6c696e65222c22746f74616c5f6c696e6573222c2266696e616c5f6e65776c696e65222c227472756e6361746564222c227472756e63617465645f6279222c226e6578745f6f6666736574225d2c2274797065223a226f626a656374227d2c22706172616d6574657273223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b226c696d6974223a7b226d6178696d756d223a323030302c226d696e696d756d223a312c2274797065223a22696e7465676572227d2c226f6666736574223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2270617468223a7b226d61784c656e677468223a313032342c226d696e4c656e677468223a312c2274797065223a22737472696e67227d7d2c227265717569726564223a5b2270617468225d2c2274797065223a226f626a656374227d2c2272656e646572223a7b22646967657374223a2263613532313938636636633265646165373938663233343062613466333730663635386434323266613035663564353239633238353130646561306136383063222c226964223a227632342e66732e726561642e74657874222c2276657273696f6e223a317d2c227265706c61795f636c617373223a22726561645f6f6e6c79227d2c2276223a327d2c226b6579223a2272656164222c227265616c6d223a2277312d66697874757265227d5d2c227265717569726573223a5b5d2c2276657273696f6e223a2231227d",
+        "manifest_expected_length": 1661,
+        "version": "1"
+      },
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m3_pending"
+    },
+    {
+      "design_refs": [
+        "§2.4",
+        "§4.4"
+      ],
+      "domain": "manifest_bytes",
+      "expected_hex": "7b22616461707465725f646967657374223a2230363435313336306162653530326239366232333131353937336135373937616635303935343930396139353535613864346530613061396664396136306563222c226964656e74697479223a227632342e66732e6e6f6465222c2270726f7669646573223a5b7b2264657363726970746f72223a7b22746f6f6c223a7b22616e6e6f746174696f6e73223a7b226465737472756374697665223a66616c73652c226964656d706f74656e74223a747275652c226f70656e5f776f726c64223a66616c73652c22726561645f6f6e6c79223a747275657d2c22636f6e63757272656e6379223a22706172616c6c656c222c226465736372697074696f6e223a224c69737420656e747269657320756e6465722061206469726563746f727920696e736964652074686520617070726f76656420776f726b73706163652e204e6f6e2d7265637572736976652062792064656661756c743b2073796d6c696e6b7320617265206c697374656420627574206e6576657220666f6c6c6f7765643b20656e74726965732061726520736f72746564206279205554462d3820706174682062797465732e206f666673657420697320312d6261736564202864656661756c742031293b206c696d6974206d6178203530302e222c226b6579223a226c697374222c226c696d697473223a7b226d61785f617267735f6279746573223a31363338342c226d61785f636f6e74656e745f6279746573223a34313938342c226d61785f6d6574615f6279746573223a343039362c226d61785f76616c75655f6279746573223a34303936302c2274696d656f75745f6d73223a353030307d2c226f75747075745f736368656d61223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b22656e7472696573223a7b226974656d73223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b226b696e64223a7b22656e756d223a5b2266696c65222c226469726563746f7279222c2273796d6c696e6b225d2c2274797065223a22737472696e67227d2c2270617468223a7b2274797065223a22737472696e67227d2c2273697a65223a7b226d696e696d756d223a302c2274797065223a5b22696e7465676572222c226e756c6c225d7d7d2c227265717569726564223a5b2270617468222c226b696e64222c2273697a65225d2c2274797065223a226f626a656374227d2c226d61784974656d73223a3530302c2274797065223a226172726179227d2c226e6578745f6f6666736574223a7b226d696e696d756d223a312c2274797065223a5b22696e7465676572222c226e756c6c225d7d2c226f6666736574223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2270617468223a7b2274797065223a22737472696e67227d2c22736b69707065645f6e6f6e5f75746638223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c22736b69707065645f7370656369616c223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c22746f74616c223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c227472756e6361746564223a7b2274797065223a22626f6f6c65616e227d7d2c227265717569726564223a5b2270617468222c226f6666736574222c22656e7472696573222c22746f74616c222c227472756e6361746564222c226e6578745f6f6666736574222c22736b69707065645f6e6f6e5f75746638222c22736b69707065645f7370656369616c225d2c2274797065223a226f626a656374227d2c22706172616d6574657273223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b22696e636c7564655f68696464656e223a7b2274797065223a22626f6f6c65616e227d2c226c696d6974223a7b226d6178696d756d223a3530302c226d696e696d756d223a312c2274797065223a22696e7465676572227d2c226f6666736574223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2270617468223a7b226d61784c656e677468223a313032342c226d696e4c656e677468223a312c2274797065223a22737472696e67227d2c22726563757273697665223a7b2274797065223a22626f6f6c65616e227d7d2c227265717569726564223a5b5d2c2274797065223a226f626a656374227d2c2272656e646572223a7b22646967657374223a2235623062626538643066633730656136386337336261656230316234646631643662653161346533316533303364633232653330373936303533373666396337222c226964223a227632342e66732e6c6973742e74657874222c2276657273696f6e223a317d2c227265706c61795f636c617373223a22726561645f6f6e6c79227d2c2276223a327d2c226b6579223a226c697374222c227265616c6d223a2277312d66697874757265227d2c7b2264657363726970746f72223a7b22746f6f6c223a7b22616e6e6f746174696f6e73223a7b226465737472756374697665223a66616c73652c226964656d706f74656e74223a747275652c226f70656e5f776f726c64223a66616c73652c22726561645f6f6e6c79223a747275657d2c22636f6e63757272656e6379223a22706172616c6c656c222c226465736372697074696f6e223a22536561726368205554462d3820746578742066696c657320756e6465722061206469726563746f727920696e736964652074686520617070726f76656420776f726b7370616365207573696e67206c69746572616c20737562737472696e67206d61746368696e672e204869747320666f6c6c6f7720444653207072652d6f726465722077697468207369626c696e677320736f72746564206279205554462d38206e616d652062797465732c207468656e206c696e652c207468656e20636f6c756d6e2e206f666673657420697320312d6261736564202864656661756c742031293b206c696d6974206d6178203230302e204966207472756e63617465642c20636f6e74696e75652077697468206e6578745f6f66667365742e222c226b6579223a22736561726368222c226c696d697473223a7b226d61785f617267735f6279746573223a31363338342c226d61785f636f6e74656e745f6279746573223a34313938342c226d61785f6d6574615f6279746573223a343039362c226d61785f76616c75655f6279746573223a34303936302c2274696d656f75745f6d73223a31353030307d2c226f75747075745f736368656d61223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b22636f6d706c657465223a7b2274797065223a22626f6f6c65616e227d2c2268697473223a7b226974656d73223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b226166746572223a7b226974656d73223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b226c696e65223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2274657874223a7b2274797065223a22737472696e67227d7d2c227265717569726564223a5b226c696e65222c2274657874225d2c2274797065223a226f626a656374227d2c226d61784974656d73223a322c2274797065223a226172726179227d2c226265666f7265223a7b226974656d73223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b226c696e65223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2274657874223a7b2274797065223a22737472696e67227d7d2c227265717569726564223a5b226c696e65222c2274657874225d2c2274797065223a226f626a656374227d2c226d61784974656d73223a322c2274797065223a226172726179227d2c22636f6c756d6e223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c226c696e65223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2270617468223a7b2274797065223a22737472696e67227d2c2274657874223a7b2274797065223a22737472696e67227d2c22746578745f7472756e6361746564223a7b2274797065223a22626f6f6c65616e227d7d2c227265717569726564223a5b2270617468222c226c696e65222c22636f6c756d6e222c2274657874222c22746578745f7472756e6361746564225d2c2274797065223a226f626a656374227d2c226d61784974656d73223a3230302c2274797065223a226172726179227d2c226e6578745f6f6666736574223a7b226d696e696d756d223a312c2274797065223a5b22696e7465676572222c226e756c6c225d7d2c226f6666736574223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2270617468223a7b2274797065223a22737472696e67227d2c227363616e6e65645f66696c6573223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c22736b6970706564223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b2262696e617279223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c2268696464656e223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c226c6f6e675f6c696e6573223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c226e6f6e5f75746638223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c2273796d6c696e6b223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c22746f6f5f6c61726765223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d7d2c227265717569726564223a5b2268696464656e222c2273796d6c696e6b222c2262696e617279222c22746f6f5f6c61726765222c226e6f6e5f75746638222c226c6f6e675f6c696e6573225d2c2274797065223a226f626a656374227d2c22746f74616c223a7b226d696e696d756d223a302c2274797065223a22696e7465676572227d2c227472756e6361746564223a7b2274797065223a22626f6f6c65616e227d7d2c227265717569726564223a5b2270617468222c226f6666736574222c2268697473222c22746f74616c222c22636f6d706c657465222c227363616e6e65645f66696c6573222c22736b6970706564222c227472756e6361746564222c226e6578745f6f6666736574225d2c2274797065223a226f626a656374227d2c22706172616d6574657273223a7b226164646974696f6e616c50726f70657274696573223a66616c73652c2270726f70657274696573223a7b22636f6e74657874223a7b226d6178696d756d223a322c226d696e696d756d223a302c2274797065223a22696e7465676572227d2c22676c6f62223a7b226d61784c656e677468223a3235362c226d696e4c656e677468223a312c2274797065223a22737472696e67227d2c2269676e6f72655f63617365223a7b2274797065223a22626f6f6c65616e227d2c22696e636c7564655f68696464656e223a7b2274797065223a22626f6f6c65616e227d2c226c696d6974223a7b226d6178696d756d223a3230302c226d696e696d756d223a312c2274797065223a22696e7465676572227d2c226f6666736574223a7b226d696e696d756d223a312c2274797065223a22696e7465676572227d2c2270617468223a7b226d61784c656e677468223a313032342c226d696e4c656e677468223a312c2274797065223a22737472696e67227d2c227175657279223a7b226d61784c656e677468223a3531322c226d696e4c656e677468223a312c2274797065223a22737472696e67227d7d2c227265717569726564223a5b227175657279225d2c2274797065223a226f626a656374227d2c2272656e646572223a7b22646967657374223a2266643266353165386333643733323862306166376365616663626566633231343138663739393932316539653437306631326233663762316236333434303131222c226964223a227632342e66732e7365617263682e74657874222c2276657273696f6e223a317d2c227265706c61795f636c617373223a22726561645f6f6e6c79227d2c2276223a327d2c226b6579223a22736561726368222c227265616c6d223a2277312d66697874757265227d5d2c227265717569726573223a5b5d2c2276657273696f6e223a2231227d",
+      "expected_length": 4745,
+      "expected_sha256": "0ad584415af8743045dd12275a54fa2f43a65395fc8669753416688c9c3e3db5",
+      "expected_text": "{\"adapter_digest\":\"06451360abe502b96b23115973a5797af50954909a9555a8d4e0a0a9fd9a60ec\",\"identity\":\"v24.fs.node\",\"provides\":[{\"descriptor\":{\"tool\":{\"annotations\":{\"destructive\":false,\"idempotent\":true,\"open_world\":false,\"read_only\":true},\"concurrency\":\"parallel\",\"description\":\"List entries under a directory inside the approved workspace. Non-recursive by default; symlinks are listed but never followed; entries are sorted by UTF-8 path bytes. offset is 1-based (default 1); limit max 500.\",\"key\":\"list\",\"limits\":{\"max_args_bytes\":16384,\"max_content_bytes\":41984,\"max_meta_bytes\":4096,\"max_value_bytes\":40960,\"timeout_ms\":5000},\"output_schema\":{\"additionalProperties\":false,\"properties\":{\"entries\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"file\",\"directory\",\"symlink\"],\"type\":\"string\"},\"path\":{\"type\":\"string\"},\"size\":{\"minimum\":0,\"type\":[\"integer\",\"null\"]}},\"required\":[\"path\",\"kind\",\"size\"],\"type\":\"object\"},\"maxItems\":500,\"type\":\"array\"},\"next_offset\":{\"minimum\":1,\"type\":[\"integer\",\"null\"]},\"offset\":{\"minimum\":1,\"type\":\"integer\"},\"path\":{\"type\":\"string\"},\"skipped_non_utf8\":{\"minimum\":0,\"type\":\"integer\"},\"skipped_special\":{\"minimum\":0,\"type\":\"integer\"},\"total\":{\"minimum\":0,\"type\":\"integer\"},\"truncated\":{\"type\":\"boolean\"}},\"required\":[\"path\",\"offset\",\"entries\",\"total\",\"truncated\",\"next_offset\",\"skipped_non_utf8\",\"skipped_special\"],\"type\":\"object\"},\"parameters\":{\"additionalProperties\":false,\"properties\":{\"include_hidden\":{\"type\":\"boolean\"},\"limit\":{\"maximum\":500,\"minimum\":1,\"type\":\"integer\"},\"offset\":{\"minimum\":1,\"type\":\"integer\"},\"path\":{\"maxLength\":1024,\"minLength\":1,\"type\":\"string\"},\"recursive\":{\"type\":\"boolean\"}},\"required\":[],\"type\":\"object\"},\"render\":{\"digest\":\"5b0bbe8d0fc70ea68c73baeb01b4df1d6be1a4e31e303dc22e3079605376f9c7\",\"id\":\"v24.fs.list.text\",\"version\":1},\"replay_class\":\"read_only\"},\"v\":2},\"key\":\"list\",\"realm\":\"w1-fixture\"},{\"descriptor\":{\"tool\":{\"annotations\":{\"destructive\":false,\"idempotent\":true,\"open_world\":false,\"read_only\":true},\"concurrency\":\"parallel\",\"description\":\"Search UTF-8 text files under a directory inside the approved workspace using literal substring matching. Hits follow DFS pre-order with siblings sorted by UTF-8 name bytes, then line, then column. offset is 1-based (default 1); limit max 200. If truncated, continue with next_offset.\",\"key\":\"search\",\"limits\":{\"max_args_bytes\":16384,\"max_content_bytes\":41984,\"max_meta_bytes\":4096,\"max_value_bytes\":40960,\"timeout_ms\":15000},\"output_schema\":{\"additionalProperties\":false,\"properties\":{\"complete\":{\"type\":\"boolean\"},\"hits\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"after\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"line\":{\"minimum\":1,\"type\":\"integer\"},\"text\":{\"type\":\"string\"}},\"required\":[\"line\",\"text\"],\"type\":\"object\"},\"maxItems\":2,\"type\":\"array\"},\"before\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"line\":{\"minimum\":1,\"type\":\"integer\"},\"text\":{\"type\":\"string\"}},\"required\":[\"line\",\"text\"],\"type\":\"object\"},\"maxItems\":2,\"type\":\"array\"},\"column\":{\"minimum\":1,\"type\":\"integer\"},\"line\":{\"minimum\":1,\"type\":\"integer\"},\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"text_truncated\":{\"type\":\"boolean\"}},\"required\":[\"path\",\"line\",\"column\",\"text\",\"text_truncated\"],\"type\":\"object\"},\"maxItems\":200,\"type\":\"array\"},\"next_offset\":{\"minimum\":1,\"type\":[\"integer\",\"null\"]},\"offset\":{\"minimum\":1,\"type\":\"integer\"},\"path\":{\"type\":\"string\"},\"scanned_files\":{\"minimum\":0,\"type\":\"integer\"},\"skipped\":{\"additionalProperties\":false,\"properties\":{\"binary\":{\"minimum\":0,\"type\":\"integer\"},\"hidden\":{\"minimum\":0,\"type\":\"integer\"},\"long_lines\":{\"minimum\":0,\"type\":\"integer\"},\"non_utf8\":{\"minimum\":0,\"type\":\"integer\"},\"symlink\":{\"minimum\":0,\"type\":\"integer\"},\"too_large\":{\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"hidden\",\"symlink\",\"binary\",\"too_large\",\"non_utf8\",\"long_lines\"],\"type\":\"object\"},\"total\":{\"minimum\":0,\"type\":\"integer\"},\"truncated\":{\"type\":\"boolean\"}},\"required\":[\"path\",\"offset\",\"hits\",\"total\",\"complete\",\"scanned_files\",\"skipped\",\"truncated\",\"next_offset\"],\"type\":\"object\"},\"parameters\":{\"additionalProperties\":false,\"properties\":{\"context\":{\"maximum\":2,\"minimum\":0,\"type\":\"integer\"},\"glob\":{\"maxLength\":256,\"minLength\":1,\"type\":\"string\"},\"ignore_case\":{\"type\":\"boolean\"},\"include_hidden\":{\"type\":\"boolean\"},\"limit\":{\"maximum\":200,\"minimum\":1,\"type\":\"integer\"},\"offset\":{\"minimum\":1,\"type\":\"integer\"},\"path\":{\"maxLength\":1024,\"minLength\":1,\"type\":\"string\"},\"query\":{\"maxLength\":512,\"minLength\":1,\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"},\"render\":{\"digest\":\"fd2f51e8c3d7328b0af7ceafcbefc21418f799921e9e470f12b3f7b1b6344011\",\"id\":\"v24.fs.search.text\",\"version\":1},\"replay_class\":\"read_only\"},\"v\":2},\"key\":\"search\",\"realm\":\"w1-fixture\"}],\"requires\":[],\"version\":\"1\"}",
+      "first_production_stage": "M2",
+      "id": "manifest.one_install_two_provides",
+      "input": {
+        "adapter_digest": "06451360abe502b96b23115973a5797af50954909a9555a8d4e0a0a9fd9a60ec",
+        "identity": "v24.fs.node",
+        "provides": [
+          {
+            "descriptor": {
+              "tool": {
+                "annotations": {
+                  "destructive": false,
+                  "idempotent": true,
+                  "open_world": false,
+                  "read_only": true
+                },
+                "concurrency": "parallel",
+                "description": "List entries under a directory inside the approved workspace. Non-recursive by default; symlinks are listed but never followed; entries are sorted by UTF-8 path bytes. offset is 1-based (default 1); limit max 500.",
+                "key": "list",
+                "limits": {
+                  "max_args_bytes": 16384,
+                  "max_content_bytes": 41984,
+                  "max_meta_bytes": 4096,
+                  "max_value_bytes": 40960,
+                  "timeout_ms": 5000
+                },
+                "output_schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "entries": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "file",
+                              "directory",
+                              "symlink"
+                            ],
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "minimum": 0,
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "kind",
+                          "size"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 500,
+                      "type": "array"
+                    },
+                    "next_offset": {
+                      "minimum": 1,
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "offset": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "skipped_non_utf8": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "skipped_special": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "total": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "offset",
+                    "entries",
+                    "total",
+                    "truncated",
+                    "next_offset",
+                    "skipped_non_utf8",
+                    "skipped_special"
+                  ],
+                  "type": "object"
+                },
+                "parameters": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "include_hidden": {
+                      "type": "boolean"
+                    },
+                    "limit": {
+                      "maximum": 500,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "offset": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "path": {
+                      "maxLength": 1024,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "recursive": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [],
+                  "type": "object"
+                },
+                "render": {
+                  "digest": "5b0bbe8d0fc70ea68c73baeb01b4df1d6be1a4e31e303dc22e3079605376f9c7",
+                  "id": "v24.fs.list.text",
+                  "version": 1
+                },
+                "replay_class": "read_only"
+              },
+              "v": 2
+            },
+            "key": "list",
+            "realm": "w1-fixture"
+          },
+          {
+            "descriptor": {
+              "tool": {
+                "annotations": {
+                  "destructive": false,
+                  "idempotent": true,
+                  "open_world": false,
+                  "read_only": true
+                },
+                "concurrency": "parallel",
+                "description": "Search UTF-8 text files under a directory inside the approved workspace using literal substring matching. Hits follow DFS pre-order with siblings sorted by UTF-8 name bytes, then line, then column. offset is 1-based (default 1); limit max 200. If truncated, continue with next_offset.",
+                "key": "search",
+                "limits": {
+                  "max_args_bytes": 16384,
+                  "max_content_bytes": 41984,
+                  "max_meta_bytes": 4096,
+                  "max_value_bytes": 40960,
+                  "timeout_ms": 15000
+                },
+                "output_schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "complete": {
+                      "type": "boolean"
+                    },
+                    "hits": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "after": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "line": {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "text": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "line",
+                                "text"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 2,
+                            "type": "array"
+                          },
+                          "before": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "line": {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "text": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "line",
+                                "text"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 2,
+                            "type": "array"
+                          },
+                          "column": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "line": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "text_truncated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "line",
+                          "column",
+                          "text",
+                          "text_truncated"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 200,
+                      "type": "array"
+                    },
+                    "next_offset": {
+                      "minimum": 1,
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "offset": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "scanned_files": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "skipped": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "binary": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "hidden": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "long_lines": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "non_utf8": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "symlink": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "too_large": {
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "hidden",
+                        "symlink",
+                        "binary",
+                        "too_large",
+                        "non_utf8",
+                        "long_lines"
+                      ],
+                      "type": "object"
+                    },
+                    "total": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "offset",
+                    "hits",
+                    "total",
+                    "complete",
+                    "scanned_files",
+                    "skipped",
+                    "truncated",
+                    "next_offset"
+                  ],
+                  "type": "object"
+                },
+                "parameters": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "context": {
+                      "maximum": 2,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "glob": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "ignore_case": {
+                      "type": "boolean"
+                    },
+                    "include_hidden": {
+                      "type": "boolean"
+                    },
+                    "limit": {
+                      "maximum": 200,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "offset": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "path": {
+                      "maxLength": 1024,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "query": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ],
+                  "type": "object"
+                },
+                "render": {
+                  "digest": "fd2f51e8c3d7328b0af7ceafcbefc21418f799921e9e470f12b3f7b1b6344011",
+                  "id": "v24.fs.search.text",
+                  "version": 1
+                },
+                "replay_class": "read_only"
+              },
+              "v": 2
+            },
+            "key": "search",
+            "realm": "w1-fixture"
+          }
+        ],
+        "requires": [],
+        "version": "1"
+      },
+      "input_id": "manifest.one_install_two_provides",
+      "kind": "byte",
+      "manifest_digest": "0ad584415af8743045dd12275a54fa2f43a65395fc8669753416688c9c3e3db5",
+      "owner": "W1-VECTORS",
+      "producer": "compact",
+      "status": "provisional_w2_pending"
+    },
+    {
+      "design_refs": [
+        "§2.4",
+        "§4.4"
+      ],
+      "expected": {
+        "digest": "M3-pending",
+        "reason": "production plugin files do not exist in W1"
+      },
+      "first_production_stage": "M3",
+      "id": "manifest.artifact_digest_pending",
+      "input": {
+        "node_artifact": "v24/s13/plugins/fs_tools.js",
+        "python_artifact": "v24/s13/plugins/fs_read.py"
+      },
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m3_pending"
+    }
+  ],
+  "domain_file": "manifest_adapter_v2.json",
+  "format": "v24-tool-plugin-abi-w1-vectors-1"
+}

@@ -1,0 +1,1790 @@
+{
+  "cases": [
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "domain": "descriptor_pg_jsonb",
+      "expected_hex": "7b2276223a20322c2022746f6f6c223a207b2261223a20312c2022c3a9223a205b747275652c206e756c6c2c20225c22715c225c6e225d2c20226e616d65223a2022e8afbbe58f96227d7d",
+      "expected_length": 75,
+      "expected_sha256": "c1b10b0a8058cbccfc721f2418b4f5b022f87282e7ff91053265760dcf27039c",
+      "expected_text": "{\"v\": 2, \"tool\": {\"a\": 1, \"é\": [true, null, \"\\\"q\\\"\\n\"], \"name\": \"读取\"}}",
+      "first_production_stage": "M2",
+      "id": "canon.pg.v1",
+      "input": {
+        "tool": {
+          "a": 1,
+          "name": "读取",
+          "é": [
+            true,
+            null,
+            "\"q\"\n"
+          ]
+        },
+        "v": 2
+      },
+      "input_id": "canon.pg.v1",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "python_pg_reference",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "domain": "descriptor_pg_jsonb",
+      "expected_hex": "7b2262223a207b2279223a207b7d2c20227a223a205b5d7d2c20226b223a202d393030373139393235343734303939312c20226161223a20225c75303030317ff09f9880227d",
+      "expected_length": 70,
+      "expected_sha256": "0ff17e8cd7831181e61773ca0803b1168a9ac78a0692d07d5a4ccd26dc0dcbac",
+      "expected_text": "{\"b\": {\"y\": {}, \"z\": []}, \"k\": -9007199254740991, \"aa\": \"\\u0001😀\"}",
+      "first_production_stage": "M2",
+      "id": "canon.pg.v2",
+      "input": {
+        "aa": "\u0001😀",
+        "b": {
+          "y": {},
+          "z": []
+        },
+        "k": -9007199254740991
+      },
+      "input_id": "canon.pg.v2",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "python_pg_reference",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "domain": "descriptor_pg_jsonb",
+      "expected_hex": "7b7d",
+      "expected_length": 2,
+      "expected_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "expected_text": "{}",
+      "first_production_stage": "M2",
+      "id": "canon.pg.empty_object",
+      "input": {},
+      "input_id": "canon.pg.empty_object",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "python_pg_reference",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "domain": "descriptor_pg_jsonb",
+      "expected_hex": "7b227a223a20352c20226161223a20332c2022c3a9223a20342c2022ee8080223a20312c2022f0908080223a20327d",
+      "expected_length": 47,
+      "expected_sha256": "652e80f29d138763ec584cac70159f602aad789c2840ec831c4dcecb1a689de6",
+      "expected_text": "{\"z\": 5, \"aa\": 3, \"é\": 4, \"\": 1, \"𐀀\": 2}",
+      "first_production_stage": "M2",
+      "id": "canon.key_order_utf8",
+      "input": {
+        "aa": 3,
+        "z": 5,
+        "é": 4,
+        "": 1,
+        "𐀀": 2
+      },
+      "input_id": "canon.key_order_utf8",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "python_pg_reference",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "domain": "descriptor_pg_jsonb",
+      "expected_hex": "7b226b223a20225c625c665c6e5c725c745c75303030312f5c5c5c22e280a8e280a9e99baaf09f98807f227d",
+      "expected_length": 44,
+      "expected_sha256": "5658317db404b12a1864d2bf6987401d6940cf5391cd63e9dc0fa9dd2fcd695e",
+      "expected_text": "{\"k\": \"\\b\\f\\n\\r\\t\\u0001/\\\\\\\"  雪😀\"}",
+      "first_production_stage": "M2",
+      "id": "canon.escape_and_unicode",
+      "input": {
+        "k": "\b\f\n\r\t\u0001/\\\"  雪😀"
+      },
+      "input_id": "canon.escape_and_unicode",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "python_pg_reference",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "domain": "descriptor_pg_jsonb",
+      "expected_hex": "7b226d6178223a20393030373139393235343734303939312c20226d696e223a202d393030373139393235343734303939312c20227a65726f223a20307d",
+      "expected_length": 62,
+      "expected_sha256": "182837ac6dcc4957a69bc171a41afd1370cf96d50cb2506f749aa30c7ac6c227",
+      "expected_text": "{\"max\": 9007199254740991, \"min\": -9007199254740991, \"zero\": 0}",
+      "first_production_stage": "M2",
+      "id": "canon.safe_integer_edges",
+      "input": {
+        "max": 9007199254740991,
+        "min": -9007199254740991,
+        "zero": 0
+      },
+      "input_id": "canon.safe_integer_edges",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "python_pg_reference",
+      "status": "m2_pending"
+    },
+    {
+      "descriptor_digest": "34a873f99632443b0e518e5d59b0340ccf5a75260741f39a9a0471ba6629d776",
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "domain": "descriptor_pg_jsonb",
+      "expected_hex": "7b2276223a20322c2022746f6f6c223a207b226b6579223a202272656164222c20226c696d697473223a207b2274696d656f75745f6d73223a20353030302c20226d61785f617267735f6279746573223a2031363338342c20226d61785f6d6574615f6279746573223a20343039362c20226d61785f76616c75655f6279746573223a2034303936302c20226d61785f636f6e74656e745f6279746573223a2034313938347d2c202272656e646572223a207b226964223a20227632342e66732e726561642e74657874222c2022646967657374223a202263613532313938636636633265646165373938663233343062613466333730663635386434323266613035663564353239633238353130646561306136383063222c202276657273696f6e223a20317d2c2022706172616d6574657273223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b2270617468225d2c202270726f70657274696573223a207b2270617468223a207b2274797065223a2022737472696e67222c20226d61784c656e677468223a20313032342c20226d696e4c656e677468223a20317d2c20226c696d6974223a207b2274797065223a2022696e7465676572222c20226d6178696d756d223a20323030302c20226d696e696d756d223a20317d2c20226f6666736574223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20317d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d2c2022616e6e6f746174696f6e73223a207b22726561645f6f6e6c79223a20747275652c20226964656d706f74656e74223a20747275652c20226f70656e5f776f726c64223a2066616c73652c20226465737472756374697665223a2066616c73657d2c2022636f6e63757272656e6379223a2022706172616c6c656c222c20226465736372697074696f6e223a2022526561642061205554462d3820746578742066696c6520696e736964652074686520617070726f76656420776f726b73706163652e206f66667365742069732074686520312d696e6465786564206669727374206c696e65202864656661756c742031293b206c696d697420697320746865206d6178696d756d206e756d626572206f66206c696e6573202864656661756c7420323030302c206d61782032303030292e204966207472756e63617465642c20636f6e74696e75652077697468206e6578745f6f66667365742e222c20227265706c61795f636c617373223a2022726561645f6f6e6c79222c20226f75747075745f736368656d61223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b2270617468222c202274657874222c202273746172745f6c696e65222c2022656e645f6c696e65222c2022746f74616c5f6c696e6573222c202266696e616c5f6e65776c696e65222c20227472756e6361746564222c20227472756e63617465645f6279222c20226e6578745f6f6666736574225d2c202270726f70657274696573223a207b2270617468223a207b2274797065223a2022737472696e67227d2c202274657874223a207b2274797065223a2022737472696e67227d2c2022656e645f6c696e65223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c20227472756e6361746564223a207b2274797065223a2022626f6f6c65616e227d2c202273746172745f6c696e65223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c20226e6578745f6f6666736574223a207b2274797065223a205b22696e7465676572222c20226e756c6c225d2c20226d696e696d756d223a20317d2c2022746f74616c5f6c696e6573223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c20227472756e63617465645f6279223a207b22656e756d223a205b226c696e6573222c20226279746573222c206e756c6c5d2c202274797065223a205b22737472696e67222c20226e756c6c225d7d2c202266696e616c5f6e65776c696e65223a207b2274797065223a2022626f6f6c65616e227d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d7d7d",
+      "expected_length": 1579,
+      "expected_sha256": "34a873f99632443b0e518e5d59b0340ccf5a75260741f39a9a0471ba6629d776",
+      "expected_text": "{\"v\": 2, \"tool\": {\"key\": \"read\", \"limits\": {\"timeout_ms\": 5000, \"max_args_bytes\": 16384, \"max_meta_bytes\": 4096, \"max_value_bytes\": 40960, \"max_content_bytes\": 41984}, \"render\": {\"id\": \"v24.fs.read.text\", \"digest\": \"ca52198cf6c2edae798f2340ba4f370f658d422fa05f5d529c28510dea0a680c\", \"version\": 1}, \"parameters\": {\"type\": \"object\", \"required\": [\"path\"], \"properties\": {\"path\": {\"type\": \"string\", \"maxLength\": 1024, \"minLength\": 1}, \"limit\": {\"type\": \"integer\", \"maximum\": 2000, \"minimum\": 1}, \"offset\": {\"type\": \"integer\", \"minimum\": 1}}, \"additionalProperties\": false}, \"annotations\": {\"read_only\": true, \"idempotent\": true, \"open_world\": false, \"destructive\": false}, \"concurrency\": \"parallel\", \"description\": \"Read a UTF-8 text file inside the approved workspace. offset is the 1-indexed first line (default 1); limit is the maximum number of lines (default 2000, max 2000). If truncated, continue with next_offset.\", \"replay_class\": \"read_only\", \"output_schema\": {\"type\": \"object\", \"required\": [\"path\", \"text\", \"start_line\", \"end_line\", \"total_lines\", \"final_newline\", \"truncated\", \"truncated_by\", \"next_offset\"], \"properties\": {\"path\": {\"type\": \"string\"}, \"text\": {\"type\": \"string\"}, \"end_line\": {\"type\": \"integer\", \"minimum\": 0}, \"truncated\": {\"type\": \"boolean\"}, \"start_line\": {\"type\": \"integer\", \"minimum\": 0}, \"next_offset\": {\"type\": [\"integer\", \"null\"], \"minimum\": 1}, \"total_lines\": {\"type\": \"integer\", \"minimum\": 0}, \"truncated_by\": {\"enum\": [\"lines\", \"bytes\", null], \"type\": [\"string\", \"null\"]}, \"final_newline\": {\"type\": \"boolean\"}}, \"additionalProperties\": false}}}",
+      "first_production_stage": "M2",
+      "id": "descriptor.v2.read",
+      "input": {
+        "tool": {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "open_world": false,
+            "read_only": true
+          },
+          "concurrency": "parallel",
+          "description": "Read a UTF-8 text file inside the approved workspace. offset is the 1-indexed first line (default 1); limit is the maximum number of lines (default 2000, max 2000). If truncated, continue with next_offset.",
+          "key": "read",
+          "limits": {
+            "max_args_bytes": 16384,
+            "max_content_bytes": 41984,
+            "max_meta_bytes": 4096,
+            "max_value_bytes": 40960,
+            "timeout_ms": 5000
+          },
+          "output_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "end_line": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "final_newline": {
+                "type": "boolean"
+              },
+              "next_offset": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "start_line": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "text": {
+                "type": "string"
+              },
+              "total_lines": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "truncated_by": {
+                "enum": [
+                  "lines",
+                  "bytes",
+                  null
+                ],
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "text",
+              "start_line",
+              "end_line",
+              "total_lines",
+              "final_newline",
+              "truncated",
+              "truncated_by",
+              "next_offset"
+            ],
+            "type": "object"
+          },
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "limit": {
+                "maximum": 2000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "offset": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "path": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "type": "object"
+          },
+          "render": {
+            "digest": "ca52198cf6c2edae798f2340ba4f370f658d422fa05f5d529c28510dea0a680c",
+            "id": "v24.fs.read.text",
+            "version": 1
+          },
+          "replay_class": "read_only"
+        },
+        "v": 2
+      },
+      "input_id": "descriptor.v2.read",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "python_pg_reference",
+      "render_case_ref": "render.manifest.read",
+      "status": "provisional_w2_pending"
+    },
+    {
+      "descriptor_digest": "5e943996fc07ea5a1d4df0d62d66842144656cba2210ccdd577f425352717151",
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "domain": "descriptor_pg_jsonb",
+      "expected_hex": "7b2276223a20322c2022746f6f6c223a207b226b6579223a20226c697374222c20226c696d697473223a207b2274696d656f75745f6d73223a20353030302c20226d61785f617267735f6279746573223a2031363338342c20226d61785f6d6574615f6279746573223a20343039362c20226d61785f76616c75655f6279746573223a2034303936302c20226d61785f636f6e74656e745f6279746573223a2034313938347d2c202272656e646572223a207b226964223a20227632342e66732e6c6973742e74657874222c2022646967657374223a202235623062626538643066633730656136386337336261656230316234646631643662653161346533316533303364633232653330373936303533373666396337222c202276657273696f6e223a20317d2c2022706172616d6574657273223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b5d2c202270726f70657274696573223a207b2270617468223a207b2274797065223a2022737472696e67222c20226d61784c656e677468223a20313032342c20226d696e4c656e677468223a20317d2c20226c696d6974223a207b2274797065223a2022696e7465676572222c20226d6178696d756d223a203530302c20226d696e696d756d223a20317d2c20226f6666736574223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20317d2c2022726563757273697665223a207b2274797065223a2022626f6f6c65616e227d2c2022696e636c7564655f68696464656e223a207b2274797065223a2022626f6f6c65616e227d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d2c2022616e6e6f746174696f6e73223a207b22726561645f6f6e6c79223a20747275652c20226964656d706f74656e74223a20747275652c20226f70656e5f776f726c64223a2066616c73652c20226465737472756374697665223a2066616c73657d2c2022636f6e63757272656e6379223a2022706172616c6c656c222c20226465736372697074696f6e223a20224c69737420656e747269657320756e6465722061206469726563746f727920696e736964652074686520617070726f76656420776f726b73706163652e204e6f6e2d7265637572736976652062792064656661756c743b2073796d6c696e6b7320617265206c697374656420627574206e6576657220666f6c6c6f7765643b20656e74726965732061726520736f72746564206279205554462d3820706174682062797465732e206f666673657420697320312d6261736564202864656661756c742031293b206c696d6974206d6178203530302e222c20227265706c61795f636c617373223a2022726561645f6f6e6c79222c20226f75747075745f736368656d61223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b2270617468222c20226f6666736574222c2022656e7472696573222c2022746f74616c222c20227472756e6361746564222c20226e6578745f6f6666736574222c2022736b69707065645f6e6f6e5f75746638222c2022736b69707065645f7370656369616c225d2c202270726f70657274696573223a207b2270617468223a207b2274797065223a2022737472696e67227d2c2022746f74616c223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c20226f6666736574223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20317d2c2022656e7472696573223a207b2274797065223a20226172726179222c20226974656d73223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b2270617468222c20226b696e64222c202273697a65225d2c202270726f70657274696573223a207b226b696e64223a207b22656e756d223a205b2266696c65222c20226469726563746f7279222c202273796d6c696e6b225d2c202274797065223a2022737472696e67227d2c202270617468223a207b2274797065223a2022737472696e67227d2c202273697a65223a207b2274797065223a205b22696e7465676572222c20226e756c6c225d2c20226d696e696d756d223a20307d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d2c20226d61784974656d73223a203530307d2c20227472756e6361746564223a207b2274797065223a2022626f6f6c65616e227d2c20226e6578745f6f6666736574223a207b2274797065223a205b22696e7465676572222c20226e756c6c225d2c20226d696e696d756d223a20317d2c2022736b69707065645f7370656369616c223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c2022736b69707065645f6e6f6e5f75746638223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d7d7d",
+      "expected_length": 1858,
+      "expected_sha256": "5e943996fc07ea5a1d4df0d62d66842144656cba2210ccdd577f425352717151",
+      "expected_text": "{\"v\": 2, \"tool\": {\"key\": \"list\", \"limits\": {\"timeout_ms\": 5000, \"max_args_bytes\": 16384, \"max_meta_bytes\": 4096, \"max_value_bytes\": 40960, \"max_content_bytes\": 41984}, \"render\": {\"id\": \"v24.fs.list.text\", \"digest\": \"5b0bbe8d0fc70ea68c73baeb01b4df1d6be1a4e31e303dc22e3079605376f9c7\", \"version\": 1}, \"parameters\": {\"type\": \"object\", \"required\": [], \"properties\": {\"path\": {\"type\": \"string\", \"maxLength\": 1024, \"minLength\": 1}, \"limit\": {\"type\": \"integer\", \"maximum\": 500, \"minimum\": 1}, \"offset\": {\"type\": \"integer\", \"minimum\": 1}, \"recursive\": {\"type\": \"boolean\"}, \"include_hidden\": {\"type\": \"boolean\"}}, \"additionalProperties\": false}, \"annotations\": {\"read_only\": true, \"idempotent\": true, \"open_world\": false, \"destructive\": false}, \"concurrency\": \"parallel\", \"description\": \"List entries under a directory inside the approved workspace. Non-recursive by default; symlinks are listed but never followed; entries are sorted by UTF-8 path bytes. offset is 1-based (default 1); limit max 500.\", \"replay_class\": \"read_only\", \"output_schema\": {\"type\": \"object\", \"required\": [\"path\", \"offset\", \"entries\", \"total\", \"truncated\", \"next_offset\", \"skipped_non_utf8\", \"skipped_special\"], \"properties\": {\"path\": {\"type\": \"string\"}, \"total\": {\"type\": \"integer\", \"minimum\": 0}, \"offset\": {\"type\": \"integer\", \"minimum\": 1}, \"entries\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"path\", \"kind\", \"size\"], \"properties\": {\"kind\": {\"enum\": [\"file\", \"directory\", \"symlink\"], \"type\": \"string\"}, \"path\": {\"type\": \"string\"}, \"size\": {\"type\": [\"integer\", \"null\"], \"minimum\": 0}}, \"additionalProperties\": false}, \"maxItems\": 500}, \"truncated\": {\"type\": \"boolean\"}, \"next_offset\": {\"type\": [\"integer\", \"null\"], \"minimum\": 1}, \"skipped_special\": {\"type\": \"integer\", \"minimum\": 0}, \"skipped_non_utf8\": {\"type\": \"integer\", \"minimum\": 0}}, \"additionalProperties\": false}}}",
+      "first_production_stage": "M2",
+      "id": "descriptor.v2.list",
+      "input": {
+        "tool": {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "open_world": false,
+            "read_only": true
+          },
+          "concurrency": "parallel",
+          "description": "List entries under a directory inside the approved workspace. Non-recursive by default; symlinks are listed but never followed; entries are sorted by UTF-8 path bytes. offset is 1-based (default 1); limit max 500.",
+          "key": "list",
+          "limits": {
+            "max_args_bytes": 16384,
+            "max_content_bytes": 41984,
+            "max_meta_bytes": 4096,
+            "max_value_bytes": 40960,
+            "timeout_ms": 5000
+          },
+          "output_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "entries": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "file",
+                        "directory",
+                        "symlink"
+                      ],
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "minimum": 0,
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "kind",
+                    "size"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 500,
+                "type": "array"
+              },
+              "next_offset": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "offset": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              },
+              "skipped_non_utf8": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "skipped_special": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "path",
+              "offset",
+              "entries",
+              "total",
+              "truncated",
+              "next_offset",
+              "skipped_non_utf8",
+              "skipped_special"
+            ],
+            "type": "object"
+          },
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "include_hidden": {
+                "type": "boolean"
+              },
+              "limit": {
+                "maximum": 500,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "offset": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "path": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              "recursive": {
+                "type": "boolean"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "render": {
+            "digest": "5b0bbe8d0fc70ea68c73baeb01b4df1d6be1a4e31e303dc22e3079605376f9c7",
+            "id": "v24.fs.list.text",
+            "version": 1
+          },
+          "replay_class": "read_only"
+        },
+        "v": 2
+      },
+      "input_id": "descriptor.v2.list",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "python_pg_reference",
+      "render_case_ref": "render.manifest.list",
+      "status": "provisional_w2_pending"
+    },
+    {
+      "descriptor_digest": "84f25827c947e3db7562c845a99e2eefa724376e6352e7ee84e1bb0a8a356b70",
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "domain": "descriptor_pg_jsonb",
+      "expected_hex": "7b2276223a20322c2022746f6f6c223a207b226b6579223a2022736561726368222c20226c696d697473223a207b2274696d656f75745f6d73223a2031353030302c20226d61785f617267735f6279746573223a2031363338342c20226d61785f6d6574615f6279746573223a20343039362c20226d61785f76616c75655f6279746573223a2034303936302c20226d61785f636f6e74656e745f6279746573223a2034313938347d2c202272656e646572223a207b226964223a20227632342e66732e7365617263682e74657874222c2022646967657374223a202266643266353165386333643733323862306166376365616663626566633231343138663739393932316539653437306631326233663762316236333434303131222c202276657273696f6e223a20317d2c2022706172616d6574657273223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b227175657279225d2c202270726f70657274696573223a207b22676c6f62223a207b2274797065223a2022737472696e67222c20226d61784c656e677468223a203235362c20226d696e4c656e677468223a20317d2c202270617468223a207b2274797065223a2022737472696e67222c20226d61784c656e677468223a20313032342c20226d696e4c656e677468223a20317d2c20226c696d6974223a207b2274797065223a2022696e7465676572222c20226d6178696d756d223a203230302c20226d696e696d756d223a20317d2c20227175657279223a207b2274797065223a2022737472696e67222c20226d61784c656e677468223a203531322c20226d696e4c656e677468223a20317d2c20226f6666736574223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20317d2c2022636f6e74657874223a207b2274797065223a2022696e7465676572222c20226d6178696d756d223a20322c20226d696e696d756d223a20307d2c202269676e6f72655f63617365223a207b2274797065223a2022626f6f6c65616e227d2c2022696e636c7564655f68696464656e223a207b2274797065223a2022626f6f6c65616e227d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d2c2022616e6e6f746174696f6e73223a207b22726561645f6f6e6c79223a20747275652c20226964656d706f74656e74223a20747275652c20226f70656e5f776f726c64223a2066616c73652c20226465737472756374697665223a2066616c73657d2c2022636f6e63757272656e6379223a2022706172616c6c656c222c20226465736372697074696f6e223a2022536561726368205554462d3820746578742066696c657320756e6465722061206469726563746f727920696e736964652074686520617070726f76656420776f726b7370616365207573696e67206c69746572616c20737562737472696e67206d61746368696e672e204869747320666f6c6c6f7720444653207072652d6f726465722077697468207369626c696e677320736f72746564206279205554462d38206e616d652062797465732c207468656e206c696e652c207468656e20636f6c756d6e2e206f666673657420697320312d6261736564202864656661756c742031293b206c696d6974206d6178203230302e204966207472756e63617465642c20636f6e74696e75652077697468206e6578745f6f66667365742e222c20227265706c61795f636c617373223a2022726561645f6f6e6c79222c20226f75747075745f736368656d61223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b2270617468222c20226f6666736574222c202268697473222c2022746f74616c222c2022636f6d706c657465222c20227363616e6e65645f66696c6573222c2022736b6970706564222c20227472756e6361746564222c20226e6578745f6f6666736574225d2c202270726f70657274696573223a207b2268697473223a207b2274797065223a20226172726179222c20226974656d73223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b2270617468222c20226c696e65222c2022636f6c756d6e222c202274657874222c2022746578745f7472756e6361746564225d2c202270726f70657274696573223a207b226c696e65223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20317d2c202270617468223a207b2274797065223a2022737472696e67227d2c202274657874223a207b2274797065223a2022737472696e67227d2c20226166746572223a207b2274797065223a20226172726179222c20226974656d73223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b226c696e65222c202274657874225d2c202270726f70657274696573223a207b226c696e65223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20317d2c202274657874223a207b2274797065223a2022737472696e67227d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d2c20226d61784974656d73223a20327d2c20226265666f7265223a207b2274797065223a20226172726179222c20226974656d73223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b226c696e65222c202274657874225d2c202270726f70657274696573223a207b226c696e65223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20317d2c202274657874223a207b2274797065223a2022737472696e67227d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d2c20226d61784974656d73223a20327d2c2022636f6c756d6e223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20317d2c2022746578745f7472756e6361746564223a207b2274797065223a2022626f6f6c65616e227d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d2c20226d61784974656d73223a203230307d2c202270617468223a207b2274797065223a2022737472696e67227d2c2022746f74616c223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c20226f6666736574223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20317d2c2022736b6970706564223a207b2274797065223a20226f626a656374222c20227265717569726564223a205b2268696464656e222c202273796d6c696e6b222c202262696e617279222c2022746f6f5f6c61726765222c20226e6f6e5f75746638222c20226c6f6e675f6c696e6573225d2c202270726f70657274696573223a207b2262696e617279223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c202268696464656e223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c202273796d6c696e6b223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c20226e6f6e5f75746638223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c2022746f6f5f6c61726765223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d2c20226c6f6e675f6c696e6573223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d2c2022636f6d706c657465223a207b2274797065223a2022626f6f6c65616e227d2c20227472756e6361746564223a207b2274797065223a2022626f6f6c65616e227d2c20226e6578745f6f6666736574223a207b2274797065223a205b22696e7465676572222c20226e756c6c225d2c20226d696e696d756d223a20317d2c20227363616e6e65645f66696c6573223a207b2274797065223a2022696e7465676572222c20226d696e696d756d223a20307d7d2c20226164646974696f6e616c50726f70657274696573223a2066616c73657d7d7d",
+      "expected_length": 3042,
+      "expected_sha256": "84f25827c947e3db7562c845a99e2eefa724376e6352e7ee84e1bb0a8a356b70",
+      "expected_text": "{\"v\": 2, \"tool\": {\"key\": \"search\", \"limits\": {\"timeout_ms\": 15000, \"max_args_bytes\": 16384, \"max_meta_bytes\": 4096, \"max_value_bytes\": 40960, \"max_content_bytes\": 41984}, \"render\": {\"id\": \"v24.fs.search.text\", \"digest\": \"fd2f51e8c3d7328b0af7ceafcbefc21418f799921e9e470f12b3f7b1b6344011\", \"version\": 1}, \"parameters\": {\"type\": \"object\", \"required\": [\"query\"], \"properties\": {\"glob\": {\"type\": \"string\", \"maxLength\": 256, \"minLength\": 1}, \"path\": {\"type\": \"string\", \"maxLength\": 1024, \"minLength\": 1}, \"limit\": {\"type\": \"integer\", \"maximum\": 200, \"minimum\": 1}, \"query\": {\"type\": \"string\", \"maxLength\": 512, \"minLength\": 1}, \"offset\": {\"type\": \"integer\", \"minimum\": 1}, \"context\": {\"type\": \"integer\", \"maximum\": 2, \"minimum\": 0}, \"ignore_case\": {\"type\": \"boolean\"}, \"include_hidden\": {\"type\": \"boolean\"}}, \"additionalProperties\": false}, \"annotations\": {\"read_only\": true, \"idempotent\": true, \"open_world\": false, \"destructive\": false}, \"concurrency\": \"parallel\", \"description\": \"Search UTF-8 text files under a directory inside the approved workspace using literal substring matching. Hits follow DFS pre-order with siblings sorted by UTF-8 name bytes, then line, then column. offset is 1-based (default 1); limit max 200. If truncated, continue with next_offset.\", \"replay_class\": \"read_only\", \"output_schema\": {\"type\": \"object\", \"required\": [\"path\", \"offset\", \"hits\", \"total\", \"complete\", \"scanned_files\", \"skipped\", \"truncated\", \"next_offset\"], \"properties\": {\"hits\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"path\", \"line\", \"column\", \"text\", \"text_truncated\"], \"properties\": {\"line\": {\"type\": \"integer\", \"minimum\": 1}, \"path\": {\"type\": \"string\"}, \"text\": {\"type\": \"string\"}, \"after\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"line\", \"text\"], \"properties\": {\"line\": {\"type\": \"integer\", \"minimum\": 1}, \"text\": {\"type\": \"string\"}}, \"additionalProperties\": false}, \"maxItems\": 2}, \"before\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"line\", \"text\"], \"properties\": {\"line\": {\"type\": \"integer\", \"minimum\": 1}, \"text\": {\"type\": \"string\"}}, \"additionalProperties\": false}, \"maxItems\": 2}, \"column\": {\"type\": \"integer\", \"minimum\": 1}, \"text_truncated\": {\"type\": \"boolean\"}}, \"additionalProperties\": false}, \"maxItems\": 200}, \"path\": {\"type\": \"string\"}, \"total\": {\"type\": \"integer\", \"minimum\": 0}, \"offset\": {\"type\": \"integer\", \"minimum\": 1}, \"skipped\": {\"type\": \"object\", \"required\": [\"hidden\", \"symlink\", \"binary\", \"too_large\", \"non_utf8\", \"long_lines\"], \"properties\": {\"binary\": {\"type\": \"integer\", \"minimum\": 0}, \"hidden\": {\"type\": \"integer\", \"minimum\": 0}, \"symlink\": {\"type\": \"integer\", \"minimum\": 0}, \"non_utf8\": {\"type\": \"integer\", \"minimum\": 0}, \"too_large\": {\"type\": \"integer\", \"minimum\": 0}, \"long_lines\": {\"type\": \"integer\", \"minimum\": 0}}, \"additionalProperties\": false}, \"complete\": {\"type\": \"boolean\"}, \"truncated\": {\"type\": \"boolean\"}, \"next_offset\": {\"type\": [\"integer\", \"null\"], \"minimum\": 1}, \"scanned_files\": {\"type\": \"integer\", \"minimum\": 0}}, \"additionalProperties\": false}}}",
+      "first_production_stage": "M2",
+      "id": "descriptor.v2.search",
+      "input": {
+        "tool": {
+          "annotations": {
+            "destructive": false,
+            "idempotent": true,
+            "open_world": false,
+            "read_only": true
+          },
+          "concurrency": "parallel",
+          "description": "Search UTF-8 text files under a directory inside the approved workspace using literal substring matching. Hits follow DFS pre-order with siblings sorted by UTF-8 name bytes, then line, then column. offset is 1-based (default 1); limit max 200. If truncated, continue with next_offset.",
+          "key": "search",
+          "limits": {
+            "max_args_bytes": 16384,
+            "max_content_bytes": 41984,
+            "max_meta_bytes": 4096,
+            "max_value_bytes": 40960,
+            "timeout_ms": 15000
+          },
+          "output_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "complete": {
+                "type": "boolean"
+              },
+              "hits": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "after": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "line": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "line",
+                          "text"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 2,
+                      "type": "array"
+                    },
+                    "before": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "line": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "line",
+                          "text"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 2,
+                      "type": "array"
+                    },
+                    "column": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "line": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "text_truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "line",
+                    "column",
+                    "text",
+                    "text_truncated"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 200,
+                "type": "array"
+              },
+              "next_offset": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "offset": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              },
+              "scanned_files": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "skipped": {
+                "additionalProperties": false,
+                "properties": {
+                  "binary": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "hidden": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "long_lines": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "non_utf8": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "symlink": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "too_large": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "hidden",
+                  "symlink",
+                  "binary",
+                  "too_large",
+                  "non_utf8",
+                  "long_lines"
+                ],
+                "type": "object"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "path",
+              "offset",
+              "hits",
+              "total",
+              "complete",
+              "scanned_files",
+              "skipped",
+              "truncated",
+              "next_offset"
+            ],
+            "type": "object"
+          },
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "context": {
+                "maximum": 2,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "glob": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "ignore_case": {
+                "type": "boolean"
+              },
+              "include_hidden": {
+                "type": "boolean"
+              },
+              "limit": {
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "offset": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "path": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              "query": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "type": "object"
+          },
+          "render": {
+            "digest": "fd2f51e8c3d7328b0af7ceafcbefc21418f799921e9e470f12b3f7b1b6344011",
+            "id": "v24.fs.search.text",
+            "version": 1
+          },
+          "replay_class": "read_only"
+        },
+        "v": 2
+      },
+      "input_id": "descriptor.v2.search",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "python_pg_reference",
+      "render_case_ref": "render.manifest.search",
+      "status": "provisional_w2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "expected": {
+        "tool_keys": [
+          "annotations",
+          "concurrency",
+          "description",
+          "key",
+          "limits",
+          "output_schema",
+          "parameters",
+          "render",
+          "replay_class"
+        ],
+        "top_keys": [
+          "v",
+          "tool"
+        ]
+      },
+      "first_production_stage": "M2",
+      "id": "descriptor.closed_sets",
+      "input": [
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "v",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.key",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.description",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.parameters",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.output_schema",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.render",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.limits",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.concurrency",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.replay_class",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.annotations",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.render.id",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.render.version",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.render.digest",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.limits.timeout_ms",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.limits.max_args_bytes",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.limits.max_value_bytes",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.limits.max_content_bytes",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.limits.max_meta_bytes",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.annotations.read_only",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.annotations.destructive",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.annotations.idempotent",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "delete",
+          "path": "tool.annotations.open_world",
+          "value": null
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "key": "unexpected",
+          "operation": "add_extra",
+          "path": "$",
+          "value": true
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "key": "unexpected",
+          "operation": "add_extra",
+          "path": "tool",
+          "value": true
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "key": "unexpected",
+          "operation": "add_extra",
+          "path": "tool.render",
+          "value": true
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "key": "unexpected",
+          "operation": "add_extra",
+          "path": "tool.limits",
+          "value": true
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "key": "unexpected",
+          "operation": "add_extra",
+          "path": "tool.annotations",
+          "value": true
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "expected": {
+        "regex": "^[a-z][a-z0-9_.-]{0,127}$",
+        "reserved": "agent.spawn"
+      },
+      "first_production_stage": "M2",
+      "id": "descriptor.key_and_provide_match",
+      "input": [
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.key",
+          "value": ""
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.key",
+          "value": "A"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.key",
+          "value": "agent.spawn"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.key",
+          "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.key",
+          "value": "read\u0000"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "descriptor_key_mismatch",
+          "provide_key": "list"
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "expected": {
+        "accepted": [
+          1,
+          4096
+        ],
+        "measure": "utf8_bytes"
+      },
+      "first_production_stage": "M2",
+      "id": "descriptor.description_boundaries",
+      "input": [
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.description",
+          "value": {
+            "count": 0,
+            "repeat": "x"
+          }
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.description",
+          "value": {
+            "count": 1,
+            "repeat": "x"
+          }
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.description",
+          "value": {
+            "count": 4096,
+            "repeat": "x"
+          }
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.description",
+          "value": {
+            "count": 4097,
+            "repeat": "x"
+          }
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.description",
+          "value": "x\u0000y"
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "expected": {
+        "approved_digest_ref": "render.manifest.read"
+      },
+      "first_production_stage": "M2",
+      "id": "descriptor.render_registry_match",
+      "input": [
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.render.id",
+          "value": "X"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.render.id",
+          "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.render.version",
+          "value": 0
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.render.version",
+          "value": 9007199254740992
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.render.digest",
+          "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.render.digest",
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "renderer_digest_mismatch",
+          "registry_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "expected": {
+        "max_args_bytes": [
+          1,
+          65536
+        ],
+        "max_content_bytes": [
+          1,
+          65536
+        ],
+        "max_meta_bytes": [
+          2,
+          16384
+        ],
+        "max_value_bytes": [
+          1,
+          49152
+        ],
+        "timeout_ms": [
+          1,
+          25000
+        ]
+      },
+      "first_production_stage": "M2",
+      "id": "descriptor.limits_boundaries",
+      "input": [
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.limits.timeout_ms",
+          "value": 0
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.limits.timeout_ms",
+          "value": 1
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.limits.timeout_ms",
+          "value": 25000
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.limits.timeout_ms",
+          "value": 25001
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.limits.max_args_bytes",
+          "value": 0
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.limits.max_args_bytes",
+          "value": 1
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.limits.max_args_bytes",
+          "value": 65536
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.limits.max_args_bytes",
+          "value": 65537
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.limits.max_value_bytes",
+          "value": 0
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.limits.max_value_bytes",
+          "value": 1
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.limits.max_value_bytes",
+          "value": 49152
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.limits.max_value_bytes",
+          "value": 49153
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.limits.max_content_bytes",
+          "value": 0
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.limits.max_content_bytes",
+          "value": 1
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.limits.max_content_bytes",
+          "value": 65536
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.limits.max_content_bytes",
+          "value": 65537
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.limits.max_meta_bytes",
+          "value": 1
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.limits.max_meta_bytes",
+          "value": 2
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.limits.max_meta_bytes",
+          "value": 16384
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.limits.max_meta_bytes",
+          "value": 16385
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "expected": {
+        "parallel_implies": "read_only=true",
+        "read_only_implies": [
+          "read_only=true",
+          "destructive=false",
+          "idempotent=true"
+        ]
+      },
+      "first_production_stage": "M2",
+      "id": "descriptor.enums_annotations",
+      "input": [
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.concurrency",
+          "value": "parallel"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.concurrency",
+          "value": "exclusive"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.concurrency",
+          "value": "serial"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.replay_class",
+          "value": "read_only"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.replay_class",
+          "value": "idempotent"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.replay_class",
+          "value": "mutating"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.replay_class",
+          "value": "external"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.replay_class",
+          "value": "unsafe"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.annotations.read_only",
+          "value": false
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.annotations.destructive",
+          "value": true
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "operation": "replace",
+          "path": "tool.annotations.idempotent",
+          "value": false
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "operation": "replace",
+          "path": "tool.annotations.open_world",
+          "value": true
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§3.1",
+        "§3.2",
+        "§3.3",
+        "§4.2",
+        "§4.3",
+        "Appendix A"
+      ],
+      "expected": {
+        "depth_cap": 16,
+        "depth_measure": "root container=1; child container=parent+1",
+        "pg_byte_cap": 16384,
+        "safe_integer_max": 9007199254740991
+      },
+      "first_production_stage": "M2",
+      "id": "descriptor.pg_size_depth_integer_unicode_boundaries",
+      "input": [
+        {
+          "descriptor": {
+            "tool": {
+              "annotations": {
+                "destructive": false,
+                "idempotent": true,
+                "open_world": false,
+                "read_only": true
+              },
+              "concurrency": "parallel",
+              "description": "Read a UTF-8 text file inside the approved workspace. offset is the 1-indexed first line (default 1); limit is the maximum number of lines (default 2000, max 2000). If truncated, continue with next_offset.",
+              "key": "read",
+              "limits": {
+                "max_args_bytes": 16384,
+                "max_content_bytes": 41984,
+                "max_meta_bytes": 4096,
+                "max_value_bytes": 40960,
+                "timeout_ms": 5000
+              },
+              "output_schema": {
+                "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "limit": {
+                    "maximum": 2000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "path": {
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "type": "object"
+              },
+              "render": {
+                "digest": "ca52198cf6c2edae798f2340ba4f370f658d422fa05f5d529c28510dea0a680c",
+                "id": "v24.fs.read.text",
+                "version": 1
+              },
+              "replay_class": "read_only"
+            },
+            "v": 2
+          },
+          "expected": "accepted",
+          "id": "pg_bytes_16384",
+          "pg_bytes": 16384
+        },
+        {
+          "descriptor": {
+            "tool": {
+              "annotations": {
+                "destructive": false,
+                "idempotent": true,
+                "open_world": false,
+                "read_only": true
+              },
+              "concurrency": "parallel",
+              "description": "Read a UTF-8 text file inside the approved workspace. offset is the 1-indexed first line (default 1); limit is the maximum number of lines (default 2000, max 2000). If truncated, continue with next_offset.",
+              "key": "read",
+              "limits": {
+                "max_args_bytes": 16384,
+                "max_content_bytes": 41984,
+                "max_meta_bytes": 4096,
+                "max_value_bytes": 40960,
+                "timeout_ms": 5000
+              },
+              "output_schema": {
+                "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "limit": {
+                    "maximum": 2000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "path": {
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "type": "object"
+              },
+              "render": {
+                "digest": "ca52198cf6c2edae798f2340ba4f370f658d422fa05f5d529c28510dea0a680c",
+                "id": "v24.fs.read.text",
+                "version": 1
+              },
+              "replay_class": "read_only"
+            },
+            "v": 2
+          },
+          "expected": "invalid_descriptor",
+          "id": "pg_bytes_16385",
+          "pg_bytes": 16385
+        },
+        {
+          "container_depth": 16,
+          "descriptor": {
+            "tool": {
+              "annotations": {
+                "destructive": false,
+                "idempotent": true,
+                "open_world": false,
+                "read_only": true
+              },
+              "concurrency": "parallel",
+              "description": "Read a UTF-8 text file inside the approved workspace. offset is the 1-indexed first line (default 1); limit is the maximum number of lines (default 2000, max 2000). If truncated, continue with next_offset.",
+              "key": "read",
+              "limits": {
+                "max_args_bytes": 16384,
+                "max_content_bytes": 41984,
+                "max_meta_bytes": 4096,
+                "max_value_bytes": 40960,
+                "timeout_ms": 5000
+              },
+              "output_schema": {
+                "enum": [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      [
+                                        [
+                                          0
+                                        ]
+                                      ]
+                                    ]
+                                  ]
+                                ]
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "limit": {
+                    "maximum": 2000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "path": {
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "type": "object"
+              },
+              "render": {
+                "digest": "ca52198cf6c2edae798f2340ba4f370f658d422fa05f5d529c28510dea0a680c",
+                "id": "v24.fs.read.text",
+                "version": 1
+              },
+              "replay_class": "read_only"
+            },
+            "v": 2
+          },
+          "expected": "accepted",
+          "id": "depth_16"
+        },
+        {
+          "container_depth": 17,
+          "descriptor": {
+            "tool": {
+              "annotations": {
+                "destructive": false,
+                "idempotent": true,
+                "open_world": false,
+                "read_only": true
+              },
+              "concurrency": "parallel",
+              "description": "Read a UTF-8 text file inside the approved workspace. offset is the 1-indexed first line (default 1); limit is the maximum number of lines (default 2000, max 2000). If truncated, continue with next_offset.",
+              "key": "read",
+              "limits": {
+                "max_args_bytes": 16384,
+                "max_content_bytes": 41984,
+                "max_meta_bytes": 4096,
+                "max_value_bytes": 40960,
+                "timeout_ms": 5000
+              },
+              "output_schema": {
+                "enum": [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      [
+                                        [
+                                          [
+                                            0
+                                          ]
+                                        ]
+                                      ]
+                                    ]
+                                  ]
+                                ]
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              },
+              "parameters": {
+                "additionalProperties": false,
+                "properties": {
+                  "limit": {
+                    "maximum": 2000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "path": {
+                    "maxLength": 1024,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "type": "object"
+              },
+              "render": {
+                "digest": "ca52198cf6c2edae798f2340ba4f370f658d422fa05f5d529c28510dea0a680c",
+                "id": "v24.fs.read.text",
+                "version": 1
+              },
+              "replay_class": "read_only"
+            },
+            "v": 2
+          },
+          "expected": "invalid_descriptor",
+          "id": "depth_17"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "accepted",
+          "id": "safe_max",
+          "path": "tool.output_schema.enum",
+          "raw_json": "[9007199254740991]"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "id": "unsafe_plus",
+          "path": "tool.output_schema.enum",
+          "raw_json": "[9007199254740992]"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "id": "float",
+          "path": "tool.output_schema.enum",
+          "raw_json": "[1.5]"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "id": "exponent",
+          "path": "tool.output_schema.enum",
+          "raw_json": "[1e3]"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "id": "negative_zero",
+          "path": "tool.output_schema.enum",
+          "raw_json": "[-0]"
+        },
+        {
+          "base_ref": "descriptor.v2.read",
+          "expected": "invalid_descriptor",
+          "id": "lone_surrogate",
+          "path": "tool.output_schema.enum",
+          "raw_json": "[\"\\ud800\"]"
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    }
+  ],
+  "domain_file": "descriptor_v2.json",
+  "format": "v24-tool-plugin-abi-w1-vectors-1"
+}

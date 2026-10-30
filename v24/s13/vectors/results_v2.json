@@ -1,0 +1,2030 @@
+{
+  "cases": [
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "domain": "result_output",
+      "expected_hex": "7b22636f6e74656e74223a5b7b2274657874223a226869222c2274797065223a2274657874227d5d2c226d657461223a7b7d2c2276616c7565223a7b2270617468223a22612e747874222c2274657874223a226869227d7d",
+      "expected_length": 88,
+      "expected_sha256": "0586497d1be18910510353c921f62a61dcd8711ac73ae0691df646b13697ddbc",
+      "expected_text": "{\"content\":[{\"text\":\"hi\",\"type\":\"text\"}],\"meta\":{},\"value\":{\"path\":\"a.txt\",\"text\":\"hi\"}}",
+      "first_production_stage": "M2",
+      "id": "result.success_envelope",
+      "input": {
+        "content": [
+          {
+            "text": "hi",
+            "type": "text"
+          }
+        ],
+        "meta": {},
+        "value": {
+          "path": "a.txt",
+          "text": "hi"
+        }
+      },
+      "input_id": "result.success_envelope",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "compact",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "domain": "result_output",
+      "expected_hex": "7b22636f6e74656e74223a5b7b2274657874223a224572726f72205b6e6f745f666f756e645d3a2046696c65206e6f7420666f756e642e222c2274797065223a2274657874227d5d2c226572726f72223a7b22636f6465223a226e6f745f666f756e64222c226d657373616765223a2246696c65206e6f7420666f756e642e227d2c226d657461223a7b7d7d",
+      "expected_length": 140,
+      "expected_sha256": "720b9764a4877139c5c93936caf378828bd3865989de01282d4eb964304efc49",
+      "expected_text": "{\"content\":[{\"text\":\"Error [not_found]: File not found.\",\"type\":\"text\"}],\"error\":{\"code\":\"not_found\",\"message\":\"File not found.\"},\"meta\":{}}",
+      "first_production_stage": "M2",
+      "id": "result.failure_envelope",
+      "input": {
+        "content": [
+          {
+            "text": "Error [not_found]: File not found.",
+            "type": "text"
+          }
+        ],
+        "error": {
+          "code": "not_found",
+          "message": "File not found."
+        },
+        "meta": {}
+      },
+      "input_id": "result.failure_envelope",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "compact",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "domain": "result_output",
+      "expected_hex": "7b226572726f72223a7b22636f6465223a2274696d656f7574222c226d657373616765223a22746f6f6c2070726f636573732065786365656465642069747320646561646c696e65227d7d",
+      "expected_length": 75,
+      "expected_sha256": "ccb96cac2a5fe5c06b3aa9cf9e75f72d52553dd56a40921229bcf2a86780d4c6",
+      "expected_text": "{\"error\":{\"code\":\"timeout\",\"message\":\"tool process exceeded its deadline\"}}",
+      "first_production_stage": "M2",
+      "id": "result.unknown_envelope",
+      "input": {
+        "error": {
+          "code": "timeout",
+          "message": "tool process exceeded its deadline"
+        }
+      },
+      "input_id": "result.unknown_envelope",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "compact",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "expected": {
+        "allowed_keys": [
+          "wall_ms"
+        ],
+        "tool_errors_outside_sql_error_v1": true
+      },
+      "first_production_stage": "M2",
+      "id": "result.usage_wall_ms",
+      "input": [
+        {
+          "expected": "accepted",
+          "usage": {
+            "wall_ms": 0
+          }
+        },
+        {
+          "expected": "accepted",
+          "usage": {
+            "wall_ms": 15
+          }
+        },
+        {
+          "expected": "invalid_outcome",
+          "usage": {
+            "tokens": 1,
+            "wall_ms": 0
+          }
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "domain": "model_text",
+      "expected_hex": "6f6e650ae4ba8c0ae4b889",
+      "expected_length": 11,
+      "expected_sha256": "cdf4e39b8e0f067155ba61109423ae8b50ec2a6a4395910d6020017e1373f8a8",
+      "expected_text": "one\n二\n三",
+      "first_production_stage": "M2",
+      "id": "result.model_text_join",
+      "input": [
+        {
+          "text": "one",
+          "type": "text"
+        },
+        {
+          "text": "二\n三",
+          "type": "text"
+        }
+      ],
+      "input_id": "result.model_text_join",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "join_content",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "domain": "model_text",
+      "expected_hex": "6f6e650ae4ba8c0ae4b889",
+      "expected_length": 11,
+      "expected_sha256": "cdf4e39b8e0f067155ba61109423ae8b50ec2a6a4395910d6020017e1373f8a8",
+      "expected_text": "one\n二\n三",
+      "first_production_stage": "M2",
+      "id": "result.meta_excluded_from_model_text",
+      "input": {
+        "content": [
+          {
+            "text": "one",
+            "type": "text"
+          },
+          {
+            "text": "二\n三",
+            "type": "text"
+          }
+        ],
+        "meta": {
+          "private": "not model text"
+        }
+      },
+      "input_id": "result.meta_excluded_from_model_text",
+      "kind": "byte",
+      "owner": "W1-VECTORS",
+      "producer": "join_content",
+      "status": "m2_pending",
+      "v1_baseline_refs": [
+        "tool_message.success.content",
+        "tool_message.known_error.content"
+      ],
+      "v1_source": "v24/b0/golden/tool_messages_v1.json"
+    },
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "expected": {
+        "builtin_plugin_meta": [
+          {
+            "expected": "accepted",
+            "meta": null
+          },
+          {
+            "expected": "accepted",
+            "meta": {}
+          },
+          {
+            "expected": "invalid_tool_output",
+            "meta": {
+              "x": 1
+            }
+          }
+        ],
+        "exact_boundaries": [
+          {
+            "cap": 40960,
+            "domain": "value",
+            "expected": "accepted",
+            "repeat": 40948
+          },
+          {
+            "cap": 40960,
+            "domain": "value",
+            "expected": "accepted",
+            "repeat": 40949
+          },
+          {
+            "cap": 40960,
+            "domain": "value",
+            "expected": "output_too_large",
+            "repeat": 40950
+          },
+          {
+            "cap": 41984,
+            "domain": "content",
+            "expected": "accepted",
+            "repeat": 41956
+          },
+          {
+            "cap": 41984,
+            "domain": "content",
+            "expected": "accepted",
+            "repeat": 41957
+          },
+          {
+            "cap": 41984,
+            "domain": "content",
+            "expected": "output_too_large",
+            "repeat": 41958
+          },
+          {
+            "cap": 4096,
+            "domain": "meta",
+            "expected": "accepted",
+            "repeat": 4087
+          },
+          {
+            "cap": 4096,
+            "domain": "meta",
+            "expected": "accepted",
+            "repeat": 4088
+          },
+          {
+            "cap": 4096,
+            "domain": "meta",
+            "expected": "output_too_large",
+            "repeat": 4089
+          }
+        ],
+        "measures": [
+          "args",
+          "value",
+          "content",
+          "meta",
+          "frame"
+        ],
+        "meta_absent_normalizes_to_empty": true,
+        "prefix_scenarios": [
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\n\n[Showing 1-1 of 2. Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 83,
+                  "frame": 193,
+                  "meta": 2,
+                  "value": 155
+                },
+                "meta": {}
+              },
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\nb (1 B)",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 43,
+                  "frame": 233,
+                  "meta": 2,
+                  "value": 195
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "selected": 2
+            },
+            "id": "footer_nonmonotonic",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 50,
+                "frame": 300,
+                "meta": 2,
+                "value": 200
+              },
+              "kind": "list",
+              "values": [
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": 2,
+                  "offset": 1,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 2,
+                  "truncated": true
+                },
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    },
+                    {
+                      "kind": "file",
+                      "path": "b",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": null,
+                  "offset": 1,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 2,
+                  "truncated": false
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\n\n[Showing 1-1 of 2. Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 83,
+                  "frame": 193,
+                  "meta": 2,
+                  "value": 155
+                },
+                "meta": {}
+              },
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\nb (1 B)",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 43,
+                  "frame": 233,
+                  "meta": 2,
+                  "value": 195
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "entry_too_large"
+            },
+            "id": "all_unfit",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 1,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "list",
+              "values": [
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": 2,
+                  "offset": 1,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 2,
+                  "truncated": true
+                },
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    },
+                    {
+                      "kind": "file",
+                      "path": "b",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": null,
+                  "offset": 1,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 2,
+                  "truncated": false
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\n\n[Showing 1-1 of 2. Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 11,
+                  "content": 83,
+                  "frame": 193,
+                  "meta": 2,
+                  "value": 155
+                },
+                "meta": {}
+              },
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\nb (1 B)",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 11,
+                  "content": 43,
+                  "frame": 233,
+                  "meta": 2,
+                  "value": 195
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "selected": 1
+            },
+            "id": "byte_full_below_limit",
+            "input": {
+              "args": {
+                "limit": 3
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 160
+              },
+              "kind": "list",
+              "values": [
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": 2,
+                  "offset": 1,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 2,
+                  "truncated": true
+                },
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    },
+                    {
+                      "kind": "file",
+                      "path": "b",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": null,
+                  "offset": 1,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 2,
+                  "truncated": false
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [],
+            "expected": {
+              "error": "output_too_large"
+            },
+            "id": "empty_overhead_unfit",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 1,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "empty_value": {
+                "entries": [],
+                "next_offset": null,
+                "offset": 1,
+                "path": ".",
+                "skipped_non_utf8": 0,
+                "skipped_special": 0,
+                "total": 0,
+                "truncated": false
+              },
+              "kind": "list",
+              "values": []
+            }
+          },
+          {
+            "candidates": [],
+            "expected": {
+              "selected": 0
+            },
+            "id": "empty_complete",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "empty_value": {
+                "entries": [],
+                "next_offset": null,
+                "offset": 1,
+                "path": ".",
+                "skipped_non_utf8": 0,
+                "skipped_special": 0,
+                "total": 0,
+                "truncated": false
+              },
+              "kind": "list",
+              "values": []
+            }
+          },
+          {
+            "candidates": [],
+            "expected": {
+              "error": "offset_out_of_range"
+            },
+            "id": "empty_offset2",
+            "input": {
+              "args": {
+                "offset": 2
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "list",
+              "values": []
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\n\n[Showing 1-1 of 2. Use offset=null to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 86,
+                  "frame": 196,
+                  "meta": 2,
+                  "value": 158
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "invalid_tool_output"
+            },
+            "id": "contradictory_cursor",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "list",
+              "values": [
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": null,
+                  "offset": 1,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 2,
+                  "truncated": true
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "d/\n\n[Showing 1-1 of 2. Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 78,
+                  "frame": 198,
+                  "meta": 2,
+                  "value": 160
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "invalid_tool_output"
+            },
+            "id": "contradictory_size",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "list",
+              "values": [
+                {
+                  "entries": [
+                    {
+                      "kind": "directory",
+                      "path": "d",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": 2,
+                  "offset": 1,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 2,
+                  "truncated": true
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\n\n[Showing 9-9 of 10. Use offset=10 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 12,
+                  "content": 85,
+                  "frame": 195,
+                  "meta": 2,
+                  "value": 157
+                },
+                "meta": {}
+              },
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\nb (1 B)",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 12,
+                  "content": 43,
+                  "frame": 234,
+                  "meta": 2,
+                  "value": 196
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "selected": 2
+            },
+            "id": "decimal_width",
+            "input": {
+              "args": {
+                "offset": 9
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "list",
+              "values": [
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": 10,
+                  "offset": 9,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 10,
+                  "truncated": true
+                },
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    },
+                    {
+                      "kind": "file",
+                      "path": "b",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": null,
+                  "offset": 9,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 10,
+                  "truncated": false
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 27,
+                  "content": 34,
+                  "frame": 227,
+                  "meta": 2,
+                  "value": 189
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "selected": 1
+            },
+            "id": "safe_final_cursor_null",
+            "input": {
+              "args": {
+                "offset": 9007199254740991
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "list",
+              "values": [
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": null,
+                  "offset": 9007199254740991,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 9007199254740991,
+                  "truncated": false
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\n\n[Showing 9007199254740991-9007199254740991 of 9007199254740991. Use offset=9007199254740991 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 27,
+                  "content": 143,
+                  "frame": 238,
+                  "meta": 2,
+                  "value": 200
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "invalid_tool_output"
+            },
+            "id": "cursor_overflow",
+            "input": {
+              "args": {
+                "offset": 9007199254740991
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "list",
+              "values": [
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": 9007199254740991,
+                  "offset": 9007199254740991,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 9007199254740991,
+                  "truncated": true
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a:1:1: x\n\n[hits 1-1 of 2+; scanned 10000; skipped 0]\n[Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 11,
+                  "content": 110,
+                  "frame": 307,
+                  "meta": 2,
+                  "value": 269
+                },
+                "meta": {}
+              },
+              {
+                "content": [
+                  {
+                    "text": "a:1:1: x\na:2:1: x\n\n[hits 1-2 of 2+; scanned 10000; skipped 0]\n[Use offset=3 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 11,
+                  "content": 120,
+                  "frame": 374,
+                  "meta": 2,
+                  "value": 336
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "selected": 2
+            },
+            "id": "cutoff_count_full",
+            "input": {
+              "args": {
+                "limit": 2
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "search",
+              "scan_end": "cutoff",
+              "values": [
+                {
+                  "complete": false,
+                  "hits": [
+                    {
+                      "column": 1,
+                      "line": 1,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    }
+                  ],
+                  "next_offset": 2,
+                  "offset": 1,
+                  "path": ".",
+                  "scanned_files": 10000,
+                  "skipped": {
+                    "binary": 0,
+                    "hidden": 0,
+                    "long_lines": 0,
+                    "non_utf8": 0,
+                    "symlink": 0,
+                    "too_large": 0
+                  },
+                  "total": 2,
+                  "truncated": true
+                },
+                {
+                  "complete": false,
+                  "hits": [
+                    {
+                      "column": 1,
+                      "line": 1,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    },
+                    {
+                      "column": 1,
+                      "line": 2,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    }
+                  ],
+                  "next_offset": 3,
+                  "offset": 1,
+                  "path": ".",
+                  "scanned_files": 10000,
+                  "skipped": {
+                    "binary": 0,
+                    "hidden": 0,
+                    "long_lines": 0,
+                    "non_utf8": 0,
+                    "symlink": 0,
+                    "too_large": 0
+                  },
+                  "total": 2,
+                  "truncated": true
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a:1:1: x\n\n[hits 1-1 of 1+; scanned 10000; skipped 0]\n[Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 11,
+                  "content": 110,
+                  "frame": 307,
+                  "meta": 2,
+                  "value": 269
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "search_scope_too_large"
+            },
+            "id": "cutoff_before_fill",
+            "input": {
+              "args": {
+                "limit": 2
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "search",
+              "scan_end": "cutoff",
+              "values": [
+                {
+                  "complete": false,
+                  "hits": [
+                    {
+                      "column": 1,
+                      "line": 1,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    }
+                  ],
+                  "next_offset": 2,
+                  "offset": 1,
+                  "path": ".",
+                  "scanned_files": 10000,
+                  "skipped": {
+                    "binary": 0,
+                    "hidden": 0,
+                    "long_lines": 0,
+                    "non_utf8": 0,
+                    "symlink": 0,
+                    "too_large": 0
+                  },
+                  "total": 1,
+                  "truncated": true
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [],
+            "expected": {
+              "error": "search_scope_too_large"
+            },
+            "id": "cutoff_before_offset",
+            "input": {
+              "args": {
+                "offset": 5
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "search",
+              "scan_end": "cutoff",
+              "values": []
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a:1:1: x\n\n[hits 1-1 of 2+; scanned 10000; skipped 0]\n[Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 11,
+                  "content": 110,
+                  "frame": 307,
+                  "meta": 2,
+                  "value": 269
+                },
+                "meta": {}
+              },
+              {
+                "content": [
+                  {
+                    "text": "a:1:1: x\na:2:1: x\n\n[hits 1-2 of 2+; scanned 10000; skipped 0]\n[Use offset=3 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 11,
+                  "content": 120,
+                  "frame": 374,
+                  "meta": 2,
+                  "value": 336
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "selected": 1
+            },
+            "id": "cutoff_byte_full",
+            "input": {
+              "args": {
+                "limit": 3
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 269
+              },
+              "kind": "search",
+              "scan_end": "cutoff",
+              "values": [
+                {
+                  "complete": false,
+                  "hits": [
+                    {
+                      "column": 1,
+                      "line": 1,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    }
+                  ],
+                  "next_offset": 2,
+                  "offset": 1,
+                  "path": ".",
+                  "scanned_files": 10000,
+                  "skipped": {
+                    "binary": 0,
+                    "hidden": 0,
+                    "long_lines": 0,
+                    "non_utf8": 0,
+                    "symlink": 0,
+                    "too_large": 0
+                  },
+                  "total": 2,
+                  "truncated": true
+                },
+                {
+                  "complete": false,
+                  "hits": [
+                    {
+                      "column": 1,
+                      "line": 1,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    },
+                    {
+                      "column": 1,
+                      "line": 2,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    }
+                  ],
+                  "next_offset": 3,
+                  "offset": 1,
+                  "path": ".",
+                  "scanned_files": 10000,
+                  "skipped": {
+                    "binary": 0,
+                    "hidden": 0,
+                    "long_lines": 0,
+                    "non_utf8": 0,
+                    "symlink": 0,
+                    "too_large": 0
+                  },
+                  "total": 2,
+                  "truncated": true
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a:1:1: x\n\n[hits 1-1 of 2; scanned 10000; skipped 0]\n[Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 11,
+                  "content": 109,
+                  "frame": 306,
+                  "meta": 2,
+                  "value": 268
+                },
+                "meta": {}
+              },
+              {
+                "content": [
+                  {
+                    "text": "a:1:1: x\na:2:1: x\n\n[hits 1-2 of 2; scanned 10000; skipped 0]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 11,
+                  "content": 90,
+                  "frame": 377,
+                  "meta": 2,
+                  "value": 339
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "selected": 1
+            },
+            "id": "eof_complete_truncated",
+            "input": {
+              "args": {
+                "limit": 3
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 269
+              },
+              "kind": "search",
+              "scan_end": "eof",
+              "values": [
+                {
+                  "complete": true,
+                  "hits": [
+                    {
+                      "column": 1,
+                      "line": 1,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    }
+                  ],
+                  "next_offset": 2,
+                  "offset": 1,
+                  "path": ".",
+                  "scanned_files": 10000,
+                  "skipped": {
+                    "binary": 0,
+                    "hidden": 0,
+                    "long_lines": 0,
+                    "non_utf8": 0,
+                    "symlink": 0,
+                    "too_large": 0
+                  },
+                  "total": 2,
+                  "truncated": true
+                },
+                {
+                  "complete": true,
+                  "hits": [
+                    {
+                      "column": 1,
+                      "line": 1,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    },
+                    {
+                      "column": 1,
+                      "line": 2,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    }
+                  ],
+                  "next_offset": null,
+                  "offset": 1,
+                  "path": ".",
+                  "scanned_files": 10000,
+                  "skipped": {
+                    "binary": 0,
+                    "hidden": 0,
+                    "long_lines": 0,
+                    "non_utf8": 0,
+                    "symlink": 0,
+                    "too_large": 0
+                  },
+                  "total": 2,
+                  "truncated": false
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [],
+            "expected": {
+              "selected": 0
+            },
+            "id": "search_empty_offset1",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "empty_value": {
+                "complete": true,
+                "hits": [],
+                "next_offset": null,
+                "offset": 1,
+                "path": ".",
+                "scanned_files": 10000,
+                "skipped": {
+                  "binary": 0,
+                  "hidden": 0,
+                  "long_lines": 0,
+                  "non_utf8": 0,
+                  "symlink": 0,
+                  "too_large": 0
+                },
+                "total": 0,
+                "truncated": false
+              },
+              "kind": "search",
+              "scan_end": "eof",
+              "values": []
+            }
+          },
+          {
+            "candidates": [],
+            "expected": {
+              "error": "offset_out_of_range"
+            },
+            "id": "search_empty_offset2",
+            "input": {
+              "args": {
+                "offset": 2
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "search",
+              "scan_end": "eof",
+              "values": []
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "[no matches]\n\n[hits 0-0 of 0+; scanned 10000; skipped 0]\n[Use offset=1 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 114,
+                  "frame": 241,
+                  "meta": 2,
+                  "value": 203
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "invalid_tool_output"
+            },
+            "id": "incomplete_empty_invalid",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "search",
+              "values": [
+                {
+                  "complete": false,
+                  "hits": [],
+                  "next_offset": 1,
+                  "offset": 1,
+                  "path": ".",
+                  "scanned_files": 10000,
+                  "skipped": {
+                    "binary": 0,
+                    "hidden": 0,
+                    "long_lines": 0,
+                    "non_utf8": 0,
+                    "symlink": 0,
+                    "too_large": 0
+                  },
+                  "total": 0,
+                  "truncated": true
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [],
+            "expected": {
+              "error": "not_utf8"
+            },
+            "id": "source_error_first",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "read",
+              "source_error": "not_utf8",
+              "values": []
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "one\n\n[Showing lines 1-1 of 2. Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 22,
+                  "content": 85,
+                  "frame": 185,
+                  "meta": 2,
+                  "value": 147
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "selected": 1
+            },
+            "id": "read_byte_full",
+            "input": {
+              "args": {
+                "limit": 3,
+                "offset": 1
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "read",
+              "values": [
+                {
+                  "end_line": 1,
+                  "final_newline": false,
+                  "next_offset": 2,
+                  "path": "a",
+                  "start_line": 1,
+                  "text": "one",
+                  "total_lines": 2,
+                  "truncated": true,
+                  "truncated_by": "bytes"
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a (1 B)\n\n[Showing 1-1 of 2. Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 83,
+                  "frame": 193,
+                  "meta": 2,
+                  "value": 155
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "entry_too_large"
+            },
+            "id": "first_item_unfit",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 1,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "list",
+              "values": [
+                {
+                  "entries": [
+                    {
+                      "kind": "file",
+                      "path": "a",
+                      "size": 1
+                    }
+                  ],
+                  "next_offset": 2,
+                  "offset": 1,
+                  "path": ".",
+                  "skipped_non_utf8": 0,
+                  "skipped_special": 0,
+                  "total": 2,
+                  "truncated": true
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "a:1:1: x\n\n[hits 1-1 of 1; scanned 10000; skipped 0]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 80,
+                  "frame": 310,
+                  "meta": 2,
+                  "value": 272
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "hit_too_large"
+            },
+            "id": "search_hit_unfit",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 1
+              },
+              "kind": "search",
+              "values": [
+                {
+                  "complete": true,
+                  "hits": [
+                    {
+                      "column": 1,
+                      "line": 1,
+                      "path": "a",
+                      "text": "x",
+                      "text_truncated": false
+                    }
+                  ],
+                  "next_offset": null,
+                  "offset": 1,
+                  "path": ".",
+                  "scanned_files": 10000,
+                  "skipped": {
+                    "binary": 0,
+                    "hidden": 0,
+                    "long_lines": 0,
+                    "non_utf8": 0,
+                    "symlink": 0,
+                    "too_large": 0
+                  },
+                  "total": 1,
+                  "truncated": false
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "[no matches]\n\n[hits 0-0 of 1; scanned 10000; skipped 0]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 12,
+                  "content": 84,
+                  "frame": 244,
+                  "meta": 2,
+                  "value": 206
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "invalid_tool_output"
+            },
+            "id": "search_offset_past_total",
+            "input": {
+              "args": {
+                "offset": 2
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "search",
+              "values": [
+                {
+                  "complete": true,
+                  "hits": [],
+                  "next_offset": null,
+                  "offset": 2,
+                  "path": ".",
+                  "scanned_files": 10000,
+                  "skipped": {
+                    "binary": 0,
+                    "hidden": 0,
+                    "long_lines": 0,
+                    "non_utf8": 0,
+                    "symlink": 0,
+                    "too_large": 0
+                  },
+                  "total": 1,
+                  "truncated": false
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "one\ntwo\n\n[Showing lines 1-1 of 2. Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 90,
+                  "frame": 190,
+                  "meta": 2,
+                  "value": 152
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "invalid_tool_output"
+            },
+            "id": "read_line_count_mismatch",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "read",
+              "values": [
+                {
+                  "end_line": 1,
+                  "final_newline": false,
+                  "next_offset": 2,
+                  "path": "a",
+                  "start_line": 1,
+                  "text": "one\ntwo",
+                  "total_lines": 2,
+                  "truncated": true,
+                  "truncated_by": "bytes"
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [
+              {
+                "content": [
+                  {
+                    "text": "one\n\n[Showing lines 1-1 of 2. Use offset=2 to continue.]",
+                    "type": "text"
+                  }
+                ],
+                "measures": {
+                  "args": 2,
+                  "content": 85,
+                  "frame": 185,
+                  "meta": 2,
+                  "value": 147
+                },
+                "meta": {}
+              }
+            ],
+            "expected": {
+              "error": "invalid_tool_output"
+            },
+            "id": "read_wrong_truncated_by",
+            "input": {
+              "args": {},
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "kind": "read",
+              "values": [
+                {
+                  "end_line": 1,
+                  "final_newline": false,
+                  "next_offset": 2,
+                  "path": "a",
+                  "start_line": 1,
+                  "text": "one",
+                  "total_lines": 2,
+                  "truncated": true,
+                  "truncated_by": "lines"
+                }
+              ]
+            }
+          },
+          {
+            "candidates": [],
+            "expected": {
+              "error": "offset_out_of_range"
+            },
+            "id": "read_empty_offset2",
+            "input": {
+              "args": {
+                "offset": 2
+              },
+              "caps": {
+                "content": 41984,
+                "frame": 60000,
+                "meta": 4096,
+                "value": 40960
+              },
+              "empty_value": {
+                "end_line": 0,
+                "final_newline": false,
+                "next_offset": null,
+                "path": "empty",
+                "start_line": 0,
+                "text": "",
+                "total_lines": 0,
+                "truncated": false,
+                "truncated_by": null
+              },
+              "kind": "read",
+              "values": []
+            }
+          }
+        ]
+      },
+      "first_production_stage": "M2",
+      "id": "result.budget_domains",
+      "input": [
+        {
+          "cap": 2,
+          "expected": "accepted",
+          "id": "meta_absent_cap2",
+          "measure": 2,
+          "meta": null
+        },
+        {
+          "cap": 2,
+          "expected": "accepted",
+          "id": "meta_empty_cap2",
+          "measure": 2,
+          "meta": {}
+        },
+        {
+          "cap": 2,
+          "expected": "output_too_large",
+          "id": "meta_nonempty_cap2",
+          "measure": 7,
+          "meta": {
+            "a": 1
+          }
+        },
+        {
+          "args": {
+            "x": 1
+          },
+          "excludes": [
+            "frame",
+            "LF"
+          ],
+          "id": "args_object_only",
+          "measure": 7
+        },
+        {
+          "cap": 40960,
+          "domain": "value",
+          "id": "value_40960",
+          "threshold": 40960
+        },
+        {
+          "cap": 41984,
+          "domain": "content",
+          "id": "content_41984",
+          "threshold": 41984
+        },
+        {
+          "cap": 4096,
+          "domain": "meta",
+          "id": "meta_4096",
+          "threshold": 4096
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "expected": {
+        "frame_target": 60000,
+        "overhead": 49,
+        "transport_hard_cap": 65536
+      },
+      "first_production_stage": "M2",
+      "id": "result.frame_60000_60001_65536_65537",
+      "input": [
+        {
+          "classification": "within_builtin_target",
+          "repeat_count": 59951,
+          "target": 60000,
+          "text_repeat": "x"
+        },
+        {
+          "classification": "over_builtin_target_transport_valid",
+          "repeat_count": 59952,
+          "target": 60001,
+          "text_repeat": "x"
+        },
+        {
+          "classification": "over_builtin_target_transport_valid",
+          "repeat_count": 65487,
+          "target": 65536,
+          "text_repeat": "x"
+        },
+        {
+          "classification": "stdout_limit_unknown",
+          "repeat_count": 65488,
+          "target": 65537,
+          "text_repeat": "x"
+        }
+      ],
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m2_pending"
+    },
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "expected": {
+        "replay_source": "journal tool_message",
+        "rerender": false
+      },
+      "first_production_stage": "M4",
+      "id": "result.replay_no_rerender",
+      "input": {
+        "journal_event": "dispatch_finished",
+        "renderer_digest_changed": true,
+        "tool_message_content": "frozen rendered text"
+      },
+      "kind": "table",
+      "owner": "W1-VECTORS",
+      "status": "m4_pending"
+    },
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "expected": {
+        "model_text_source": "journal",
+        "second_spawn": false
+      },
+      "first_production_stage": "M4",
+      "id": "lifecycle.journal_replay_no_rerender",
+      "input": {
+        "journal_model_text": "frozen rendered text",
+        "recovery": "restart_after_dispatch_finished"
+      },
+      "kind": "table",
+      "owner": "M4-LIFECYCLE",
+      "status": "m4_pending"
+    },
+    {
+      "design_refs": [
+        "§5.2",
+        "§5.4",
+        "§5.6",
+        "§8.2"
+      ],
+      "expected": {
+        "journal_event_types_unchanged": true,
+        "model_text": "a\nb"
+      },
+      "first_production_stage": "M4",
+      "id": "lifecycle.tool_message_model_text_stable",
+      "input": {
+        "content": [
+          {
+            "text": "a",
+            "type": "text"
+          },
+          {
+            "text": "b",
+            "type": "text"
+          }
+        ],
+        "meta": {
+          "ignored": 1
+        }
+      },
+      "kind": "table",
+      "owner": "M4-LIFECYCLE",
+      "status": "m4_pending"
+    }
+  ],
+  "domain_file": "results_v2.json",
+  "format": "v24-tool-plugin-abi-w1-vectors-1"
+}
