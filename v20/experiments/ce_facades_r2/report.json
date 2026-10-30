@@ -1,0 +1,466 @@
+{
+  "experiment": "ce_facades_r2",
+  "database": "agent_v20_ce_facades_r2",
+  "note": "four designs observed; none selected",
+  "designs": [
+    {
+      "design_id": "workflow_container",
+      "title": "会话即 workflow 容器",
+      "repair_note": "身份模型保持不变。这一轮只补上 Postgres、等待、并发、恢复、宏观任务和真实导出。",
+      "probes": {
+        "model_inside_transaction_rejected": true,
+        "file_write_inside_transaction_rejected": true,
+        "file_read_inside_transaction_rejected": true
+      },
+      "resume": {
+        "before": {
+          "session_id": "wf_4",
+          "run_id": "run_7"
+        },
+        "after": {
+          "session_id": "wf_4",
+          "run_id": "run_44"
+        },
+        "session_id_stable": true,
+        "run_id_changed": true,
+        "parent_run_id": "run_7",
+        "listed": true
+      },
+      "poll_wait": {
+        "polled_revision": 4,
+        "waiter_transaction_open": false,
+        "main_connection_idle": true,
+        "path": "notify",
+        "payload_fields": [
+          "run_id",
+          "revision"
+        ],
+        "payload": "run_7|5",
+        "observed_revision": 5,
+        "after_revision": 4,
+        "advanced": true
+      },
+      "cas": {
+        "outcomes": [
+          "committed",
+          "conflict"
+        ],
+        "one_commit_one_conflict": true
+      },
+      "recover_owner": {
+        "dead_pid": 28717,
+        "old_fence_rejected": true,
+        "new_owner_steer_committed": true,
+        "owner_generation": 2
+      },
+      "citation": {
+        "authority": "workflow_step_io",
+        "digest": "ef94dfcc6e00c8cd34f847cafe8daddf134eafdd80d003a7f2c29671b8c795d5",
+        "session_id": "wf_4",
+        "run_id": "run_7",
+        "folded_on_read": false
+      },
+      "handoff": {
+        "session_id": "wf_4",
+        "artifact_refs": [
+          "ef94dfcc6e00c8cd34f847cafe8daddf134eafdd80d003a7f2c29671b8c795d5"
+        ],
+        "folded_on_read": false,
+        "authority": "workflow_step_io",
+        "step_id": "step_46",
+        "seq": 2
+      },
+      "log_count": 17,
+      "needs_status": "needs_input",
+      "responded_status": "running",
+      "started_run_id": "run_7",
+      "macro": {
+        "macro_id": "macro_49",
+        "workflow_ids": [
+          "wf_52",
+          "wf_63"
+        ],
+        "digest": "8c2c7ef6b9bf1fd739917b56061349c1a34137fbe24ee694bc4ab3933dd66e5a",
+        "file_matches_digest": true,
+        "second_step_inputs": [
+          "8c2c7ef6b9bf1fd739917b56061349c1a34137fbe24ee694bc4ab3933dd66e5a"
+        ],
+        "alias_rows": 0,
+        "session_rows": 0,
+        "external_rows": 0
+      },
+      "macro_links": 2,
+      "event_retention": {
+        "events_before": 17,
+        "events_after": 20,
+        "events_retained": true,
+        "tombstone_via": "workflow_container_tombstone",
+        "kernel_verb_rejected": null
+      },
+      "workspace_export": {
+        "path": "exports/plan-run_7",
+        "digest": "ef94dfcc6e00c8cd34f847cafe8daddf134eafdd80d003a7f2c29671b8c795d5",
+        "file_exists": true,
+        "bytes_cleared": true,
+        "artifact_row_remains": true,
+        "digest_matched_file_before_cleanup": true
+      },
+      "postgres_readback": {
+        "row": {
+          "workflow_run_id": "wf_4",
+          "current_run_id": "run_44",
+          "revision": 6
+        },
+        "session_columns": [
+          "session_id",
+          "status",
+          "workflow_run_id"
+        ],
+        "events_session_indexed": true
+      }
+    },
+    {
+      "design_id": "thin_adapter",
+      "title": "薄适配器",
+      "repair_note": "调用方 session_id 是已提交的 session_aliases 行，resume 在同一事务里换 run 并改指向。下一步的 digest 从 artifacts 表读出，不留在调用方内存。宏观任务另建 workflow，不把别名行变成 workflow 容器。",
+      "probes": {
+        "model_inside_transaction_rejected": true,
+        "file_write_inside_transaction_rejected": true,
+        "file_read_inside_transaction_rejected": true
+      },
+      "resume": {
+        "before": {
+          "session_id": "alias_86",
+          "run_id": "run_89"
+        },
+        "after": {
+          "session_id": "alias_86",
+          "run_id": "run_126"
+        },
+        "session_id_stable": true,
+        "run_id_changed": true,
+        "parent_run_id": "run_89",
+        "listed": true
+      },
+      "poll_wait": {
+        "polled_revision": 4,
+        "waiter_transaction_open": false,
+        "main_connection_idle": true,
+        "path": "notify",
+        "payload_fields": [
+          "run_id",
+          "revision"
+        ],
+        "payload": "run_89|5",
+        "observed_revision": 5,
+        "after_revision": 4,
+        "advanced": true
+      },
+      "cas": {
+        "outcomes": [
+          "committed",
+          "conflict"
+        ],
+        "one_commit_one_conflict": true
+      },
+      "recover_owner": {
+        "dead_pid": 28727,
+        "old_fence_rejected": true,
+        "new_owner_steer_committed": true,
+        "owner_generation": 2
+      },
+      "citation": {
+        "authority": "committed_artifact_row",
+        "digest": "a34f092c49e0eff3c3cbbb61ea3b294a5643703ea9957d943d1ddc8eb780fed5",
+        "session_id": "alias_86",
+        "run_id": "run_89",
+        "folded_on_read": false
+      },
+      "handoff": {
+        "session_id": "alias_86",
+        "artifact_refs": [
+          "a34f092c49e0eff3c3cbbb61ea3b294a5643703ea9957d943d1ddc8eb780fed5"
+        ],
+        "folded_on_read": false,
+        "authority": "committed_artifact_row"
+      },
+      "log_count": 18,
+      "needs_status": "needs_input",
+      "responded_status": "running",
+      "started_run_id": "run_89",
+      "macro": {
+        "macro_id": "macro_130",
+        "workflow_ids": [
+          "wf_133",
+          "wf_140"
+        ],
+        "digest": "6e1df3060ab18e622b82ed7e41675929c86f198573e34361720faa408e9c7380",
+        "file_matches_digest": true,
+        "second_step_inputs": [
+          "6e1df3060ab18e622b82ed7e41675929c86f198573e34361720faa408e9c7380"
+        ],
+        "alias_rows": 2,
+        "session_rows": 0,
+        "external_rows": 0
+      },
+      "macro_links": 2,
+      "event_retention": {
+        "events_before": 18,
+        "events_after": 20,
+        "events_retained": true,
+        "tombstone_via": "alias_tombstone",
+        "kernel_verb_rejected": null
+      },
+      "workspace_export": {
+        "path": "exports/plan-run_89",
+        "digest": "a34f092c49e0eff3c3cbbb61ea3b294a5643703ea9957d943d1ddc8eb780fed5",
+        "file_exists": true,
+        "bytes_cleared": true,
+        "artifact_row_remains": true,
+        "digest_matched_file_before_cleanup": true
+      },
+      "postgres_readback": {
+        "row": {
+          "session_id": "alias_86",
+          "current_run_id": "run_126",
+          "revision": 3
+        },
+        "session_columns": [
+          "session_id",
+          "status",
+          "workflow_run_id"
+        ],
+        "events_session_indexed": true
+      }
+    },
+    {
+      "design_id": "session_object",
+      "title": "会话一等对象",
+      "repair_note": "sessions 行只保存稳定 session_id 和 workflow_run_id，不再自带 revision 或 artifact 链。步骤序号和输入输出在 workflow_steps。日志按 events.session_id 索引读取。",
+      "probes": {
+        "model_inside_transaction_rejected": true,
+        "file_write_inside_transaction_rejected": true,
+        "file_read_inside_transaction_rejected": true
+      },
+      "resume": {
+        "before": {
+          "session_id": "sess_166",
+          "run_id": "run_169"
+        },
+        "after": {
+          "session_id": "sess_166",
+          "run_id": "run_206"
+        },
+        "session_id_stable": true,
+        "run_id_changed": true,
+        "parent_run_id": "run_169",
+        "listed": true
+      },
+      "poll_wait": {
+        "polled_revision": 4,
+        "waiter_transaction_open": false,
+        "main_connection_idle": true,
+        "path": "notify",
+        "payload_fields": [
+          "run_id",
+          "revision"
+        ],
+        "payload": "run_169|5",
+        "observed_revision": 5,
+        "after_revision": 4,
+        "advanced": true
+      },
+      "cas": {
+        "outcomes": [
+          "committed",
+          "conflict"
+        ],
+        "one_commit_one_conflict": true
+      },
+      "recover_owner": {
+        "dead_pid": 28737,
+        "old_fence_rejected": true,
+        "new_owner_steer_committed": true,
+        "owner_generation": 2
+      },
+      "citation": {
+        "authority": "workflow_step_io",
+        "digest": "b9e14b43903f9a357508b1d82d155202c310a3a7bc1d233581348a29e5da8a72",
+        "session_id": "sess_166",
+        "run_id": "run_169",
+        "folded_on_read": false
+      },
+      "handoff": {
+        "session_id": "sess_166",
+        "artifact_refs": [
+          "b9e14b43903f9a357508b1d82d155202c310a3a7bc1d233581348a29e5da8a72"
+        ],
+        "folded_on_read": false,
+        "authority": "workflow_step_io",
+        "seq": 1
+      },
+      "log_count": 17,
+      "needs_status": "needs_input",
+      "responded_status": "running",
+      "started_run_id": "run_169",
+      "macro": {
+        "macro_id": "macro_210",
+        "workflow_ids": [
+          "wf_213",
+          "wf_226"
+        ],
+        "digest": "1d523598791e6cfe67f422b2a0ad557beda21a24250d4401c8b28044c0451c95",
+        "file_matches_digest": true,
+        "second_step_inputs": [
+          "1d523598791e6cfe67f422b2a0ad557beda21a24250d4401c8b28044c0451c95"
+        ],
+        "alias_rows": 0,
+        "session_rows": 2,
+        "external_rows": 0
+      },
+      "macro_links": 2,
+      "event_retention": {
+        "events_before": 17,
+        "events_after": 21,
+        "events_retained": true,
+        "tombstone_via": "manage_cleanup",
+        "kernel_verb_rejected": null
+      },
+      "workspace_export": {
+        "path": "exports/plan-run_169",
+        "digest": "b9e14b43903f9a357508b1d82d155202c310a3a7bc1d233581348a29e5da8a72",
+        "file_exists": true,
+        "bytes_cleared": true,
+        "artifact_row_remains": true,
+        "digest_matched_file_before_cleanup": true
+      },
+      "postgres_readback": {
+        "row": {
+          "session_id": "sess_166",
+          "workflow_run_id": "wf_164",
+          "status": "purged"
+        },
+        "session_columns": [
+          "session_id",
+          "status",
+          "workflow_run_id"
+        ],
+        "events_session_indexed": true
+      }
+    },
+    {
+      "design_id": "unloadable_profile",
+      "title": "可卸载 profile",
+      "repair_note": "external_ids 和 external_runs 在 start 或 resume 的同一事务里写入，另一条连接能 SELECT 到。cleanup 走 note_purge 并把映射标成 purged，不再把 cleanup 当成被拒绝的 kernel 动词。get_log 仍在读路径折叠，折叠来源是已提交的 external_runs。",
+      "probes": {
+        "model_inside_transaction_rejected": true,
+        "file_write_inside_transaction_rejected": true,
+        "file_read_inside_transaction_rejected": true
+      },
+      "resume": {
+        "before": {
+          "session_id": "ext_251",
+          "run_id": "run_254"
+        },
+        "after": {
+          "session_id": "ext_251",
+          "run_id": "run_291"
+        },
+        "session_id_stable": true,
+        "run_id_changed": true,
+        "parent_run_id": "run_254",
+        "listed": true
+      },
+      "poll_wait": {
+        "polled_revision": 4,
+        "waiter_transaction_open": false,
+        "main_connection_idle": true,
+        "path": "notify",
+        "payload_fields": [
+          "run_id",
+          "revision"
+        ],
+        "payload": "run_254|5",
+        "observed_revision": 5,
+        "after_revision": 4,
+        "advanced": true
+      },
+      "cas": {
+        "outcomes": [
+          "committed",
+          "conflict"
+        ],
+        "one_commit_one_conflict": true
+      },
+      "recover_owner": {
+        "dead_pid": 28747,
+        "old_fence_rejected": true,
+        "new_owner_steer_committed": true,
+        "owner_generation": 2
+      },
+      "citation": {
+        "authority": "read_path_fold",
+        "digest": "ec8d581441eaa7b6f04ba83294b1f2ad3e355347b0dca5c90de778982ff62bbc",
+        "session_id": "ext_251",
+        "run_id": "run_254",
+        "folded_on_read": true
+      },
+      "handoff": {
+        "session_id": "ext_251",
+        "artifact_refs": [
+          "ec8d581441eaa7b6f04ba83294b1f2ad3e355347b0dca5c90de778982ff62bbc"
+        ],
+        "folded_on_read": true,
+        "authority": "read_path_fold"
+      },
+      "log_count": 18,
+      "needs_status": "needs_input",
+      "responded_status": "running",
+      "started_run_id": "run_254",
+      "macro": {
+        "macro_id": "macro_295",
+        "workflow_ids": [
+          "wf_298",
+          "wf_305"
+        ],
+        "digest": "717e1986373bd67a9c6ede2bfa897f9f35df52eadc68c6ab9e4e9c3fe4a025e7",
+        "file_matches_digest": true,
+        "second_step_inputs": [
+          "717e1986373bd67a9c6ede2bfa897f9f35df52eadc68c6ab9e4e9c3fe4a025e7"
+        ],
+        "alias_rows": 0,
+        "session_rows": 0,
+        "external_rows": 2
+      },
+      "macro_links": 2,
+      "event_retention": {
+        "events_before": 18,
+        "events_after": 20,
+        "events_retained": true,
+        "tombstone_via": "profile_tombstone",
+        "kernel_verb_rejected": null
+      },
+      "workspace_export": {
+        "path": "exports/plan-run_254",
+        "digest": "ec8d581441eaa7b6f04ba83294b1f2ad3e355347b0dca5c90de778982ff62bbc",
+        "file_exists": true,
+        "bytes_cleared": true,
+        "artifact_row_remains": true,
+        "digest_matched_file_before_cleanup": true
+      },
+      "postgres_readback": {
+        "row": {
+          "external_id": "ext_251",
+          "run_id": "run_291",
+          "status": "purged"
+        },
+        "session_columns": [
+          "session_id",
+          "status",
+          "workflow_run_id"
+        ],
+        "events_session_indexed": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,1536 @@
+{
+  "experiment": "ce_facades",
+  "note": "four designs observed; none selected",
+  "designs": [
+    {
+      "design_id": "thin_adapter",
+      "title": "薄适配器",
+      "module": "thin_adapter",
+      "probes": {
+        "model_inside_transaction_rejected": true,
+        "file_write_inside_transaction_rejected": true,
+        "file_read_inside_transaction_rejected": true
+      },
+      "resume": {
+        "before": {
+          "session_id": "run_4",
+          "run_id": "run_4"
+        },
+        "after": {
+          "session_id": "run_40",
+          "run_id": "run_40"
+        },
+        "session_id_stable": false,
+        "run_id_changed": true,
+        "session_id_equals_run_id_after": true,
+        "parent_run_id": "run_4",
+        "kernel_session_rows": 0,
+        "kernel_workflow_rows": 0,
+        "profile_loaded": false,
+        "external_session_id_unchanged": false
+      },
+      "transaction_writes": {
+        "phases": {
+          "create_session": [
+            {
+              "tx_id": "tx_3",
+              "verbs": [
+                "start"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "start": [],
+          "model_plan": [
+            {
+              "tx_id": "tx_7",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_11",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "artifacts",
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "steer": [
+            {
+              "tx_id": "tx_16",
+              "verbs": [
+                "steer"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "needs_input": [
+            {
+              "tx_id": "tx_19",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_23",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "respond": [
+            {
+              "tx_id": "tx_26",
+              "verbs": [
+                "respond"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "cite": [
+            {
+              "tx_id": "tx_29",
+              "verbs": [
+                "steer"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_32",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_36",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "resume": [
+            {
+              "tx_id": "tx_39",
+              "verbs": [
+                "start"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "stop": [
+            {
+              "tx_id": "tx_43",
+              "verbs": [
+                "cancel"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "cleanup": [
+            {
+              "tx_id": "tx_46",
+              "verbs": [
+                "note_purge"
+              ],
+              "objects": [
+                "events",
+                "operations"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ]
+        }
+      },
+      "artifact_citation": {
+        "authority": "caller_explicit_ref",
+        "digest": "cde30b6c9ce479081c64435f984517e816b5487f81d0e1e9156a5a2f30875ac8",
+        "accepted": true,
+        "unknown_digest_rejected": true,
+        "unknown_digest_tx_count": 0,
+        "folded_on_read": false,
+        "evidence": {
+          "caller_bundle": [
+            "cde30b6c9ce479081c64435f984517e816b5487f81d0e1e9156a5a2f30875ac8"
+          ],
+          "session_chain": [],
+          "workflow_step_inputs": [],
+          "resume_run_start_refs": [
+            "cde30b6c9ce479081c64435f984517e816b5487f81d0e1e9156a5a2f30875ac8"
+          ]
+        }
+      },
+      "event_retention": {
+        "events_retained": true,
+        "event_ids_removed": [],
+        "event_count_before": 12,
+        "event_count_after": 13,
+        "events_deleted": 0,
+        "tombstone_appended": true,
+        "purge_tombstones": 1,
+        "tombstone_via": "caller_loop",
+        "kernel_verb_rejected": null,
+        "kernel_cleanup_verb": false,
+        "exports_dropped": true,
+        "session_rows": 0,
+        "workflow_rows": 0,
+        "cleanup_verbs": [
+          "note_purge"
+        ],
+        "workflow_row_present": false,
+        "session_row_present": false
+      },
+      "caller_view": {
+        "log_count": 11,
+        "handoff_refs": [
+          "cde30b6c9ce479081c64435f984517e816b5487f81d0e1e9156a5a2f30875ac8"
+        ],
+        "session_ids": [
+          "run_4",
+          "run_40"
+        ],
+        "folded_on_read": false
+      },
+      "unused_observations": {
+        "created_session_id": "run_4",
+        "steered_run_id": "run_4",
+        "needs_status": "needs_input",
+        "responded_status": "running",
+        "stopped": "cancelled"
+      }
+    },
+    {
+      "design_id": "workflow_container",
+      "title": "会话即 workflow 容器",
+      "module": "workflow_container",
+      "probes": {
+        "model_inside_transaction_rejected": true,
+        "file_write_inside_transaction_rejected": true,
+        "file_read_inside_transaction_rejected": true
+      },
+      "resume": {
+        "before": {
+          "session_id": "wf_4",
+          "run_id": "run_8"
+        },
+        "after": {
+          "session_id": "wf_4",
+          "run_id": "run_45"
+        },
+        "session_id_stable": true,
+        "run_id_changed": true,
+        "session_id_equals_run_id_after": false,
+        "parent_run_id": "run_8",
+        "kernel_session_rows": 0,
+        "kernel_workflow_rows": 1,
+        "profile_loaded": false,
+        "external_session_id_unchanged": true
+      },
+      "transaction_writes": {
+        "phases": {
+          "create_session": [
+            {
+              "tx_id": "tx_3",
+              "verbs": [
+                "start"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "workflow_runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "start": [
+            {
+              "tx_id": "tx_7",
+              "verbs": [
+                "spawn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "workflow_runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "model_plan": [
+            {
+              "tx_id": "tx_11",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_15",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "artifacts",
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "steer": [
+            {
+              "tx_id": "tx_20",
+              "verbs": [
+                "steer"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "needs_input": [
+            {
+              "tx_id": "tx_23",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_27",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "respond": [
+            {
+              "tx_id": "tx_30",
+              "verbs": [
+                "respond"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "cite": [
+            {
+              "tx_id": "tx_33",
+              "verbs": [
+                "handoff"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "workflow_runs",
+                "workflow_steps"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_37",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_41",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "resume": [
+            {
+              "tx_id": "tx_43",
+              "verbs": [
+                "spawn",
+                "handoff"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "workflow_runs",
+                "workflow_steps"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "stop": [
+            {
+              "tx_id": "tx_51",
+              "verbs": [
+                "cancel"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "workflow_runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "cleanup": [
+            {
+              "tx_id": "tx_55",
+              "verbs": [
+                "note_purge"
+              ],
+              "objects": [
+                "events",
+                "operations"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ]
+        }
+      },
+      "artifact_citation": {
+        "authority": "workflow_step_io",
+        "digest": "bb8dd7307213625bf788bc5e0363b10963e86e7ec1d595ae83387262c644a5ec",
+        "accepted": true,
+        "unknown_digest_rejected": true,
+        "unknown_digest_tx_count": 0,
+        "folded_on_read": false,
+        "evidence": {
+          "caller_bundle": null,
+          "session_chain": [],
+          "workflow_step_inputs": [
+            "bb8dd7307213625bf788bc5e0363b10963e86e7ec1d595ae83387262c644a5ec"
+          ],
+          "resume_run_start_refs": []
+        }
+      },
+      "event_retention": {
+        "events_retained": true,
+        "event_ids_removed": [],
+        "event_count_before": 15,
+        "event_count_after": 16,
+        "events_deleted": 0,
+        "tombstone_appended": true,
+        "purge_tombstones": 1,
+        "tombstone_via": "workflow_container_tombstone",
+        "kernel_verb_rejected": null,
+        "kernel_cleanup_verb": false,
+        "exports_dropped": true,
+        "session_rows": 0,
+        "workflow_rows": 1,
+        "cleanup_verbs": [
+          "note_purge"
+        ],
+        "workflow_row_present": true,
+        "session_row_present": false
+      },
+      "caller_view": {
+        "log_count": 13,
+        "handoff_refs": [
+          "bb8dd7307213625bf788bc5e0363b10963e86e7ec1d595ae83387262c644a5ec"
+        ],
+        "session_ids": [
+          "wf_4"
+        ],
+        "folded_on_read": false
+      },
+      "unused_observations": {
+        "created_session_id": "wf_4",
+        "steered_run_id": "run_8",
+        "needs_status": "needs_input",
+        "responded_status": "running",
+        "stopped": "cancelled"
+      }
+    },
+    {
+      "design_id": "session_object",
+      "title": "会话一等对象",
+      "module": "session_object",
+      "probes": {
+        "model_inside_transaction_rejected": true,
+        "file_write_inside_transaction_rejected": true,
+        "file_read_inside_transaction_rejected": true
+      },
+      "resume": {
+        "before": {
+          "session_id": "sess_7",
+          "run_id": "run_4"
+        },
+        "after": {
+          "session_id": "sess_7",
+          "run_id": "run_43"
+        },
+        "session_id_stable": true,
+        "run_id_changed": true,
+        "session_id_equals_run_id_after": false,
+        "parent_run_id": "run_4",
+        "kernel_session_rows": 1,
+        "kernel_workflow_rows": 0,
+        "profile_loaded": false,
+        "external_session_id_unchanged": true
+      },
+      "transaction_writes": {
+        "phases": {
+          "create_session": [
+            {
+              "tx_id": "tx_3",
+              "verbs": [
+                "start",
+                "manage_create_session"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "sessions"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "start": [],
+          "model_plan": [
+            {
+              "tx_id": "tx_10",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_14",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "artifacts",
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "steer": [
+            {
+              "tx_id": "tx_19",
+              "verbs": [
+                "steer"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "needs_input": [
+            {
+              "tx_id": "tx_22",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_26",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "respond": [
+            {
+              "tx_id": "tx_29",
+              "verbs": [
+                "respond"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "cite": [
+            {
+              "tx_id": "tx_32",
+              "verbs": [
+                "handoff"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "sessions"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_35",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_39",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "resume": [
+            {
+              "tx_id": "tx_41",
+              "verbs": [
+                "start",
+                "manage_resume_session"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "sessions"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "stop": [
+            {
+              "tx_id": "tx_48",
+              "verbs": [
+                "manage_stop_session"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "sessions"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "cleanup": [
+            {
+              "tx_id": "tx_52",
+              "verbs": [
+                "manage_cleanup"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "sessions"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ]
+        }
+      },
+      "artifact_citation": {
+        "authority": "session_artifact_chain",
+        "digest": "cde30b6c9ce479081c64435f984517e816b5487f81d0e1e9156a5a2f30875ac8",
+        "accepted": true,
+        "unknown_digest_rejected": true,
+        "unknown_digest_tx_count": 0,
+        "folded_on_read": false,
+        "evidence": {
+          "caller_bundle": null,
+          "session_chain": [
+            "cde30b6c9ce479081c64435f984517e816b5487f81d0e1e9156a5a2f30875ac8"
+          ],
+          "workflow_step_inputs": [],
+          "resume_run_start_refs": []
+        }
+      },
+      "event_retention": {
+        "events_retained": true,
+        "event_ids_removed": [],
+        "event_count_before": 15,
+        "event_count_after": 16,
+        "events_deleted": 0,
+        "tombstone_appended": true,
+        "purge_tombstones": 1,
+        "tombstone_via": "manage_cleanup",
+        "kernel_verb_rejected": null,
+        "kernel_cleanup_verb": false,
+        "exports_dropped": true,
+        "session_rows": 1,
+        "workflow_rows": 0,
+        "cleanup_verbs": [
+          "manage_cleanup"
+        ],
+        "workflow_row_present": false,
+        "session_row_present": true
+      },
+      "caller_view": {
+        "log_count": 13,
+        "handoff_refs": [
+          "cde30b6c9ce479081c64435f984517e816b5487f81d0e1e9156a5a2f30875ac8"
+        ],
+        "session_ids": [
+          "sess_7"
+        ],
+        "folded_on_read": false
+      },
+      "unused_observations": {
+        "created_session_id": "sess_7",
+        "steered_run_id": "run_4",
+        "needs_status": "needs_input",
+        "responded_status": "running",
+        "stopped": "cancelled"
+      }
+    },
+    {
+      "design_id": "unloadable_profile",
+      "title": "可卸载 profile",
+      "module": "unloadable_profile",
+      "probes": {
+        "model_inside_transaction_rejected": true,
+        "file_write_inside_transaction_rejected": true,
+        "file_read_inside_transaction_rejected": true
+      },
+      "resume": {
+        "before": {
+          "session_id": "ext_2",
+          "run_id": "run_5"
+        },
+        "after": {
+          "session_id": "ext_2",
+          "run_id": "run_41"
+        },
+        "session_id_stable": true,
+        "run_id_changed": true,
+        "session_id_equals_run_id_after": false,
+        "parent_run_id": "run_5",
+        "kernel_session_rows": 0,
+        "kernel_workflow_rows": 0,
+        "profile_loaded": true,
+        "external_session_id_unchanged": true
+      },
+      "transaction_writes": {
+        "phases": {
+          "create_session": [
+            {
+              "tx_id": "tx_4",
+              "verbs": [
+                "start"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [
+                "bind"
+              ],
+              "committed": true
+            }
+          ],
+          "start": [],
+          "model_plan": [
+            {
+              "tx_id": "tx_8",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_12",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "artifacts",
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "steer": [
+            {
+              "tx_id": "tx_17",
+              "verbs": [
+                "steer"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "needs_input": [
+            {
+              "tx_id": "tx_20",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_24",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "respond": [
+            {
+              "tx_id": "tx_27",
+              "verbs": [
+                "respond"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "cite": [
+            {
+              "tx_id": "tx_30",
+              "verbs": [
+                "steer"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_33",
+              "verbs": [
+                "admit_turn"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            },
+            {
+              "tx_id": "tx_37",
+              "verbs": [
+                "accept_turn_receipt"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs",
+                "turns"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ],
+          "resume": [
+            {
+              "tx_id": "tx_39",
+              "verbs": [
+                "start"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [
+                "rebind"
+              ],
+              "committed": true
+            }
+          ],
+          "stop": [
+            {
+              "tx_id": "tx_43",
+              "verbs": [
+                "cancel"
+              ],
+              "objects": [
+                "events",
+                "operations",
+                "runs"
+              ],
+              "profile_writes": [
+                "retire"
+              ],
+              "committed": true
+            }
+          ],
+          "cleanup": [
+            {
+              "tx_id": "tx_48",
+              "verbs": [
+                "note_purge"
+              ],
+              "objects": [
+                "events",
+                "operations"
+              ],
+              "profile_writes": [],
+              "committed": true
+            }
+          ]
+        }
+      },
+      "artifact_citation": {
+        "authority": "read_path_fold",
+        "digest": "9cfced84b2535b4ba49cc0bf72aa707c81da080e074cb4ae669569cf5ad5c03a",
+        "accepted": true,
+        "unknown_digest_rejected": true,
+        "unknown_digest_tx_count": 0,
+        "folded_on_read": true,
+        "evidence": {
+          "caller_bundle": null,
+          "session_chain": [],
+          "workflow_step_inputs": [],
+          "resume_run_start_refs": []
+        }
+      },
+      "event_retention": {
+        "events_retained": true,
+        "event_ids_removed": [],
+        "event_count_before": 12,
+        "event_count_after": 13,
+        "events_deleted": 0,
+        "tombstone_appended": true,
+        "purge_tombstones": 1,
+        "tombstone_via": "rejected_cleanup_then_profile_note_purge",
+        "kernel_verb_rejected": "cleanup",
+        "kernel_cleanup_verb": false,
+        "exports_dropped": true,
+        "session_rows": 0,
+        "workflow_rows": 0,
+        "cleanup_verbs": [
+          "note_purge"
+        ],
+        "workflow_row_present": false,
+        "session_row_present": false
+      },
+      "caller_view": {
+        "log_count": 11,
+        "handoff_refs": [
+          "9cfced84b2535b4ba49cc0bf72aa707c81da080e074cb4ae669569cf5ad5c03a"
+        ],
+        "session_ids": [
+          "ext_2"
+        ],
+        "folded_on_read": true
+      },
+      "unused_observations": {
+        "created_session_id": "ext_2",
+        "steered_run_id": "run_5",
+        "needs_status": "needs_input",
+        "responded_status": "running",
+        "stopped": "cancelled"
+      }
+    }
+  ],
+  "divergence": {
+    "resume_identity": [
+      {
+        "design_id": "thin_adapter",
+        "session_id_before": "run_4",
+        "run_id_before": "run_4",
+        "session_id_after": "run_40",
+        "run_id_after": "run_40",
+        "session_id_stable": false,
+        "run_id_changed": true,
+        "session_id_equals_run_id_after": true,
+        "parent_run_id": "run_4",
+        "kernel_session_rows": 0,
+        "kernel_workflow_rows": 0
+      },
+      {
+        "design_id": "workflow_container",
+        "session_id_before": "wf_4",
+        "run_id_before": "run_8",
+        "session_id_after": "wf_4",
+        "run_id_after": "run_45",
+        "session_id_stable": true,
+        "run_id_changed": true,
+        "session_id_equals_run_id_after": false,
+        "parent_run_id": "run_8",
+        "kernel_session_rows": 0,
+        "kernel_workflow_rows": 1
+      },
+      {
+        "design_id": "session_object",
+        "session_id_before": "sess_7",
+        "run_id_before": "run_4",
+        "session_id_after": "sess_7",
+        "run_id_after": "run_43",
+        "session_id_stable": true,
+        "run_id_changed": true,
+        "session_id_equals_run_id_after": false,
+        "parent_run_id": "run_4",
+        "kernel_session_rows": 1,
+        "kernel_workflow_rows": 0
+      },
+      {
+        "design_id": "unloadable_profile",
+        "session_id_before": "ext_2",
+        "run_id_before": "run_5",
+        "session_id_after": "ext_2",
+        "run_id_after": "run_41",
+        "session_id_stable": true,
+        "run_id_changed": true,
+        "session_id_equals_run_id_after": false,
+        "parent_run_id": "run_5",
+        "kernel_session_rows": 0,
+        "kernel_workflow_rows": 0
+      }
+    ],
+    "transaction_writes": [
+      {
+        "design_id": "thin_adapter",
+        "create_session": [
+          {
+            "verbs": [
+              "start"
+            ],
+            "objects": [
+              "events",
+              "operations",
+              "runs"
+            ],
+            "profile_writes": []
+          }
+        ],
+        "start": [],
+        "resume": [
+          {
+            "verbs": [
+              "start"
+            ],
+            "objects": [
+              "events",
+              "operations",
+              "runs"
+            ],
+            "profile_writes": []
+          }
+        ],
+        "cleanup": [
+          {
+            "verbs": [
+              "note_purge"
+            ],
+            "objects": [
+              "events",
+              "operations"
+            ],
+            "profile_writes": []
+          }
+        ]
+      },
+      {
+        "design_id": "workflow_container",
+        "create_session": [
+          {
+            "verbs": [
+              "start"
+            ],
+            "objects": [
+              "events",
+              "operations",
+              "workflow_runs"
+            ],
+            "profile_writes": []
+          }
+        ],
+        "start": [
+          {
+            "verbs": [
+              "spawn"
+            ],
+            "objects": [
+              "events",
+              "operations",
+              "runs",
+              "workflow_runs"
+            ],
+            "profile_writes": []
+          }
+        ],
+        "resume": [
+          {
+            "verbs": [
+              "spawn",
+              "handoff"
+            ],
+            "objects": [
+              "events",
+              "operations",
+              "runs",
+              "workflow_runs",
+              "workflow_steps"
+            ],
+            "profile_writes": []
+          }
+        ],
+        "cleanup": [
+          {
+            "verbs": [
+              "note_purge"
+            ],
+            "objects": [
+              "events",
+              "operations"
+            ],
+            "profile_writes": []
+          }
+        ]
+      },
+      {
+        "design_id": "session_object",
+        "create_session": [
+          {
+            "verbs": [
+              "start",
+              "manage_create_session"
+            ],
+            "objects": [
+              "events",
+              "operations",
+              "runs",
+              "sessions"
+            ],
+            "profile_writes": []
+          }
+        ],
+        "start": [],
+        "resume": [
+          {
+            "verbs": [
+              "start",
+              "manage_resume_session"
+            ],
+            "objects": [
+              "events",
+              "operations",
+              "runs",
+              "sessions"
+            ],
+            "profile_writes": []
+          }
+        ],
+        "cleanup": [
+          {
+            "verbs": [
+              "manage_cleanup"
+            ],
+            "objects": [
+              "events",
+              "operations",
+              "runs",
+              "sessions"
+            ],
+            "profile_writes": []
+          }
+        ]
+      },
+      {
+        "design_id": "unloadable_profile",
+        "create_session": [
+          {
+            "verbs": [
+              "start"
+            ],
+            "objects": [
+              "events",
+              "operations",
+              "runs"
+            ],
+            "profile_writes": [
+              "bind"
+            ]
+          }
+        ],
+        "start": [],
+        "resume": [
+          {
+            "verbs": [
+              "start"
+            ],
+            "objects": [
+              "events",
+              "operations",
+              "runs"
+            ],
+            "profile_writes": [
+              "rebind"
+            ]
+          }
+        ],
+        "cleanup": [
+          {
+            "verbs": [
+              "note_purge"
+            ],
+            "objects": [
+              "events",
+              "operations"
+            ],
+            "profile_writes": []
+          }
+        ]
+      }
+    ],
+    "artifact_citation": [
+      {
+        "design_id": "thin_adapter",
+        "authority": "caller_explicit_ref",
+        "folded_on_read": false,
+        "unknown_digest_rejected": true,
+        "digest_in_handoff": true,
+        "evidence": {
+          "caller_bundle": [
+            "cde30b6c9ce479081c64435f984517e816b5487f81d0e1e9156a5a2f30875ac8"
+          ],
+          "session_chain": [],
+          "workflow_step_inputs": [],
+          "resume_run_start_refs": [
+            "cde30b6c9ce479081c64435f984517e816b5487f81d0e1e9156a5a2f30875ac8"
+          ]
+        }
+      },
+      {
+        "design_id": "workflow_container",
+        "authority": "workflow_step_io",
+        "folded_on_read": false,
+        "unknown_digest_rejected": true,
+        "digest_in_handoff": true,
+        "evidence": {
+          "caller_bundle": null,
+          "session_chain": [],
+          "workflow_step_inputs": [
+            "bb8dd7307213625bf788bc5e0363b10963e86e7ec1d595ae83387262c644a5ec"
+          ],
+          "resume_run_start_refs": []
+        }
+      },
+      {
+        "design_id": "session_object",
+        "authority": "session_artifact_chain",
+        "folded_on_read": false,
+        "unknown_digest_rejected": true,
+        "digest_in_handoff": true,
+        "evidence": {
+          "caller_bundle": null,
+          "session_chain": [
+            "cde30b6c9ce479081c64435f984517e816b5487f81d0e1e9156a5a2f30875ac8"
+          ],
+          "workflow_step_inputs": [],
+          "resume_run_start_refs": []
+        }
+      },
+      {
+        "design_id": "unloadable_profile",
+        "authority": "read_path_fold",
+        "folded_on_read": true,
+        "unknown_digest_rejected": true,
+        "digest_in_handoff": true,
+        "evidence": {
+          "caller_bundle": null,
+          "session_chain": [],
+          "workflow_step_inputs": [],
+          "resume_run_start_refs": []
+        }
+      }
+    ],
+    "event_retention": [
+      {
+        "design_id": "thin_adapter",
+        "events_retained": true,
+        "event_ids_removed": [],
+        "event_count_before": 12,
+        "event_count_after": 13,
+        "tombstone_appended": true,
+        "tombstone_via": "caller_loop",
+        "cleanup_verbs": [
+          "note_purge"
+        ],
+        "kernel_verb_rejected": null,
+        "exports_dropped": true,
+        "session_rows": 0,
+        "workflow_rows": 0
+      },
+      {
+        "design_id": "workflow_container",
+        "events_retained": true,
+        "event_ids_removed": [],
+        "event_count_before": 15,
+        "event_count_after": 16,
+        "tombstone_appended": true,
+        "tombstone_via": "workflow_container_tombstone",
+        "cleanup_verbs": [
+          "note_purge"
+        ],
+        "kernel_verb_rejected": null,
+        "exports_dropped": true,
+        "session_rows": 0,
+        "workflow_rows": 1
+      },
+      {
+        "design_id": "session_object",
+        "events_retained": true,
+        "event_ids_removed": [],
+        "event_count_before": 15,
+        "event_count_after": 16,
+        "tombstone_appended": true,
+        "tombstone_via": "manage_cleanup",
+        "cleanup_verbs": [
+          "manage_cleanup"
+        ],
+        "kernel_verb_rejected": null,
+        "exports_dropped": true,
+        "session_rows": 1,
+        "workflow_rows": 0
+      },
+      {
+        "design_id": "unloadable_profile",
+        "events_retained": true,
+        "event_ids_removed": [],
+        "event_count_before": 12,
+        "event_count_after": 13,
+        "tombstone_appended": true,
+        "tombstone_via": "rejected_cleanup_then_profile_note_purge",
+        "cleanup_verbs": [
+          "note_purge"
+        ],
+        "kernel_verb_rejected": "cleanup",
+        "exports_dropped": true,
+        "session_rows": 0,
+        "workflow_rows": 0
+      }
+    ]
+  }
+}
