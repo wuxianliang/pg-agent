@@ -3,7 +3,7 @@
   "inventory_version": 1,
   "design_input": {
     "path": "docs/designs/v24-tool-plugin-abi-v1-2026-10-30.md",
-    "sha256_at_review": "976567da3f7a381f488200bfc11b0ce933b3924b2bd9551c50846742081eb951",
+    "sha256_at_review": "0de115c947967cc92a5e15ec7bf7c53f38abe78bcfcc89f77e06042be1313d04",
     "source_sha256_imported_from_primary": "bdfe65dcd7f1a445671d9754fd99d2642edfee516b35c9f17ba84c7c15d90c70"
   },
   "vocabulary": {
@@ -120,8 +120,8 @@
         },
         {
           "ref": "Appendix A",
-          "line_start": 1062,
-          "line_end": 1168,
+          "line_start": 1072,
+          "line_end": 1178,
           "heading": "## 附录 A：`search` 完整 descriptor",
           "sha256": "fe8af625a08a1b940f9d26b619989f612ebd4505552129e446de231471de8c7b"
         }
@@ -228,8 +228,8 @@
         },
         {
           "ref": "§7.2",
-          "line_start": 925,
-          "line_end": 932,
+          "line_start": 929,
+          "line_end": 936,
           "heading": "### 7.2 v1 兼容与迁移",
           "sha256": "710221b07eded60fb003ed8f03336c36c1f60bb6e11a0ccf3131e39bab1d7ce0"
         }
@@ -318,8 +318,8 @@
         },
         {
           "ref": "§8.2",
-          "line_start": 1004,
-          "line_end": 1015,
+          "line_start": 1014,
+          "line_end": 1025,
           "heading": "### 8.2 K1：transcript 派生",
           "sha256": "c23a3ab2fd89ea5c622588727eefb31106ccb1a4bb6fb6b738f5748353502c51"
         }
@@ -424,15 +424,15 @@
         },
         {
           "ref": "§8.2",
-          "line_start": 1004,
-          "line_end": 1015,
+          "line_start": 1014,
+          "line_end": 1025,
           "heading": "### 8.2 K1：transcript 派生",
           "sha256": "c23a3ab2fd89ea5c622588727eefb31106ccb1a4bb6fb6b738f5748353502c51"
         },
         {
           "ref": "§8.3",
-          "line_start": 1016,
-          "line_end": 1023,
+          "line_start": 1026,
+          "line_end": 1033,
           "heading": "### 8.3 `dispatch_started` 前移",
           "sha256": "cb65227e899e7b466997e48b311926e05f015c77f5430507510e10d1e1ac5c36"
         }

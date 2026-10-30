@@ -21,7 +21,6 @@ registry itself stores tuples and private mappings and exposes no mutator.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import stat
 from dataclasses import dataclass, field
@@ -34,55 +33,15 @@ DEFAULT_TIMEOUT_MS = 5000
 _HEX64_REQUIRED = "0123456789abcdef"
 
 
-class _FrozenDict(dict):
-    """A JSON object that cannot be mutated after registry construction."""
-
-    def _readonly(self, *args, **kwargs):
-        raise TypeError("approved adapter parameters are immutable")
-
-    __setitem__ = _readonly
-    __delitem__ = _readonly
-    __ior__ = _readonly
-    clear = _readonly
-    pop = _readonly
-    popitem = _readonly
-    setdefault = _readonly
-    update = _readonly
-
-
-class _FrozenList(list):
-    """A JSON array that cannot be mutated after registry construction."""
-
-    def _readonly(self, *args, **kwargs):
-        raise TypeError("approved adapter parameters are immutable")
-
-    __setitem__ = _readonly
-    __delitem__ = _readonly
-    __iadd__ = _readonly
-    __imul__ = _readonly
-    append = _readonly
-    clear = _readonly
-    extend = _readonly
-    insert = _readonly
-    pop = _readonly
-    remove = _readonly
-    reverse = _readonly
-    sort = _readonly
-
-
-def _freeze(value):
-    """Deep-freeze the JSON-shaped ``parameters`` field."""
-    if isinstance(value, dict):
-        return _FrozenDict({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return _FrozenList(_freeze(item) for item in value)
-    if isinstance(value, tuple):
-        return tuple(_freeze(item) for item in value)
-    return value
-
-
-class RegistryError(RuntimeError):
-    """An approved adapter entry is structurally invalid or ambiguous."""
+from .canonical import (  # noqa: F401
+    RegistryError,
+    _FrozenDict,
+    _FrozenList,
+    _freeze,
+    _quote,
+    descriptor_digest,
+    pg_jsonb_text,
+)
 
 
 class AdapterNotFound(RegistryError):
@@ -99,49 +58,6 @@ def _hex64(value, name: str) -> str:
     if any(ch not in _HEX64_REQUIRED for ch in value):
         raise RegistryError(f"{name} must be 64 lowercase hex characters")
     return value
-
-
-def _quote(value: str) -> str:
-    return json.dumps(value, ensure_ascii=False)
-
-
-def pg_jsonb_text(value) -> str:
-    """Render the exact text PostgreSQL ``jsonb::text`` produces.
-
-    ``v24.canonical_json(jsonb)`` is ``p_payload::text``.  JSON object keys are
-    ordered by byte length and then bytewise, with ``", "``/``": "`` spacing.
-    Descriptor digests are computed over that text, so Python must mirror it
-    rather than use a compact ``json.dumps``.
-    """
-    if isinstance(value, dict):
-        items = sorted(value.items(),
-                       key=lambda kv: (len(kv[0].encode("utf-8")),
-                                       kv[0].encode("utf-8")))
-        return "{" + ", ".join(
-            f"{_quote(key)}: {pg_jsonb_text(item)}" for key, item in items
-        ) + "}"
-    if isinstance(value, (list, tuple)):
-        return "[" + ", ".join(pg_jsonb_text(item) for item in value) + "]"
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    if value is None:
-        return "null"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        return json.dumps(value, allow_nan=False)
-    if isinstance(value, str):
-        return _quote(value)
-    raise TypeError(f"unsupported JSON value in descriptor: {type(value)!r}")
-
-
-def descriptor_digest(descriptor: dict) -> str:
-    """SHA-256 hex of the PostgreSQL canonical descriptor text."""
-    if not isinstance(descriptor, dict):
-        raise RegistryError("descriptor must be an object")
-    return hashlib.sha256(pg_jsonb_text(descriptor).encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)

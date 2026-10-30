@@ -611,3 +611,13 @@ B0 is an evidence baseline, not a production ABI implementation. The four golden
 - **D-ABI-W1-3 (M3/M4 pending):** plugin artifact digest depends on future tool files; 12-second timing is a future timing gate. Journal-only replay/no-rerender and additive model text remain M4 behavior contracts. No real filesystem tool or provider was invoked by W1 checks.
 - **D-ABI-W1-4 (compatibility/scope):** B0 bytes and checker are unchanged. `structure.descriptor_v2_rejected` is a malformed pre-M2 observation, not a permanent v2 rejection rule; M2 adds complete valid v2 acceptance. W1 adds no SQL, kernel object, runtime callback, or journal event. Frozen paths have zero diff from `f990b1d`; closeout remains 11/11.
 - **D-ABI-W1-5 (evidence):** final serial W1/B0/closeout/G9/G10/Node/multilingual checks passed, with no exit2/SKIP. The [W1 execution record](v24-tool-plugin-abi-w1-execution-2026-10-30.md) preserves capture review, design SHA/spans, command identity/results, and audits. Gate results are recorded separately from downstream pending vector labels.
+
+## Post-closeout Tool/Plugin ABI W2（2026-10-30）
+
+W2 在纯 host 层落地五个合同模块，并完成 design §7 的 W2 修订与 conformance repin。它不接线 registry v2/line-json v2/plugins/worker/deepseek，也不证明 M2 完成。
+
+- **D-ABI-W2-1 (implemented/verified; pure host):** `canonical.py` 统一 PG canonical、`J`、`strict_loads`、deep-freeze 与 `RegistryError`；`tool_schema.py` 只接受 13 个关键字并固定 first-error 顺序；`renderers.py` 提供三个纯投影、不可变 registry、21 个内嵌 golden 与三组 digest；`descriptor.py` 按 17 步顺序校验 v2 descriptor；`tool_results.py` 提供 v2 envelope、`join_content`、五域计量与 frame 分类。所有模块无 I/O、无 clock/random/env、无进程级 cache。
+- **D-ABI-W2-2 (contract-covered; 40 cases):** descriptor 16、schema 9、renderers 7（21 内层 golden）、results 8 由生产代码命中；results 的 3 个 `m4_pending` 明确不执行。`registry.py` 只做七个名字的 re-export；`RegistryError` 身份、非 dict digest 异常与 B0/W1 字节保持不变。
+- **D-ABI-W2-3 (design repin):** §7.1/§7.3/§7.4 增加 `canonical.py`、拆分四条 s13 gate、增加三条 gate 命令并改述 done-when #1。design SHA-256 由 `976567da…` 变为 `0de115c9…`；`DESIGN_SHA256` 与 `design_conformance.json.design_input.sha256_at_review` 同步更新；§7.2/§8.2/§8.3/Appendix A 只移位，pinned heading 与 span SHA 未变；八个 domain vector 与 case/status/expected 未改。
+- **D-ABI-W2-4 (not proved; downstream):** W2 不证明 M2 完成、W3 registry/multi-tool/line-json v2、W4 dispatcher/worker/provider 接线、read/list/search 文件系统语义、分页收敛、12s 扫描预算、replay/journal 重放或真实 provider 行为。renderer golden 来自内嵌固定数据，不是真实工具调用。
+- **D-ABI-W2-5 (evidence/scope):** 24 条命令串行 exit 0，无 exit 2/SKIP；closeout 11/11；`v24/sql/**`、`v24/s10/**`、`v24/s11/**`、`v24/load.py`、`v24/b0/**` 与七个运行时 host 文件零 diff；合同模块无运行时 import 边，生产代码不读 `v24/s13/vectors/*`。命令、时间、末行与日志 SHA 见 [W2 execution record](v24-tool-plugin-abi-w2-execution-2026-10-30.md)。

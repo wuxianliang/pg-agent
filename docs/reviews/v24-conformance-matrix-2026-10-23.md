@@ -629,3 +629,20 @@ W1 freezes 10 suites / 71 case IDs in an independent vector format. The read-onl
 The final serial candidate run passed all 20 commands: three W1 checks, two B0 checks, 11 frozen closeout commands, G9, G10, Node, and multilingual smoke. Closeout remains **11/11**. Per-command UTC timestamps, base source, tested-source fingerprint, last lines, and merged-log hashes are in the [W1 execution record](v24-tool-plugin-abi-w1-execution-2026-10-30.md).
 
 Frozen host/SQL/s10/s11/loader/B0 paths have zero diff from `f990b1d`; no SQL was added and `SQL_LOAD_ORDER` is unchanged. M2 production descriptor/schema/frame/renderer/result behavior, M3 tools/artifact digest/12-second timing, and M4 journal replay remain pending. No real provider was called.
+
+## Post-closeout Tool/Plugin ABI W2 (2026-10-30)
+
+W2 adds the pure host contract layer: `canonical.py`, `tool_schema.py`, `renderers.py`, `descriptor.py`, and `tool_results.py`. The four new gates are DB-free, Node-free, socket-free and subprocess-free; `registry.py` only re-exports the extracted canonical names. The frozen W1 test labels are unchanged; coverage facts are recorded here, not by editing vectors.
+
+| Gate | W2 cases | Actual result |
+|---|---:|---|
+| `v24/s13/test_descriptor.py` | 16 | exit 0; `cases=16; canonical_python=9; reasons=4` |
+| `v24/s13/test_schema.py` | 9 | exit 0; `cases=9; first_error_order=frozen; defaults_injected=false` |
+| `v24/s13/test_renderers.py` | 7 | exit 0; `cases=7; golden_cases=21; digest_pairs=3` |
+| `v24/s13/test_results.py` | 8 | exit 0; `cases=8; envelope_bytes=3; frame_boundaries=4; replay_claimed=false` |
+
+Coverage totals: descriptor 16 (9 byte: 6 canonical + 3 descriptors; 7 table), schema 9 (13 allow / 29 deny / 13 invalid-allowed rows plus first-error/path/bound probes), renderers 7 (21 inner golden + 3 manifests + 1 digest table), results 8 (3 additional `m4_pending` cases asserted unexecuted).
+
+The final 24-command serial run at 2026-10-31T00:28–00:29 +08:00 exited 0 for every command, with no exit 2/SKIP, including the 11 frozen closeout commands. `v24/sql/**`, `v24/s10/**`, `v24/s11/**`, `v24/load.py`, `v24/b0/**`, and the seven runtime host files have zero diff; the four contract modules have no runtime import edge and production code never reads `v24/s13/vectors/*`. Design §7.1/§7.3/§7.4 were revised; the design SHA and pinned span line numbers were repinned atomically, with all span heading/content SHA values unchanged and only `design_conformance.json` metadata differing among vector files. Closeout remains **11/11**; W2 is extension evidence, not a twelfth closeout item.
+
+W2 does not prove M2 completion, W3 registry/multi-tool/line-json v2, W4 dispatcher/worker/provider wiring, filesystem tool semantics, pagination convergence, 12-second scan budgets, journal replay, or real provider behavior. Per-command timestamps, source SHA, last lines, and merged-log hashes are in the [W2 execution record](v24-tool-plugin-abi-w2-execution-2026-10-30.md).

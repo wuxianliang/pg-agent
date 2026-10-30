@@ -893,11 +893,12 @@ class Renderer:
 
 | 文件 | 变更 | 职责 / 依赖 | 量级 |
 |---|---|---|---:|
-| `v24/host/descriptor.py` | 新 | v2 descriptor 关闭集校验、字段约束、render 身份比对、digest 重导出；依赖 `registry.pg_jsonb_text` | ~280 |
-| `v24/host/tool_schema.py` | 新 | 白名单 schema 校验器（`assert_supported` + `validate`）；被 descriptor 与 plugins 共用 | ~320 |
-| `v24/host/renderers.py` | 新 | 三个 host renderer + manifest registry + golden manifest digest 计算 | ~260 |
-| `v24/host/tool_results.py` | 新 | `ToolDispatchResult`、v2 envelope 构造/校验、`join_content` | ~160 |
-| `v24/host/registry.py` | 改 | `ApprovedTool`、`ApprovedPlugin`、共享 mixin、registry union、`match_tool`、`environment()` 注入 workspace root；v1 `ApprovedAdapter`/`match_pin` 不动 | +200/−20 |
+| `v24/host/canonical.py` | 新 | PG canonical、deep-freeze、严格 JSON（`J`/`strict_loads`/`escaped_len`）与 `RegistryError`；仅依赖标准库 | ~220 |
+| `v24/host/descriptor.py` | 新 | v2 descriptor 关闭集校验、字段约束、render 身份比对、digest 重导出；依赖 `canonical`、`tool_schema`、`renderers` | ~280 |
+| `v24/host/tool_schema.py` | 新 | 封闭 schema 子集（`assert_supported`/`compile_schema`/`validate`/`schema_metrics`）；依赖 `canonical` | ~320 |
+| `v24/host/renderers.py` | 新 | 三个 host renderer + 不可变 registry + 21 个内嵌 golden + manifest digest；依赖 `canonical` | ~300 + 数据 |
+| `v24/host/tool_results.py` | 新 | `ToolDispatchResult`、v2 envelope 构造/校验、`join_content`、预算计量与 frame 分类；依赖 `canonical` | ~220 |
+| `v24/host/registry.py` | 改 | W2 把七个 canonical 名字移入 `canonical` 并 re-export；W3 再加 `ApprovedTool`、`ApprovedPlugin`、共享 mixin、registry union、`match_tool`、`environment()`；v1 `ApprovedAdapter`/`match_pin` 不动 | W2 −93/+9；W3 +200/−20 |
 | `v24/host/line_json.py` | 改 | v2 build/parse；`run(entry, operation, reservation, args, tool=None)`；v1 解析器原样 | +150 |
 | `v24/host/plugins.py` | 改 | v2 分支：match_tool → args 预校验 → lease → invoke → value 校验 → render → envelope；v1 分支原样 | +170 |
 | `v24/host/worker.py` | 改 | `_call_tool_handler` 接受 `model_text`；`_execute_tool` 用它；lease 逻辑不动 | +40 |
@@ -906,7 +907,10 @@ class Renderer:
 | `v24/s13/plugins/fs_tools.js` | 新 | Node `list` + `search` 单文件插件；按 frame `tool` 分流 | ~520 |
 | `v24/s13/fixtures.py` | 新 | 工作区树、v2 manifest/descriptor、`ApprovedPlugin` 构造、复用 s11 `PluginHarness` | ~280 |
 | `v24/s13/vectors/*.json` | 新 | descriptor/frame/工具契约的固定期望 bytes、sha256、renderer golden cases、负例 | 数据 |
-| `v24/s13/test_descriptor.py` | 新 | 关闭集、canonical 向量、schema 子集、render 身份、digest | ~380 |
+| `v24/s13/test_descriptor.py` | 新 | descriptor-only：canonical 向量、关闭集、limits/description/key 边界、render 身份、四 reason、strict parse | ~300 |
+| `v24/s13/test_schema.py` | 新 | 13 allow / 29 deny / 13 invalid-allowed、结构边界、first-error 顺序、path、enum distinct | ~260 |
+| `v24/s13/test_renderers.py` | 新 | 21 个 golden 的 content/meta/measures、三组 digest、registry 身份 | ~260 |
+| `v24/s13/test_results.py` | 新 | 8 个 M2 case、envelope bytes、9 行 boundary、4 行 frame | ~200 |
 | `v24/s13/test_registry.py` | 新 | 多工具匹配、五字段、protocol、workspace、tamper、零 spawn | ~300 |
 | `v24/s13/test_line_json.py` | 新 | v1 golden、v2 帧/解析/unknown 矩阵 | ~300 |
 | `v24/s13/test_tools.py` | 新 | read/list/search 文件系统边界与分页 golden | ~550 |
@@ -934,7 +938,10 @@ s13 的 `fixtures.py` 复用 `v24/s1/setup_db.py`（通过 `sys.path`）与 `v24
 
 | 测试 | 关键断言 |
 |---|---|
-| `test_descriptor.py` | V1/V2/`{}` 的 bytes+sha256 三方一致；关闭集多/少键拒绝；浮点/孤立代理项/超 16 KiB 拒绝；render id/digest 不匹配拒绝；annotations 一致性；schema 白名单每个关键字的正反例；全部禁用关键字在注册时拒绝；深度/节点/properties/enum 上限 |
+| `test_descriptor.py` | V1/V2/`{}` 的 bytes+sha256 三方一致；descriptor 关闭集多/少键拒绝；浮点/孤立代理项/超 16 KiB 拒绝；render id/digest 不匹配拒绝；annotations 一致性；四 reason 封闭；strict parse（重复键/`NaN`/非法 UTF-8/非 object） |
+| `test_schema.py` | 13 allow / 29 deny / 13 invalid-allowed；nullable union；required/additional/items；JSON-distinct enum；depth/nodes/properties/enum 上限；Unicode-scalar 长度；根 parameters/output；first-error/path 顺序；无 default 注入 |
+| `test_renderers.py` | 21 个内嵌 golden 与向量五键逐项相等；content/meta/measures 逐字节；`27+E(T)`；三组 golden/render digest；registry 不可变、未知 ref、renderer 抛错、非法 content |
+| `test_results.py` | success/failure/unknown envelope 逐字节；usage 三行；11-byte model_text 与 meta 排除；builtin meta 三态；9 行 cap−1/cap/cap+1；4 个 frame boundary；prefix candidate 复现；不实现 `page_decision` |
 | `test_registry.py` | v1 `.descriptor` 字节不变；v2 多工具 key 唯一；混用 v1/v2 拒绝；`tool.key != provide.key` 拒绝；`timeout > cap` 拒绝；workspace root 缺失/symlink 拒绝；`match_tool` 的 key/pin/bytes/digest/artifact 五类失败都零 spawn；`match_pin(v2)` 抛 `protocol_mismatch` |
 | `test_line_json.py` | v1 四操作请求/成功/失败/unknown 的 golden bytes 不变；v2 invoke 带 `tool`；prepare/release/inspect 不带 `tool`；缺 LF/多帧/坏 JSON/重复键/NaN/超 stdout/超 stderr/timeout → unknown；v1/v2 解析器互不串线 |
 | `test_tools.py` | read 空文件/尾换行/offset 越界/Unicode/binary/超长行/1 MiB/符号链接/`.git`/continuation 收敛；list 排序/递归/hidden/`.git`/symlink/special/非 UTF-8/offset/total；search literal/case/glob/context/上限/二进制跳过/column 码点/`complete`/`total` |
@@ -946,6 +953,9 @@ s13 的 `fixtures.py` 复用 `v24/s1/setup_db.py`（通过 `sys.path`）与 `v24
 
 ```bash
 uv run python v24/s13/test_descriptor.py
+uv run python v24/s13/test_schema.py
+uv run python v24/s13/test_renderers.py
+uv run python v24/s13/test_results.py
 uv run python v24/s13/test_registry.py
 uv run python v24/s13/test_line_json.py
 uv run python v24/s13/test_tools.py
@@ -965,7 +975,7 @@ git diff --exit-code -- v24/sql
 
 Done-when：
 
-1. 上述 s13 六条全部 exit 0；Node 缺失时 `test_node.py` 必须 SKIP exit 2，不能记为通过。
+1. W2 覆盖九个 s13 gate 中的四个（`test_descriptor.py`、`test_schema.py`、`test_renderers.py`、`test_results.py`）且全部 exit 0；`test_registry.py`、`test_line_json.py`、`test_tools.py`、`test_lifecycle.py`、`test_node.py` 仍归 W3/W4。上述 s13 九条全部 exit 0；Node 缺失时 `test_node.py` 必须 SKIP exit 2，不能记为通过。
 2. 真实 install→prepare→activate→start→model→tool→continuation→final→off→dispose→release→scope close 跑通，Python 与 Node 都是真子进程。
 3. 一个 Node install 同时提供 `list` + `search`；一次 start 的 requires 同时包含三个 key。
 4. 同一 model batch 的三个 tool 只产生一个 continuation。
