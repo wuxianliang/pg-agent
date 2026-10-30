@@ -37,8 +37,10 @@ RESULT_CLASSES = ("success", "failure", "unknown")
 class ToolResultError(ValueError):
     """A tool outcome violates the v2 result contract.
 
-    ``reason`` is ``invalid_outcome`` (usage shape) or ``invalid_tool_output``
-    (envelope/content/error/meta shape).
+    ``reason`` is ``invalid_outcome`` for the outer dispatch shape (class,
+    exactly ``{status,output,usage}``, status/class agreement, usage, model
+    text) or ``invalid_tool_output`` for the class-specific envelope,
+    content/error/meta shape and the ``J`` value domain.
     """
 
     def __init__(self, reason: str):
@@ -48,11 +50,12 @@ class ToolResultError(ValueError):
 
 @dataclass(frozen=True)
 class ToolDispatchResult:
-    """A validated dispatch result and the text shown to the model.
+    """A validated v2 dispatch result and the text shown to the model.
 
     ``class_`` is ``success``, ``failure`` or ``unknown``.  An ``unknown``
     result never generates a model continuation, so its ``model_text`` is
-    required to be the empty string.
+    required to be the empty string.  Only v2 results use this container; v1
+    keeps the 2-tuple or ``{class,result}`` return path.
     """
 
     class_: str
@@ -61,13 +64,28 @@ class ToolDispatchResult:
 
     def __post_init__(self) -> None:
         if self.class_ not in RESULT_CLASSES:
-            raise ToolResultError("invalid_outcome")
+            _invalid_outcome()
         if not isinstance(self.result, dict):
-            raise ToolResultError("invalid_outcome")
+            _invalid_outcome()
+        if set(self.result) != {"status", "output", "usage"}:
+            _invalid_outcome()
+        status = self.result["status"]
+        if status not in ("ok", "error"):
+            _invalid_outcome()
+        if (self.class_ == "success") != (status == "ok"):
+            _invalid_outcome()
         if not isinstance(self.model_text, str):
-            raise ToolResultError("invalid_outcome")
+            _invalid_outcome()
         if self.class_ == "unknown" and self.model_text != "":
-            raise ToolResultError("invalid_outcome")
+            _invalid_outcome()
+        assert_usage(self.result["usage"])
+        output = self.result["output"]
+        if self.class_ == "success":
+            assert_success_output(output)
+        elif self.class_ == "failure":
+            assert_failure_output(output)
+        else:
+            assert_unknown_output(output)
 
 
 def _invalid_output() -> None:
@@ -78,6 +96,14 @@ def _invalid_outcome() -> None:
     raise ToolResultError("invalid_outcome")
 
 
+def _assert_jsonable(value: Any) -> None:
+    """Reject values outside the canonical JSON domain used on the wire."""
+    try:
+        compact_json(value)
+    except (CanonicalError, RecursionError):
+        _invalid_output()
+
+
 def _assert_content(content: Any) -> list:
     if not isinstance(content, list) or not 1 <= len(content) <= MAX_CONTENT_BLOCKS:
         _invalid_output()
@@ -86,6 +112,7 @@ def _assert_content(content: Any) -> list:
             _invalid_output()
         if block["type"] != "text" or not isinstance(block["text"], str):
             _invalid_output()
+    _assert_jsonable(content)
     return content
 
 
@@ -94,7 +121,7 @@ def _assert_meta(meta: Any) -> None:
         _invalid_output()
     try:
         compact_json(meta)
-    except CanonicalError:
+    except (CanonicalError, RecursionError):
         _invalid_output()
 
 
@@ -163,6 +190,7 @@ def assert_success_output(obj: Any) -> None:
     keys = set(obj)
     if keys not in ({"value", "content"}, {"value", "content", "meta"}):
         _invalid_output()
+    _assert_jsonable(obj["value"])
     _assert_content(obj["content"])
     if "meta" in obj:
         _assert_meta(obj["meta"])
@@ -215,7 +243,10 @@ def join_content(content: Any) -> str:
 def frame_bytes(value: Any) -> int:
     """Return the exact tool-frame bytes for ``value`` plus its trailing LF."""
     frame = {"ok": True, "v": 2, "result": {"value": value}}
-    return len(compact_json(frame)) + 1
+    try:
+        return len(compact_json(frame)) + 1
+    except (CanonicalError, RecursionError):
+        raise ToolResultError("invalid_tool_output") from None
 
 
 def measure(args: Any, value: Any, content: Any, meta: Any = None) -> dict:
@@ -233,7 +264,7 @@ def measure(args: Any, value: Any, content: Any, meta: Any = None) -> dict:
             "meta": len(compact_json(normalized_meta)),
             "frame": frame_bytes(value),
         }
-    except CanonicalError:
+    except (CanonicalError, RecursionError):
         raise ToolResultError("invalid_tool_output") from None
 
 

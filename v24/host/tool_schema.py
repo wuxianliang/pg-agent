@@ -181,9 +181,16 @@ def _check_schema(schema: Any, depth: int, metrics: _Metrics) -> None:
             _unsupported()
         if declared is not None and "object" not in declared:
             _unsupported()
-    if declared is not None and "object" in declared:
-        if "additionalProperties" not in schema:
-            _unsupported()
+    # A schema that carries object-only keywords is an object schema even when
+    # it omits ``type``; §5.5 requires every object schema to spell out
+    # ``additionalProperties``.  A bare ``{}`` remains a valid any-JSON schema.
+    declares_object_shape = (
+        "properties" in schema
+        or "required" in schema
+        or (declared is not None and "object" in declared)
+    )
+    if declares_object_shape and "additionalProperties" not in schema:
+        _unsupported()
 
     if "items" in schema:
         if not isinstance(schema["items"], dict):

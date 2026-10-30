@@ -3,7 +3,7 @@
   "inventory_version": 1,
   "design_input": {
     "path": "docs/designs/v24-tool-plugin-abi-v1-2026-10-30.md",
-    "sha256_at_review": "0de115c947967cc92a5e15ec7bf7c53f38abe78bcfcc89f77e06042be1313d04",
+    "sha256_at_review": "2606aedc7135e7085219d0a9c99d1ccca5c22ee33baee6a82dd6f137ce7cac24",
     "source_sha256_imported_from_primary": "bdfe65dcd7f1a445671d9754fd99d2642edfee516b35c9f17ba84c7c15d90c70"
   },
   "vocabulary": {

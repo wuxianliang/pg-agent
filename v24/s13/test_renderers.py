@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 
 from v24.host import renderers  # noqa: E402
 from v24.host.canonical import compact_json, escaped_len  # noqa: E402
+from v24.host.tool_results import measure as production_measure  # noqa: E402
 
 VECTORS = Path(__file__).resolve().parent / "vectors" / "renderers.json"
 SOURCE = Path(renderers.__file__).read_text(encoding="utf-8")
@@ -102,6 +103,9 @@ def main() -> int:
             assert content == vector_case["content"], vector_case["id"]
             assert meta == vector_case["meta"], vector_case["id"]
             assert budget_measures(
+                vector_case["args"], vector_case["value"], content, meta
+            ) == vector_case["measures"], vector_case["id"]
+            assert production_measure(
                 vector_case["args"], vector_case["value"], content, meta
             ) == vector_case["measures"], vector_case["id"]
             assert case["expected"]["single_text_block"] is True
@@ -191,6 +195,9 @@ def main() -> int:
     def raises(args, value):
         raise RuntimeError("boom")
 
+    def raises_contract(args, value):
+        raise renderers.RendererError("invalid_tool_content")
+
     def bad_content(args, value):
         return [], {}
 
@@ -203,12 +210,21 @@ def main() -> int:
     def bad_meta(args, value):
         return [{"type": "text", "text": ""}], []
 
+    def surrogate_text(args, value):
+        return [{"type": "text", "text": "\ud800"}], {}
+
+    def non_json_meta(args, value):
+        return [{"type": "text", "text": ""}], {"x": object()}
+
     for fn, reason in (
         (raises, "render_failed"),
+        (raises_contract, "render_failed"),
         (bad_content, "invalid_tool_content"),
         (too_many, "invalid_tool_content"),
         (bad_block, "invalid_tool_content"),
         (bad_meta, "invalid_tool_content"),
+        (surrogate_text, "invalid_tool_content"),
+        (non_json_meta, "invalid_tool_content"),
     ):
         registry = renderers.RendererRegistry((
             renderers.Renderer(

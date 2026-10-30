@@ -10,7 +10,6 @@ not imported by any existing host runtime module during W2.
 """
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -127,7 +126,10 @@ def parse_descriptor(raw: str | bytes) -> dict:
     """
     try:
         value = strict_loads(raw)
-    except (CanonicalError, json.JSONDecodeError, UnicodeDecodeError):
+    except (ValueError, RecursionError):
+        # ``CanonicalError``/``JSONDecodeError``/``UnicodeDecodeError`` are all
+        # ``ValueError`` subclasses; deep JSON raises ``RecursionError``.  Every
+        # decode failure must surface as one reason, never as a raw exception.
         _invalid()
     if not isinstance(value, dict):
         _invalid()

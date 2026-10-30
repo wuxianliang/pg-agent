@@ -938,10 +938,10 @@ s13 的 `fixtures.py` 复用 `v24/s1/setup_db.py`（通过 `sys.path`）与 `v24
 
 | 测试 | 关键断言 |
 |---|---|
-| `test_descriptor.py` | V1/V2/`{}` 的 bytes+sha256 三方一致；descriptor 关闭集多/少键拒绝；浮点/孤立代理项/超 16 KiB 拒绝；render id/digest 不匹配拒绝；annotations 一致性；四 reason 封闭；strict parse（重复键/`NaN`/非法 UTF-8/非 object） |
-| `test_schema.py` | 13 allow / 29 deny / 13 invalid-allowed；nullable union；required/additional/items；JSON-distinct enum；depth/nodes/properties/enum 上限；Unicode-scalar 长度；根 parameters/output；first-error/path 顺序；无 default 注入 |
-| `test_renderers.py` | 21 个内嵌 golden 与向量五键逐项相等；content/meta/measures 逐字节；`27+E(T)`；三组 golden/render digest；registry 不可变、未知 ref、renderer 抛错、非法 content |
-| `test_results.py` | success/failure/unknown envelope 逐字节；usage 三行；11-byte model_text 与 meta 排除；builtin meta 三态；9 行 cap−1/cap/cap+1；4 个 frame boundary；prefix candidate 复现；不实现 `page_decision` |
+| `test_descriptor.py` | V1/V2/`{}` 的 bytes+sha256 三方一致；descriptor 关闭集多/少键拒绝；浮点/孤立代理项/超 16 KiB 拒绝；render id/digest 不匹配拒绝；annotations 一致性；四 reason 封闭；strict parse（重复键/`NaN`/非法 UTF-8/非 object）；深嵌套与超长整数字面量 → `invalid_descriptor` |
+| `test_schema.py` | 13 allow / 29 deny / 13 invalid-allowed；nullable union；required/additional/items；JSON-distinct enum；depth/nodes/properties/enum 上限；Unicode-scalar 长度；根 parameters/output；first-error/path 顺序；无 default 注入；无 `type` 的 object-shaped 须显式 `additionalProperties`，裸 `{}` 仍合法 |
+| `test_renderers.py` | 21 个内嵌 golden 与向量五键逐项相等；content/meta/measures 逐字节；`27+E(T)`；三组 golden/render digest；registry 不可变、未知 ref、renderer 抛错、非法 content；21 个 golden 逐例比对生产 `measure`；`fn` 自抛 `RendererError` → `render_failed`；非 `J` 域 content/meta → `invalid_tool_content` |
+| `test_results.py` | success/failure/unknown envelope 逐字节；usage 三行；11-byte model_text 与 meta 排除；builtin meta 三态；9 行 cap−1/cap/cap+1；4 个 frame boundary；prefix candidate 复现；不实现 `page_decision`；`J` 值域负例、有限深值与循环容器；`ToolDispatchResult` 外层三键/class-status/usage 错配 |
 | `test_registry.py` | v1 `.descriptor` 字节不变；v2 多工具 key 唯一；混用 v1/v2 拒绝；`tool.key != provide.key` 拒绝；`timeout > cap` 拒绝；workspace root 缺失/symlink 拒绝；`match_tool` 的 key/pin/bytes/digest/artifact 五类失败都零 spawn；`match_pin(v2)` 抛 `protocol_mismatch` |
 | `test_line_json.py` | v1 四操作请求/成功/失败/unknown 的 golden bytes 不变；v2 invoke 带 `tool`；prepare/release/inspect 不带 `tool`；缺 LF/多帧/坏 JSON/重复键/NaN/超 stdout/超 stderr/timeout → unknown；v1/v2 解析器互不串线 |
 | `test_tools.py` | read 空文件/尾换行/offset 越界/Unicode/binary/超长行/1 MiB/符号链接/`.git`/continuation 收敛；list 排序/递归/hidden/`.git`/symlink/special/非 UTF-8/offset/total；search literal/case/glob/context/上限/二进制跳过/column 码点/`complete`/`total` |
@@ -1179,3 +1179,57 @@ W1 provisional digest：`fd2f51e8c3d7328b0af7ceafcbefc21418f799921e9e470f12b3f7b
 ## 附录 B：一句话总结
 
 **v1 的边界是：host 扩展、descriptor v2、frame v2、三个只读工具、一个 Node install 两个工具、literal search、30 秒 lease、host-only 封闭 schema、v1 字节不变、SQL 零改动。** 任何越界（replay、写工具、session、regex、图片、streaming、sandbox）都不在本文，不得靠“顺手加个字段”偷渡。
+
+---
+
+## 附录 C：W2 合同加固规范补充（2026-10-31）
+
+本附录是规范性补充，细化 §3.1、§5.2–§5.5 的接受域与错误分类；正文其他条款不变。若正文措辞与本附录冲突，以本附录为准。
+
+### C.1 Descriptor 原文解码（补充 §3.1）
+
+- 顶层非 object，以及全部 JSON 解码/词法失败，统一为 `invalid_descriptor`：重复键、非法 UTF-8/JSON、浮点/指数、`-0`、`NaN`/`Infinity`、孤立代理项、过深嵌套导致的 `RecursionError`、任意长度的超安全整数字面量。
+- 实现可在 `int()` 转换前按位数预拒绝必然越界者（安全整数绝对值最多 16 位十进制），但不得改变安全整数的接受域，也不得向外泄漏 `ValueError`/`RecursionError`。
+- `parse_descriptor` 的四个公开 reason 不变；解码失败仍只报 `invalid_descriptor`。
+
+### C.2 结果 `J` 值域（补充 §5.2）
+
+- success 的 `value`、`content` 与 failure 的 `content`、`meta` 还必须处于 §5.3.1 的 `J` 值域：object 键必须是 string，数值只能是安全整数，字符串必须是 Unicode scalar，容器只能是 list/object，标量只能是 boolean/null。
+- float、`NaN`/`Infinity`、unsafe integer、孤立代理项、非 JSON 类型、非 string 键与循环引用一律 `invalid_tool_output`。
+- success `value` 仍另须满足该工具的 `output_schema`；`J` 域检查是 envelope 层兜底，不替代 schema 校验。
+- 帧层面：语法上非 JSON、`NaN`/`Infinity`、孤立代理项仍按 §5.1 的 unknown 处理；语法合法但数值越出 `J` 域的 success `value`，W3 按普通 failure `invalid_tool_output` 处理，不判 unknown。
+
+### C.3 Renderer 失败分类（补充 §5.3）
+
+`RendererRegistry.render` 的固定顺序：
+
+1. 按完整 ref 执行 `lookup`；失败为 `renderer_not_approved`。
+2. 通过 lookup 后调用 `fn`；`fn` 抛出的任何 `Exception`（包括 `RendererError` 自身）统一重分类为 `render_failed`。
+3. 返回值 content/meta 形状或 `J` 域不合法 → `invalid_tool_content`。
+4. 预算超限 → `output_too_large`（由调用方执行）。
+
+`lookup` 在 `try` 之外，因此审批错误不会被 `fn` 的异常分类吞并；返回值校验在 `try` 之后，因此非法返回不会被误报为 `render_failed`。
+
+### C.4 `ToolDispatchResult` 构造合同（补充 §5.4）
+
+`ToolDispatchResult` 仅用于 v2，不用于 v1 路径（v1 继续返回 2-tuple 或 `{class,result}`）。构造时必须验证：
+
+- `result` 恰为 `{status,output,usage}`，`status ∈ {ok,error}`，且 `class=success` 当且仅当 `status=ok`；
+- `usage` 符合 §5.2 的 `{wall_ms}` 闭集；
+- `model_text` 是 str；`class=unknown` 时必须是空串；
+- 通过上述外层检查后，按 class 调用对应的 `assert_success_output`/`assert_failure_output`/`assert_unknown_output`。
+
+外层结构、class/status、usage 与 `model_text` 错误为 `invalid_outcome`；class-specific envelope（value/content/error/meta）错误为 `invalid_tool_output`。该构造合同只定义容器校验，worker 接线仍属 W4。
+
+### C.5 Object schema 判定（补充 §5.5）
+
+本节所称 object schema 包括：
+
+- `type` 为 string 或数组且含 `object` 的节点；
+- 未声明 `type`，但出现 `properties` 或 `required` 的节点。
+
+两类节点都必须显式写出 boolean `additionalProperties`。该判定只影响结构审批，不注入 `type:"object"`，对象约束仍只作用于对象实例；裸 `{}` 不是 object schema，仍是合法的 any-JSON schema。
+
+### C.6 `J` 的深度与循环（补充 §5.3.1）
+
+`J` 的编码使用显式栈，不以 Python 调用栈递归；有限深度的 JSON 不因深度被拒绝，字节计数仍按 §5.3.1 的公式。循环引用不是合法 JSON，统一报 `circular_reference`：公开结果入口（`success_output`/`ToolDispatchResult`/`measure`/`frame_bytes`）归一为 `invalid_tool_output`；descriptor 原文解码来自 JSON，不会产生循环引用。帧的字节上限与语义预算不变。

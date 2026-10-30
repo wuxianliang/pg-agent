@@ -119,7 +119,7 @@ from .canonical import (RegistryError, _FrozenDict, _FrozenList, _freeze,
 
 ### D2：严格 JSON 解码由 W2 拥有
 
-`canonical.strict_loads(raw)` 复现 `w1_reference.strict_loads`（`v24/s13/w1_reference.py:28-62`）：拒绝重复键（`duplicate_key`）、词法 `-0`（`negative_zero`）、任意 float/exponent（`non_integer_number`）、`NaN/Infinity`（`non_json_constant`）、超出 `2^53−1` 的整数（`unsafe_integer`）、孤立 surrogate（`lone_surrogate`）。`descriptor.parse_descriptor(raw)` 调用它，并把任何 `CanonicalError`/`JSONDecodeError`/`UnicodeDecodeError` 统一映射为 `DescriptorError("invalid_descriptor")`。
+`canonical.strict_loads(raw)` 复现 `w1_reference.strict_loads`（`v24/s13/w1_reference.py:28-62`）：拒绝重复键（`duplicate_key`）、词法 `-0`（`negative_zero`）、任意 float/exponent（`non_integer_number`）、`NaN/Infinity`（`non_json_constant`）、超出 `2^53−1` 的整数（`unsafe_integer`）、孤立 surrogate（`lone_surrogate`）。整数字面量在 `int()` 前按位数预拒绝必然越界者（安全整数绝对值最多 16 位十进制），避免 Python 的 4300 位转换上限泄漏裸 `ValueError`。`descriptor.parse_descriptor(raw)` 调用它，并把任何 `CanonicalError`/`JSONDecodeError`/`UnicodeDecodeError`/`RecursionError` 统一映射为 `DescriptorError("invalid_descriptor")`。
 
 拒绝方案：留给 W3 的 manifest loader。理由：六个 `raw_json` case 将无法在 W2 执行，`test_descriptor.py` 只能 SKIP（exit 2），W2 无法完成；W3 只是消费者。
 
@@ -202,7 +202,7 @@ def strict_loads(raw: str | bytes) -> Any
 - 整数用普通十进制（负数带 `-`）；bool 不是 integer；
 - 仅接受安全整数、bool、null、str、list、dict；float、NaN/Infinity、unsafe integer、孤立 surrogate、非 string 键、其他 Python 类型一律 `CanonicalError`。
 
-`strict_loads` 的顺序：strict UTF-8 解码 → `object_pairs_hook` 拒绝重复键 → `parse_int` 拒绝 `-0` 与 unsafe → `parse_float` 拒绝全部浮点/指数 → `parse_constant` 拒绝 `NaN/Infinity` → 递归校验 key/value 的 Unicode scalar。不做 NFC/NFD，不注入默认值。
+`strict_loads` 的顺序：strict UTF-8 解码 → `object_pairs_hook` 拒绝重复键 → `parse_int` 拒绝 `-0`，并在转换前按位数拒绝 unsafe → `parse_float` 拒绝全部浮点/指数 → `parse_constant` 拒绝 `NaN/Infinity` → 递归校验 key/value 的 Unicode scalar。不做 NFC/NFD，不注入默认值。
 
 ### `v24/host/tool_schema.py`
 
@@ -224,7 +224,7 @@ def schema_metrics(schema) -> dict                        # depth/nodes/max_prop
 
 - `type`：单个允许类型，或 2..4 个互异允许类型；取值只能是 `object/array/string/integer/boolean/null`。
 - `properties`：object（name → schema）；`required` 必须是无重复 string 数组且每项在 `properties` 中；`required` 不得脱离 `properties`。
-- `additionalProperties`：每个 object schema 必须显式写 boolean。
+- `additionalProperties`：每个 object schema 必须显式写 boolean。object schema 指 `type` 含 `object`，或未声明 `type` 但出现 `properties`/`required` 的节点；该判定不注入 `type:"object"`，裸 `{}` 不是 object schema。
 - `items`：单个 schema；`"array"` ∈ type 时必须写。
 - `minItems`/`maxItems`：非负安全整数，仅 array；`minLength`/`maxLength`：非负安全整数，按 **Unicode scalar** 计数，仅 string；`minimum`/`maximum`：安全整数（bool 不接受），仅 integer。
 - `enum`：1..64 个 **JSON-distinct** 值。distinct 判定用 `compact_json` 的字节：对象键顺序无关，数组顺序有关，`true`/`1`/`"1"`/`null` 互不相等。`enum: []` 与 `enum: [65 项]` 是 `unsupported_schema`；重复值（如两个同形 object）是 `duplicate_enum`。
@@ -233,7 +233,7 @@ def schema_metrics(schema) -> dict                        # depth/nodes/max_prop
 - 不检查 `minimum <= maximum`、`minItems <= maxItems` 之类的跨字段一致性；设计没有要求，冻结向量也不覆盖。
 - `enum` 内的数组/对象是**值**，不计入 schema node/depth；node 只数 schema 节点（root、`properties.<k>`、`items`）。
 - nullable union（`type:["object","null"]`、`["array","null"]`）必须接受；`null` 分支不触发其他约束。
-- `parameters` 根：`type:"object"` 且 `additionalProperties:false`；`output_schema` 根可为 `{}`。
+- `parameters` 根：`type:"object"` 且 `additionalProperties:false`；`output_schema` 根可为 `{}`（任意 `J` 域 JSON）。
 - 不注入 `default`；host 不改写 instance。
 
 **结构边界**（`schema.schema_bounds` 固定）：depth ≤16（root schema node = 1，`properties.<k>` 与 `items` 各 +1）；总 schema node ≤256；任一单个 `properties` map ≤128 键（per-object 解释，写入模块文档）；任一 `enum` ≤64。
@@ -330,7 +330,7 @@ def render_digest(renderer_id, version, projection, cases) -> str
 
 三个内建：`v24.fs.read.text`、`v24.fs.list.text`、`v24.fs.search.text`，均 version 1 / projection 1。`fn(args, value)` 采用设计 §5.3 的双参数签名，三个内建函数忽略 `args`（§5.3.1 的投影只依赖 `value`）；这是对 W1 reference 单参数 `render(kind, value)` 的适配。
 
-`registry.render`：先 `lookup`，再调用 `fn`；`fn` 抛任何普通异常 → `render_failed`；返回 content 必须是 1..16 个恰为 `{type:"text",text:str}` 的 block、meta 必须是 object，否则 `invalid_tool_content`。预算校验不在本模块。
+`registry.render`：先 `lookup`（失败 `renderer_not_approved`），再调用 `fn`；`fn` 抛出的任何 `Exception`（包括 `RendererError` 自身）统一重分类为 `render_failed`；返回 content 必须是 1..16 个恰为 `{type:"text",text:str}` 的 block、meta 必须是 object 且 content/meta 处于 `J` 域，否则 `invalid_tool_content`。预算校验不在本模块。
 
 投影算法以设计 §5.3.1 为唯一权威，实现必须逐字节复现，不自创新格式。实现要点（供 code review 对照，不替代 §5.3.1）：
 
@@ -381,7 +381,8 @@ def classify_frame(total: int) -> str
 - content 1..16 个 block，每个恰 `{type,text}` 且 `type=="text"`、text 为 string（可为空）。
 - error 恰 `{code,message}`；code 全匹配 `^[a-z][a-z0-9_]{0,63}$`；message ≤1024 UTF-8 bytes。message 必须拒绝：NUL；`Traceback (`；`stack trace`；`DEEPSEEK_API_KEY=`；`OPENAI_API_KEY=`；任何以 `/` 开头的空白分隔 token（Unix absolute path）、Windows drive 路径（`[A-Za-z]:` 后接反斜杠或 `/`）、以两个反斜杠开头的 UNC 路径。该谓词是构造期纪律的 backstop（生成消息一律只带相对路径），不是安全边界；测试需有正反例，包括 `File not found.` 与 `/etc/passwd`。
 - `usage` 必须恰为 `{wall_ms}`；`wall_ms` 必须是非 bool、非负、安全的整数；任何额外键（如 `tokens`）→ `invalid_outcome`。
-- `invalid_outcome` 只用于 `usage` 形状错误；envelope 键集、content block、error/code/message、meta、builtin meta 任一不合规均为 `invalid_tool_output`；`measure` 遇到非 JSON 值或 `CanonicalError` 也归一为 `invalid_tool_output`。渲染器返回非法 block 用 `renderers.RendererError("invalid_tool_content")`，不归 `ToolResultError`。
+- `invalid_outcome` 用于外层 dispatch/result 合同：class 词表、`result` 恰为 `{status,output,usage}`、status 词表、`class=success` 与 `status=ok` 的一致性、`model_text` 类型及 unknown 空文本、`usage` 形状。class-specific envelope 的 value/content/error/meta 形状、`J` 域与 builtin meta 错误为 `invalid_tool_output`；`measure`/`frame_bytes` 遇到非 JSON 值、`CanonicalError` 或循环引用也归一为 `invalid_tool_output`。渲染器返回非法 block/content 用 `renderers.RendererError("invalid_tool_content")`，不归 `ToolResultError`。
+- `ToolDispatchResult` 仅用于 v2：构造时执行上述外层校验，再按 class 调用对应的 `assert_*_output`；v1 路径继续返回 2-tuple 或 `{class,result}`，不构造该类型。
 
 **meta 语义**：插件 wire meta 可缺省；host success/failure output materialize `{}`；计量把缺省规范化为 `{}`（2 bytes）；不向 wire frame 注入默认值。`assert_builtin_meta` 只允许 `None`/`{}`，拒绝非空 object——这是三个内建插件的 W4 policy，不是通用 envelope 规则。
 
@@ -607,3 +608,14 @@ W2 已按本计划完成并验证（2026-10-30）。
 - 24 条串行命令全部 exit 0，无 exit 2/SKIP/`not_run`；closeout 仍 11/11；`v24/sql/**`、`v24/s10/**`、`v24/s11/**`、`v24/load.py`、`v24/b0/**` 与七个运行时 host 文件零 diff；四个合同模块无运行时 import 边，生产代码不读 `v24/s13/vectors/*`。
 - 证据、命令、末行与日志 SHA 见 [`W2 execution record`](../reviews/v24-tool-plugin-abi-w2-execution-2026-10-30.md)；本计划与 plan critique 作为 planning artifacts 一并提交。
 - W2 不证明 M2 完成、W3 registry/line-json v2、W4 dispatcher/worker/provider、文件系统工具语义或 replay；这些仍按设计归后续阶段。
+
+### Result addendum: post-review hardening (2026-10-31)
+
+三 lane Oracle 复审后，W2 在不改变 40 个 vector case、21 个 golden 和 gate 数字的前提下完成一轮合同加固：
+
+- 修复 strict decode 的异常泄漏（`RecursionError`、超长整数字面量的裸 `ValueError`），并把 `J` 改为显式栈编码，使有限深 JSON 不再被递归上限误拒；循环引用归一为 `circular_reference`。
+- success `value`/content/meta 增加 `J` 值域校验；`frame_bytes`/`measure` 统一归一 `CanonicalError`/`RecursionError`；`ToolDispatchResult` 构造时校验外层三键、class/status、usage 与 class-specific envelope。
+- renderer 的 `fn` 自抛 `RendererError` 统一重分类为 `render_failed`，非 `J` content/meta 为 `invalid_tool_content`；`fn` 异常探针与 21 个 golden 的生产 `measure` 比对进入 `test_renderers.py`。
+- 无 `type` 但含 `properties`/`required` 的 schema 明确视为 object-shaped，必须显式 `additionalProperties`；裸 `{}` 仍合法。
+- 上述规范澄清写入 design 附录 C（正文 §3.1/§5.2–§5.5 是 pinned span，未原地改字）；§7.3 四行等行数扩写。design SHA-256 更新为 `2606aedc7135e7085219d0a9c99d1ccca5c22ee33baee6a82dd6f137ce7cac24`，`DESIGN_SHA256` 与 `design_conformance.json` 原子 repin，所有 pinned span 的 heading/行号/内容 SHA 保持不变。
+- 加固后 24 条串行命令再次全部 exit 0，证据见 execution record 的 “W2 hardening supplement” 节。加固前那次 24 条运行保留为历史证据，不回溯覆盖。

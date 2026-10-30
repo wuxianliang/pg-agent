@@ -199,6 +199,28 @@ def main() -> int:
     assert schema_result({}, "output_schema") == "accepted"
     assert schema_result({"type": "object"}, "parameters") == "unsupported_schema"
 
+    # 10. Object-shaped schemas without ``type`` still owe an explicit
+    # additionalProperties; a bare ``{}`` stays any-JSON.
+    assert schema_result(
+        {"properties": {"x": {"type": "string"}}},
+        "output_schema",
+    ) == "unsupported_schema"
+    assert schema_result(
+        {"properties": {"x": {"type": "string"}},
+         "additionalProperties": False},
+        "output_schema",
+    ) == "accepted"
+    assert schema_result(
+        {"required": ["x"], "properties": {"x": {"type": "string"}}},
+        "output_schema",
+    ) == "unsupported_schema"
+    assert schema_result({}, "output_schema") == "accepted"
+    object_case = by_id["schema.required_additional_items"]
+    assert object_case["expected"] == {
+        "array_requires_items": True,
+        "object_requires_explicit_additionalProperties": True,
+    }
+
     print(
         "[passed] W2 schema contract; cases=9; "
         "first_error_order=frozen; defaults_injected=false"

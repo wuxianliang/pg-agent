@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import hashlib
 from typing import Callable, Mapping, Sequence
 
-from .canonical import compact_json
+from .canonical import CanonicalError, compact_json
 
 
 class RendererError(ValueError):
@@ -186,6 +186,13 @@ def _validate_result(result) -> tuple[list[dict], dict]:
             raise RendererError("invalid_tool_content")
     if type(meta) is not dict:
         raise RendererError("invalid_tool_content")
+    try:
+        compact_json(content)
+        compact_json(meta)
+    except (CanonicalError, RecursionError):
+        # A block that cannot enter ``J`` is an invalid render, not a later
+        # ``invalid_tool_output`` envelope failure.
+        raise RendererError("invalid_tool_content") from None
     return content, meta
 
 
@@ -231,9 +238,10 @@ class RendererRegistry:
         entry = self.lookup(ref)
         try:
             result = entry.fn(args, value)
-        except RendererError:
-            raise
         except Exception as exc:
+            # §5.3: a renderer that raises is a normal failure, regardless of
+            # the exception class.  Only an invalid return maps to
+            # ``invalid_tool_content`` below.
             raise RendererError("render_failed") from exc
         return _validate_result(result)
 

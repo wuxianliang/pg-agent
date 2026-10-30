@@ -122,38 +122,79 @@ def _safe_integer(value: int) -> str:
 
 
 def _compact_encode(value: Any) -> str:
-    if isinstance(value, dict):
-        keys = []
-        for key in value:
-            if not isinstance(key, str):
-                raise CanonicalError("non_string_key")
-            _scalar(key)
-            try:
-                encoded = key.encode("utf-8")
-            except UnicodeEncodeError as exc:
-                raise CanonicalError("lone_surrogate") from exc
-            keys.append((encoded, key))
-        keys.sort(key=lambda item: item[0])
-        return "{" + ",".join(
-            _quote(key) + ":" + _compact_encode(value[key])
-            for _, key in keys
-        ) + "}"
-    if isinstance(value, list):
-        return "[" + ",".join(_compact_encode(item) for item in value) + "]"
-    if isinstance(value, str):
-        _scalar(value)
-        return _quote(value)
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    if value is None:
-        return "null"
-    if type(value) is int:
-        return _safe_integer(value)
-    if isinstance(value, float):
-        raise CanonicalError("non_integer_number")
-    raise CanonicalError("unsupported_json_value")
+    """Encode ``J`` with an explicit stack, not Python call recursion.
+
+    A finite JSON document is legal regardless of its depth; a recursive
+    encoder would reject deep-but-valid values once Python's recursion limit
+    is reached.  The explicit stack also makes cycle detection precise:
+    ``circular_reference`` instead of an out-of-context ``RecursionError``.
+    Output bytes are identical to the recursive form.
+    """
+    out: list[str] = []
+    active: set[int] = set()
+    stack: list[tuple[str, Any]] = [("value", value)]
+    while stack:
+        tag, item = stack.pop()
+        if tag == "text":
+            out.append(item)
+            continue
+        if tag == "leave":
+            active.discard(item)
+            continue
+        if isinstance(item, dict):
+            identity = id(item)
+            if identity in active:
+                raise CanonicalError("circular_reference")
+            active.add(identity)
+            keys = []
+            for key in item:
+                if not isinstance(key, str):
+                    raise CanonicalError("non_string_key")
+                _scalar(key)
+                try:
+                    encoded = key.encode("utf-8")
+                except UnicodeEncodeError as exc:
+                    raise CanonicalError("lone_surrogate") from exc
+                keys.append((encoded, key))
+            keys.sort(key=lambda entry: entry[0])
+            stack.append(("leave", identity))
+            stack.append(("text", "}"))
+            for index in range(len(keys) - 1, -1, -1):
+                key = keys[index][1]
+                stack.append(("value", item[key]))
+                stack.append(("text", ":"))
+                stack.append(("text", _quote(key)))
+                if index:
+                    stack.append(("text", ","))
+            stack.append(("text", "{"))
+        elif isinstance(item, list):
+            identity = id(item)
+            if identity in active:
+                raise CanonicalError("circular_reference")
+            active.add(identity)
+            stack.append(("leave", identity))
+            stack.append(("text", "]"))
+            for index in range(len(item) - 1, -1, -1):
+                stack.append(("value", item[index]))
+                if index:
+                    stack.append(("text", ","))
+            stack.append(("text", "["))
+        elif isinstance(item, str):
+            _scalar(item)
+            out.append(_quote(item))
+        elif item is True:
+            out.append("true")
+        elif item is False:
+            out.append("false")
+        elif item is None:
+            out.append("null")
+        elif type(item) is int:
+            out.append(_safe_integer(item))
+        elif isinstance(item, float):
+            raise CanonicalError("non_integer_number")
+        else:
+            raise CanonicalError("unsupported_json_value")
+    return "".join(out)
 
 
 def compact_json(value: Any) -> bytes:
@@ -189,6 +230,12 @@ def strict_loads(raw: str | bytes) -> Any:
     def integer(token):
         if token == "-0":
             raise CanonicalError("negative_zero")
+        # Reject by digit count before ``int()``: Python caps decimal string
+        # conversion at 4300 digits and would otherwise leak a bare
+        # ``ValueError``.  Any 17-digit magnitude already exceeds 2**53 - 1.
+        digits = token[1:] if token.startswith("-") else token
+        if len(digits) > len(str(SAFE_INTEGER_MAX)):
+            raise CanonicalError("unsafe_integer")
         value = int(token)
         _safe_integer(value)
         return value

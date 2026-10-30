@@ -29,7 +29,7 @@ env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_N
 
 Exit 0 with the command-specific `[passed]` marker is passed; exit 2/`[SKIP]` is unverified and blocks W2 completion; exit 1 or a missing marker is failed. W2 covers four of the nine s13 gates; `test_registry.py`, `test_line_json.py`, `test_tools.py`, `test_lifecycle.py`, and `test_node.py` remain W3/W4.
 
-W2 reproduces 40 W2-domain cases from production code: descriptor 16 (including 9 canonical byte cases), schema 9, renderers 7 (including 21 inner golden cases and three digest pairs), and results 8. The three `m4_pending` result/lifecycle cases are asserted to remain unexecuted. The s13 checks are extension evidence; closeout remains 11/11 and s13 is not a twelfth closeout item. W2 does not prove M2 completion, W3 registry/line-json v2 behavior, W4 dispatcher/worker/provider wiring, filesystem tool semantics, or replay.
+W2 reproduces 40 W2-domain cases from production code: descriptor 16 (including 9 canonical byte cases), schema 9, renderers 7 (including 21 inner golden cases and three digest pairs), and results 8. The three `m4_pending` result/lifecycle cases are asserted to remain unexecuted. A post-review hardening pass adds internal probes for decoder normalization, the `J` value domain, deep finite values, `ToolDispatchResult` outer-shape checks, renderer exception precedence, and object-shaped schemas; it does not change any vector case ID, status, owner, or expected value. The s13 checks are extension evidence; closeout remains 11/11 and s13 is not a twelfth closeout item. W2 does not prove M2 completion, W3 registry/line-json v2 behavior, W4 dispatcher/worker/provider wiring, filesystem tool semantics, or replay.
 
 ## Execution
 

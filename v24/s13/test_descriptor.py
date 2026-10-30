@@ -282,6 +282,12 @@ def main() -> int:
                       "invalid_descriptor")
     expect_reason(lambda: descriptor.parse_descriptor(b"\xff"),
                   "invalid_descriptor")
+    # Raw-JSON ingress normalizes decoder edge failures: deep nesting raises
+    # RecursionError and a >4300-digit literal trips int()'s conversion cap.
+    deep = '{"v":2,"tool":' + "[" * 5000 + "]" * 5000 + "}"
+    expect_reason(lambda: descriptor.parse_descriptor(deep), "invalid_descriptor")
+    huge = '{"v":' + "9" * 5000 + "}"
+    expect_reason(lambda: descriptor.parse_descriptor(huge), "invalid_descriptor")
 
     # 6. The canonical leaf keeps its independent canonicalization contracts.
     assert canonical.escaped_len("a\n雪") == len("a\\n雪".encode("utf-8"))
@@ -293,6 +299,9 @@ def main() -> int:
     expect_canonical(lambda: canonical.strict_loads("1e3"), "non_integer_number")
     expect_canonical(lambda: canonical.strict_loads("-0"), "negative_zero")
     expect_canonical(lambda: canonical.strict_loads("NaN"), "non_json_constant")
+    assert canonical.strict_loads(str(2 ** 53 - 1)) == 2 ** 53 - 1
+    expect_canonical(lambda: canonical.strict_loads(str(2 ** 53)), "unsafe_integer")
+    expect_canonical(lambda: canonical.strict_loads("9" * 5000), "unsafe_integer")
 
     # 7. registry compatibility: the extracted names keep one identity.
     from v24.host import registry  # noqa: E402

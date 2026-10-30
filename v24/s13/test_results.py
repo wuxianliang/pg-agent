@@ -318,17 +318,91 @@ def main() -> int:
         "invalid_tool_output",
     )
 
-    # 9. ToolDispatchResult keeps unknown results continuation-free.
-    assert ToolDispatchResult("unknown", unknown, "").model_text == ""
+    # 8b. Non-JSON values/content and cyclic containers normalize to the one
+    # ``invalid_tool_output`` reason instead of leaking CanonicalError or
+    # RecursionError through a public constructor.
+    text_block = [{"type": "text", "text": ""}]
+    for bad_value in (float("nan"), 1.5, object(), (1,), "\ud800"):
+        expect_result_error(
+            lambda bad_value=bad_value: success_output(bad_value, text_block),
+            "invalid_tool_output",
+        )
     expect_result_error(
-        lambda: ToolDispatchResult("unknown", unknown, "text"),
+        lambda: success_output(1, [{"type": "text", "text": "\ud800"}]),
+        "invalid_tool_output",
+    )
+    cyclic = []
+    cyclic.append(cyclic)
+    expect_result_error(lambda: frame_bytes(cyclic), "invalid_tool_output")
+    expect_result_error(
+        lambda: measure({}, cyclic, text_block), "invalid_tool_output"
+    )
+    # Finite depth is legal: the encoder uses an explicit stack, so a value
+    # far beyond Python's recursion limit still measures instead of failing.
+    deep = 0
+    for _ in range(1200):
+        deep = [deep]
+    assert success_output(deep, text_block)["value"] is deep
+    assert measure({}, deep, text_block)["value"] == len(compact_json(deep))
+
+    # 9. ToolDispatchResult closes the outer {status,output,usage} shape and
+    # dispatches to the validator for its class.
+    success_result = {
+        "status": "ok", "output": success, "usage": {"wall_ms": 1},
+    }
+    failure_result = {
+        "status": "error", "output": failure, "usage": {"wall_ms": 0},
+    }
+    unknown_result = {
+        "status": "error", "output": unknown, "usage": {"wall_ms": 0},
+    }
+    assert ToolDispatchResult("unknown", unknown_result, "").model_text == ""
+    assert ToolDispatchResult("success", success_result, joined).model_text == joined
+    assert ToolDispatchResult("failure", failure_result, joined).model_text == joined
+    for class_, bad_result in (
+        ("unknown", unknown),
+        ("unknown", {"status": "error", "output": unknown}),
+        ("unknown", {
+            "status": "error", "output": unknown,
+            "usage": {"wall_ms": 0}, "x": 1,
+        }),
+        ("unknown", {"status": "unknown", "output": unknown,
+                    "usage": {"wall_ms": 0}}),
+        ("unknown", {"status": "ok", "output": unknown,
+                    "usage": {"wall_ms": 0}}),
+        ("unknown", {"status": "error", "output": unknown,
+                    "usage": {"wall_ms": -1}}),
+    ):
+        expect_result_error(
+            lambda class_=class_, bad_result=bad_result: ToolDispatchResult(
+                class_, bad_result, ""
+            ),
+            "invalid_outcome",
+        )
+    expect_result_error(
+        lambda: ToolDispatchResult("unknown", unknown_result, "text"),
         "invalid_outcome",
     )
     expect_result_error(
-        lambda: ToolDispatchResult("maybe", unknown, ""),
+        lambda: ToolDispatchResult("maybe", unknown_result, ""),
         "invalid_outcome",
     )
-    assert ToolDispatchResult("success", success, joined).model_text == joined
+    expect_result_error(
+        lambda: ToolDispatchResult(
+            "success",
+            {"status": "ok", "output": failure, "usage": {"wall_ms": 0}},
+            joined,
+        ),
+        "invalid_tool_output",
+    )
+    expect_result_error(
+        lambda: ToolDispatchResult(
+            "failure",
+            {"status": "error", "output": success, "usage": {"wall_ms": 0}},
+            joined,
+        ),
+        "invalid_tool_output",
+    )
 
     print(
         "[passed] W2 result contract; cases=8; envelope_bytes=3; "
