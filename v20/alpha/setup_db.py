@@ -28,6 +28,31 @@ def local_dsn(database: str = DB, *, user: str | None = CONTROL_ROLE) -> str:
     return make_dsn(**params)
 
 
+def ensure() -> str:
+    """Create the alpha database when it is missing. Do not drop an existing one."""
+    admin = psycopg2.connect(local_dsn("postgres", user=None))
+    admin.autocommit = True
+    exists = True
+    try:
+        with admin.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (DB,))
+            exists = cur.fetchone() is not None
+            if not exists:
+                cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(DB)))
+    finally:
+        admin.close()
+    if not exists:
+        loader = psycopg2.connect(local_dsn(user=None))
+        loader.autocommit = True
+        try:
+            with loader.cursor() as cur:
+                cur.execute(SQL_FILE.read_text(encoding="utf-8"))
+                cur.execute("GRANT pg_read_all_stats TO v20_alpha_control")
+        finally:
+            loader.close()
+    return local_dsn()
+
+
 def main() -> int:
     admin = psycopg2.connect(local_dsn("postgres", user=None))
     admin.autocommit = True

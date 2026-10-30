@@ -10,7 +10,7 @@ from uuid import uuid4
 import threading
 
 from v20.alpha.control import Control, ControlError
-from v20.alpha.tools import InTransaction, ToolFailed, run_tool
+from v20.alpha.tools import InTransaction, ToolFailed, reset_workspace, run_tool, use_workspace
 from v20.alpha.worker import (
     TurnReceipt,
     WorkerRequest,
@@ -36,9 +36,16 @@ class Host:
 
     _gate = threading.Lock()
 
-    def __init__(self, control: Control, worker: Callable[..., TurnReceipt]) -> None:
+    def __init__(
+        self,
+        control: Control,
+        worker: Callable[..., TurnReceipt],
+        *,
+        workspace_root: str | None = None,
+    ) -> None:
         self.control = control
         self.worker = worker
+        self.workspace_root = workspace_root
 
     def drive(
         self,
@@ -50,9 +57,11 @@ class Host:
     ) -> dict[str, Any]:
         if not Host._gate.acquire(blocking=False):
             raise ControlError("Rejected")
+        token = use_workspace(self.workspace_root)
         try:
             return self._drive(verb, actor, dict(payload), handle_timeout)
         finally:
+            reset_workspace(token)
             Host._gate.release()
 
     def _drive(

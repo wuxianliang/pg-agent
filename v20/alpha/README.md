@@ -34,6 +34,19 @@ uv run python v20/alpha/test_alpha.py
 SELECT session_id FROM v20_sessions WHERE NOT list_hidden
 ```
 
+## 一次真实工作区读取
+
+内核 gate 仍然不开网络。工具闭集现在是 `echo` 和单根 `read_file`。路径围栏和换行切分跟 v13 的 headless 读合同，代码在 `read_file.py`，不 import v13。工作区根是 Host 的配置，不写进 run。
+
+另一个脚本，不是 gate：
+
+```bash
+uv run python v20/alpha/test_run.py
+uv run python v20/alpha/drive.py --root /path/to/workspace --message "read note.txt"
+```
+
+`test_run.py` 覆盖 provider 工人和 `read_file`。`V20_MODE` 缺省是 `fake`：不开套接字，消息里出现的相对路径会被 `read_file` 读一次，然后完成。真实模型要同时有 `V20_MODE=real`、`V20_REAL_PROVIDER_AUTHORIZATION=1` 和 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY`。缺授权打印 `not_authorized`，缺 key 打印 `credentials_absent`，退出码都是 2，不调用 provider。密钥不进请求体，也不进库。一次 drive 只放行一批工具。
+
 ## 不做什么
 
-不改 `v8/load.py`，不 import v13，不建 workflow、plan、artifact、span、token 表。不跑真实 `read_file`，不跑真实 provider，不把 `v20_runs` 收成 v23 那种单表。偏差见 `docs/reviews/v20-deviation-ledger-2026-10-14.md`。探针对照见 `docs/reviews/v20-conformance-matrix-2026-10-14.md`。
+不改 `v8/load.py`，不 import v13，不建 workflow、plan、artifact、span、token 表。不接 WorkspaceContext，不跑 Swift、Node 或 DuckDB 读平面。不把 `v20_runs` 收成 v23 那种单表。偏差见 `docs/reviews/v20-deviation-ledger-2026-10-14.md`。探针对照见 `docs/reviews/v20-conformance-matrix-2026-10-14.md`。
