@@ -406,6 +406,17 @@ Node 缺失时 `test_node.py --node`/`--multilingual-smoke` 打印 SKIP 并
 exit 2，SKIP 不算通过。
 
 
+### 1.19 W1 文档对齐（2026-10-29；实现不变）
+
+本节记录文档与已实现 v24 行为的 wording-only 对齐；不改 SQL、host、tests、loaders 或 gate，亦不重新宣称未有 gate 证据的能力。
+
+| ID | 文档漂移 | 文档修正 | 证据 / 性质 |
+|---|---|---|---|
+| D-S1-1 | `turn_no` 被写成“已提交模型步骤数”，与 model/tool settlement 计数实现不符 | 设计稿改为已提交业务 settlement 数；cancel/steer/respond 与 cancel-late 不增；§3.3/§5.1 同步说明 | `48_loop.sql:588,1411`、`49_recovery.sql:126-129`；纯文档修正，零代码影响 |
+| D-S3-9 | 设计允许 tool successor 声明 `replay_safe`，实现对 tool successor 硬编码 `no_replay` | §B.4 改为 v1 tool_call successor 一律 no_replay；可被 claim 的 replay_safe 恢复闭集收紧为 host_prepare/host_release/inspect_resource | `48_loop.sql:1133,2963`、`49_recovery.sql:351-375`；工具 replay_policy 无独立 gate 断言，既有证据缺口保留 |
+| D-S4-11 | 设计声称参数与 tool output 按 descriptor JSON Schema 校验 | 设计稿降级为 `{key,args}` / `{status,output,usage}` 形状校验；`slots.descriptor` 不透明，DB/host 不执行 parameters/output schema | `48_loop.sql:296-307,1376-1387`、`30_advance.sql:745-806`、`10_schema.sql:127,190`；post-closeout spec-layer revision，无 gate assertion |
+| D-MR-11 | 设计把 host journal 写成外部证据副本，未明确其为 provider transcript 来源 | 两份设计稿、矩阵与 S10 README 明确 journal 是后续 model 请求对话原文唯一持久来源；DB 仅保留语义投影，journal 丢失导致 history_missing → failure，再经 command_recover 转 unknown | `v24/host/worker.py:944,1125-1137,1190-1231`、G9-A/B/C；纯文档对齐，未做 derive_model_messages 或新增 outcome 字段 |
+
 ## 2. 实施披露（不是规格偏差）
 
 以下条目改动的是 DDL 细节或测试夹具，不改变设计语义；列在此处是为了让复核者能对着代码找到它们。
@@ -414,7 +425,7 @@ exit 2，SKIP 不算通过。
 |---|---|---|---|---|
 | I1 | `f_effects_parent`、`f_events_effect` 为 DEFERRABLE | 计划列为普通 FK | DEFERRABLE | 与同组 FK 的延迟策略一致；`D.deferred` 证明延迟 FK 在 COMMIT 闭合 |
 | I2 | `c_installs_ident` 重命名为 `c_installs_identity_len` | 计划用 `c_installs_ident` | 改名 | 与唯一索引 `u_installs_ident` 重名，PG 允许但审计易混；`D.catalog` 断言约束名 |
-| I3 | 夹具 schema 闭集为 `{v24, v24_fake}` | 计划只列 `v24` | 加入 FakeHost journal schema | journal 必须与十表分离；`S._assert_closed_catalog` 仍断言第三 schema 被拒 |
+| I3 | 夹具 schema 闭集为 `{v24, v24_fake}` | 计划只列 `v24` | 加入 FakeHost journal schema | journal 必须与十表分离（指夹具 schema 闭集，不指权威归属）；`S._assert_closed_catalog` 仍断言第三 schema 被拒 |
 | I4 | G1-A 允许 INVOKER `validate_and_apply_install_delta` 含 `UPDATE v24.effects` | 计划「只有 advance 体内出现 UPDATE」 | 允许该具名、不可授权的 INVOKER helper | W5 需要与 advance 共享 delta 应用；S1 时 `prosecdef=true` 恰为 `{advance}`；S3 W1 后加入只读 DEFINER allowlist，advance 仍为唯一可写 DEFINER（矩阵 §1.1） |
 | I5 | settlement mode 由 `p_outcome.class` 推断 | 计划未指定推断来源 | class 决定 success/failure/unknown | 避免 delta 自选执行域；`T.install_settlement_w5` 三态断言 |
 | I6 | `install` 的 `preparing` vs `installed` 由 manifest 决定 | 计划只写状态机 | 空 `provides` + 零长 artifact ⇒ 纯声明 `installed` | 让 `host_prepare` 三态都可达；`T.install_settlement_w5` 覆盖 |

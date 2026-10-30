@@ -21,6 +21,8 @@ Expected last line:
 `--only` is a debugging checkpoint; the acceptance run is the no-argument
 form above.
 
+跨 turn 请求重建以 host journal 为唯一来源；DB 只有语义投影。
+
 ## Cases
 
 | ID | Contract |

@@ -209,6 +209,7 @@ M-H 落地范围：新增 `v24/sql/49_host_reads.sql`；修改 `50_permissions.s
   `TRANSACTION_STATUS_IDLE`、`0 < timeout_s ≤ 239`、lease 61/180/299s、
   短 lease 不发 HTTP；journal 目录 0700/文件 0600、第二写者被 POSIX lock
   拒绝、未知 version 与内部 corruption 失败、截断尾被裁剪、secret 被拒。
+  因此跨 turn 请求重建以 journal 为唯一来源。
 - **封闭面**：`G9-R` 的 catalog 仍是十表闭集，无 queue/claim/journal 表；
   `run_until_idle(max_rounds=1)` 对两个 ready effect 只执行一个，剩余一个
   明确不作为 fairness 承诺。
@@ -471,6 +472,17 @@ G5 已由 S6 W1–W4 完成并实跑；G6 已由 S7 W1–W2 完成并实跑（30
 | G5 crash/replay | **完成（S6 W1–W4，K1–K10 10/10）** | 设计稿 §9 G5 行 + 附录 C.1（K1–K10）+ 附录 C.3；[S6 计划](../plans/v24-s6-crash-recovery-2026-10-24.md)；[`v24/s6/test_g5.py`](../../v24/s6/test_g5.py) | 无参数全量 gate 退出 0，`[G5-K1]`…`[G5-K10]` 各恰一次，末行 `[passed] v24 S6 W1-W4`；每窗口 child/worker/parent backend PID 互异；K4 的 trigger 注入/回滚/删除、K5 的三次 response 字节相等见 §0.2。边界：FakeHost + 持久 journal 证明合同，**不证明**真实 provider/adapter 的 reservation 复用；K2/K3 的 lease 过期是 seeded fixture；K5 为 host-only、预算不适用；`has_more` 仅提示；S6 本身无 S7 并发、无 S8 spawn 证据（S8 见下行） |
 | G7 spawn/child run | **完成（S8 W1–W3，G7-A…H + N1–N7）** | 设计稿 §5.5 + 附录 C.2（G7-A…H 与强制负例）+ 附录 C.6（R7/D-S8-9…12）；[S8 计划](../plans/v24-s8-spawn-2026-10-24.md)；[`v24/s8/test_g7.py`](../../v24/s8/test_g7.py) | 无参数全量 gate 退出 0（S6/S8 收尾轮第 10 条命令），`[G7-A]`…`[G7-H]` 与 `[G7-N1]`…`[G7-N7]` 各恰一次（N1/N2 另有 `[G7-N1-lock]`/`[G7-N2-lock]` 证据行，G7-G 另有 `[G7-G evidence]` 附加证据行、`[G7-G]` 结果行仍一次），末行 `[passed] v24 S8 W1-W3 G7-A…H + N1-N7: g7_a,g7_b,g7_c,g7_d,g7_e,g7_f,g7_g,g7_h,n1,n2,n3,n4,n5,n6,n7`；完整输出见 §0.3。**边界**：① FakeHost/进程内 fixture，**不调真实 provider**；② owner pin 受 `c_pins_xor` 约束存为 `consumer_type='run'`、`consumer_run_id=child`、**`consumer_episode_id=NULL`**，owner episode 由 child run 的 `owner_episode_id` 承载，激活 pin 必须恰一条 live（0/>1 → `dependency_unresolved`）；③ child 首 model 的 `toolset` 按**预期 run pin** 计算并在 settlement 后与 `v24.model_digests(child)` 逐字节比对（prospective digest）；④ N2 同 key 异 bytes 的并发败者在 G 串行下得 `receipt_conflict`，第 24 码 `spawn_key_conflict` 由随后携带败者 bytes 的**新父 outcome**产生；⑤ 同 effect 同 bytes 的 receipt replay 返回 S2/S4 冻结 replay 信封（**无 `spawned`**），仅新父 outcome 复用既有 child 时 `spawned.replayed=true`；⑥ child 首 `model_call` 的 `effects.pin_id=NULL`，owner run pin 是独立的 `v24.pins` 行；G7-G 经真实公共 claim 路径（`attempt/fence=1/1`，service login owner）取得 claimed，过期 lease 后由 `v24.command_recover` 结算 unknown、child `blocked_unknown`、spawn edge/child 计数/父 quota 不变、run pin 释放；这是 D-S8-12，不再 seed claim，也无残余 claim 路径债务；⑦ S8 **不证** G6/S7 三面并发（已由 S7/G6 补证），也不证明真实 provider/adapter |
 | G6 三面并发 | **完成（S7 W1–W2，30 ID）** | 设计稿 §9 G6 行 + §7 矩阵（6 行 × 3 列 = 18 格）+ 附录 C.2 的 spawn 负例；[S7 计划](../plans/v24-s7-concurrency-2026-10-24.md)；[`v24/s7/README.md`](../../v24/s7/README.md)；[`v24/s7/test_g6.py`](../../v24/s7/test_g6.py) | 无参数全量 `uv run python v24/s7/test_g6.py` 退出 0，**30/30 ID** = 16 条矩阵（A1；B1–B3；C1–C3；D1；E1；F1；G1–G3；H1–H3）+ N1–N9（9 条负例）+ L1–L5（5 条锁序审计）；末行逐字为 `[passed] v24 S7 W1-W2 G6-A…H + N1-N9 + L1-L5: g6_a1,g6_b1,g6_b2,g6_b3,g6_c1,g6_c2,g6_c3,g6_d1,g6_e1,g6_f1,g6_g1,g6_g2,g6_g3,g6_h1,g6_h2,g6_h3,g6_n1,g6_n2,g6_n3,g6_n4,g6_n5,g6_n6,g6_n7,g6_n8,g6_n9,g6_l1,g6_l2,g6_l3,g6_l4,g6_l5`；18 格全部落位、无空格（格 1 = `G6-A1`，格 3 = `G6-N1`，格 4–18 = `G6-B1`–`G6-H3`）；格 2 = **G3b-5 closeout 重跑，仅此**（非 G6 body，不计第 31 ID），证据命令 `uv run python v24/s3/test_g2.py` 退出 0，证据行逐字为 `[G3b-5] two fresh fixtures/two connections: pg_blocking_pids + waiting advisory pg_locks prove G serialization; start-first/off deferred; off-first/start dependency_unresolved with no run/pin`；S7 closeout 为 **11/11（10 既有 + G6）**。**边界**：Fake-only、无真实 provider/网络、无跨主机 lease、无 starvation/公平性证明、无 G5 崩溃窗口重测、无多主机；evidence-only，无产品改动（24/0 不变）。 |
+
+## 2.8 W1 文档对齐（2026-10-29；实现不变）
+
+以下新增行记录 documented≠implemented 的文档层对齐；不新增 gate，不把现有证据扩写成实现能力。
+
+| ID | 对齐项 | 文档修正与现状 | 证据 / 状态 |
+|---|---|---|---|
+| D-S1-1 | `turn_no` 语义 | 设计稿改为 model/tool settlement 计数，cancel-late 不增；测试既按 settlement 断言 | `G2b-B/D` 与 `48_loop.sql:588,1411`；doc-only resolved |
+| D-S3-9 | tool `replay_safe` | 设计稿收紧为 v1 tool successor 一律 `no_replay`；可被 claim 的 replay_safe 仅 host_prepare/host_release/inspect_resource | `G5 K2/K3` 恢复证据；工具 successor 无独立 gate 断言，保留缺口披露 |
+| D-S4-11 | descriptor schema | 设计稿明确 DB/host 只做参数与结果形状校验，不执行 descriptor JSON Schema | `G2b-T/V` 形状与语义负例；doc-only resolved |
+| D-MR-11 | journal transcript 权威 | 设计稿、旧稿与 S10 README 明确 host journal 是后续 model 请求唯一对话来源，DB 仅有语义投影；跨 turn 重建据此进行 | `G9-A/B/C` 的 reasoning_content/tool_call_id/provider 顺序证据；doc-only resolved |
 
 ## 3. 错误码覆盖（24 码）
 

@@ -64,7 +64,7 @@
 
 [第一性推导] 丢失候选只能延迟执行，不能改变授权、产生新 effect 或擦掉责任。
 
-[仅规格] 宿主 journal 是外部证据副本；它丢失不能改变数据库中的已知/未知边界。
+[仅规格] 宿主 journal 是外部 IO 回执、provider 侧明细与该 run 后续 model 请求对话原文的唯一持久处；它丢失不改变任何十表行与已知/未知边界，但使该 run 的续链不可重建（history_missing → failure），只能经 command_recover 转 unknown。
 
 ### 1.3 至多一次、恢复与失败责任
 
