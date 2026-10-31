@@ -298,6 +298,13 @@ def search_workspace(root, case_id):
     return _workspace_result(root, case["fixture_tree"])
 
 
+def node_workspace(root, nodes):
+    """Materialize caller-provided Node tool nodes without touching vectors."""
+    root = _prepare_root(root)
+    materialize_nodes(root, nodes)
+    return Workspace(os.path.realpath(root), "none")
+
+
 def manifest_bytes(identity, realm, descriptors, language):
     document = {
         "identity": identity,

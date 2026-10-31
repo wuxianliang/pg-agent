@@ -15,9 +15,13 @@ const MAX_LINE_BYTES = 4096;
 const MAX_LIST_ENTRIES = 10000;
 const MAX_LIST_LIMIT = 500;
 const MAX_SEARCH_HITS = 200;
+const MAX_SEARCH_FILES = 10000;
 const MAX_VALUE_BYTES = 40960;
 const MAX_CONTENT_BYTES = 41984;
+const MAX_META_BYTES = 4096;
 const FRAME_TARGET = 60000;
+const SCAN_BUDGET_MS = 12000;
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
 class ToolError extends Error {
   constructor(code, message) {
@@ -201,6 +205,78 @@ function selectPrefix(lengths, cap) {
   return best;
 }
 
+function defaultCaps() {
+  return {
+    value: MAX_VALUE_BYTES,
+    content: MAX_CONTENT_BYTES,
+    meta: MAX_META_BYTES,
+    frame: FRAME_TARGET,
+  };
+}
+
+function addSafe(a, b) {
+  if (!Number.isInteger(a) || !Number.isInteger(b)) {
+    throw new ToolError("invalid_tool_output",
+      "page arithmetic is not an integer");
+  }
+  const sum = BigInt(a) + BigInt(b);
+  if (sum > MAX_SAFE_BIGINT || sum < 0n) {
+    throw new ToolError("invalid_tool_output",
+      "page arithmetic exceeds safe integers");
+  }
+  return Number(sum);
+}
+
+function pageMeasures(value, text) {
+  return {
+    value: jsonLen(value),
+    content: 27 + escapedLen(text),
+    meta: 2,
+    frame: frameLen(value),
+  };
+}
+
+function emptyMeasures(value, text) {
+  return pageMeasures(value, text);
+}
+
+function fits(measures, caps) {
+  return measures.value <= caps.value
+    && measures.content <= caps.content
+    && measures.meta <= caps.meta
+    && measures.frame <= caps.frame;
+}
+
+function searchSettings(options) {
+  const supplied = options && typeof options === "object" ? options : {};
+  return {
+    caps: Object.assign({}, defaultCaps(), supplied.caps || {}),
+    fileLimit: supplied.fileLimit === undefined
+      ? MAX_SEARCH_FILES : supplied.fileLimit,
+    budgetMs: supplied.budgetMs === undefined
+      ? SCAN_BUDGET_MS : supplied.budgetMs,
+    trace: supplied.trace === undefined ? null : supplied.trace,
+  };
+}
+
+function budgetExpired(state) {
+  state.nowCalls += 1;
+  if (state.now() >= state.deadline) {
+    state.stopReason = "time-cap";
+    return true;
+  }
+  return false;
+}
+
+function listSettings(options) {
+  const supplied = options && typeof options === "object" ? options : {};
+  return {
+    caps: Object.assign({}, defaultCaps(), supplied.caps || {}),
+    scanLimit: supplied.scanLimit === undefined
+      ? MAX_LIST_ENTRIES : supplied.scanLimit,
+  };
+}
+
 function listText(value) {
   const lines = [];
   for (const entry of value.entries) {
@@ -210,7 +286,7 @@ function listText(value) {
   }
   let text = lines.length ? lines.join("\n") : "[empty directory]";
   if (value.truncated) {
-    const end = value.offset + value.entries.length - 1;
+    const end = addSafe(value.offset, value.entries.length - 1);
     text += `\n\n[Showing ${value.offset}-${end} of ${value.total}. `
       + `Use offset=${value.next_offset} to continue.]`;
   }
@@ -235,7 +311,7 @@ function searchText(value) {
   let text = lines.length ? lines.join("\n") : "[no matches]";
   const count = value.hits.length;
   const first = count ? value.offset : 0;
-  const last = count ? value.offset + count - 1 : 0;
+  const last = count ? addSafe(value.offset, count - 1) : 0;
   const total = `${value.total}${value.complete ? "" : "+"}`;
   text += `\n\n[hits ${first}-${last} of ${total}; scanned `
     + `${value.scanned_files}; skipped ${skippedSum(value.skipped)}]`;
@@ -255,7 +331,7 @@ function listScan(dir, prefix, recursive, includeHidden, state) {
   names.sort((left, right) => Buffer.compare(left, right));
   for (const raw of names) {
     state.scanned += 1;
-    if (state.scanned > MAX_LIST_ENTRIES) {
+    if (state.scanned > state.scanLimit) {
       throw new ToolError("directory_too_large",
         "directory contains more than 10000 entries");
     }
@@ -293,19 +369,21 @@ function listScan(dir, prefix, recursive, includeHidden, state) {
   }
 }
 
-function listTool(args, root) {
+function listTool(args, root, options) {
   const targetInfo = resolvePath(args.path === undefined ? "." : args.path,
     root, true);
   const recursive = args.recursive === true;
   const includeHidden = args.include_hidden === true;
-  let offset = args.offset === undefined ? 1 : args.offset;
-  let limit = args.limit === undefined ? MAX_LIST_LIMIT : args.limit;
-  if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 1
-      || typeof limit !== "number" || !Number.isInteger(limit)
+  const offset = args.offset === undefined ? 1 : args.offset;
+  const limit = args.limit === undefined ? MAX_LIST_LIMIT : args.limit;
+  if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 1
+      || typeof limit !== "number" || !Number.isSafeInteger(limit)
       || limit < 1 || limit > MAX_LIST_LIMIT) {
     throw new ToolError("invalid_path", "offset or limit is invalid");
   }
-  const state = { entries: [], nonUtf8: 0, special: 0, scanned: 0 };
+  const settings = listSettings(options);
+  const state = { entries: [], nonUtf8: 0, special: 0, scanned: 0,
+    scanLimit: settings.scanLimit };
   listScan(targetInfo.target, targetInfo.rel === "." ? "" : targetInfo.rel,
     recursive, includeHidden, state);
   state.entries.sort((left, right) => Buffer.compare(
@@ -315,7 +393,7 @@ function listTool(args, root) {
     if (offset !== 1) {
       throw new ToolError("offset_out_of_range", "offset is outside the directory");
     }
-    return {
+    const empty = {
       path: targetInfo.rel,
       offset: 1,
       entries: [],
@@ -325,29 +403,33 @@ function listTool(args, root) {
       skipped_non_utf8: state.nonUtf8,
       skipped_special: state.special,
     };
+    if (!fits(emptyMeasures(empty, listText(empty)), settings.caps)) {
+      throw new ToolError("output_too_large",
+        "no list page fits the budgets");
+    }
+    return empty;
   }
-  if (offset > total) {
+  const totalBig = BigInt(total);
+  const offsetBig = BigInt(offset);
+  if (offsetBig > totalBig) {
     throw new ToolError("offset_out_of_range", "offset is outside the directory");
   }
   const maxK = Math.min(limit, total - offset + 1);
   let best = null;
   for (let count = 1; count <= maxK; count += 1) {
     const entries = state.entries.slice(offset - 1, offset - 1 + count);
-    const truncated = offset + count - 1 < total;
+    const truncated = offsetBig + BigInt(count) - 1n < totalBig;
     const value = {
       path: targetInfo.rel,
       offset,
       entries,
       total,
       truncated,
-      next_offset: truncated ? offset + count : null,
+      next_offset: truncated ? addSafe(offset, count) : null,
       skipped_non_utf8: state.nonUtf8,
       skipped_special: state.special,
     };
-    const contentLen = 27 + escapedLen(listText(value));
-    if (jsonLen(value) <= MAX_VALUE_BYTES
-        && contentLen <= MAX_CONTENT_BYTES
-        && frameLen(value) <= FRAME_TARGET) {
+    if (fits(pageMeasures(value, listText(value)), settings.caps)) {
       best = value;
     }
   }
@@ -386,7 +468,10 @@ function globRegex(glob) {
       index += 1;
     }
   }
-  return new RegExp(out + "$");
+  return {
+    regex: new RegExp(out + "$"),
+    basenameOnly: !glob.includes("/"),
+  };
 }
 
 function codePointLength(text) {
@@ -439,7 +524,11 @@ function searchFile(file, relPath, args, state, matcher) {
     return false;
   }
   state.scannedFiles += 1;
-  if (matcher && !matcher.test(relPath)) return false;
+  if (matcher) {
+    const subject = matcher.basenameOnly
+      ? path.posix.basename(relPath) : relPath;
+    if (!matcher.regex.test(subject)) return false;
+  }
   const foldedQuery = args.ignore_case === true ? asciiFold(args.query) : args.query;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index].endsWith("\r") ? lines[index].slice(0, -1) : lines[index];
@@ -475,8 +564,8 @@ function searchFile(file, relPath, args, state, matcher) {
       if (after.length) hit.after = after;
     }
     state.hits.push(hit);
-    if (state.hits.length >= args.offset + args.limit) {
-      state.stopped = true;
+    if (BigInt(state.hits.length) >= BigInt(args.offset) + BigInt(args.limit)) {
+      state.stopReason = "sentinel";
       return true;
     }
   }
@@ -515,21 +604,23 @@ function searchWalk(dir, prefix, args, state, matcher) {
       continue;
     }
     if (info.isDirectory()) {
+      if (budgetExpired(state)) return true;
       if (searchWalk(full, relPath, args, state, matcher)) return true;
       continue;
     }
     if (!info.isFile()) continue;
     state.regular += 1;
-    if (state.regular > 10000) {
-      state.scopeExhausted = true;
+    if (state.regular > state.fileLimit) {
+      state.stopReason = "file-cap";
       return true;
     }
+    if (budgetExpired(state)) return true;
     if (searchFile(full, relPath, args, state, matcher)) return true;
   }
   return false;
 }
 
-function searchTool(args, root) {
+function searchTool(args, root, options) {
   const targetInfo = resolvePath(args.path === undefined ? "." : args.path,
     root, true);
   if (typeof args.query !== "string" || args.query.length === 0
@@ -543,11 +634,15 @@ function searchTool(args, root) {
   }
   const offset = args.offset === undefined ? 1 : args.offset;
   const limit = args.limit === undefined ? MAX_SEARCH_HITS : args.limit;
-  if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 1
-      || typeof limit !== "number" || !Number.isInteger(limit)
+  if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 1
+      || typeof limit !== "number" || !Number.isSafeInteger(limit)
       || limit < 1 || limit > MAX_SEARCH_HITS) {
     throw new ToolError("invalid_path", "offset or limit is invalid");
   }
+  const settings = searchSettings(options);
+  const now = options && options.now !== undefined ? options.now
+    : () => Number(process.hrtime.bigint()) / 1e6;
+  const started = now();
   const normalized = {
     query: args.query,
     ignore_case: args.ignore_case === true,
@@ -565,22 +660,36 @@ function searchTool(args, root) {
     regular: 0,
     skipped: { hidden: 0, symlink: 0, binary: 0, too_large: 0,
       non_utf8: 0, long_lines: 0 },
-    stopped: false,
-    scopeExhausted: false,
+    stopReason: null,
+    fileLimit: settings.fileLimit,
+    now,
+    deadline: started + settings.budgetMs,
+    nowCalls: 1,
   };
   searchWalk(targetInfo.target, targetInfo.rel === "." ? "" : targetInfo.rel,
     normalized, state, matcher);
-  const complete = !state.stopped && !state.scopeExhausted;
-  const total = state.hits.length;
-  if (state.scopeExhausted && total < offset + limit) {
-    throw new ToolError("search_scope_too_large",
-      "search scope exceeds the deterministic file budget");
+  if (state.stopReason === null) state.stopReason = "eof";
+  if (settings.trace) {
+    settings.trace.stopReason = state.stopReason;
+    settings.trace.nowCalls = state.nowCalls;
   }
+  const complete = state.stopReason === "eof";
+  const total = state.hits.length;
+  const totalBig = BigInt(total);
+  const offsetBig = BigInt(offset);
   if (total === 0) {
     if (offset !== 1) {
-      throw new ToolError("offset_out_of_range", "offset is outside the hits");
+      if (complete) {
+        throw new ToolError("offset_out_of_range", "offset is outside the hits");
+      }
+      throw new ToolError("search_scope_too_large",
+        "search stopped before the requested offset");
     }
-    return {
+    if (!complete) {
+      throw new ToolError("search_scope_too_large",
+        "search stopped before the requested offset");
+    }
+    const empty = {
       path: targetInfo.rel,
       offset: 1,
       hits: [],
@@ -591,26 +700,33 @@ function searchTool(args, root) {
       truncated: false,
       next_offset: null,
     };
+    if (!fits(emptyMeasures(empty, searchText(empty)), settings.caps)) {
+      throw new ToolError("output_too_large",
+        "no search page fits the budgets");
+    }
+    return empty;
   }
-  if (offset > total) {
+  if (offsetBig > totalBig) {
     if (complete) {
       throw new ToolError("offset_out_of_range", "offset is outside the hits");
     }
     throw new ToolError("search_scope_too_large",
       "search stopped before the requested offset");
   }
-  const candidate = state.hits.slice(offset - 1, offset - 1 + limit);
-  if (candidate.length === 0) {
-    if (complete) {
-      throw new ToolError("offset_out_of_range", "offset is outside the hits");
-    }
-    throw new ToolError("search_scope_too_large",
-      "search stopped before the requested offset");
+  const startBig = offsetBig - 1n;
+  const endBig = startBig + BigInt(limit) < totalBig
+    ? startBig + BigInt(limit) : totalBig;
+  const start = Number(startBig);
+  const end = Number(endBig);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) {
+    throw new ToolError("invalid_tool_output",
+      "page arithmetic exceeds safe integers");
   }
+  const candidate = state.hits.slice(start, end);
   let best = null;
   for (let count = 1; count <= candidate.length; count += 1) {
     const hits = candidate.slice(0, count);
-    const truncated = offset + count - 1 < total || !complete;
+    const truncated = offsetBig + BigInt(count) - 1n < totalBig || !complete;
     const value = {
       path: targetInfo.rel,
       offset,
@@ -620,17 +736,22 @@ function searchTool(args, root) {
       scanned_files: state.scannedFiles,
       skipped: state.skipped,
       truncated,
-      next_offset: truncated ? offset + count : null,
+      next_offset: truncated ? addSafe(offset, count) : null,
     };
-    const contentLen = 27 + escapedLen(searchText(value));
-    if (jsonLen(value) <= MAX_VALUE_BYTES
-        && contentLen <= MAX_CONTENT_BYTES
-        && frameLen(value) <= FRAME_TARGET) {
+    if (fits(pageMeasures(value, searchText(value)), settings.caps)) {
       best = value;
     }
   }
   if (best === null) {
     throw new ToolError("hit_too_large", "no search page fits the budgets");
+  }
+  if (!complete) {
+    const selected = best.hits.length;
+    if (!(selected === candidate.length && selected === limit)
+        && !(selected < candidate.length)) {
+      throw new ToolError("search_scope_too_large",
+        "search stopped before the page could be filled");
+    }
   }
   return best;
 }
@@ -700,4 +821,17 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { selectPrefix, listText, searchText };
+module.exports = {
+  selectPrefix,
+  listText,
+  searchText,
+  searchTool,
+  listTool,
+  ToolError,
+  SCAN_BUDGET_MS,
+  MAX_SEARCH_FILES,
+  MAX_LIST_ENTRIES,
+  defaultCaps,
+  emptyMeasures,
+  addSafe,
+};

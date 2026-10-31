@@ -124,6 +124,28 @@ All 32 required commands exited 0 in order: commands 1–31 have their exact com
 
 The [W5 execution record](../../docs/reviews/v24-tool-plugin-abi-w5-execution-2026-10-31.md) contains provenance, source/artifact digests, the 32-row serial table, seven audits, deviations and limits. Raw evidence is in `/tmp/w5-20261031T063812Z/`.
 
+## W6 Node list/search closeout (2026-10-31)
+
+W6 closes the Node `list`/`search` compliance and evidence gaps within the existing W4b install. Only `v24/s13/plugins/fs_tools.js` changes production behavior; `fixtures.py` adds `node_workspace`, and `test_tools.py` adds `js_call`, strict `check_error`, 11 list probes and 26 search probes. Search now records `stopReason ∈ {eof, sentinel, file-cap, time-cap}`, applies the §5.6 post-selection rule (a cutoff page succeeds only when the selected `k = m = limit`, or `k < m`), and checks `SCAN_BUDGET_MS = 12000` at C0 (before the walk) and C1 (directory before recursion, regular file after the file-cap check). Slashless globs match the basename, `offset`/`limit` use `Number.isSafeInteger`, page/footer arithmetic uses BigInt-backed `addSafe`, and empty list/search pages pass all four output budgets. The test-only seam is the optional third `options` argument; there are no new env/argv switches.
+
+The existing gate command is unchanged:
+
+```bash
+env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s13/test_tools.py
+```
+
+The final serial sweep reports:
+
+```text
+[passed] W4 fs tools; cases=140; read=16; read_probes=29; list=7; list_probes=11; search=24; search_probes=26; pagination_converged=true; page_contracts_imported=3
+```
+
+The 37 new probes cover the five file-cap shapes, four time-cap shapes, EOF/sentinel priority, no-fitting-prefix and empty-page budgets, slashless/slash/`?`/`**` glob behavior, glob accounting, safe-integer and footer overflow, precheck counters, context rendering/measurement, code-point columns and truncation, hidden/`.git`, and the eleven list boundaries (byte-full pagination, injected caps/scanLimit, nested `.git`, symlinks/specials, root non-UTF-8, UTF-8 order, offset/empty, defaults and content equality). S24 also asserts the constant/descriptor/source structure, the three-way artifact digest and tamper rejection, and host exit-3 passthrough for `output_too_large`/`invalid_tool_output`.
+
+The three 12-second evidence layers are kept separate: T1 deterministic injected-clock branches through the production `searchTool` (S06–S11); T2 constant/descriptor/source assertions (S24: 12000, 15000, margin 3000, `process.env` only in `rootPath`, `hrtime` only in `searchTool`); T3 one real-clock observation (S25: `real_clock_elapsed_ms=50.331`, overshoot `0.331`, no elapsed threshold). S26's hard assertion is the 600-call `JSON.stringify` count; `enum_cost_wall_ms=126.674` is recorded only. This does **not** prove a 12-second wall-clock guarantee and is **not an M3-complete declaration**: `tool.search_budget_timing_m3_pending` stays `m3_pending`, and C.18 remains for the later M3 declaration stage.
+
+The measured 32-command serial run on base `82e5440` passed 32/32; rows 14–24 are the eleven frozen closeout commands, so closeout remains **11/11** and s13 is not a twelfth closeout item. The seven scope audits (six inherited `c8c4bd0` checks plus the `82e5440` W6 delta with path+sha256 untracked comparison) passed both the precheck and the post-documentation final run. The `fs_tools.js` source, installed copy and approved-entry SHA-256 are all `efd05d63f028f0da4de333684dc3e63f506302f5a1c52a26c95efe36297348e5`; `fixtures.py` is `f2b5b84d9539ad9580645cabb15bf92dd169bb6a75b00c2eb1f25f069ac99bf5` and `test_tools.py` is `4df195f18d9583d920e64b1e5a5715d3626b97abdc00ffb0313651879d992d92`. `linux_real=not_run`; L07 covers only the root-level non-UTF-8 entry. The [W6 execution record](../../docs/reviews/v24-tool-plugin-abi-w6-execution-2026-10-31.md) contains provenance, the 32-row table, audits, deviations and limits; evidence is in `/tmp/w6-20261031T113313Z/`.
+
 ## Execution
 
 Capture is candidate generation, not a gate. It requires two fresh external destinations and byte comparison before promotion. Checkers are read-only, have no re-bless mode, and do not execute production tools.
