@@ -379,6 +379,18 @@ def environment(self, source=None):
 
 `spawn_count(harness, install_id)` 从该 install 的 argv 取路径（G12-A 的 Python/Node 两个 install identity 不同，不会撞 `canonical_key`）；W4a 的 `w4_stub_plugin.py` 同样遵守。
 
+### D16：macOS-first 非 UTF-8 文件名 fixture 采用 test-only preload
+
+APFS 拒绝原始非 UTF-8 文件名（`EILSEQ`）；HFS+/HFS/MS-DOS 镜像把非法字节转义成 `%FF`。macOS 是首要运行平台，不能在 `workspace() -> None` 后直接 SKIP。W4b 采用探测驱动的双模式：
+
+- `fixtures.workspace` 总是返回 `Workspace` 描述（`root`、`non_utf8_mode`、可选 `preload`/`ledger`），不再返回 `None`。先创建并回读 `b"\xff"`；精确读回为 `filesystem`，`EILSEQ`/`ENOTSUP`/转义为 `preload_shim`，其他 `OSError` 为 fixture 故障。
+- macOS 的 `preload_shim` 通过插件子进程的 `NODE_OPTIONS=--require <absolute>` 加载 `v24/s13/w4b_non_utf8_preload.cjs`，只给 realpath 精确匹配的 root 的 buffer `fs.readdirSync` 追加一个 `Buffer.from([0xff])`；不创建 fake 文件，不包装 `lstat/readFile`，不改变其他 entry/排序/分页。
+- Linux 必须创建真实 `b"\xff"` 名称并使用 `filesystem`；真实创建失败不得自动回退 shim。`W4B_FORCE_NON_UTF8_MODE=preload_shim` 仅用于 Linux 交叉验证，不能把模式强制为 `filesystem`。
+- 生产插件不新增任何测试 seam；scope audit 断言 `v24/s13/plugins/` 不出现 `W4B_*`/`NODE_OPTIONS`/preload 引用。
+- 冻结向量 `expected`/`status` 完全不变：list 的 `skipped_non_utf8=1`、search `skip_counters.non_utf8=2` 仍由真实插件逻辑产生（一个 shim 名称 + 一个真实坏内容文件）。
+- 只有 Node 缺失、preload 不可用或 runner 明确不支持 `NODE_OPTIONS` 才允许 `[SKIP] exit 2`；preload 已加载后的注入/目录/返回类型错误和插件断言失败均为 FAIL。SKIP 不计为 W4b PASS。
+- macOS 执行记录写 `non_utf8_source=preload_shim`，并记录 `linux_real=not_run`（若未在 Linux 运行）；Linux 记录 `non_utf8_source=filesystem`，并做 shim 交叉验证。shim 证据只覆盖插件对非法目录项的处理，**不证明 APFS 文件系统能力**。
+
 ---
 
 ## 组件设计
@@ -501,7 +513,7 @@ tool_handler                 # 不变（异常兜底仍是 v1 形状）
 
 ### `v24/s13/fixtures.py`（新，约 280 行）
 
-- `workspace(...)`：构造确定性测试树（ASCII/Unicode/空文件/尾换行/超长行/超过 1 MiB/`.git`/symlink/hidden/special/非 UTF-8 名），返回 `os.path.realpath(root)`（macOS 的 `/tmp`、`/var/folders` 都是 symlink，`ApprovedPlugin` 要求 `realpath(root)==root`）。非 UTF-8 名在不支持的平台返回 `None`，由调用方 SKIP exit 2。
+- `workspace(...)`：构造确定性测试树（ASCII/Unicode/空文件/尾换行/超长行/超过 1 MiB/`.git`/symlink/hidden/special/非 UTF-8 名），返回 `Workspace(root, non_utf8_mode, preload, ledger)`；root 为 `os.path.realpath`（macOS 的 `/tmp`、`/var/folders` 都是 symlink，`ApprovedPlugin` 要求 `realpath(root)==root`）。非 UTF-8 名优先真实创建并回读验证；APFS 拒绝时使用 D16 的 test-only preload（`preload_shim`），不返回 `None`。
 - `read_spec(...)` / `node_spec(...)`：两份 v2 manifest（`identity` 分别为 `v24.fs.python`/`v24.fs.node`），`provides` 的 key 与 descriptor key 对齐，`adapter_digest = adapter_declaration_digest(language)`，`artifact_digest = sha256(plugin file)`；两份 manifest 的 `argv` 末尾都带该 install 的 `--spawn-log <abs path>`（D15）。
 - `plugin_registry(specs)`：构造只含 `ApprovedPlugin` 的 `ApprovedAdapterRegistry`（不依赖 s11 的 `build_registry`，避免 v1 假设）。
 - `open_harness(...)`：复用 `v24/s11/plugin_fixtures.PluginHarness`（`sys.path` 导入），不复制 admit/prepare/activate/start/off/dispose 驱动。
@@ -529,6 +541,7 @@ tool_handler                 # 不变（异常兜底仍是 v1 形状）
 ### `v24/s13/test_tools.py`（新，W4b gate，约 550 行，需 DB + 真子进程）
 
 按 design §7.3 的 `test_tools` 行逐项；每个用例读 `--spawn-log` 文件证明真的起过进程；分页用例断言「枚举全部前缀、不假设单调」的行为（构造一个长前缀失败、短前缀成功、再长前缀又成功的 value，证明实现不是首败即停）。
+- `preload_shim` 模式在正式向量前跑 preload preflight，并增加差分守护：同一 root 带/不带 shim 的 list 除 `skipped_non_utf8`（1 vs 0）外完全相等，search `skip_counters` 除 `skipped.non_utf8`（2 vs 1）外完全相等；最小页长逐页比较；control 目录不注入；ledger 无 mismatch。证据行 `[evidence] non_utf8_source=preload_shim|filesystem`，不改变 W4 fs tools marker。
 
 ### `v24/s13/test_lifecycle.py`（新，W4c gate，约 480 行）
 
@@ -643,6 +656,7 @@ uv run python v24/s13/test_tools.py
 ```
 
 ```text
+[evidence] non_utf8_source=preload_shim|filesystem
 [passed] W4 fs tools; cases=<N>; read=<N>; list=<N>; search=<N>; pagination_converged=true; page_contracts_imported=3
 ```
 
@@ -764,7 +778,7 @@ git diff --exit-code "$BASE" -- v24/sql
 4. **v2 帧超 64 KiB**：`stdout_limit` unknown → 缩页/缩预算；**禁止**抬高 transport 上限。
 5. **`tool_pages` 与 `page_error` 差分不一致**：以 design §5.6 文本裁决，不以参考实现为准；`w1_reference.py` 属冻结面（零 diff），若它错，**不得在 W4 修改它**，而是把差异记成 `oracle_gap` 并让 host 按 design 拒绝（C5）。
 6. **`registry.py` diff 超出 D12 精确 patch**：STOP，回退并改用不改 registry 的方案（插件从 `cwd` 取 root 并把该偏差写台账）。
-7. **Node 缺失**：`test_node.py` 必须 `[SKIP]` exit 2；`test_tools.py` 的 list/search 部分同样 SKIP/exit 2，不计通过；**W4b 不得宣布完成**（M3 实现完成声明也要求 Node 工具证据），W4c 同样阻断。
+7. **Node 缺失 / 平台非 UTF-8 名称能力**：`test_node.py` 必须 `[SKIP]` exit 2；`test_tools.py` 仅在 Node 缺失、preload 不可用或 runner 明确不支持 `NODE_OPTIONS` 时 SKIP/exit 2，不计通过；macOS 的 APFS `EILSEQ` 由 D16 的 `preload_shim` 处理，不是 SKIP 原因。Linux 真实名称失败必须 FAIL/STOP，不得回退 shim。任何 SKIP 都阻断 W4b 完成声明，W4c 同样阻断。
 8. **12 秒墙钟用例**：不得进 gate。出现 `time.sleep(12)` 类用例 → 拒收。
 9. **pinned span SHA 变化**：附录追加后任一 span 的 content SHA 变 → 说明改到了正文，回退。
 10. **fake/real 边界**：`v24/s13/**` 不得打开网络套接字、不得构造真实 provider；只能起本地插件子进程。
@@ -930,9 +944,21 @@ done-when #8 的 registry 审计按等价判据关闭：原文 `git diff -U0` �
 
 **M2 完成声明（带边界）**：W4a 完成 M2。该声明不表示真实文件系统工具、分页收敛、mixed batch、崩溃重启、replay、12 秒预算已验证；closeout 仍 11/11，s13 不是第 12 条 closeout。
 
-### W4b
+### W4b（2026-10-31，实测完成；M3 实现完成，timing/cutoff pending）
 
-（待实现后实测填写；M3 完成声明预计为「M3 实现完成，timing/cutoff pending」，不代表 M3 完成。）
+基线与候选：`main`，HEAD `3d95d5fa7ceeb593942b2a76275f69cff962b577`；30 条串行命令全部 exit 0，第 30 条 `test_tools.py` 同时打印 `[evidence] non_utf8_source=preload_shim; linux_real=not_run` 与 marker：
+
+```text
+[passed] W4 fs tools; cases=74; read=16; list=7; search=24; pagination_converged=true; page_contracts_imported=3
+```
+
+第 14–24 条为 11 条冻结 closeout：**closeout 仍 11/11**，s13 不是第 12 条。六项 scope audit 全部 exit 0，全部显式钉 `c8c4bd0`；frozen 检查已扩展到 s13 测试文件，并断言 `test_contracts.py` 只改 `DESIGN_SHA256`。design 只追加 C.17：旧 `15afb72dfb8f4f274d36b1722ad3b50501388abbe2a6a0d0ce6e6eeba12f7800` → 新 `ab4636fcae5361cc237b16cdd893c2c544d80e770e8e13269b3d4205713d528b`，旧字节是新字节的精确前缀，25 处引用的 23 个 pinned span 全部不变；`test_contracts.py` 仅改 `DESIGN_SHA256`，`design_conformance.json` 仅改 `sha256_at_review`。
+
+实现与覆盖：`fs_read.py` 全部 16 个 read 输入；`fs_tools.js` 全部 7 个 list 与 24 个 search 输入（含 10000/10001 文件预算、10000 list 项、10000 files search 快照、sentinel 不完整页、glob/context/Unicode/skip 计数）；`fixtures.py` 复用 s11 `PluginHarness`；`test_tools.py` 74 cases，含 15 个跨语言 path 错误、4 个 selector 非单调前缀探针、3 个 DB harness 端到端、5 个 shim 差分/control 守护。分页枚举全部前缀、不假设单调、不二分、不在首败停止；没有 `sleep(12)` 或墙钟 gate。macOS APFS 拒绝原始非 UTF-8 名称，按 D16/C.17 使用 test-only preload；生产插件无测试 seam；Linux real 模式尚未运行，记录 `linux_real=not_run`，不得写成已验证。
+
+证据目录 `/tmp/w4b-20261031T043334/`；逐条时间/exit/末行/日志 SHA、scope audit、shim 边界与局限见 [W4b execution record](../reviews/v24-tool-plugin-abi-w4b-execution-2026-10-31.md)。
+
+**M3 实现完成声明（带边界）**：W4b 完成 M3 实现；timing/cutoff pending，`tool.search_budget_timing_m3_pending` 仍为 `m3_pending`。**不宣布 M3 完成**；不表示 12 秒墙钟、cutoff 页填满时序、跨平台计时或 Linux real 证据已验证。W4c 仍是 downstream。
 
 ### W4c
 

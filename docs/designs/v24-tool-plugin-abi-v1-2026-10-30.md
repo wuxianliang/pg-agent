@@ -1382,3 +1382,14 @@ W4 的零 spawn 证明固定为进程计数双证：`line_json.run_process` 的�
 12 秒扫描预算是插件内部预算，host 只采用 descriptor 的 `limits.timeout_ms`（read/list 5000、search 15000）作为进程 deadline；lease 预检使用同一个 per-tool timeout，而不是 30000 ms 默认值。W4a 证明 `_spec_v2` 对 invoke/prepare 采用正确 timeout，并用构造的 19999 ms 剩余 lease 证明 lease 判定使用该工具 timeout；不做墙钟 12 秒 gate，不出现 `sleep(12)`。
 
 W4b 只执行确定性文件数预算（10000 regular files → `search_scope_too_large`），`tool.search_budget_timing_m3_pending` 保持 pending；W4 不证明插件内部 12 秒截止、cutoff 时页填满判定的时序或跨平台墙钟抖动。`result.frame_60000_60001_65536_65537` 的 frame 域只计量、不拒绝，60001..65536 属 transport 合法，>65536 才是 `stdout_limit` unknown。
+
+### C.17 macOS-first 非 UTF-8 文件名 fixture 能力（补充 §6.1/§7.3）
+
+APFS 在 VFS 层拒绝非 UTF-8 文件名（`open`/`mkdir`/`symlink` 返回 `EILSEQ`），HFS+/HFS/MS-DOS 镜像则把非法字节转义成字面 `%FF`。在不引入 FUSE、虚拟机、网络或新依赖的前提下，macOS 无法从真实文件系统取得 `b"\xff"` 名称。W4b 的 fixture 因此采用探测驱动的双模式，向量 `expected`/`status` 一律不变：
+
+1. **能力探测**：在目标文件系统的独立临时目录中创建原始 `b"\xff"` 名称，再用字节形式枚举确认读回完全相等。两者都成功才是 `filesystem` 模式；`EILSEQ`/`ENOTSUP` 或读回被转义时才是 `preload_shim` 模式；其他 `OSError` 按 fixture 故障失败，不自动降级。
+2. **模式选择**：Linux 优先使用真实名称；macOS 当前使用 `preload_shim`。`preload_shim` 只提供目录枚举边界的一个原始名称，不创建磁盘文件，不替换其他 entry、文件内容、排序、分页或协议结果。
+3. **shim 边界**：`v24/s13/w4b_non_utf8_preload.cjs` 是 test-only CommonJS preload，仅通过插件子进程的 `NODE_OPTIONS=--require <absolute>` 加载。它只包装 buffer 形式的 `fs.readdirSync`，仅当目标目录的 realpath 与 `W4B_NON_UTF8_ROOT` 精确相等时，在真实结果末尾追加一个 `Buffer.from([0xff])`；不匹配的目录、字符串返回形式、`withFileTypes`、递归形式和原生错误全部保持原样或 fail-closed。加载后清除自身环境变量，不向 stdout/stderr 输出。
+4. **生产无 seam**：`fs_read.py`/`fs_tools.js` 不读取 `W4B_*`、`NODE_OPTIONS` 或 preload 路径，不新增测试分支；scope audit 用 grep 验证。
+5. **证据**：执行记录写 `non_utf8_source=preload_shim|filesystem`。macOS 的 shim 证据只证明插件在收到非法 UTF-8 目录项时的检测、计数和跳过逻辑正确，**不证明** APFS 支持真实非法名称；Linux real 模式才覆盖内核到插件的端到端保真度。Linux 未运行时写 `linux_real=not_run`，不得代填为已验证。
+6. **失败语义**：Node 缺失、Node 明确禁止 preload 或 preload 资产不可用时允许 `[SKIP] exit 2`；preload 已加载但注入数量/目录/返回类型不符、fixture 故障或插件契约失败一律为 FAIL，不能转成 SKIP。SKIP 不计为 W4b PASS。

@@ -682,3 +682,19 @@ The design append is C.11–C.16. Design SHA-256 changed `269e6bada20c6c18331cc6
 The six explicit audits (all pinned to `c8c4bd0`) pass: frozen modules/untracked files, vectors except the SHA metadata, design restore, registry exact +5/−1 patch, host import purity, and `v24/sql` zero diff. No real provider or network socket was used.
 
 W4a does **not** prove real filesystem read/list/search behavior, pagination convergence, mixed batches, crash/restart, journal replay, or the 12-second scan budget. W4b (M3 tools/timing) and W4c (M4 lifecycle/replay/Node) remain downstream. Full commands, times, last lines, log hashes and limitations are in the [W4a execution record](v24-tool-plugin-abi-w4-execution-2026-10-31.md); evidence directory `/tmp/w4a-20261031T025906/`.
+
+## Post-closeout Tool/Plugin ABI W4b (2026-10-31)
+
+W4b adds the real filesystem tools and their gate: Python `read` in `v24/s13/plugins/fs_read.py`, one Node install providing `list` + `search` in `v24/s13/plugins/fs_tools.js`, the reviewed-tree/v2-manifest `v24/s13/fixtures.py`, the macOS-first non-UTF-8 preload, and `v24/s13/test_tools.py`. All 16 read contract inputs, all 7 list inputs and all 24 search inputs pass; the page selectors enumerate every prefix without assuming monotonicity.
+
+| Gate | W4b coverage | Actual result |
+|---|---|---|
+| `v24/s13/test_tools.py` | 74 cases; read=16; list=7; search=24 | exit 0; `[evidence] non_utf8_source=preload_shim; linux_real=not_run`; `[passed] W4 fs tools; cases=74; read=16; list=7; search=24; pagination_converged=true; page_contracts_imported=3` |
+
+The final 30-command serial run on base `3d95d5f`, started 2026-10-31T04:25:52Z, exited 0 for every command. Rows 14–24 are the eleven frozen closeout commands: **closeout remains 11/11**; s13 is not a twelfth closeout item. The five scope audits plus the explicit SQL diff all exit 0 at `c8c4bd0`; the extended frozen check now covers the s13 test files and asserts `test_contracts.py` changes only `DESIGN_SHA256`.
+
+macOS APFS rejects raw non-UTF-8 filenames (`EILSEQ`), so the fixture probe selects a test-only Node preload for exactly one root; the shim only appends one `0xff` buffer to the buffer `fs.readdirSync` result. Production plugins contain no `W4B_`/`NODE_OPTIONS`/preload seam. The gate additionally checks preload preflight, a control directory, ledger inject/mismatch counts, list and search differentials (only the non-UTF-8 counter changes), and minimum-page pagination. The frozen list/search `expected` and `status` values are unchanged. `linux_real=not_run` is recorded as a limitation, not as Linux verification.
+
+Design C.17 was appended after C.16; design SHA-256 changed `15afb72dfb8f4f274d36b1722ad3b50501388abbe2a6a0d0ce6e6eeba12f7800` → `ab4636fcae5361cc237b16cdd893c2c544d80e770e8e13269b3d4205713d528b`. The old bytes are an exact prefix; all 25 references to 23 pinned spans retain their line ranges, headings and content SHA. `test_contracts.py` changed only `DESIGN_SHA256`; `design_conformance.json` changed only `sha256_at_review`.
+
+**M3 implementation is complete, but timing/cutoff is pending.** This is not an M3-complete declaration; `tool.search_budget_timing_m3_pending` remains `m3_pending`, no 12-second wall-clock gate was added, and W4c remains downstream. Full commands, times, last lines, log hashes and limitations are in the [W4b execution record](v24-tool-plugin-abi-w4b-execution-2026-10-31.md); evidence directory `/tmp/w4b-20261031T043334/`.

@@ -63,6 +63,26 @@ The measured 29-command serial run on base `c8c4bd0` passed every command; rows 
 
 This completion does **not** mean real filesystem tools, pagination convergence, mixed batch, crash/restart, replay, or the 12-second budget are verified. W4b (filesystem read/list/search) and W4c (lifecycle/replay/Node) remain downstream. Evidence, command times, last lines and hashes are in the [W4a execution record](../../docs/reviews/v24-tool-plugin-abi-w4-execution-2026-10-31.md); evidence directory `/tmp/w4a-20261031T025906/`.
 
+## W4b filesystem read/list/search tools (M3 implementation)
+
+W4b adds the real v2 tool plugins `v24/s13/plugins/fs_read.py` (Python `read`) and `v24/s13/plugins/fs_tools.js` (one Node install providing `list` + `search`), plus `v24/s13/fixtures.py` and `v24/s13/test_tools.py`. The fixture layer materializes the reviewed vector trees, builds v2 manifests with the SQL-compatible adapter digest, and reuses `v24/s11/plugin_fixtures.PluginHarness` for the DB-backed integration cases.
+
+Run the W4b gate from the repository root:
+
+```bash
+env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s13/test_tools.py
+```
+
+The macOS-first run reports `[evidence] non_utf8_source=preload_shim; linux_real=not_run` before the marker. APFS rejects raw non-UTF-8 filenames, so the fixture probe selects a test-only Node preload (`v24/s13/w4b_non_utf8_preload.cjs`) that appends exactly one `0xff` directory entry for the designated root; the production plugins contain no test seam. Linux uses a real `b"\xff"` name and reports `non_utf8_source=filesystem`; `linux_real` remains pending until that run is executed. The shim is guarded by preload preflight, control-directory, ledger and list/search differential assertions; the frozen vector `expected`/`status` values are unchanged.
+
+The measured 30-command serial run on base `3d95d5f` passed every command; rows 14–24 are the eleven frozen closeout commands, so closeout remains **11/11** and s13 is not a twelfth closeout item. The W4b marker is:
+
+```text
+[passed] W4 fs tools; cases=74; read=16; list=7; search=24; pagination_converged=true; page_contracts_imported=3
+```
+
+**M3 implementation is complete, but timing/cutoff is pending.** This is not an M3-complete declaration: the 12-second scan budget and cutoff page-fill timing are not proven, and `tool.search_budget_timing_m3_pending` remains `m3_pending`. W4c (lifecycle/replay/Node) remains downstream. Evidence and limitations are in the [W4b execution record](../../docs/reviews/v24-tool-plugin-abi-w4b-execution-2026-10-31.md); evidence directory `/tmp/w4b-20261031T043334/`.
+
 ## Execution
 
 Capture is candidate generation, not a gate. It requires two fresh external destinations and byte comparison before promotion. Checkers are read-only, have no re-bless mode, and do not execute production tools.
