@@ -960,6 +960,17 @@ done-when #8 的 registry 审计按等价判据关闭：原文 `git diff -U0` �
 
 **M3 实现完成声明（带边界）**：W4b 完成 M3 实现；timing/cutoff pending，`tool.search_budget_timing_m3_pending` 仍为 `m3_pending`。**不宣布 M3 完成**；不表示 12 秒墙钟、cutoff 页填满时序、跨平台计时或 Linux real 证据已验证。W4c 仍是 downstream。
 
-### W4c
+### W4c（2026-10-31，实测完成）
 
-（待实现后实测填写；M4 完成声明待生命周期/replay/Node gate 实测。）
+基线与候选：`main`，HEAD `80dc0c45f5f7618fecb1a97f09cbe67b2caef109`；32 条串行命令全部 exit 0。W4c markers：
+
+```text
+[passed] W4 lifecycle; cases=14; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true
+[passed] W4 node contract; node=/Users/wxl/.nvm/versions/node/v24.13.1/bin/node
+```
+
+第 14–24 条为 11 条冻结 closeout：**closeout 仍 11/11**，s13 不是第 12 条。六项 scope audit 全部 exit 0，全部显式钉 `c8c4bd0`；W4c 不改 design/design_conformance/test_contracts/生产 host/向量，design SHA 仍为 `ab4636fcae5361cc237b16cdd893c2c544d80e770e8e13269b3d4205713d528b`。
+
+覆盖：G12-A 双 install、三 key、真实 Python/Node 子进程、完整 off/dispose/release/scope close；G12-B 同一 model batch 三工具、屏障后恰一个 continuation、list/search 同一 install；G12-C/D/E/F/H 的非法 args、非法 output/render、timeout、tamper、lease 不足路径；G12-G `dispatch_finished` 后崩溃后重建 journal/worker，`_reconcile` 只重放 journal；G12-L success/known_error 的 B0 provider/tool-message 字节逐字节相等。replay 断言 `replay_source=journal tool_message`、`rerender=false`、`second_spawn=false`、`journal_event_types_unchanged=true`；三个 replay 相关 `m4_pending` case 只执行、`status` 不变。Node 缺失时 `test_node.py --node` 打印 `[SKIP]` exit 2，不是 PASS；最终运行 Node `v24.13.1` 存在。
+
+**M4 完成声明（带边界）**：W4c 完成 M4。该声明不回溯使 W4b 的 M3 timing/cutoff 完成；`tool.search_budget_timing_m3_pending` 仍为 `m3_pending`，不表示 12 秒墙钟、cutoff 时序或跨平台计时已验证。closeout 仍 11/11，s13 不是第 12 条。证据目录 `/tmp/w4c-20261031T044427/`；逐条时间/exit/末行/日志 SHA、scope audit 与 replay 细节见 [W4c execution record](../reviews/v24-tool-plugin-abi-w4c-execution-2026-10-31.md)。

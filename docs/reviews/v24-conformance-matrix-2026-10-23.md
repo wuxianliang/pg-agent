@@ -698,3 +698,18 @@ macOS APFS rejects raw non-UTF-8 filenames (`EILSEQ`), so the fixture probe sele
 Design C.17 was appended after C.16; design SHA-256 changed `15afb72dfb8f4f274d36b1722ad3b50501388abbe2a6a0d0ce6e6eeba12f7800` → `ab4636fcae5361cc237b16cdd893c2c544d80e770e8e13269b3d4205713d528b`. The old bytes are an exact prefix; all 25 references to 23 pinned spans retain their line ranges, headings and content SHA. `test_contracts.py` changed only `DESIGN_SHA256`; `design_conformance.json` changed only `sha256_at_review`.
 
 **M3 implementation is complete, but timing/cutoff is pending.** This is not an M3-complete declaration; `tool.search_budget_timing_m3_pending` remains `m3_pending`, no 12-second wall-clock gate was added, and W4c remains downstream. Full commands, times, last lines, log hashes and limitations are in the [W4b execution record](v24-tool-plugin-abi-w4b-execution-2026-10-31.md); evidence directory `/tmp/w4b-20261031T043334/`.
+
+## Post-closeout Tool/Plugin ABI W4c (2026-10-31)
+
+W4c completes the M4 lifecycle evidence: `test_lifecycle.py` covers G12-A…H + G12-L with real Python/Node subprocesses, mixed batches, tamper/lease zero-spawn paths, `dispatch_finished` crash/replay and legacy B0 bytes; `test_node.py` covers one Node install providing `list` + `search`.
+
+| Gate | Coverage | Actual result |
+|---|---|---|
+| `v24/s13/test_lifecycle.py` | G12-A…H + G12-L; mixed batch; replay; legacy | exit 0; `[passed] W4 lifecycle; cases=14; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true` |
+| `v24/s13/test_node.py --node` | one install, two tools, real lifecycle | exit 0; `[passed] W4 node contract; node=/Users/wxl/.nvm/versions/node/v24.13.1/bin/node` |
+
+The final 32-command serial run on base `80dc0c4` exited 0 for every command. Rows 14–24 are the eleven frozen closeout commands: **closeout remains 11/11**; s13 is not a twelfth closeout item. The six scope audits (frozen modules/frozen s13 tests/untracked, vectors except design metadata, design restore, registry exact patch, host import purity, SQL zero diff) all exit 0 at `c8c4bd0`.
+
+Replay evidence: `replay_source=journal tool_message`, `rerender=false`, `second_spawn=false`, `journal_event_types_unchanged=true`; the crash is injected only after the tool's `dispatch_finished`, the worker/journal is rebuilt, and `_reconcile` settles the pending outcome without calling the tool handler or spawning. The three replay-related `results_v2` cases (`result.replay_no_rerender`, `lifecycle.journal_replay_no_rerender`, `lifecycle.tool_message_model_text_stable`) were executed but retain `m4_pending` status. G12-L compares success and known-error provider requests and tool message bytes to the B0 goldens exactly.
+
+Node missing is an explicit `[SKIP]` exit 2 and cannot be a pass; the simulation was checked. No design or design-conformance change was made in W4c: design SHA remains `ab4636fcae5361cc237b16cdd893c2c544d80e770e8e13269b3d4205713d528b` and all pinned spans are unchanged. W4b's M3 implementation timing/cutoff remains pending; `tool.search_budget_timing_m3_pending` stays `m3_pending`. Full commands, times, last lines and log hashes are in the [W4c execution record](v24-tool-plugin-abi-w4c-execution-2026-10-31.md); evidence directory `/tmp/w4c-20261031T044427/`.

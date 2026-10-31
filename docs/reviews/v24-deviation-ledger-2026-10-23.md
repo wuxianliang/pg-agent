@@ -657,3 +657,9 @@ W4a 把 W3 的审批模型与 line-json v2 接进 dispatcher/worker/provider，�
 ## Post-closeout Tool/Plugin ABI W4b（2026-10-31）
 
 - **D-ABI-W4-8（macOS-first 非 UTF-8 目录项 fixture；已接受）：** APFS 在 VFS 层拒绝原始非 UTF-8 文件名（`EILSEQ`）；HFS+/HFS/MS-DOS 镜像把非法字节转义成字面 `%FF`，当前也没有可写非 APFS 卷。按 design C.17 与 W4b D16，`fixtures.workspace` 改为能力探测驱动的 `Workspace` 描述：能真实创建并精确回读 `b"\xff"` 时为 `filesystem`（Linux 首选）；否则为 `preload_shim`（当前 macOS）。shim 是 test-only CommonJS preload，仅通过插件子进程的 `NODE_OPTIONS=--require <absolute>` 加载，只对 realpath 精确匹配的 root 的 buffer `fs.readdirSync` 追加一个 `Buffer.from([0xff])`；不创建 fake 文件，不包装 `lstat/readFile`，不改变其他 entry、排序或分页。生产插件零测试 seam，scope audit 已验证。冻结向量 `expected`/`status` 完全不变：list 的 `skipped_non_utf8=1`、search `skip_counters.non_utf8=2` 仍由真实插件逻辑产生。执行记录写 `non_utf8_source=preload_shim; linux_real=not_run`；该证据只证明插件对非法目录项的处理，不证明 APFS 文件系统能力，Linux real 模式仍待运行。测试层另有 preload preflight、control 目录、ledger mismatch=0、list/search 差分和最小页长分页守护，任何 shim 加载后异常均为 FAIL，不转 SKIP。
+
+## Post-closeout Tool/Plugin ABI W4c（2026-10-31）
+
+- **D-ABI-W4-9（M4 证据只执行、不改状态；已接受）：** W4c 的 `test_lifecycle.py` 执行 G12-A…H + G12-L、mixed batch 与 replay，`test_node.py` 执行 Node 双工具生命周期。三个 replay/生命周期相关 `results_v2` case 只被**执行**，其 `status` 保持 `m4_pending`；不 re-bless、不改期望字节。replay 测试为证明不重渲染，只在测试内存中把 `ApprovedTool.render` 的 digest 改成不可能匹配的值，并同时把 tool handler 换成 raising；重启 worker 后只走 `_reconcile` 的 journal 路径，断言 `replay_source=journal tool_message`、`rerender=false`、`second_spawn=false`、`journal_event_types_unchanged=true`。这是测试内故障注入，不进入生产代码或冻结向量。
+- **Node 缺失语义：** `test_node.py --node` 在 Node 不可用时打印 `[SKIP] W4 node contract; node_missing` 并 exit 2；该状态不是 PASS，W4c 不得在 SKIP 下宣布完成。模拟已执行；最终 32 条 gate 的 Node 环境存在并全绿。
+- W4c 不改 design/design_conformance/test_contracts；design SHA 仍为 `ab4636fcae5361cc237b16cdd893c2c544d80e770e8e13269b3d4205713d528b`，25 处/23 个 pinned span 不变。closeout 仍 11/11；W4b 的 M3 实现 timing/cutoff 仍 pending，不因 W4c 的 M4 gate 变成 M3 完成。

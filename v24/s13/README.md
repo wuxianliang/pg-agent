@@ -83,6 +83,26 @@ The measured 30-command serial run on base `3d95d5f` passed every command; rows 
 
 **M3 implementation is complete, but timing/cutoff is pending.** This is not an M3-complete declaration: the 12-second scan budget and cutoff page-fill timing are not proven, and `tool.search_budget_timing_m3_pending` remains `m3_pending`. W4c (lifecycle/replay/Node) remains downstream. Evidence and limitations are in the [W4b execution record](../../docs/reviews/v24-tool-plugin-abi-w4b-execution-2026-10-31.md); evidence directory `/tmp/w4b-20261031T043334/`.
 
+## W4c lifecycle, replay and Node extension
+
+W4c adds `v24/s13/test_lifecycle.py` (G12-A…H + G12-L, mixed batch and journal replay) and `v24/s13/test_node.py` (one Node install, list + search, real lifecycle). It uses the real Python/Node subprocesses, the local PostgreSQL test database and the existing journal replay path; no provider socket is opened.
+
+Run the two W4c gates from the repository root:
+
+```bash
+env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s13/test_lifecycle.py
+env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s13/test_node.py --node
+```
+
+The measured 32-command serial run on base `80dc0c4` passed every command; rows 14–24 are the eleven frozen closeout commands, so closeout remains **11/11** and s13 is not a twelfth closeout item. The W4c markers are:
+
+```text
+[passed] W4 lifecycle; cases=14; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true
+[passed] W4 node contract; node=/Users/wxl/.nvm/versions/node/v24.13.1/bin/node
+```
+
+The replay section proves `replay_source=journal tool_message`, `rerender=false`, `second_spawn=false` and `journal_event_types_unchanged=true`; the three replay-related `m4_pending` vectors are executed but retain their `status` field. Node missing is an explicit `[SKIP]` exit 2 and is not recorded as a pass. **M4 is complete** for this gate, but W4b's **M3 implementation timing/cutoff remains pending**; `tool.search_budget_timing_m3_pending` stays `m3_pending` and no 12-second wall-clock gate was added. Evidence and limitations are in the [W4c execution record](../../docs/reviews/v24-tool-plugin-abi-w4c-execution-2026-10-31.md); evidence directory `/tmp/w4c-20261031T044427/`.
+
 ## Execution
 
 Capture is candidate generation, not a gate. It requires two fresh external destinations and byte comparison before promotion. Checkers are read-only, have no re-bless mode, and do not execute production tools.
