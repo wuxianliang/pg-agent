@@ -103,6 +103,27 @@ The measured 32-command serial run on base `80dc0c4` passed every command; rows 
 
 The replay section proves `replay_source=journal tool_message`, `rerender=false`, `second_spawn=false` and `journal_event_types_unchanged=true`; the three replay-related `m4_pending` vectors are executed but retain their `status` field. Node missing is an explicit `[SKIP]` exit 2 and is not recorded as a pass. **M4 is complete** for this gate, but W4b's **M3 implementation timing/cutoff remains pending**; `tool.search_budget_timing_m3_pending` stays `m3_pending` and no 12-second wall-clock gate was added. Evidence and limitations are in the [W4c execution record](../../docs/reviews/v24-tool-plugin-abi-w4c-execution-2026-10-31.md); evidence directory `/tmp/w4c-20261031T044427/`.
 
+## W5 Python read closeout (2026-10-31)
+
+W5 closes the Python `read` implementation and evidence gaps within the existing W4b tool: bounded two-pass scanning on one file descriptor, additive four-domain candidate measurement including continuation footers, empty-page budget checks, hardened open and best-effort file-change detection. The frozen 16 read cases remain byte-identical; 29 new read probes are counted separately. The existing gate command is unchanged:
+
+```bash
+env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s13/test_tools.py
+```
+
+The final serial sweep reports:
+
+```text
+[evidence] read_artifact_sha256=260274daba1efa87f4c33103fe53503c76a65187af68e610d5aedcfadad5165c; read_1m_wall_ms=113; read_peak_kib=3959.904; permission_probe=real
+[passed] W4 fs tools; cases=103; read=16; read_probes=29; list=7; search=24; pagination_converged=true; page_contracts_imported=3
+```
+
+The wide 1,047,999-byte input succeeds through the DB-backed executor within the unchanged 5000 ms host deadline; the measured peak for the wide/newline memory probes is below 8 MiB. Earlier W5-4 verified runs recorded 92–93 ms; 113 ms is this final sweep's actual observation, not a new timing threshold. The hardware-independent serialization probe and the real host deadline remain the guards.
+
+All 32 required commands exited 0 in order: commands 1–31 have their exact command-specific markers; command 32 is the SQL diff with empty output. No exit 2 or `[SKIP]` occurred. Seven scope audits are recorded as a precheck and rerun after documentation, immediately before staging. Closeout remains **11/11**; s13 is extension evidence, not a twelfth closeout item. **M3 timing/cutoff remains pending**: `tool.search_budget_timing_m3_pending` stays `m3_pending`; `linux_real=not_run` and the frozen manifest pending labels are unchanged. No design, pin, host, SQL, Node plugin or frozen-vector behavior changes belong to W5.
+
+The [W5 execution record](../../docs/reviews/v24-tool-plugin-abi-w5-execution-2026-10-31.md) contains provenance, source/artifact digests, the 32-row serial table, seven audits, deviations and limits. Raw evidence is in `/tmp/w5-20261031T063812Z/`.
+
 ## Execution
 
 Capture is candidate generation, not a gate. It requires two fresh external destinations and byte comparison before promotion. Checkers are read-only, have no re-bless mode, and do not execute production tools.

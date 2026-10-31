@@ -8,12 +8,17 @@ provider is constructed.
 from __future__ import annotations
 
 import copy
+import contextlib
+import hashlib
+import importlib
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import tracemalloc
 import uuid
 from pathlib import Path
 
@@ -32,6 +37,7 @@ from fixtures import (  # noqa: E402
     node_spec,
     open_harness,
     read_spec,
+    read_workspace,
     search_workspace,
     spawn_count,
     workspace,
@@ -40,6 +46,8 @@ from plugin_fixtures import final_reply  # noqa: E402
 from setup_db import server_helper_scope, setup_db  # noqa: E402
 from v24.host.deepseek import _v2_provider_name  # noqa: E402
 from v24.host.tool_pages import BUILTIN_PAGE_CONTRACTS, validate_page  # noqa: E402
+from v24.host.tool_results import measure as result_measure  # noqa: E402
+from v24.host.renderers import RENDERERS  # noqa: E402
 
 CONTRACT = {case["id"]: case for case in TOOL_CONTRACTS["cases"]}
 READ_CASES = CONTRACT["tool.read.contract"]["input"]["inputs"]
@@ -161,6 +169,29 @@ def invoke(spec: V2Spec, tool: str, args: dict, *, timeout=60):
     return payload
 
 
+def invoke_raw(spec: V2Spec, tool: str, args: dict, *, drop_root=False):
+    frame = {"v": 2, "operation": "invoke",
+             "reservation": f"v24:tool_call:{uuid.uuid4()}",
+             "args": args, "tool": tool}
+    source = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "V24_WORKSPACE_ROOT": spec.workspace,
+    }
+    source.update(dict(spec.env_overlay))
+    env = spec.entry.environment(source)
+    if drop_root:
+        env.pop("V24_WORKSPACE_ROOT", None)
+    process = subprocess.run(
+        list(spec.entry.argv),
+        input=json.dumps(frame, ensure_ascii=False).encode("utf-8") + b"\n",
+        cwd=spec.entry.cwd, env=env, capture_output=True, timeout=60)
+    assert process.returncode in (0, 3), (process.returncode, process.stderr)
+    payload = json.loads(process.stdout.decode("utf-8"))
+    assert payload.get("v") == 2, payload
+    return payload
+
+
 def check_value(spec: V2Spec, tool_key: str, args: dict, value):
     tool = spec.entry.tool_for(tool_key)
     assert tool is not None
@@ -238,7 +269,7 @@ def dispatch_records(harness, kind):
 
 
 def run_harness_case(fixture, base, spec: V2Spec, tool_key: str, args: dict,
-                     value_check):
+                     value_check, result_check=None):
     realm = spec.realm
     harness = open_harness(fixture, [spec], base / f"harness-{realm}",
                            realm=realm)
@@ -256,6 +287,10 @@ def run_harness_case(fixture, base, spec: V2Spec, tool_key: str, args: dict,
         payloads = dispatch_records(harness, "tool_call")
         assert len(payloads) == 1, len(payloads)
         payload = payloads[0]
+        if result_check is not None:
+            result_check(payload)
+        if result_check is not None and payload["tool_result"].get("status") != "ok":
+            return payload
         value = payload["tool_result"]["output"]["value"]
         check_value(spec, tool_key, args, value)
         value_check(value)
@@ -284,6 +319,318 @@ def path_differential(base, read_spec_value, node_spec_value):
     expect_error(node_spec_value, "search", {"query": "x", "path": "b"},
                  "symlink_denied")
     return len(common) * 3 + 3
+
+
+READ_EVIDENCE = {}
+
+
+def read_probes(base):
+    """W5-R01..R29: read-only contracts beyond the frozen sixteen cases."""
+    import errno
+    from unittest.mock import patch
+    import fs_read
+    import w1_reference as reference
+    from v24.host.registry import AdapterNotFound
+    from v24.host.tool_results import _assert_error
+
+    tree = read_workspace(base / "read-probes")
+    spec = read_spec(base / "read-probe-spec", tree)
+    root = Path(tree.root)
+    passed = []
+
+    def done(number):
+        assert number not in passed, number
+        passed.append(number)
+
+    def error_payload(payload, code):
+        assert payload.get("ok") is False, payload
+        assert payload["error"]["code"] == code, payload
+        _assert_error(payload["error"])
+        assert tree.root not in payload["error"]["message"]
+
+    def error(args, code):
+        error_payload(invoke(spec, "read", args), code)
+
+    def local_error(fn, code):
+        try:
+            fn()
+        except fs_read.ToolError as exc:
+            assert exc.code == code, (exc.code, code)
+            _assert_error({"code": exc.code, "message": exc.message})
+            assert tree.root not in exc.message
+        else:
+            raise AssertionError(("expected read error", code))
+
+    def success(args):
+        payload = invoke(spec, "read", args)
+        assert payload.get("ok") is True, payload
+        assert set(payload["result"]) == {"value"}, payload
+        value = payload["result"]["value"]
+        check_value(spec, "read", args, value)
+        return value
+
+    error({"path": "binary"}, "binary_file")
+    done(1)
+    error({"path": "dir"}, "not_a_file")
+    done(2)
+    error({"path": "fifo"}, "not_a_file")
+    done(3)
+    if os.geteuid() == 0:
+        with patch.object(fs_read.os, "open", side_effect=PermissionError()):
+            local_error(lambda: fs_read.read_tool({"path": "noperm"}, tree.root),
+                        "permission_denied")
+        permission_probe = "mock_root"
+    else:
+        mode = (root / "noperm").stat().st_mode
+        try:
+            (root / "noperm").chmod(0)
+            error({"path": "noperm"}, "permission_denied")
+        finally:
+            (root / "noperm").chmod(mode)
+        permission_probe = "real"
+    done(4)
+    with patch.object(fs_read.os, "open", side_effect=OSError(errno.EIO, "injected")):
+        local_error(lambda: fs_read.read_tool({"path": "three"}, tree.root),
+                    "io_error")
+    done(5)
+    error_payload(invoke_raw(spec, "read", {"path": "three"}, drop_root=True),
+                  "root_unavailable")
+    done(6)
+    error({"path": "three", "offset": 4}, "offset_out_of_range")
+    done(7)
+    assert success({"path": "nul_late"})["text"] == "a" * 8192 + "\x00"
+    done(8)
+    assert success({"path": str(root / "three")})["path"] == "three"
+    done(9)
+    outside = base / "outside.txt"
+    outside.write_bytes(b"x")
+    error({"path": str(outside)}, "path_escape")
+    done(10)
+    error({"path": "dirlink/f"}, "symlink_denied")
+    done(11)
+    assert success({"path": "./dir//f"})["path"] == "dir/f"
+    done(12)
+    error({"path": ""}, "invalid_path")
+    done(13)
+    error({"path": "a" * 1025}, "invalid_path")
+    done(14)
+    # The schema counts scalars; the plugin intentionally fails closed in bytes.
+    spec.entry.tool_for("read").parameters_check({"path": "é" * 513})
+    error({"path": "é" * 513}, "invalid_path")
+    done(15)
+    assert success({"path": ".hidden"})["text"] == "h"
+    done(16)
+    assert success({"path": "three"})["text"] == "a\nb\nc"
+    done(17)
+    error({"path": "long_after"}, "line_too_long")
+    done(18)
+    value = success({"path": "nine5", "limit": 4})
+    assert (value["end_line"], value["truncated_by"]) == (4, "lines"), value
+    done(19)
+    value = success({"path": "nine5", "limit": 5})
+    assert (value["end_line"], value["truncated_by"]) == (4, "bytes"), value
+    done(20)
+    error({"path": "ctrl16384"}, "line_too_long")
+    done(21)
+
+    domains = ("value", "content", "meta", "frame")
+    empty = next(case["expected"]["value"] for case in READ_CASES
+                 if case["id"] == "empty_offset1")
+    empty_counts = fs_read.empty_measures("empty")
+    for domain in domains:
+        caps = fs_read._caps()
+        caps[domain] = empty_counts[domain] - 1
+        with patch.object(fs_read, "_caps", return_value=caps):
+            local_error(lambda: fs_read.read_tool({"path": "empty"}, tree.root),
+                        "output_too_large")
+            local_error(lambda: fs_read.read_tool(
+                {"path": "empty", "offset": 2}, tree.root), "offset_out_of_range")
+    assert fs_read.read_tool({"path": "empty"}, tree.root) == empty
+    done(22)
+
+    def candidate(path, offset, limit, total, final_newline, lines, k):
+        end = offset + k - 1
+        truncated = end < total
+        return {"path": path, "text": "\n".join(lines[:k]),
+                "start_line": offset, "end_line": end, "total_lines": total,
+                "final_newline": final_newline, "truncated": truncated,
+                "truncated_by": (("lines" if k == limit else "bytes")
+                                 if truncated else None),
+                "next_offset": end + 1 if truncated else None}
+
+    def compare(args, value, actual):
+        content, meta = reference.render("read", value)
+        reference_counts = reference.budget_measures(args, value, content, meta)
+        host_content, host_meta = RENDERERS.render(
+            spec.entry.tool_for("read").render, args, value)
+        assert (host_content, host_meta) == (content, meta)
+        host_counts = result_measure(args, value, host_content, host_meta)
+        for domain in domains:
+            assert actual[domain] == reference_counts[domain] == host_counts[domain], (
+                "W5-R23", domain, args, actual, reference_counts, host_counts)
+
+    for raw in [bytes([byte]) for byte in range(128)] + [
+            sample.encode("utf-8") for sample in ("é", "😀", "\u2028", "\u2029", "\x7f")]:
+        assert fs_read.escaped_bytes_len(raw) == reference.escaped_payload_bytes(
+            raw.decode("utf-8", "strict")), raw
+    lines = ['"', "\\", "\b\f\r\t", "\x01", "\x1f", "tail\r",
+             "é😀\u2028\u2029", "", "x", ""]
+    line_e = [fs_read.escaped_bytes_len(line.encode("utf-8")) for line in lines]
+    for offset in (1, 9, 10, 99, 100, 1000):
+        for total in (offset + len(lines) - 1, offset + len(lines), 10000):
+            for final_newline in (False, True):
+                args = {"path": 'é/ctrl\x01/"\\', "offset": offset, "limit": len(lines)}
+                measures = fs_read.page_measures(
+                    args["path"], offset, len(lines), total, final_newline, line_e)
+                assert len(measures) == len(lines)
+                for k, counts in enumerate(measures, 1):
+                    value = candidate(args["path"], offset, len(lines), total,
+                                      final_newline, lines, k)
+                    compare(args, value, counts)
+    compare({"path": "empty"}, empty, empty_counts)
+    # A later finalized prefix may fit after an earlier one fails.
+    caps = dict.fromkeys(domains, 50)
+    assert fs_read.choose_k([dict.fromkeys(domains, n) for n in (83, 43, 83)], caps) == 2
+    done(23)
+
+    args = {"path": "three", "limit": 2}
+    one = candidate("three", 1, 2, 3, True, ["a", "b"], 1)
+    content, meta = reference.render("read", one)
+    cap = reference.budget_measures(args, one, content, meta)["content"]
+    assert 27 + reference.escaped_payload_bytes("a\nb") <= cap
+    with patch.object(fs_read, "MAX_CONTENT_BYTES", cap):
+        selected = fs_read.read_tool(args, tree.root)
+    assert selected == one, (selected, one)
+    done(24)
+
+    peaks = []
+    for name in ("newlines_1m", "wide"):
+        tracemalloc.start()
+        try:
+            measured_value = fs_read.read_tool({"path": name}, tree.root)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert peak < 8 * 1024 * 1024, ("W5-R25", name, peak)
+        if name == "newlines_1m":
+            assert measured_value["total_lines"] == 1048576
+            assert measured_value["final_newline"] is True
+        else:
+            assert measured_value["total_lines"] == 2000
+        peaks.append(peak)
+        print(f"[probe] W5-R25 {name}; peak_kib={peak / 1024:.3f}")
+    # Offset past many chunks must still retain only the selected boundaries.
+    for offset in (65535, 65536, 65537, 1048576):
+        tail = fs_read.read_tool(
+            {"path": "newlines_1m", "offset": offset, "limit": 2}, tree.root)
+        assert tail["end_line"] == min(offset + 1, 1048576), tail
+        assert tail["text"] == ("\n" if offset < 1048576 else ""), tail
+    crossing = fs_read.read_tool(
+        {"path": "wide", "offset": 126, "limit": 2}, tree.root)
+    assert crossing["text"] == "\x01" * 523 + "\n" + "\x01" * 523, crossing
+    assert (crossing["start_line"], crossing["end_line"]) == (126, 127), crossing
+    done(25)
+
+    wall = []
+    def harness_result(payload):
+        result = payload["tool_result"]
+        assert payload["outcome"]["class"] == "success", payload
+        assert result["status"] == "ok", result
+        wall.append(result["usage"]["wall_ms"])
+
+    with server_helper_scope(), setup_db() as fixture:
+        run_harness_case(fixture, base,
+                         read_spec(base / "read-wide-harness-spec", tree.root),
+                         "read", {"path": "wide"},
+                         lambda value: compare({"path": "wide"}, value,
+                             fs_read.page_measures("wide", 1, 2000, 2000, False,
+                                 [523 * 6] * value["end_line"])[-1]),
+                         result_check=harness_result)
+    assert len(wall) == 1
+    done(26)
+
+    dumps = json.dumps
+    serialized = []
+    def skeleton_dumps(obj, *args, **kwargs):
+        encoded = dumps(obj, *args, **kwargs)
+        if isinstance(obj, dict) and "text" in obj:
+            assert obj["text"] == "", "W5-R27 serialized body in value"
+        elif isinstance(obj, dict) and "result" in obj:
+            assert obj["result"]["value"]["text"] == "", "W5-R27 serialized body in frame"
+        else:
+            raise AssertionError(("W5-R27 unexpected serialization", type(obj)))
+        size = len(encoded.encode("utf-8"))
+        assert size <= 4096 + fs_read.escaped_bytes_len(b"wide"), size
+        serialized.append(size)
+        return encoded
+
+    with patch.object(fs_read.json, "dumps", side_effect=skeleton_dumps):
+        value = fs_read.read_tool({"path": "wide"}, tree.root)
+    assert 0 < len(serialized) <= 2 * 2000 + 8, len(serialized)
+    done(27)
+
+    digest = hashlib.sha256((PLUGINS / "fs_read.py").read_bytes()).hexdigest()
+    artifact = Path(spec.entry.argv[1])
+    assert digest == hashlib.sha256(artifact.read_bytes()).hexdigest()
+    assert digest == spec.artifact_digest == spec.entry.artifact_digest
+    spec.entry.require_artifact()
+    original = artifact.read_bytes()
+    try:
+        artifact.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+        try:
+            spec.entry.require_artifact()
+        except AdapterNotFound as exc:
+            assert exc.reason == "artifact_digest_mismatch", exc
+        else:
+            raise AssertionError("W5-R28 accepted tampered artifact")
+    finally:
+        artifact.write_bytes(original)
+    spec.entry.require_artifact()
+    done(28)
+
+    scan = fs_read._scan
+    for same_size in (False, True):
+        path = root / "three"
+        before = path.stat()
+        original = path.read_bytes()
+        def changed_scan(*args, **kwargs):
+            scanned = scan(*args, **kwargs)
+            if same_size:
+                path.write_bytes(b"z" + original[1:])
+                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+                assert path.stat().st_size == before.st_size
+                assert path.stat().st_mtime_ns == before.st_mtime_ns
+                assert path.stat().st_ctime_ns != before.st_ctime_ns
+            else:
+                with path.open("ab") as handle:
+                    handle.write(b"x")
+            return scanned
+        try:
+            with patch.object(fs_read, "_scan", side_effect=changed_scan):
+                local_error(lambda: fs_read.read_tool({"path": "three"}, tree.root),
+                            "io_error")
+        finally:
+            path.write_bytes(original)
+    read_window = fs_read._read_window
+    path = root / "three"
+    original = path.read_bytes()
+    def changed_window(*args, **kwargs):
+        window = read_window(*args, **kwargs)
+        path.write_bytes(b"z" + original[1:])
+        return window
+    try:
+        with patch.object(fs_read, "_read_window", side_effect=changed_window):
+            local_error(lambda: fs_read.read_tool({"path": "three"}, tree.root),
+                        "io_error")
+    finally:
+        path.write_bytes(original)
+    done(29)
+    assert sorted(passed) == list(range(1, 30)), passed
+    READ_EVIDENCE.update(read_artifact_sha256=digest, read_1m_wall_ms=wall[0],
+                         read_peak_kib=f"{max(peaks) / 1024:.3f}",
+                         permission_probe=permission_probe)
+    print("[probe] W5-R01..R29 green")
+    return len(passed)
 
 
 def main() -> int:
@@ -345,6 +692,8 @@ def main() -> int:
         if shim:
             cases += shim_guard(base, list_tree)
         cases += selector_probe()
+        read_probe_count = read_probes(base)
+        cases += read_probe_count
 
         with server_helper_scope(), setup_db() as fixture:
             def check_read(value):
@@ -378,9 +727,15 @@ def main() -> int:
         print(f"[evidence] non_utf8_source={list_tree.non_utf8_mode}; "
               f"linux_real={linux_real}")
         print(
+            f"[evidence] read_artifact_sha256={READ_EVIDENCE['read_artifact_sha256']}; "
+            f"read_1m_wall_ms={READ_EVIDENCE['read_1m_wall_ms']}; "
+            f"read_peak_kib={READ_EVIDENCE['read_peak_kib']}; "
+            f"permission_probe={READ_EVIDENCE['permission_probe']}")
+        print(
             f"[passed] W4 fs tools; cases={cases}; read={read_cases}; "
-            f"list={list_cases}; search={search_cases}; "
-            f"pagination_converged=true; page_contracts_imported=3")
+            f"read_probes={read_probe_count}; list={list_cases}; "
+            f"search={search_cases}; pagination_converged=true; "
+            f"page_contracts_imported=3")
         return 0
 
 

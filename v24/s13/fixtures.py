@@ -264,6 +264,34 @@ def workspace(root, kind="list"):
     raise ValueError(f"unknown workspace kind {kind!r}")
 
 
+def read_workspace(root):
+    """Materialize the W5 read probe tree without touching frozen vectors."""
+    root = _prepare_root(root)
+    nodes = [
+        {"kind": "file", "path": "empty", "bytes_hex": ""},
+        {"kind": "file", "path": "binary", "bytes_hex": "610062"},
+        {"kind": "file", "path": "nul_late", "bytes_hex": "61" * 8192 + "000a"},
+        {"kind": "directory", "path": "dir"},
+        {"kind": "file", "path": "dir/f", "bytes_hex": "780a"},
+        {"kind": "special", "path": "fifo"},
+        {"kind": "file", "path": "noperm", "bytes_hex": "78"},
+        {"kind": "file", "path": "three", "bytes_hex": "610a620a630a"},
+        {"kind": "file", "path": "long_after",
+         "bytes_hex": ("610a" + "7a" * 16385 + "0a630a")},
+        {"kind": "file", "path": "ctrl16384", "bytes_hex": "01" * 16384},
+        {"kind": "file", "path": ".hidden", "bytes_hex": "68"},
+        {"kind": "symlink", "path": "dirlink", "target": "dir"},
+        {"kind": "file", "path": "nine5",
+         "recipe": {"lines": ["a" * 9000] * 5, "final_newline": False}},
+        {"kind": "file", "path": "wide",
+         "recipe": {"lines": ["\x01" * 523] * 2000, "final_newline": False}},
+        {"kind": "file", "path": "newlines_1m",
+         "recipe": {"repeat_hex": "0a", "count": 1048576}},
+    ]
+    materialize_nodes(root, nodes)
+    return Workspace(os.path.realpath(root), "none")
+
+
 def search_workspace(root, case_id):
     case = SEARCH_CASES[case_id]
     root = _prepare_root(root)
