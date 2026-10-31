@@ -18,10 +18,54 @@ in the command line.
 """
 from __future__ import annotations
 
+import os
+
 from . import line_json
+from .canonical import CanonicalError, compact_json
 from .db import HostContractError, is_error
 from .line_json import LineJsonPreflight
-from .registry import AdapterNotFound, ApprovedAdapterRegistry
+from .registry import AdapterNotFound, ApprovedAdapterRegistry, ApprovedPlugin
+from .renderers import RENDERERS, RendererError
+from .tool_pages import ToolPageError, validate_page
+from .tool_results import (
+    ToolDispatchResult,
+    ToolResultError,
+    assert_builtin_meta,
+    failure_output,
+    join_content,
+    measure,
+    success_output,
+    unknown_output,
+)
+from .tool_schema import InstanceError
+
+_HOST_MESSAGE = {
+    "invalid_tool_arguments":
+        "arguments do not match the approved tool schema",
+    "lease_insufficient":
+        "remaining effect lease is shorter than the approved tool timeout",
+    "workspace_unavailable":
+        "the approved workspace root is not available",
+    "invalid_tool_output":
+        "tool output does not satisfy the approved contract",
+    "output_too_large":
+        "tool output exceeds the approved size budget",
+    "render_failed":
+        "the host renderer rejected the tool value",
+    "invalid_tool_content":
+        "the renderer produced an invalid content block",
+    "renderer_not_approved":
+        "the approved renderer is not available",
+}
+_UNKNOWN_MESSAGE = "tool process did not produce a decidable outcome"
+_DISPATCH_FAILED = "tool dispatch failed before execution"
+_RENDER_FAILURES = frozenset({
+    "renderer_not_approved", "render_failed", "invalid_tool_content",
+})
+
+
+def _limits(tool) -> dict:
+    return tool.descriptor["tool"]["limits"]
 
 
 class PluginError(RuntimeError):
@@ -62,6 +106,13 @@ class PluginDispatcher:
             raise PluginError("tool_request_invalid")
         pin = self._pin(effect)
         install = self._install(effect.get("scope_id"), pin.get("provider_install_id"))
+        entry = self.registry.lookup_install(install)
+        if isinstance(entry, ApprovedPlugin):
+            return self._tool_v2(effect, entry, install, pin, key, args)
+        return self._tool_v1(effect, install, pin, key, args)
+
+    def _tool_v1(self, effect: dict, install: dict, pin: dict, key: str,
+                 args: dict):
         entry = self.registry.match_pin(install, pin)
         if entry.tool_key != key:
             raise PluginError("tool_key_mismatch")
@@ -82,6 +133,151 @@ class PluginDispatcher:
                            "message": invocation.result["message"]},
             }
         return "unknown", _tool_unknown(invocation.reason, invocation.wall_ms)
+
+    def _tool_v2(self, effect: dict, entry: ApprovedPlugin, install: dict,
+                 pin: dict, key: str, args: dict):
+        try:
+            tool = self.registry.match_tool(install, pin, key).tool
+            limits = _limits(tool)
+            try:
+                args_size = len(compact_json(args))
+            except (CanonicalError, RecursionError, UnicodeError):
+                return self._v2_failure(
+                    "invalid_tool_arguments",
+                    _HOST_MESSAGE["invalid_tool_arguments"], 0)
+            if args_size > limits["max_args_bytes"]:
+                return self._v2_failure(
+                    "invalid_tool_arguments",
+                    _HOST_MESSAGE["invalid_tool_arguments"], 0)
+            try:
+                tool.parameters_check(args)
+            except InstanceError as exc:
+                return self._instance_failure(
+                    "invalid_tool_arguments", exc, 0)
+            entry.require_artifact()
+            root = entry.workspace_root
+            if (not isinstance(root, str) or os.path.realpath(root) != root
+                    or not os.path.isdir(root)):
+                return self._v2_failure(
+                    "workspace_unavailable",
+                    _HOST_MESSAGE["workspace_unavailable"], 0)
+            lease_until = effect.get("lease_until")
+            if not isinstance(lease_until, str):
+                return self._v2_failure(
+                    "lease_insufficient",
+                    _HOST_MESSAGE["lease_insufficient"], 0)
+            try:
+                remaining = self.db.remaining_lease_ms(lease_until)
+            except Exception:
+                remaining = None
+            if type(remaining) is not int or remaining < tool.timeout_ms + 5000:
+                return self._v2_failure(
+                    "lease_insufficient",
+                    _HOST_MESSAGE["lease_insufficient"], 0)
+            reservation = f"v24:tool_call:{effect['effect_id']}"
+            invocation = line_json.run(
+                entry, "invoke", reservation, args, tool=key)
+            self.last_invocation = invocation
+            wall_ms = invocation.wall_ms
+            if invocation.class_name == "unknown":
+                return self._v2_unknown(invocation)
+            if invocation.class_name == "failure":
+                error = (invocation.result
+                         if isinstance(invocation.result, dict) else {})
+                return self._v2_failure(
+                    error.get("code", "unknown"),
+                    error.get("message", ""), wall_ms)
+            value = invocation.result.get("value")
+            wire_meta = invocation.result.get("meta")
+            try:
+                value_size = len(compact_json(value))
+            except (CanonicalError, RecursionError, UnicodeError):
+                return self._v2_failure(
+                    "invalid_tool_output",
+                    _HOST_MESSAGE["invalid_tool_output"], wall_ms)
+            if value_size > limits["max_value_bytes"]:
+                return self._v2_failure(
+                    "output_too_large", _HOST_MESSAGE["output_too_large"],
+                    wall_ms)
+            try:
+                tool.output_check(value)
+            except InstanceError as exc:
+                return self._instance_failure(
+                    "invalid_tool_output", exc, wall_ms)
+            try:
+                assert_builtin_meta(wire_meta)
+                validate_page(tool.render, args, value)
+            except (ToolResultError, ToolPageError):
+                return self._v2_failure(
+                    "invalid_tool_output",
+                    _HOST_MESSAGE["invalid_tool_output"], wall_ms)
+            try:
+                content, meta = RENDERERS.render(tool.render, args, value)
+            except RendererError as exc:
+                code = (exc.reason if exc.reason in _RENDER_FAILURES
+                        else "render_failed")
+                return self._v2_failure(code, _HOST_MESSAGE[code], wall_ms)
+            try:
+                measured = measure(args, value, content, meta)
+            except ToolResultError:
+                return self._v2_failure(
+                    "invalid_tool_output",
+                    _HOST_MESSAGE["invalid_tool_output"], wall_ms)
+            if (measured["content"] > limits["max_content_bytes"]
+                    or measured["meta"] > limits["max_meta_bytes"]):
+                return self._v2_failure(
+                    "output_too_large", _HOST_MESSAGE["output_too_large"],
+                    wall_ms)
+            return self._v2_success(value, content, meta, wall_ms)
+        except (AdapterNotFound, LineJsonPreflight) as exc:
+            reason = getattr(exc, "reason", "dispatch_failed")
+            return self._v2_failure(
+                reason, _HOST_MESSAGE.get(reason, _DISPATCH_FAILED), 0)
+
+    def _v2_failure(self, code: str, message: str, wall_ms: int) -> dict:
+        content = [{"type": "text",
+                    "text": f"Error [{code}]: {message}"}]
+        output = failure_output(code, message, content)
+        result = {"status": "error", "output": output,
+                  "usage": {"wall_ms": wall_ms}}
+        dispatch = ToolDispatchResult("failure", result, join_content(content))
+        return {"class": "failure", "result": result,
+                "model_text": dispatch.model_text}
+
+    def _v2_unknown(self, invocation) -> dict:
+        reason = invocation.reason
+        code = reason if isinstance(reason, str) and reason else "unknown"
+        output = unknown_output(code, _UNKNOWN_MESSAGE)
+        result = {"status": "error", "output": output,
+                  "usage": {"wall_ms": invocation.wall_ms}}
+        ToolDispatchResult("unknown", result, "")
+        return {"class": "unknown", "result": result, "model_text": ""}
+
+    def _v2_success(self, value, content: list, meta: dict,
+                    wall_ms: int) -> dict:
+        output = success_output(value, content, meta)
+        result = {"status": "ok", "output": output,
+                  "usage": {"wall_ms": wall_ms}}
+        model_text = join_content(content)
+        dispatch = ToolDispatchResult("success", result, model_text)
+        return {"class": "success", "result": result,
+                "model_text": dispatch.model_text}
+
+    def _instance_failure(self, code: str, exc: InstanceError,
+                          wall_ms: int) -> dict:
+        path = getattr(exc, "path", "$")
+        rule = getattr(exc, "rule", "invalid")
+        if not isinstance(rule, str) or not rule:
+            rule = "invalid"
+        if (not isinstance(path, str) or len(path) > 256
+                or "/" in path or "\\" in path or "\x00" in path):
+            message = f"$: {rule}"
+        else:
+            message = f"{path}: {rule}"
+        try:
+            return self._v2_failure(code, message, wall_ms)
+        except ToolResultError:
+            return self._v2_failure(code, f"$: {rule}", wall_ms)
 
     # -- host resources --------------------------------------------------
     def _resource(self, effect: dict, kind: str):

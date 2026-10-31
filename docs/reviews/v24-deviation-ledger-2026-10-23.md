@@ -639,3 +639,19 @@ W3 交付 registry 审批模型与独立 line-json v2 transport；26 条指定�
 - **D-ABI-W3-7 (risk #9; implicit dispatcher coupling):** `plugins.py` 的 `_resource`/`_inspect` 将 `lookup_install()` 结果直接传给 `line_json.run()`。registry 一旦含 `ApprovedPlugin`，这两个路径会按 protocol 自动发 v2 帧；`_tool` 仍经 `match_pin()`，对 v2 以 `protocol_mismatch` fail closed。W3 不改 dispatcher；该既有耦合须由 W4 接线与生命周期 gate 处理，本轮不是 dispatcher v2 完成证据。
 - **D-ABI-W3-8 (append-only deviation / pinned spans):** 计划 D4/W3-5/File-by-file 原拟在 §4.1/§7 原地澄清；为保留行锚定 pinned spans，实际追加 C.9（closure/构造 reason）与 C.10（§7 阶段/证据措辞），并追加 C.7/C.8。正文前缀逐字节不变；23 个唯一 span（25 处引用）的行范围、heading、content SHA 全部不变。design SHA `2606aedc7135e7085219d0a9c99d1ccca5c22ee33baee6a82dd6f137ce7cac24` → `269e6bada20c6c18331cc681f385808d638bd6ac9403dd7b484352175f57e4b0`；两个 pin 同批更新，仅 `design_conformance.json` SHA 元数据有 vectors diff。
 - **D-ABI-W3-9 (scope / measured limits):** 指定 SQL、六个 W4 文件、五个 W2 模块零 diff；四条 scope audit 均 exit 0，vectors stat 仅一文件 1 insertion/1 deletion。两条 W3 gate 使用 stub，不打开 DB/network/Node；继承 gate 的 PostgreSQL/Node/v1 subprocess 检查照常执行，不能外推为 W3 Node、真实生命周期、文件系统、12 秒预算、renderer 活派发、artifact 或 replay 证明。全部测试使用四项凭据清除前缀与 `UV_NO_ENV_FILE=1`，未调用真实 provider。
+
+## Post-closeout Tool/Plugin ABI W4a（2026-10-31）
+
+W4a 把 W3 的审批模型与 line-json v2 接进 dispatcher/worker/provider，并完成 M2。29 条串行命令全部 exit 0（第 29 条为 `git diff --exit-code c8c4bd0 -- v24/sql` 的空输出）；closeout 仍 **11/11**，s13 不是第 12 条。证据见 [W4a execution record](v24-tool-plugin-abi-w4-execution-2026-10-31.md)。
+
+- **D-ABI-W4-1（协议不可知前段仍为 v1 形状）：** `lookup_install` 成功之前的 request/pin/install 读取失败（含 `adapter_not_approved`）仍由 `tool_handler` 产出 v1 `{"status":"error","output":{"code":…}}`，因为此时协议未知。`isinstance(entry, ApprovedPlugin)` 之后的所有失败（含 `match_tool` 的 `pin_key_mismatch`/`tool_not_approved`/`descriptor_*` 与 `LineJsonPreflight`）由 `_tool_v2` 的 envelope guard 转成 v2 `{class:"failure",result:{status,output,usage},model_text}`，不落到 v1 兜底。`test_wiring` 固化了这两侧边界。
+- **D-ABI-W4-2（`match_tool` 先于 args 校验）：** §5.5 字面顺序是 args 大小→parameters schema→pin/artifact/workspace/lease；但 schema 与 per-tool timeout 只有绑定工具后才可得，故把纯读、零 spawn 的 `match_tool` 提到最前，其余顺序照 §5.5。第 2 步 args 大小、第 3 步 parameters、第 4 步 artifact、第 5 步 workspace、第 6 步 lease 都在 spawn 前；`test_wiring` 用 sentinel + `--spawn-log` 证明六类路径零进程。
+- **D-ABI-W4-3（pre-spawn 拒绝仍已有 `dispatch_started`）：** worker 在调用 handler 之前写 `dispatch_started` 的既有顺序不变；args/schema/artifact/workspace/lease 拒绝因此不保证「没有 `dispatch_started`」。W4 不使用 journal 事件数证明零 spawn，而用 `line_json.run_process` sentinel 与插件侧 `--spawn-log` 文件双证；把检查前移是 §8.3 kernel revision，不在本阶段。
+- **D-ABI-W4-4（host 不拒绝 60001..65536 的 frame）：** §5.6 只把 >65536 判 `stdout_limit` unknown；60001..65536 属 transport 合法。host 的四个语义预算（args/value/content/meta）独立执行，frame 域只计量不拒绝。`test_wiring` 与冻结 `result.frame_60000_60001_65536_65537` 不冲突。
+- **D-ABI-W4-5（`environment()` 条件注入 root）：** 只在 allowlist 显式包含 `V24_WORKSPACE_ROOT` 且 entry 有 `workspace_root` 时注入，值取注册表字段，绝不读宿主同名变量。这样 `test_line_json` 的 `expected_env` 与 v1 `ApprovedAdapter` 输出不变；v2 fixture 必须显式把该名放进 allowlist，缺失时插件拿不到 root（安装配置错误）。registry 相对基线的 diff 精确为 +5/−1。
+- **D-ABI-W4-6（`tool_pages.py` 不在 design §7.1 原表）：** §5.6 要求 host 在 render 前验证成功页字段关系，但 §7.1 没有对应文件行。W4a 新增纯函数模块并把规范补入附录 C.12；它只依赖 `canonical`/`renderers`，不 import s13 oracle，失败统一为 `invalid_tool_output`。差分测试只对 `output_check` 通过的值做双向等价，两个参考实现缺口（空 read offset>1、负 skipped）单边记录，未修改冻结的 `w1_reference.py`。
+
+**复核期新增记录（不属于 D1–D15 偏离）：**
+
+- provider 投影的 `name` 在 v2 使用 design §6.4 的 `name:key`（approved key 本身是合法 provider 函数名时原样返回），v1 继续使用 `_safe_name` 的 8 位哈希后缀。最初尝试全局改 `_safe_name` 时 G9-A 的 v1 哈希断言在正式串行第 25 条变红；按「B0/G9 v1 字节不可变 + v2 冻结投影向量」改为 v2-only 映射后复跑全绿。该失败运行保留在 `/tmp/w4a-20261031T025653/`，不作为最终证据。
+- D12 的 +5/−1 实际是把 `return` 首行改为 `env` 首行（第二行 `if key in source}` 保持不变）并新增四行注入；`git diff -U0` 会拆成两个 hunk，正因第二行为上下文。scope audit 用 `-U1` 断言一个 hunk、1 deletion/5 additions，并用「`git show c8c4bd0` + D12 替换后逐字节相等」作为主判据；这不是放宽，而是让审计命令与真实两行原文一致。

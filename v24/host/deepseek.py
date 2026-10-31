@@ -34,6 +34,8 @@ from v15.provider.deepseek import StdlibTransport
 from v15.provider.errors import ProviderRejected, ProviderUncertain, detail
 from v15.provider.pricing import PRICING_REVISION, compute_cost, is_peak
 
+from .descriptor import RESERVED_KEY
+
 MODEL = "deepseek-flash"
 BASE_URL = "https://api.deepseek.com"
 ENDPOINT = BASE_URL + "/chat/completions"
@@ -123,6 +125,18 @@ def _safe_name(key: str) -> str:
     base = _SAFE_NAME.sub("_", key).strip("_")[:80] or "tool"
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
     return f"{base}_{digest}"[:128]
+
+
+def _v2_provider_name(key: str) -> str:
+    """v2 §6.4 name:key; unsafe keys still use the v1 sanitizer.
+
+    v1 is frozen by B0/G9 and always keeps the hash suffix.  v2 keys are
+    descriptor-approved keys; when such a key is already a legal provider
+    function name the provider sees it unchanged.
+    """
+    if _SAFE_NAME.sub("_", key).strip("_") == key and len(key) <= 80:
+        return key
+    return _safe_name(key)
 
 
 def provider_tool_name(key: str) -> str:
@@ -352,8 +366,19 @@ class DeepSeekAdapter:
                 raise AdapterFailure("duplicate_pin_key")
             descriptor = pin.get("descriptor")
             tool = descriptor.get("tool") if isinstance(descriptor, dict) else None
-            if (not isinstance(descriptor, dict) or descriptor.get("v") != 1
-                    or not isinstance(tool, dict)):
+            if not isinstance(descriptor, dict) or not isinstance(tool, dict):
+                raise AdapterFailure("descriptor_invalid")
+            version = descriptor.get("v")
+            is_v2 = type(version) is int and version == 2
+            if is_v2:
+                # Provider-side self-consistency only: the approval authority
+                # is the dispatcher's match_tool().  The projection below is
+                # identical to v1, so v1 request bytes cannot move.
+                tool_key = tool.get("key")
+                if (not isinstance(tool_key, str) or tool_key != key
+                        or tool_key == RESERVED_KEY):
+                    raise AdapterFailure("descriptor_invalid")
+            elif version != 1:
                 raise AdapterFailure("descriptor_invalid")
             parameters = tool.get("parameters")
             if not isinstance(parameters, dict) or parameters.get("type") != "object":
@@ -361,7 +386,7 @@ class DeepSeekAdapter:
             description = tool.get("description", "")
             if not isinstance(description, str):
                 raise AdapterFailure("descriptor_invalid")
-            name = _safe_name(key)
+            name = _v2_provider_name(key) if is_v2 else _safe_name(key)
             if name in by_provider:
                 raise AdapterFailure("tool_name_collision")
             by_provider[name] = key

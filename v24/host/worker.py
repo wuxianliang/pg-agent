@@ -1048,25 +1048,28 @@ class HostWorker:
         if self.crash_after == "started":
             raise HostCrash("scripted crash after dispatch_started")
         if self.tool_handler is None:
-            class_name, result, reason = "unknown", {
+            class_name, result, model_text, reason = "unknown", {
                 "status": "error", "output": {"code": "tool_handler_absent"},
-                "usage": {"wall_ms": 0}}, "tool_handler_absent"
+                "usage": {"wall_ms": 0}}, None, "tool_handler_absent"
         else:
             try:
-                class_name, result = _call_tool_handler(self.tool_handler, effect)
+                class_name, result, model_text = _call_tool_handler(
+                    self.tool_handler, effect)
                 reason = None
             except Exception:
                 if self._fair_active:
                     raise
-                class_name, result, reason = "unknown", {
+                class_name, result, model_text, reason = "unknown", {
                     "status": "error", "output": {"code": "tool_executor_error"},
-                    "usage": {"wall_ms": 0}}, "tool_executor_error"
+                    "usage": {"wall_ms": 0}}, None, "tool_executor_error"
         outcome = {"v": 1, "class": class_name, "claim": token,
                    "body": {"kind": kind, "result": result}}
+        content = (model_text if model_text is not None
+                   else canonical_json(result.get("output", {})))
         tool_message = {
             "role": "tool",
             "tool_call_id": parent["id"],
-            "content": canonical_json(result.get("output", {})),
+            "content": content,
         }
         self.journal.append(
             "dispatch_finished", effect_id, digest,
@@ -1099,7 +1102,8 @@ class HostWorker:
             raise HostCrash("scripted crash after dispatch_started")
         if self.resource_handler is not None:
             try:
-                class_name, result = _call_tool_handler(self.resource_handler, effect)
+                class_name, result, _ = _call_tool_handler(
+                    self.resource_handler, effect)
                 reason = None
             except Exception:
                 if self._fair_active:
@@ -1302,7 +1306,14 @@ class HostWorker:
 def _call_tool_handler(handler, effect):
     value = handler(effect)
     if isinstance(value, tuple) and len(value) == 2:
-        return value
+        class_name, result = value
+        return class_name, result, None
     if isinstance(value, dict) and "class" in value and "result" in value:
-        return value["class"], value["result"]
-    raise TypeError("handler must return (class, result) or {class, result}")
+        class_name, result = value["class"], value["result"]
+        if "model_text" in value:
+            if not isinstance(value["model_text"], str):
+                raise TypeError("model_text must be a string")
+            return class_name, result, value["model_text"]
+        return class_name, result, None
+    raise TypeError("handler must return (class, result), {class, result} "
+                    "or {class, result, model_text}")

@@ -1282,3 +1282,103 @@ v2 构造的 **14-token 词表只覆盖 W3 新增判定点**，不代表所有�
 - **§7.3 transport 证据**：W3 执行冻结的 5 个请求与 2 个响应 byte case，逐行复现 46 条 invalid + 9 条 whitespace corpus，覆盖 5 条 build preflight、4 类进程 unknown、v1 字节/分类与静态协议分流。`double_lf` 为 `extra_frame`；float/unsafe-int success value 为 `bad_frame`，以 C.7/C.8 为准。v1 保留原解析器；W3 gate 使用 stub，不打开网络、数据库或 Node，也不证明真实子进程生命周期。
 - **§7.4 阶段 done-when**：W2 的四条 s13 gate、W3 的 `test_registry.py` / `test_line_json.py` 与后续工具/生命周期/Node gate 分阶段交付。W3 是 design §10 M2 的 registry/transport 子阶段，不等于 M2 完成；W3 验收为两条新 gate 加既有回归共 26 条串行命令全部通过，不把 §7.4 的完整 ABI done-when 当成 W3 已完成。真实生命周期、多工具 mixed batch、崩溃恢复与 provider/tool-message 字节接线仍须后续 gate 证明。冻结向量不得 re-bless；`frames_v2.json` 的 case 保持 `m2_pending`，五字段 key 的 artifact 证据保持 `m3_pending`。
 - **§7.4 gate 三态与范围**：exit 0 且命令专属 `[passed]` 末行才算通过；exit 2 / `[SKIP]` 为未验证，阻断完成；exit 1 或缺通过标记为失败。保留 SQL 零 diff、无真实 provider/网络、closeout 11/11，s13 仍是 extension evidence，不是第 12 条 closeout；本节规范修订本身不构成 gate 通过声明。
+
+
+### C.11 W 标签与 M 阶段对照（取代 §7.4 done-when #1 的旧措辞）
+
+W4 是一个交付里程碑，内部拆成三个可独立验收的子阶段；design §10 的 M2/M3/M4 名称不变，完成声明按子阶段绑定：
+
+| W 标签 | design §10 阶段 | 交付内容 | 完成声明 |
+|---|---|---|---|
+| W1 | M1 | 冻结向量、contract inventory、Python/Node/PostgreSQL 参考实现 | 向量与 inventory 全绿 |
+| W2 | M2 | `canonical`/`descriptor`/`tool_schema`/`renderers`/`tool_results` 五个纯 host 模块 | 四条 W2 gate 全绿 |
+| W3 | M2 | `ApprovedTool`/`ApprovedPlugin`/`match_tool` 与独立 line-json v2 transport | 两条 W3 gate + 回归全绿；不是 M2 完成 |
+| W4a | M2 | `tool_pages`、`plugins._tool_v2`、`worker.model_text`、`deepseek._tools` v2、`registry.environment()` root 注入 | **M2 完成**；四条 M2 gate + G9/G10/Node + v1 golden 字节不变 |
+| W4b | M3 | `fs_read.py`、`fs_tools.js`、s13 `fixtures.py`、`test_tools.py` | **M3 实现完成，timing/cutoff pending**（O8=B） |
+| W4c | M4 | `test_lifecycle.py`、`test_node.py`、mixed batch/replay/crash/legacy 证据 | **M4 完成** |
+
+§7.4 done-when #1 中「`test_tools.py`、`test_lifecycle.py`、`test_node.py` 仍归 W3/W4」的旧措辞由本节取代：W4a 只覆盖四个 M2 gate 的接线面；三个工具/生命周期/Node gate 归 W4b/W4c。W4a 完成后可以宣布 M2 完成，但不表示真实文件系统工具、分页收敛、mixed batch、崩溃重启、replay 或 12 秒预算已验证；closeout 仍 11/11，s13 不是第 12 条 closeout。
+
+### C.12 `tool_pages.py` 的页合同与调用位置（补充 §5.6）
+
+新增 host 模块 `v24/host/tool_pages.py`，公开面固定为：
+
+```python
+class ToolPageError(ValueError):
+    reason = "invalid_tool_output"
+
+@dataclass(frozen=True)
+class PageContract:
+    renderer_id: str
+    kind: str            # "read" | "list" | "search"
+    default_limit: int   # 2000 | 500 | 200
+
+BUILTIN_PAGE_CONTRACTS: Mapping[str, PageContract]   # key = renderer id
+def validate_page(render: RendererRef, args: dict, value: Any) -> None
+```
+
+- `validate_page` 用完整 `RendererRef`（id/version/digest）与 `RENDERERS.lookup` 全等匹配；未知 id、缺 version、digest 不符均 fail closed 为 `ToolPageError`。
+- 合同集合在导入期必须恰等于 `RENDERERS` 的三个 renderer id，否则 `RuntimeError("page contract drift")`；三个默认 limit 分别为 read 2000、list 500、search 200。
+- 调用位置固定在 host 的 output schema 之后、`RENDERERS.render` 之前（§5.5 第 5 步）。失败分类为普通 failure `invalid_tool_output`，不是 renderer 错误、不是 unknown。
+- 字段关系按 §5.6 实现：read 空文件唯一形状且只允许 offset=1；非空 read 的 start/end/total/行数/每行 16384 bytes/truncated/truncated_by/next_offset；list 的 offset/k/total/truncated/next_offset 与 `kind=file` ⇔ 整数 size；search 的同类关系、`complete=false` 时 k>0、六个 skipped 非负安全整数。value 内所有整数必须是安全整数；next_offset 非 null 时必须大于 offset。
+- 模块只依赖 `canonical.SAFE_INTEGER_MAX` 与 `renderers.RENDERERS/RendererRef`，不 import `v24/s13/**`。差分测试方向只有测试→生产：`test_pages.py` 在父进程 import `w1_reference.page_error`，在子进程只 import `tool_pages` 并断言 oracle 不在 `sys.modules`。
+- `w1_reference.page_error` 是参考实现而非权威；两处已知缺口单边记录：空 read 且 offset>1（参考实现不看 offset）与负 skipped（参考实现只查安全整数）。host 按 §6.2/§5.6 拒绝，不为对齐参考实现放宽。
+
+`registry._ApprovedEntry.environment()` 的 v2 root 注入是精确 +5/−1：
+
+```diff
+-        return {key: source[key] for key in self.environment_allowlist
+-                if key in source}
++        env = {key: source[key] for key in self.environment_allowlist
++               if key in source}
++        root = getattr(self, "workspace_root", None)
++        if root is not None and "V24_WORKSPACE_ROOT" in self.environment_allowlist:
++            env["V24_WORKSPACE_ROOT"] = root
++        return env
+```
+
+只有 allowlist 显式包含该名且 entry 有 `workspace_root` 时注入；值只取注册表字段，绝不读取宿主同名环境变量。allowlist 缺该名时插件拿不到 root，属安装配置错误，必须由 v2 fixture/测试显式覆盖。
+
+### C.13 v2 dispatcher 的十三步与 host reason 表（补充 §5.5/§5.2）
+
+`plugins._tool` 先用 `lookup_install` 判协议：`ApprovedPlugin` 走 `_tool_v2`，其余走逐字搬迁的 `_tool_v1`。`_tool_v2` 的顺序固定为：
+
+| 步 | 动作 | 失败 code | spawn |
+|---:|---|---|---|
+| 1 | `match_tool(install,pin,key)` | `AdapterNotFound.reason` | 否 |
+| 2 | `len(compact_json(args)) <= limits.max_args_bytes` | `invalid_tool_arguments` | 否 |
+| 3 | `tool.parameters_check(args)`，捕获 `InstanceError` | `invalid_tool_arguments` | 否 |
+| 4 | `entry.require_artifact()` | 五个 artifact reason | 否 |
+| 5 | `realpath(root)==root and isdir(root)` | `workspace_unavailable` | 否 |
+| 6 | `db.remaining_lease_ms(effect["lease_until"]) >= tool.timeout_ms + 5000` | `lease_insufficient` | 否 |
+| 7 | `line_json.run(entry,"invoke",reservation,args,tool=key)` | preflight reason（`spawn_failed`/`process_spec_invalid`/`tool_not_approved`） | 否 |
+| 8 | unknown 帧 | unknown reason，`model_text=""` | 是 |
+| 9 | exit 3 合法错误帧 | 插件给出的 `code`/`message` | 是 |
+| 10 | value 大小 → `output_check` → `assert_builtin_meta` → `validate_page` | `output_too_large`/`invalid_tool_output` | 是 |
+| 11 | `RENDERERS.render(tool.render,args,value)` | `renderer_not_approved`/`render_failed`/`invalid_tool_content` | 是 |
+| 12 | content/meta 语义预算 | `output_too_large` | 是 |
+| 13 | `success_output` + `join_content(content)` | — | 是 |
+
+- 第 1 步提前到 args 校验之前，因为 schema 与 per-tool timeout 只有绑定工具后才可得；其余顺序照 §5.5。
+- `_tool_v2` 整体包 envelope guard：`AdapterNotFound`/`LineJsonPreflight` 在函数内部转成 `{class:"failure",result:{status,output,usage},model_text}`；`result` 恰为三键，`claim/body` 属 worker outcome，绝不留成 v1 的 `{"status":"error","output":{"code":...}}`。
+- 第 2/3/10 步的 `CanonicalError`/`RecursionError`/`UnicodeError`/`InstanceError` 必须就地映射，不得冒泡成 unknown `tool_executor_error`。`InstanceError` 的 message 为 `path: rule`；若 path >256、含 `/`/`\`/NUL，或 `failure_output` 的泄漏/1024 B 检查拒绝，退化为 `$: rule` 再构造一次，再失败即 host bug 上抛。
+- 第 6 步只用 claimed effect 的 `lease_until`（W4-0 实测 effect 含该字段），不读宿主时钟重算 `now+default_lease_ms`，不改 worker 的 lease 逻辑。`lease_until` 缺失、`remaining_lease_ms` 抛错或返回非 int 均按不足处理。
+- host 固定 message 表（不含路径）：`invalid_tool_arguments` = `arguments do not match the approved tool schema`；`lease_insufficient` = `remaining effect lease is shorter than the approved tool timeout`；`workspace_unavailable` = `the approved workspace root is not available`；`invalid_tool_output` = `tool output does not satisfy the approved contract`；`output_too_large` = `tool output exceeds the approved size budget`；`render_failed` = `the host renderer rejected the tool value`；`invalid_tool_content` = `the renderer produced an invalid content block`；`renderer_not_approved` = `the approved renderer is not available`；其余 pre-spawn reason = `tool dispatch failed before execution`；unknown = `tool process did not produce a decidable outcome`。
+- failure 的模型文本固定为单 block `Error [code]: message`；unknown 为 `""`；success 为 `join_content(content)`。`usage` 只 `{wall_ms}`，spawn 前为 0、spawn 后取进程实际 wall。
+- provider 投影字段仍是 `{name,description,parameters}`。v1 的 `name` 保持既有 `_safe_name`（安全化后追加 8 位哈希），B0/G9 字节不变；v2 的 `name` 在 approved key 本身已是合法 provider 函数名时使用该 key（design §6.4 的 `name:key`），否则回退到 v1 的 `_safe_name`。该区分只影响 v2 投影，不改变 v1 请求体。
+
+### C.14 pre-spawn 拒绝的 `dispatch_started` 语义与零 spawn 证明（补充 §7.4 #5）
+
+`worker._execute_tool` 在调用 handler 之前写 `dispatch_started` 的既有顺序不变；args/schema/artifact/workspace/lease 的 pre-spawn 拒绝因此仍可能已有 `dispatch_started`。这不是「发生了 spawn」，也不是 W4 可改的 kernel 顺序（§8.3 属 kernel revision）。
+
+W4 的零 spawn 证明固定为进程计数双证：`line_json.run_process` 的计数 sentinel（调用即记录/失败）与插件侧 approved argv 的 `--spawn-log <绝对路径>` 文件（真实进程启动时追加 `<pid> <operation>`）。`journal` 事件数不是零 spawn 证据。spawn 日志路径必须由测试 manifest/argv 显式给出，不得写入 install cwd 或源码树；生产 manifest 不得包含该 flag。必须 spawn 的用例同时断言 sentinel 次数与日志行数一致，避免「没起进程但断言通过」的空转。
+
+### C.15 §7.4 done-when 的 W 标签改写
+
+§7.4 done-when #1 的旧 W 标签按 C.11 改写：W2 交付四个 s13 host-contract gate；W3 交付 `test_registry.py`/`test_line_json.py`；W4a 接线并覆盖 M2 的 `test_descriptor`/`test_registry`/`test_line_json` 与 G9/G10/Node/v1 golden；W4b 交付 `test_tools.py`；W4c 交付 `test_lifecycle.py`/`test_node.py`。§7.4 其余条目（真实生命周期、mixed batch、tamper 零 spawn、legacy 字节、SQL 零 diff、closeout 11/11）仍按阶段拆分，不因 W4a 完成而提前宣称。
+
+### C.16 12 秒预算的证明边界（补充 §5.6）
+
+12 秒扫描预算是插件内部预算，host 只采用 descriptor 的 `limits.timeout_ms`（read/list 5000、search 15000）作为进程 deadline；lease 预检使用同一个 per-tool timeout，而不是 30000 ms 默认值。W4a 证明 `_spec_v2` 对 invoke/prepare 采用正确 timeout，并用构造的 19999 ms 剩余 lease 证明 lease 判定使用该工具 timeout；不做墙钟 12 秒 gate，不出现 `sleep(12)`。
+
+W4b 只执行确定性文件数预算（10000 regular files → `search_scope_too_large`），`tool.search_budget_timing_m3_pending` 保持 pending；W4 不证明插件内部 12 秒截止、cutoff 时页填满判定的时序或跨平台墙钟抖动。`result.frame_60000_60001_65536_65537` 的 frame 域只计量、不拒绝，60001..65536 属 transport 合法，>65536 才是 `stdout_limit` unknown。

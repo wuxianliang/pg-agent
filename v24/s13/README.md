@@ -46,6 +46,23 @@ Exit 0 plus the command-specific `[passed]` last line is passed; exit 2/`[SKIP]`
 
 The measured 26-command serial run passed every command, including all inherited checks. Evidence and limitations are in the [W3 execution record](../../docs/reviews/v24-tool-plugin-abi-w3-execution-2026-10-31.md). Frozen vector labels remain unchanged (`frames_v2` stays `m2_pending`; artifact evidence stays `m3_pending`). W3 is extension evidence and **does not prove M2 completion**. Closeout remains **11/11**, and s13 is not a twelfth closeout item. Dispatcher/worker/provider wiring, filesystem semantics, pagination, 12-second timing, artifact digest computation and replay remain downstream.
 
+## W4a dispatcher, worker and provider wiring (M2)
+
+W4a wires the W3 approval model and line-json v2 transport into the live paths: `tool_pages.validate_page` enforces the §5.6 success-page relations before rendering, `plugins._tool_v2` follows the fixed thirteen-step order, `worker._execute_tool` uses the handler-provided `model_text`, `deepseek._tools` accepts v2 descriptors, and `registry._ApprovedEntry.environment()` injects the approved `V24_WORKSPACE_ROOT` when the allowlist names it. `w4_stub_plugin.py` is a test asset only; `plugins/fs_read.py` and `plugins/fs_tools.js` remain W4b.
+
+Run the two new gates from the repository root:
+
+```bash
+env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s13/test_pages.py
+env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s13/test_wiring.py
+```
+
+Exit 0 plus the command-specific `[passed]` last line is passed; exit 2/`[SKIP]` is unverified and blocks W4a; exit 1 or a missing marker is failed. `test_pages` is DB-free (5417 page cases, 4281 oracle differentials, two documented reference gaps excluded one-sided). `test_wiring` uses PostgreSQL and local stub subprocesses only; it covers provider projection bytes, handler normalization, six pre-spawn zero-spawn paths (sentinel + `--spawn-log`), eleven end-to-end v2 scenarios, per-tool timeouts, lease using the tool timeout, and the 11-byte model-text vector. It prints `[scope] passed base=c8c4bd0 checks=6` before its marker.
+
+The measured 29-command serial run on base `c8c4bd0` passed every command; rows 14–24 are the eleven frozen closeout commands, so closeout remains **11/11** and s13 is not a twelfth closeout item. **M2 is complete** after W4a: the four M2 gates (`test_descriptor`, `test_registry`, `test_line_json` plus the W4a wiring gate) are green, G9/G10/Node and v1 golden bytes are unchanged, and no real provider was called.
+
+This completion does **not** mean real filesystem tools, pagination convergence, mixed batch, crash/restart, replay, or the 12-second budget are verified. W4b (filesystem read/list/search) and W4c (lifecycle/replay/Node) remain downstream. Evidence, command times, last lines and hashes are in the [W4a execution record](../../docs/reviews/v24-tool-plugin-abi-w4-execution-2026-10-31.md); evidence directory `/tmp/w4a-20261031T025906/`.
+
 ## Execution
 
 Capture is candidate generation, not a gate. It requires two fresh external destinations and byte comparison before promotion. Checkers are read-only, have no re-bless mode, and do not execute production tools.

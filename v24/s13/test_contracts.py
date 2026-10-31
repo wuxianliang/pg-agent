@@ -7,7 +7,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 FORMAT = 'v24-tool-plugin-abi-w1-vectors-1'
-DESIGN_SHA256 = '269e6bada20c6c18331cc681f385808d638bd6ac9403dd7b484352175f57e4b0'
+DESIGN_SHA256 = '15afb72dfb8f4f274d36b1722ad3b50501388abbe2a6a0d0ce6e6eeba12f7800'
 # Independent immutable inventory. Do not derive this from design_conformance.json.
 REQUIRED = {
  'descriptor_v2.json': {

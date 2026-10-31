@@ -85,8 +85,12 @@ class _ApprovedEntry:
     def environment(self, source=None) -> dict[str, str]:
         """Select only allowlisted variables from the host environment."""
         source = os.environ if source is None else source
-        return {key: source[key] for key in self.environment_allowlist
+        env = {key: source[key] for key in self.environment_allowlist
                 if key in source}
+        root = getattr(self, "workspace_root", None)
+        if root is not None and "V24_WORKSPACE_ROOT" in self.environment_allowlist:
+            env["V24_WORKSPACE_ROOT"] = root
+        return env
 
 
 @dataclass(frozen=True)
