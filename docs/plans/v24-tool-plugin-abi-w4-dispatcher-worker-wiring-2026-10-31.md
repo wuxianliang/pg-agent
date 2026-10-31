@@ -922,7 +922,9 @@ git diff --exit-code "$BASE" -- v24/sql
 
 实现与覆盖：`tool_pages.py` 三合同、5417 page cases、4281 差分、两处 oracle gap 单边；`plugins._tool` 分流、`_tool_v2` 十三步与 envelope guard；`worker` 三形态归一与 try 外回落；`deepseek._tools` v2 投影（v2-only `name:key`，v1 保持 `_safe_name` 哈希）；`registry.environment()` 条件注入。`test_wiring` 56 cases，六类零 spawn（sentinel + `--spawn-log` 双证）、11 个 stub scenario、19999 ms lease spy、per-tool timeout、11 B model text、v1 resource receipt。证据目录 `/tmp/w4a-20261031T025906/`（`provenance.txt`、`git-status-porcelain.txt`、`source-sha256.txt`、`credential-scan.txt`、`01.log`–`29.log`、`results.tsv`、`merged.log`、`scope-audit.tsv`、六个 scope 日志）；逐条时间/exit/末行/日志 SHA 见 [W4a execution record](../reviews/v24-tool-plugin-abi-w4-execution-2026-10-31.md)。
 
-偏差：D-ABI-W4-1…6 已写入 [deviation ledger](../reviews/v24-deviation-ledger-2026-10-23.md)。另记录两项复核期发现：(1) v2 provider `name` 使用 `name:key`，v1 保留 `_safe_name` 哈希；pre-sweep 的全局改动在 G9-A 红，已回退，失败证据 `/tmp/w4a-20261031T025653/` 不作最终证据。(2) registry 的 +5/−1 在 `git diff -U0` 下拆成两个 hunk（第二行 `if key in source}` 为上下文），scope audit 用 `-U1` 断言一个 hunk、1 deletion/5 additions，并以「基线 + D12 替换后逐字节相等」为主判据。
+偏差：`D-ABI-W4-1…7` 已写入 [deviation ledger](../reviews/v24-deviation-ledger-2026-10-23.md)。D-ABI-W4-7 记录 v2 provider 命名分叉（v2 安全 key 使用 `name:key`，否则回退 `_safe_name`；v1 完全保留 `_safe_name`），触发点是首轮第 25 条 G9-A 对全局改名报红，回退后从 01 完整重跑全绿，失败证据 `/tmp/w4a-20261031T025653/` 不作最终证据。
+
+done-when #8 的 registry 审计按等价判据关闭：原文 `git diff -U0` 单 hunk 字面要求因基线 `return` 是两行而不可满足；实际以「`git show c8c4bd0` + D12 替换后逐字节相等」为主判据，并以 `git diff -U1` 断言一个 hunk、1 deletion/5 additions（同一处 +5/−1，hunk 数不同仅因零上下文会以第二行作上下文）。该替代判据记录于 ledger 的「审计方法记录（非 ABI 编号）」段，未放宽 gate，也未改变代码或 design。
 
 未决假设：(a) `ApprovedAdapterRegistry` 接受 `ApprovedPlugin`，但 `build_spec`/`build_adapter` 只产 v1；W4b 自建 v2 registry，s11 零 diff。(b) 实测 `_execute_tool` 收到的 effect 含 `lease_until`（`status=claimed`、`kind=tool_call`），实现直读该字段，无 `db.host_effect` 回读分支；缺失/非字符串 fail closed。(c) `test_line_json.py` 的 `env_names` 仍是 `("PATH","HOME","V24_W3_UNSET_TEST_VARIABLE")`（定义在 118 行；计划 171–178 是 `expected_env` 现算处）。
 
