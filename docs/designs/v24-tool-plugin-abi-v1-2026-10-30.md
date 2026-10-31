@@ -1393,3 +1393,45 @@ APFS 在 VFS 层拒绝非 UTF-8 文件名（`open`/`mkdir`/`symlink` 返回 `EIL
 4. **生产无 seam**：`fs_read.py`/`fs_tools.js` 不读取 `W4B_*`、`NODE_OPTIONS` 或 preload 路径，不新增测试分支；scope audit 用 grep 验证。
 5. **证据**：执行记录写 `non_utf8_source=preload_shim|filesystem`。macOS 的 shim 证据只证明插件在收到非法 UTF-8 目录项时的检测、计数和跳过逻辑正确，**不证明** APFS 支持真实非法名称；Linux real 模式才覆盖内核到插件的端到端保真度。Linux 未运行时写 `linux_real=not_run`，不得代填为已验证。
 6. **失败语义**：Node 缺失、Node 明确禁止 preload 或 preload 资产不可用时允许 `[SKIP] exit 2`；preload 已加载但注入数量/目录/返回类型不符、fixture 故障或插件契约失败一律为 FAIL，不能转成 SKIP。SKIP 不计为 W4b PASS。
+
+### C.18 M3 声明与证据标准（补充 §5.6/§6.3，取代 C.11 W4b 行与 C.16 的 pending 结论）
+
+**C.18.1 阶段绑定与权威。** W5 的 read 证据、W6 的 list/search 证据与本附录共同满足设计 §10 的 M3 done-when。C.11 的两行原文保留为历史；本节的阶段绑定不是无条件的完成状态，而是各自 done-when 条件的重述。两行都只有在对应 execution record 按实际运行日记录结果后才构成完成声明；缺少记录时，两行都只是待满足条件。C.18 不改变 M2（W4a）与 M4（W4c）的完成声明，也不改变数据库恢复策略。
+
+| 阶段标签 | design §10 | done-when（全部满足） | 声明落点 |
+|---|---|---|---|
+| M3 声明 | M3 | W4b + W5 + W6 的交付证据；C.18.2(a)–(f)；C.18.3 的三层证据；32-command sweep 与七项 audit 全绿 | 由 M3 execution record 按实际运行日记录 **M3 完成** |
+| M5 收口 | M5 | §7.5 第 1–3 项；C.18.6 下 34 位置裁决；32-command sweep；`git diff --exit-code -- v24/sql` 为空；closeout 11/11；七项 audit 全绿 | 由 M5 execution record 按实际运行日记录 **M5 完成** |
+
+**C.18.2 “M3 完成”的定义。** “M3 完成”是下列合取项同时成立： (a) 设计 §10 M3 的 done-when——`test_tools` 全绿、真实子进程、分页收敛； (b) 冻结的 16 个 read、7 个 list、24 个 search 输出逐字节不变； (c) 四个 stop reason 与 §5.6 页填满分支经生产函数证明； (d) read 的合法最坏输入在 5000 ms host deadline 内完成，并记录本轮 `read_1m_wall_ms` 与 `read_peak_kib` 观测值； (e) C.18.3 的三层证据分别成立； (f) 声明候选的 32-command sweep 与七项 audit 全绿。声明本身以 M3 execution record 的日期与结果为准，不以本附录文本或任一单项 probe 为准。
+
+**C.18.3 三层 12 秒证据（不得合并表述）。**
+
+| 层 | 内容 | 不得外推 |
+|---|---|---|
+| T1 | S06–S11 经导出的生产 `searchTool` 注入时钟，证明 time-cap 的 count-full / before-fill / before-offset / empty 形态，以及 EOF 优先与 sentinel 优先 | 不是另写的参考算法；不是帧级时钟注入 |
+| T2 | S24 断言 `SCAN_BUDGET_MS=12000`、search `timeout_ms=15000`、余量 3000、`hrtime` 只在 `searchTool`、`process.env` 只在 `rootPath` | 3000 ms 是配置余量，不是扫描/IO 最坏上界 |
+| T3 | S25 用真实时钟与小预算，断言结果属于该 probe 允许集合，并记录 elapsed/overshoot | 不以 elapsed 判通过；不要求复现 50.331 ms |
+
+file-cap 的五个形态（S01–S05）与“无适配前缀 / offset 优先”（S12）是同一生产函数上的确定性证据，但不属于注入时钟层；不得把它们并入 T1 的证明范围。`deterministic_w1_pass:false` 是 W1 参考实现的限制，不构成“必须硬实时 CI gate”的要求；三层不得合并成“12 秒已证明”。同步 `readdir`/`readFile` 不可抢占，超过 15000 ms 仍是 `unknown/timeout`。
+
+**C.18.4 时钟起点、检查点与 seam。** 默认时钟是 `Number(process.hrtime.bigint())/1e6`；起点是 `searchTool` 完成参数检查后的 `started = now()`（`fs_tools.js:645`），不是函数第一条语句。C0 只是这一次初始化读取：`started + budgetMs` 在该处设定 deadline，`nowCalls` 初始为 1，不做比较。真正的截止比较（C1）在目录递归前（`fs_tools.js:607`）与 regular file 的 file-cap 检查之后、`searchFile` 之前（`fs_tools.js:617`）。因此“进入 `searchTool` 立即判定超时”不是当前行为；C.18 按实现描述，不沿用 W6 README 中 “checks … at C0” 的宽松措辞。同一文件上 file-cap 判定先于 C1（`:613` 在 `:617` 之前），所以 file-cap 在同一交界处优先于 time-cap。一个 C1 单元的工作量是：一次 `readdirSync`、其 `names.sort`、对每个未被名字过滤的条目做 `lstat` 与分类（symlink 记 skipped 后跳过），以及最后一个 C1 之后至多一个 ≤1 MiB 文件的读取与扫描；hidden/`.git`/非 UTF-8 在 `lstat` 前按名过滤，不触发时钟检查。不在行/context 构造中插入检查，不给出毫秒级最坏上界。生产 `invoke` 不传第三参数；`options` 字段为 `now/budgetMs/fileLimit/scanLimit/caps/trace`，只供进程内测试。C.17 §4 的“生产无 seam”针对 env/preload，不禁止显式函数参数；不新增 env/argv/wire 字段。
+
+**C.18.5 §5.6 页填满权威。** 以 §5.6 的终结候选算法为唯一权威，判定顺序与 `fs_tools.js:680-756` 一致：
+
+1. **来源错误 / 非法统计或整数**先于分页：参数、路径、编码、冲突，以及字段关系/统计不一致，按既有映射返回；`offset_out_of_range` 不在本层。
+2. **`m=0`**（`total===0`）：先处理 offset——`offset!==1` 时，complete 发 `offset_out_of_range`，否则 `search_scope_too_large`；incomplete 发 `search_scope_too_large`；complete 且 `offset=1` 时构造规范空页并检查四预算，不适配发 `output_too_large`；不得返回空 incomplete 成功页。
+3. **非空快照的 offset 与页算术**：`offset > total` 时，complete 发 `offset_out_of_range`，否则 `search_scope_too_large`；该检查在快照校验后、前缀枚举前。随后的 `start`/`end` 越过安全整数发 `invalid_tool_output`。
+4. **无任何适配非空前缀** → `hit_too_large`，不被后续 cutoff 判定掩盖。
+5. **cutoff 页填满判定**：成功仅允许 `k=m=limit` 或 `k<m`；否则 `search_scope_too_large`。不使用 `scopeExhausted && total < offset+limit` 的预选早退。
+6. **成功**：返回所选页。
+
+其中 `m` = 本页完整候选数，`k` = 枚举全部候选前缀后选中的最大适配数；`complete` 当且仅当 `stopReason === 'eof'`，其余为 `sentinel/file-cap/time-cap`。sentinel 是完整观察到的 hit：计入 `total`，不进入本页 `hits`。“页可返回”不等于慢 scope 分页一定收敛。
+
+**C.18.6 冻结标签与字节权威。** 四个 pending token（`m2_pending`/`m3_pending`/`m4_pending`/`provisional_w2_pending`）记录“首次生产证据归属”，不是持续状态；另外五个 vocabulary 值（`planned`/`design_resolved`/`pending_vectors`/`pending_reference`/`not_run`）含义不变。`owner`、`first_production_stage`、suite 的 `required_case_ids` 保持原值；suite 内可含后续阶段补齐的证据。timing case 的内层 `expected.status` 同样保留；两个 `"M3-pending"` artifact 字符串是 W1 fixture 占位，不是当前 digest。`compatibility.*_claimed=false` 保持 W1 语义（“W1 vectors 不作生产声明”）；当前完成证据只写 README/matrix/ledger/record。C.18 不授权重新生成、re-bless 或 promotion。
+
+**C.18.7 承接的既有解释、声明边界与 M5 读法。** 承接（不改行为）：read 完整请求窗口先解码再选前缀；glob 排除的 regular file 仍计 `scanned_files` 且消耗 file 预算；list 扫描 cap 按原始目录项计数；空页预算失败发 `output_too_large`；Node 安全整数失败发 `invalid_tool_output`；平台证据仅 macOS root-level shim。
+
+不证明：硬实时 12s、固定 cutoff 位置、跨平台 timing、慢 scope 分页收敛、真实字节满树的 file-cap 复现（S02 只证 `k<m` 结构）、Linux real、子目录非 UTF-8、恶意并发 workspace、原子文件快照、工具自动重执行、新 provider 行为。
+
+M5 读法：§10 M5 = §7.5 第 1–3 项执行（第 4/5 项已由 W1–W6 增量完成）+ C.18.6 下的 34 位置裁决 + 32-command sweep + `git diff --exit-code -- v24/sql` 为空 + closeout 11/11。
