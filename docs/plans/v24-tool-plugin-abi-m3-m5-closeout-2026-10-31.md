@@ -577,7 +577,7 @@ closeout 仍然是 11/11，s13 仍然是 extension evidence。
 
 ## Result
 
-**M3 已执行（2026-11-01 +08:00）；M5 尚未开始。**
+**M3 与 M5 均已执行（2026-11-01 +08:00）。**
 
 M3 的 32 条串行命令在 `main` @ `23070776b0ac16749a7ff87729bb1782fb331f27` 上运行：第 1 条于 2026-10-31T16:38:23Z 开始，第 32 条于 16:40:30Z 开始（命令起始时间，不作端到端耗时），32/32 exit 0。第 1–31 条末行为各自命令专属真实 `[passed]`；第 32 条 `git diff --exit-code c8c4bd0 -- v24/sql` exit 0、输出为空、无 `[passed]`。无 exit 2/`[SKIP]`。第 29 条实际 marker：
 
@@ -589,9 +589,13 @@ M3 的 32 条串行命令在 `main` @ `23070776b0ac16749a7ff87729bb1782fb331f27`
 
 M3 的声明工件已写入：C.18、README、`D-ABI-M3-1…7`、调查状态行与 Resolution、matrix 小节、M3 execution record。发布单元为 §12.1 的 10 路径；按路径 staging、正常 hook、非 force push，真实 commit SHA 与推送结果由外部回执报告，本文不嵌入自身提交哈希。
 
+M5 在 M3 commit `e58204c29afacd27b72e35e9e7eaeb6e32c11dac` 上独立运行 32 条串行命令：第 1 条 2026-10-31T16:45:18Z 开始，第 32 条 16:47:28Z 开始，32/32 exit 0；第 32 条 SQL diff 输出为空。第 29 条 marker 与 M3 相同；本轮 `read_artifact_sha256=260274daba1efa87f4c33103fe53503c76a65187af68e610d5aedcfadad5165c`、`read_1m_wall_ms=97`、`read_peak_kib=3959.904`，S25 `real_clock_elapsed_ms=50.635` / overshoot `0.635`。34 个冻结 `status` 位置由脚本定位并逐条裁决：`tool_contracts=8`、`design_conformance=10`、`manifest_adapter_v2=5`、`results_v2=11`；2 个 `design_resolved` 不计入；裁决为 E-SAT 28 / E-SAT-T 3 / E-SAT-PH 2 / FROZEN-EXPECTED 1，JSON 零字节变化。M5 的 vectors 零 diff 基线是实际 M3 commit，不是 `2307077`；`git diff --exit-code e58204c -- v24/s13/vectors` 为空，`v24/sql` 对 `c8c4bd0` 与 M3 commit 均为空。七项 audit 预检与文档后 final 均 7/7；closeout 仍 11/11。主设计 786 → 795 行，正文 1–652 除 275/297 两行外零 diff，附录 C.7 带日期追加；drift D2/D3/D4 已加注。证据目录 `/tmp/v24-abi-m5-20261031T164407Z/`。
+
+M5 的 34 行裁决表在 matrix 的 `## Post-closeout Tool/Plugin ABI M5 closeout (2026-11-01)` 小节，M5 record 绑定其文件摘要 `f7209fc292b36af2741bae05215416cf9e8777b67d0058cec1517a10621191a6`（以最终落盘为准）。发布单元为 §12.2 的 7 路径；真实 commit SHA 与推送结果由外部回执报告。
+
 | 里程碑 | Gate | Scope audit | 工件 | Commit / push |
 |---|---|---|---|---|
 | M3 declaration | 32/32 exit 0；第 29 条 marker 与接受条件逐字节相等；第 32 条空输出 | 7/7 precheck + 7/7 final | C.18、README、ledger、matrix、investigation Resolution、M3 record 已写入 | 10 路径，结果见外部回执 |
-| M5 closeout | 未运行 | 未运行 | 待落实 | 未执行 |
+| M5 closeout | 32/32 exit 0；第 29 条 marker 与接受条件逐字节相等；第 32 条空输出 | 7/7 precheck + 7/7 final | §7.5 文档、34 行裁决、README、ledger、M5 record 已写入 | 7 路径，结果见外部回执 |
 
 完成后只填本轮实际结果；W5/W6 的通过、耗时、digest 与发布状态不得代填。

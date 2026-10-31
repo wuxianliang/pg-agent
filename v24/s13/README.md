@@ -158,6 +158,16 @@ The measured 32-command serial run passed 32/32, with exact command-specific `[p
 
 **This section supersedes the earlier W4b/W4c/W5/W6 sentences that say “not an M3-complete declaration” or “M3 timing/cutoff remains pending”; those paragraphs remain as stage records.** Under C.18.6, `tool.search_budget_timing_m3_pending` stays the frozen `m3_pending` provenance token; the frozen manifest `"M3-pending"` placeholders and `compatibility.*_claimed=false` are unchanged. The declaration does not claim a hard real-time 12-second bound, Linux real coverage, or subdirectory non-UTF-8 coverage: `linux_real=not_run`, and the platform evidence remains macOS root-level shim.
 
+## M5 closeout (2026-11-01)
+
+**M5 is complete under design §10 and C.18.1.** §7.5 items 1–3 are executed: main design §5.1/§5.4 are revised inline (lines 275/297) with a dated Appendix C.7 entry, and the drift-factcheck D2/D3/D4 carry dated M5 notes. Items 4–5 were already delivered by the W1–W6 ledger/matrix increments; this closeout appends the M5 sections without rewriting history.
+
+All 34 frozen `status` positions are adjudicated in the [M5 section of the conformance matrix](../../docs/reviews/v24-conformance-matrix-2026-10-23.md) — 10 `design_conformance` suites, 8 `tool_contracts`, 5 `manifest_adapter_v2`, 11 `results_v2`. The script-derived counts are 8/10/5/11, and the 2 `design_resolved` decisions are excluded. The verdict set is 28 `E-SAT`, 3 `E-SAT-T`, 2 `E-SAT-PH` and 1 `FROZEN-EXPECTED`; no token was promoted, no JSON byte changed, and both `"M3-pending"` placeholders remain.
+
+The M5-0 vectors baseline is the actual M3 commit `e58204c29afacd27b72e35e9e7eaeb6e32c11dac`, not `2307077`: `git diff --exit-code e58204c -- v24/s13/vectors` is empty, and `git diff --exit-code e58204c -- v24/sql` is empty. The 32-command serial sweep passed 32/32 with exact command-specific last lines for rows 1–31 and empty SQL output; seven scope audits passed precheck and the post-documentation final run. Rows 14–24 remain the eleven frozen closeout commands: **closeout stays 11/11**; s13 is extension evidence, not a twelfth item.
+
+This run's artifacts remain `read_artifact_sha256=260274daba1efa87f4c33103fe53503c76a65187af68e610d5aedcfadad5165c` and Node source/copy/entry equality for `efd05d63f028f0da4de333684dc3e63f506302f5a1c52a26c95efe36297348e5`; `read_1m_wall_ms=97`, `read_peak_kib=3959.904`, and S25 `real_clock_elapsed_ms=50.635` / overshoot `0.635`. The declaration still does not claim a hard real-time 12-second bound, Linux real, subdirectory non-UTF-8 coverage, or automatic tool re-execution; `linux_real=not_run`. Full commands, times, hashes, audits and limits are in the [M5 execution record](../../docs/reviews/v24-tool-plugin-abi-m5-closeout-execution-2026-11-01.md); evidence directory `/tmp/v24-abi-m5-20261031T164407Z/`.
+
 ## Execution
 
 Capture is candidate generation, not a gate. It requires two fresh external destinations and byte comparison before promotion. Checkers are read-only, have no re-bless mode, and do not execute production tools.

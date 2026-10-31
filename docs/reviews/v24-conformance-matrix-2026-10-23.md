@@ -766,3 +766,83 @@ Design Appendix C.18 is the authority. **M3 is complete under the C.18 evidence 
 This run's C.18.2(d) read evidence is `read_artifact_sha256=260274daba1efa87f4c33103fe53503c76a65187af68e610d5aedcfadad5165c`, `read_1m_wall_ms=97`, `read_peak_kib=3959.904`, with R26 succeeding under the unchanged 5000 ms host deadline. T3 recorded `real_clock_elapsed_ms=50.463`, overshoot `0.463`, with no elapsed threshold. The Node artifact remains `efd05d63f028f0da4de333684dc3e63f506302f5a1c52a26c95efe36297348e5`. The frozen 16 read / 7 list / 24 search outputs, all vector `status`/`expected` fields, `manifest.artifact_digest_pending`, the `"M3-pending"` placeholders and `compatibility.*_claimed=false` are unchanged; 34 frozen `status` positions remain for M5 adjudication.
 
 Rows 14–24 remain the eleven frozen closeout commands: **closeout stays 11/11**, and s13 is extension evidence, not a twelfth item. The declaration does not claim a hard real-time 12-second bound, Linux real, or subdirectory non-UTF-8 coverage: `linux_real=not_run`. Full commands, times, last lines, hashes, audits, deviations and limits are in the [M3 execution record](v24-tool-plugin-abi-m3-declaration-execution-2026-11-01.md); evidence directory `/tmp/v24-abi-m3-20261031T163642Z/`.
+
+## Post-closeout Tool/Plugin ABI M5 closeout (2026-11-01)
+
+M5 is complete under design §10 and C.18.1: §7.5 items 1–3 executed, items 4–5 already delivered by the W1–W6 increments, 34 frozen `status` positions adjudicated without changing any JSON byte, one fresh 32-command serial sweep, seven scope audits, `git diff --exit-code -- v24/sql` empty, and closeout **11/11**. The M5-0 vectors baseline is the actual M3 commit `e58204c29afacd27b72e35e9e7eaeb6e32c11dac`, not `2307077`; `git diff --exit-code e58204c -- v24/s13/vectors` is empty.
+
+### §7.5 obligations
+
+| # | Obligation | Landing |
+|---|---|---|
+| 1 | Main design §5.1 parameter-schema wording | Inline revision at line 275; v1 host unchanged, v2 host closed subset before spawn, DB validator unchanged |
+| 2 | Main design §5.4 result envelope | Inline revision at line 297; DB outer shape, v2 `{value,content,meta?}` / `{error,content,meta?}` / `{error}` |
+| 3 | Drift-factcheck D2/D3/D4 | Dated M5 notes in each 触碰面/gate plus status line; D2 cites the revised §5.1/§5.4 |
+| 4 | deviation ledger s13 entry | `D-ABI-M5-1…3` appended; no historical text rewritten |
+| 5 | conformance matrix s13 section | This section; closeout count unchanged at 11/11 |
+
+The main-design revision is inline for exactly two body lines (275/297) and appends `### C.7 M5 工具合同文档对齐（2026-11-01）` at EOF. Body lines 1–652 are otherwise byte-identical to `e58204c`; the existing line-number anchors are not displaced because no body line was inserted or removed. The file grows from 786 to 795 lines only by the appendix entry.
+
+### 34-position adjudication
+
+The position set is script-derived, not hand-counted: `tool_contracts.json` 8, `design_conformance.json` 10 pending suites (the 2 `design_resolved` entries are excluded), `manifest_adapter_v2.json` 5, `results_v2.json` 11; total **34**. The 10 suite pointers are exactly `immutable_required_suites[*].status`; the 2 `design_resolved` values live under `reviewed_design_decisions[*].status` and are not part of this adjudication. All 34 frozen bytes are unchanged (audit 2), and every row uses only documentation evidence; no token is promoted.
+
+Verdict counts: **E-SAT 28**, **E-SAT-T 3** (`filesystem_tool_contracts`, both search timing positions), **E-SAT-PH 2** (`manifest.five_field_key`, `manifest.artifact_digest_pending`), **FROZEN-EXPECTED 1** (the timing case's inner `expected.status`). No row is `FROZEN-EXPECTED` other than that inner value.
+
+#### design_conformance.json（10 suites）
+
+| 文件 + JSON 指针 | case/suite id | 冻结 token | first_production_stage | 满足阶段 | 本轮证据（sweep 行 + marker/probe + 实测） | 裁决 | 限制 | 冻结字节 audit |
+|---|---|---|---|---|---|---|---|---|
+| `design_conformance.json /immutable_required_suites/0/status` | `canonical_descriptor_bytes` | `m2_pending` | M2 | M2 | row 3 test_descriptor cases=16/canonical_python=9; rows 10-11 vectors cases=71/PG+Python canonical=9/Node checked | **E-SAT** | W1/W2 byte layer; no runtime timing claim | unchanged (audit 2) |
+| `design_conformance.json /immutable_required_suites/1/status` | `descriptor_v2_contract` | `m2_pending` | M2 | M2 | row 3 cases=16; row 7 registry cases=17/construction_reasons=14; row 29 R28/S24 digest | **E-SAT** | M2 contract; M4 replay proved separately | unchanged (audit 2) |
+| `design_conformance.json /immutable_required_suites/2/status` | `line_json_v2_frames` | `m2_pending` | M2 | M2 | row 8 cases=10/frame_bytes=7/parse_rows=55/preflight_rejections=5/unknown_outcomes=4; row 30 unknown lifecycle | **E-SAT** | Stub transport layer; real lifecycle separately | unchanged (audit 2) |
+| `design_conformance.json /immutable_required_suites/3/status` | `adapter_manifest_v2` | `m2_pending` | M2 | M2 | row 7 manifest_bytes=3/zero_spawn_paths=6; row 29 S24/R28 artifact digest | **E-SAT** | Manifest/artifact bytes; placeholders frozen | unchanged (audit 2) |
+| `design_conformance.json /immutable_required_suites/4/status` | `provider_projection_v2` | `m2_pending` | M2 | M2 | row 2 wiring cases=56/model_text_bytes=11/v1_bytes_unchanged=true; rows 12-13 B0 byte_cases=29/34; rows 25-27 G9/G10/Node | **E-SAT** | No real provider or network call | unchanged (audit 2) |
+| `design_conformance.json /immutable_required_suites/5/status` | `renderer_goldens_and_digest` | `provisional_w2_pending` | M2 | M2 | row 5 renderers cases=7/golden_cases=21/digest_pairs=3; row 2 wiring; row 13 B0 Node | **E-SAT** | Renderer digests fixed; no live provider rendering | unchanged (audit 2) |
+| `design_conformance.json /immutable_required_suites/6/status` | `result_model_text_budget_replay` | `m2_pending` | M2 | M2 | row 6 results cases=8/envelope_bytes=3/frame_boundaries=4; row 2 model_text_bytes=11; row 30 replay | **E-SAT** | Replay is completed-outcome journal replay only | unchanged (audit 2) |
+| `design_conformance.json /immutable_required_suites/7/status` | `closed_schema_subset` | `m2_pending` | M2 | M2 | row 4 schema cases=9/first_error_order=frozen/defaults_injected=false; row 2 pre-spawn wiring; row 29 R28/S24 | **E-SAT** | Closed subset; no defaults; DB validator unchanged | unchanged (audit 2) |
+| `design_conformance.json /immutable_required_suites/8/status` | `filesystem_tool_contracts` | `m3_pending` | M3 | M3 | row 29 cases=140; read=16/read_probes=29; list=7/list_probes=11; search=24/search_probes=26; pagination_converged=true; C.18 T1/T2/T3; read_artifact_sha256=260274da...; S25 50.635/0.635 | **E-SAT-T** | macOS root-level shim; linux_real=not_run; not a hard real-time 12 s claim | unchanged (audit 2) |
+| `design_conformance.json /immutable_required_suites/9/status` | `result_replay_lifecycle` | `m4_pending` | M4 | M4 | row 30 lifecycle cases=14; python=ok/node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true | **E-SAT** | Journal outcome replay; no automatic tool re-execution | unchanged (audit 2) |
+
+#### tool_contracts.json（8 位置）
+
+| 文件 + JSON 指针 | case/suite id | 冻结 token | first_production_stage | 满足阶段 | 本轮证据（sweep 行 + marker/probe + 实测） | 裁决 | 限制 | 冻结字节 audit |
+|---|---|---|---|---|---|---|---|---|
+| `tool_contracts.json /cases/0/status` | `tool.shared_paths_encoding_order` | `m3_pending` | M3 | M3 | row 29 L01-L11 path/encoding/order probes; read/list/search contracts | **E-SAT** | Trusted non-concurrent workspace; TOCTOU window remains | unchanged (audit 2) |
+| `tool_contracts.json /cases/1/status` | `tool.read.contract` | `m3_pending` | M3 | M3 | row 29 read=16/read_probes=29; R26 success under 5000 ms; read_1m_wall_ms=97; read_peak_kib=3959.904 | **E-SAT** | No hard real-time read claim; macOS run only | unchanged (audit 2) |
+| `tool_contracts.json /cases/2/status` | `tool.list.contract` | `m3_pending` | M3 | M3 | row 29 list=7/list_probes=11; S24 artifact/digest; L07 root non-UTF-8 | **E-SAT** | macOS root-level non-UTF-8 only; Linux not run | unchanged (audit 2) |
+| `tool_contracts.json /cases/3/status` | `tool.search.contract` | `m3_pending` | M3 | M3 | row 29 search=24/search_probes=26; S06-S11 injected clock; S24 constants; S25 50.635/0.635 | **E-SAT-T** | No hard real-time 12 s; slow-scope convergence not promised | unchanged (audit 2) |
+| `tool_contracts.json /cases/4/status` | `tool.fixture_tree.portable_nodes` | `m3_pending` | M3 | M3 | row 29 fixture materialization; L07 root 0xff via preload shim; S24 | **E-SAT** | macOS preload_shim; no Linux real or subdirectory injection | unchanged (audit 2) |
+| `tool_contracts.json /cases/5/status` | `tool.search_budget_file_count` | `m3_pending` | M3 | M3 | row 29 S01-S05 file-cap shapes; S17 glob/file budget; timing=not_frozen retained | **E-SAT** | S02 proves k<m structure, not a real byte-full tree | unchanged (audit 2) |
+| `tool_contracts.json /cases/6/expected/status` | `tool.search_budget_timing_m3_pending (inner expected)` | `m3_pending` | M3 | M3 | row 29 S06-S11/S24/S25; frozen expected.status is data | **FROZEN-EXPECTED** | Inner expected value, not an independent state | unchanged (audit 2) |
+| `tool_contracts.json /cases/6/status` | `tool.search_budget_timing_m3_pending` | `m3_pending` | M3 | M3 | row 29 S06-S11; S24 SCAN_BUDGET_MS=12000/timeout=15000/margin=3000; S25 50.635/0.635 | **E-SAT-T** | deterministic_w1_pass:false retained; no wall-clock gate | unchanged (audit 2) |
+
+#### manifest_adapter_v2.json（5 位置）
+
+| 文件 + JSON 指针 | case/suite id | 冻结 token | first_production_stage | 满足阶段 | 本轮证据（sweep 行 + marker/probe + 实测） | 裁决 | 限制 | 冻结字节 audit |
+|---|---|---|---|---|---|---|---|---|
+| `manifest_adapter_v2.json /cases/0/status` | `manifest.adapter.python_read` | `m2_pending` | M2 | M2 | row 7 registry; row 29 R28 source/copy/entry 260274da...; fixed manifest bytes | **E-SAT** | Adapter bytes/digest only; no production provider call | unchanged (audit 2) |
+| `manifest_adapter_v2.json /cases/1/status` | `manifest.adapter.node_list_search` | `m2_pending` | M2 | M2 | row 7 registry; row 29 S24 source/copy/entry efd05d63... and tamper rejection | **E-SAT** | Adapter bytes/digest only; macOS run | unchanged (audit 2) |
+| `manifest_adapter_v2.json /cases/2/status` | `manifest.five_field_key` | `m3_pending` | M3 | M3 | row 7 five-field match/manifest_bytes=3; row 29 S24 actual artifact; input placeholder | **E-SAT-PH** | M3-pending input placeholder preserved; no promotion | unchanged (audit 2) |
+| `manifest_adapter_v2.json /cases/3/status` | `manifest.one_install_two_provides` | `provisional_w2_pending` | M2 | M2 | row 31 node contract; row 30 node=ok; row 29 same install provides list+search | **E-SAT** | One Node install/two tools; no Linux real | unchanged (audit 2) |
+| `manifest_adapter_v2.json /cases/4/status` | `manifest.artifact_digest_pending` | `m3_pending` | M3 | M3 | row 29 R28/S24 current digests 260274da.../efd05d63...; expected M3-pending | **E-SAT-PH** | Placeholder expected unchanged; install copy proved via S24 equality | unchanged (audit 2) |
+
+#### results_v2.json（11 位置）
+
+| 文件 + JSON 指针 | case/suite id | 冻结 token | first_production_stage | 满足阶段 | 本轮证据（sweep 行 + marker/probe + 实测） | 裁决 | 限制 | 冻结字节 audit |
+|---|---|---|---|---|---|---|---|---|
+| `results_v2.json /cases/0/status` | `result.success_envelope` | `m2_pending` | M2 | M2 | row 6 results; row 2 wiring success; row 29 tool success | **E-SAT** | Outer DB shape; v2 {value,content,meta?} host layer | unchanged (audit 2) |
+| `results_v2.json /cases/1/status` | `result.failure_envelope` | `m2_pending` | M2 | M2 | row 6 results; row 2 known failure; row 29 S12 empty/failure ordering | **E-SAT** | Known failure only; unknown has its own row | unchanged (audit 2) |
+| `results_v2.json /cases/2/status` | `result.unknown_envelope` | `m2_pending` | M2 | M2 | row 6 results; row 8 unknown frames; row 30 lifecycle unknown | **E-SAT** | Unknown only {error}; no retry | unchanged (audit 2) |
+| `results_v2.json /cases/3/status` | `result.usage_wall_ms` | `m2_pending` | M2 | M2 | row 6 allowed_keys; row 2 wiring usage; row 29 wall_ms | **E-SAT** | Usage closed set; wall_ms is process wall time | unchanged (audit 2) |
+| `results_v2.json /cases/4/status` | `result.model_text_join` | `m2_pending` | M2 | M2 | row 6 results; row 2 model_text_bytes=11; row 30 stable tool message | **E-SAT** | Joined content only; meta excluded | unchanged (audit 2) |
+| `results_v2.json /cases/5/status` | `result.meta_excluded_from_model_text` | `m2_pending` | M2 | M2 | row 6 results; row 2 wiring; row 30 journal model text | **E-SAT** | Meta is not part of model_text | unchanged (audit 2) |
+| `results_v2.json /cases/6/status` | `result.budget_domains` | `m2_pending` | M2 | M2 | row 6 results; row 1 pages contracts=3/cases=5417; row 29 four-domain caps | **E-SAT** | Four semantic domains; transport frame target distinct | unchanged (audit 2) |
+| `results_v2.json /cases/7/status` | `result.frame_60000_60001_65536_65537` | `m2_pending` | M2 | M2 | row 6 frame_boundaries=4; row 8 frame_bytes=7; row 29 S24 | **E-SAT** | 60000 target is not 65536 transport cap | unchanged (audit 2) |
+| `results_v2.json /cases/8/status` | `result.replay_no_rerender` | `m4_pending` | M4 | M4 | row 30 rerender=false; journal tool_message replay | **E-SAT** | Completed-outcome replay only; no rerender | unchanged (audit 2) |
+| `results_v2.json /cases/9/status` | `lifecycle.journal_replay_no_rerender` | `m4_pending` | M4 | M4 | row 30 second_spawn=false; journal replay path | **E-SAT** | No handler/second spawn; no auto re-execution | unchanged (audit 2) |
+| `results_v2.json /cases/10/status` | `lifecycle.tool_message_model_text_stable` | `m4_pending` | M4 | M4 | row 30 journal_events_unchanged=true; rows 12-13 B0 legacy bytes | **E-SAT** | Legacy tool-message bytes stable; no new transcript derivation | unchanged (audit 2) |
+
+The current row-29 R28/S24 values are `read_artifact_sha256=260274daba1efa87f4c33103fe53503c76a65187af68e610d5aedcfadad5165c` and Node source/copy/entry equality for `efd05d63f028f0da4de333684dc3e63f506302f5a1c52a26c95efe36297348e5`; `read_1m_wall_ms=97`, `read_peak_kib=3959.904`, and T3 `real_clock_elapsed_ms=50.635` / overshoot `0.635`. W5/W6 values are historical cross-checks only. The frozen 16 read / 7 list / 24 search outputs and every `status`/`expected` field, including both `"M3-pending"` placeholders, are byte-identical to `e58204c`. `compatibility.production_behavior_claimed` and `gate_pass_claimed` remain `false`.
+
+M5 does not claim a hard real-time 12-second bound, Linux real, subdirectory non-UTF-8 coverage, slow-scope pagination convergence, or automatic tool re-execution. Full commands, times, last lines, hashes, audits and the 34-row evidence binding are in the [M5 execution record](v24-tool-plugin-abi-m5-closeout-execution-2026-11-01.md); evidence directory `/tmp/v24-abi-m5-20261031T164407Z/`.

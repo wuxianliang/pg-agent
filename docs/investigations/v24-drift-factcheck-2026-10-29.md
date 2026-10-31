@@ -6,6 +6,7 @@
 - **修复口径（用户 2026-10-29 明确）**：保持实际实现，只修文档；不改 SQL/host/test。
 - 约束：本文件只记录事实与文档修法；核查阶段未改源码。
 - **W1 状态（2026-10-29）：完成。** 已按 D1/D2/D3/D4 的精确 old→new 文案完成文档对齐；实现、测试、loader 与 gate 脚本未改。收尾记录见 deviation ledger `D-S1-1`、`D-S3-9`、`D-S4-11`、`D-MR-11` 与 conformance matrix §2.8。
+- **M5 状态（2026-11-01）：** D2/D3/D4 的旧结论保留为历史；本轮按各节末尾带日期的 M5 修订对齐 descriptor v2 参数/output 校验、replay 边界与 journal transcript 权威，未改运行时、SQL、host 或测试。
 
 ## 核查范围
 
@@ -91,6 +92,7 @@
 ### 触碰面 / gate
 - 纯文档；不改 `48_loop`/`30_advance`/`10_schema`。
 - 无需重跑 gate；G2b/G8/G10 全部只断言形状。
+- **M5 修订（2026-11-01）：** 原“DB 与 host 都没有 schema 校验”只作为 descriptor v1 / DB 层的事实保留。v2 descriptor 的参数与 output 已由 host 在 spawn 前按封闭 schema 子集校验；引用本次修订后的主设计 §5.1/§5.4 与 ABI §5.5/C.13。`v24/host/plugins.py:57-70` 的描述属于 `_tool_v1`，不覆盖 v2 `_tool_v2` 的第 2/3/10 步；DB 仍未新增 schema validator。
 
 ## D3. replay_safe
 
@@ -121,6 +123,7 @@
 ### 触碰面 / gate
 - 纯文档；不改 `48_loop`/`49_recovery`。
 - 无需重跑；G5 K2/K3 证明的正是“host replay_safe 重投、model/tool no_replay → unknown”。
+- **M5 修订（2026-11-01）：** `replay_class` 仍是 metadata；tool successor 仍硬编码 `no_replay`，本轮没有新增工具 replay 权。W4c 证明的是**已完成 outcome** 经 journal replay 不重渲染、不二次 spawn，不等于未决工具自动重执行，也不等于 `tool_call` 可 `replay_safe`。
 
 ## D4. host journal / transcript 权威
 
@@ -153,6 +156,7 @@
 ### 触碰面 / gate
 - 纯文档；不改 `worker.py`/`journal.py`/`48_loop`/`10_schema`。
 - 无需重跑；但修复 agent 必须用 `git diff --exit-code -- v24/sql v24/host` 证明代码零变更。
+- **M5 修订（2026-11-01）：** v2 的 `model_text` 经 `tool_message` 持久化；journal 仍是 provider 对话原文与 transcript 权威，DB 仍只有语义投影。重启只从 journal replay 已记录 outcome，不重新 render；W4c 的 `rerender=false`、`second_spawn=false`、`journal_events_unchanged=true` 是当前证据。
 
 ## 核查结论汇总
 
