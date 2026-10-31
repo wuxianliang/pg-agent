@@ -168,6 +168,44 @@ The M5-0 vectors baseline is the actual M3 commit `e58204c29afacd27b72e35e9e7eae
 
 This run's artifacts remain `read_artifact_sha256=260274daba1efa87f4c33103fe53503c76a65187af68e610d5aedcfadad5165c` and Node source/copy/entry equality for `efd05d63f028f0da4de333684dc3e63f506302f5a1c52a26c95efe36297348e5`; `read_1m_wall_ms=97`, `read_peak_kib=3959.904`, and S25 `real_clock_elapsed_ms=50.635` / overshoot `0.635`. The declaration still does not claim a hard real-time 12-second bound, Linux real, subdirectory non-UTF-8 coverage, or automatic tool re-execution; `linux_real=not_run`. Full commands, times, hashes, audits and limits are in the [M5 execution record](../../docs/reviews/v24-tool-plugin-abi-m5-closeout-execution-2026-11-01.md); evidence directory `/tmp/v24-abi-m5-20261031T164407Z/`.
 
+## W7 lifecycle and recovery closure (2026-11-01)
+
+W7 is a post-M5 recovery-closure stage, not a new design §10 milestone: M4 stays complete under C.11 and M5 stays complete. It closes the three gaps named by the W4c record — every crash window (enumerated as K0–K5 plus K3.5), mixed-batch replay with multiple pending tools, and a real process restart — without changing host, SQL, vectors, design pins or any frozen test.
+
+The gate command is unchanged:
+
+```bash
+env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s13/test_lifecycle.py
+```
+
+The final serial sweep reports:
+
+```text
+[passed] W4 lifecycle; cases=30; recovery_probes=16; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true; no_replay=true
+```
+
+`cases=30` uses function-level counting: the 14 W4c sub-scenarios (A1+B1+C1+D3+E1+F3+G1+H1+L2) plus one case per R01–R16. `recovery_probes=16` is fixed; R11's four artifact shapes, R13's restart stage, R14's success/known-error/crash stages, R15's three pending effects and R16's backfill are sub-probes of one case each. The file grew from 645 to 2,849 lines; the measured gate wall time is ≈40.4 s, and the sweep's row-30 window is `2026-10-31T20:03:34Z` → `2026-10-31T20:04:14Z`, below the 90 s cap.
+
+| Window | Crash point | Cases |
+|---|---|---|
+| K0 | `effect_prepared` written, `dispatch_started` not written | R01 (tool), R07 (`host_prepare`), R08 (`host_release`) |
+| K1 | `dispatch_started` written, handler not entered | R02 |
+| K2 | after a real plugin spawn, before `dispatch_finished` | R03 (host child `SIGKILL`, real plugin process) |
+| K3 | `dispatch_finished` written, settlement not written | R04 (model), R05, R10, R14 (v1), R15 (3 pending) |
+| K3.5 | DB settlement committed, journal `settlement_committed` not written | R16 |
+| K4 | after settlement | R06 |
+| K5 | model `dispatch_finished` written, settlement not written | R04 |
+
+R09 (mixed batch: two successes and one timeout, with the read executing last), R11 (four disk-artifact tamper shapes), R12 (workspace root moved away) and R13 (timeout process-group cleanup) are orthogonal pre-spawn/timeout probes, not new K labels.
+
+Two test-only assets carry the evidence. `w4_stub_plugin.py` adds the `grandchild` scenario (a grandchild that stays in the plugin process group) and the `kill_parent` scenario (the plugin `SIGKILL`s its host parent after spawn); `kill_parent` is selected only by R03's `stub_spec` and is not used by any production descriptor, fixture module or other scenario. `w7_recover.py` is the fresh-process reconciler: it opens only `HostDB`/`HostJournal`, calls `_reconcile`, never constructs a registry and never spawns, and prints `[w7-recover] reconciled=N settlements=M`; `settlements` is this process's journal increment. R05/R06/R15/R16 and the v1/v2 recovery in R14 use it.
+
+The fresh-process results are `R05 reconciled=1 settlements=1`, `R06 reconciled=0 progress=0`, `R15 reconciled=3 settlements=3` after three pending settlements, and `R16 reconciled=0 settlements=1` with payload `reason=database_terminal` / `conflict=false`. R03's host child ends `WIFSIGNALED` with `WTERMSIG=SIGKILL(9)` and the plugin `invoke` count stays 1 before and after recovery; R13 observes both the plugin and its grandchild as empty `ps -o stat=` states after 1.131 s without any signal from the test side.
+
+W7 adds no host, SQL, vector, fixture-module, design or pin changes. `git diff --exit-code a41ce22 -- v24/host v24/sql v24/s13/vectors` is empty, the B0 v1 provider-request and tool-message bytes are unchanged, and all tool effects remain `no_replay`. Closeout remains **11/11**; s13 is extension evidence, not a twelfth closeout item.
+
+The [W7 execution record](../../docs/reviews/v24-tool-plugin-abi-w7-execution-2026-11-01.md) contains provenance, source digests, the 32-row serial table, seven audit tables, R15/R16 fresh-process evidence, R03/R13 cleanup observations, limits and deviations. Raw evidence is in `/tmp/v24-abi-w7-20261031T200002Z/`; the publication receipt there records the commit/push outcome externally.
+
 ## Execution
 
 Capture is candidate generation, not a gate. It requires two fresh external destinations and byte comparison before promotion. Checkers are read-only, have no re-bless mode, and do not execute production tools.

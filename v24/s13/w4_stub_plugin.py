@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
+from pathlib import Path
 
 SCENARIOS = (
     "ok",
@@ -25,6 +28,8 @@ SCENARIOS = (
     "bad_relation",
     "huge_value",
     "crash",
+    "grandchild",
+    "kill_parent",
 )
 
 
@@ -127,6 +132,17 @@ def _invoke(args):
         return 0
     if scenario == "crash":
         os._exit(7)
+    if scenario == "grandchild":
+        spawn_log = _spawn_log_path(sys.argv)
+        assert spawn_log is not None
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"])
+        Path(f"{spawn_log}.child").write_text(str(child.pid),
+                                              encoding="utf-8")
+        time.sleep(60)
+    if scenario == "kill_parent":
+        os.kill(os.getppid(), signal.SIGKILL)
+        time.sleep(5)
     raise SystemExit(3)
 
 

@@ -846,3 +846,34 @@ Verdict counts: **E-SAT 28**, **E-SAT-T 3** (`filesystem_tool_contracts`, both s
 The current row-29 R28/S24 values are `read_artifact_sha256=260274daba1efa87f4c33103fe53503c76a65187af68e610d5aedcfadad5165c` and Node source/copy/entry equality for `efd05d63f028f0da4de333684dc3e63f506302f5a1c52a26c95efe36297348e5`; `read_1m_wall_ms=97`, `read_peak_kib=3959.904`, and T3 `real_clock_elapsed_ms=50.635` / overshoot `0.635`. W5/W6 values are historical cross-checks only. The frozen 16 read / 7 list / 24 search outputs and every `status`/`expected` field, including both `"M3-pending"` placeholders, are byte-identical to `e58204c`. `compatibility.production_behavior_claimed` and `gate_pass_claimed` remain `false`.
 
 M5 does not claim a hard real-time 12-second bound, Linux real, subdirectory non-UTF-8 coverage, slow-scope pagination convergence, or automatic tool re-execution. Full commands, times, last lines, hashes, audits and the 34-row evidence binding are in the [M5 execution record](v24-tool-plugin-abi-m5-closeout-execution-2026-11-01.md); evidence directory `/tmp/v24-abi-m5-20261031T164407Z/`.
+
+## Post-closeout Tool/Plugin ABI W7 lifecycle and recovery（2026-11-01）
+
+W7 是 M5 之后的恢复收口，不是 design §10 的新 M 阶段，也不重开 M4：M4 仍按 C.11 完成、M5 仍完成。它只补 W4c 执行记录列出的三个缺口——每个 crash window（按 K0–K5+K3.5 枚举）、multiple pending tools 的 mixed-batch replay、真实进程重启——且不改 host、SQL、vectors、design、pins 或任何冻结测试。`cases=30`（W4c 的 14 个子场景 + R01–R16 各 1）、`recovery_probes=16`；row 30 的末行为 `[passed] W4 lifecycle; cases=30; recovery_probes=16; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true; no_replay=true`。
+
+| # | 窗口 | `test_lifecycle.py` | 本轮实测证据 | 结果 |
+|---|---|---|---|---|
+| R01 | K0 tool | `r01_prepared_resume:1007` | `effect_prepared` 后注入；重启 `_resume_prepared` 执行一次，`invoke` 1、`settlement_committed` 1、run completed | pass |
+| R02 | K1 | `r02_started_lease_expiry:1087` | live restart `skipped`；3000 ms lease 过期后 `_recover` → unknown；DB `effect_recovered_unknown` 1（`settle_unknown/lease_expired`）；spawn 0；第三次 `_reconcile`=0 | pass |
+| R07 | K0 `host_prepare` | `r07_prepare_resume:1204` | install `installed`；prepare spawn 1；幂等 `prepare` 不再新增 prepare effect；release spawn 1；run completed | pass |
+| R08 | K0 `host_release` | `r08_release_resume:1326` | `dispose` 后 release `effect_prepared` 崩溃；重启完成 dispose；release spawn 1 | pass |
+| R05 | K3 tool | `r05_tool_finished_fresh_reconcile:1422` | 崩溃 claimed、journal finish 1/settlement 0；fresh `(reconciled=1, settlements=1)`；settlement delta 1；invoke 1；run completed | pass |
+| R06 | K4 | `r06_settled_restart_noop:1506` | 5 effects/3 tool effects/28 journal records 不变；`reconciled=0 progress=0`；snapshots unchanged | pass |
+| R15 | K3 ×3 | `r15_multiple_pending_reconcile:1581` | 3 个 pending 均 claimed、9 次注入 settle error；fresh `(3,3)`；三个 succeeded；continuation 1；spawn 不变 | pass |
+| R16 | K3.5 | `r16_settlement_backfill:1671` | 崩溃时 effect succeeded、`settled_at` 有值、journal finish 1/settlement 0；fresh `(0,1)`；payload `reason=database_terminal`、`conflict=false`；effect row 不变；second reconcile 0 | pass |
+| R03 | K2 | `r03_kill_parent_sigkill:1775` | `WIFSIGNALED=true`、`WTERMSIG=9`/`SIGKILL`；invoke 1→1；effect unknown、run blocked；DB event 1；`lease_remaining_at_spawn=6475` ms（6500 ms lease） | pass |
+| R04 | K3(model)+K5 | `r04_model_finished_replay:2012` | 崩溃 model claimed（finish 1/settlement 0、tool effect 0）；`reconciled=1`；transport 1+1；model effects 2；continuation 1；三 tool succeeded | pass |
+| R09 | mixed batch | `r09_mixed_batch_timeout:2109` | 执行顺序 `[0,2,1]` 与 journal `dispatch_finished` 顺序相同；read ordinal 1 最后执行；success/unknown(`timeout`)/success；transport 1；model effects 1；continuation 0；run blocked | pass |
+| R10 | K3 first tool | `r10_first_tool_finished_crash:2218` | target ordinal 2（执行顺序第一）；崩溃 1 claimed+2 ready；`reconciled=1`；continuation 1；三 tool succeeded；tool message 字节相同；transport 2 | pass |
+| R11 | tamper | `r11_artifact_tamper:2336` | 代码顺序 `artifact_missing`→`artifact_outside_cwd`→`artifact_not_regular`→`artifact_digest_mismatch`；四者 failed；唯一 invoke 属恢复后的成功调用 | pass |
+| R12 | workspace | `r12_workspace_unavailable:2430` | `workspace_unavailable` failed；恢复后 succeeded；唯一 invoke 属成功调用 | pass |
+| R13 | timeout | `r13_timeout_group_cleanup:2494` | 1.131 s；`plugin_ps=""`、`child_ps=""`；`timeout`/unknown/blocked；restart `reconciled=0`、journal 12 条不变；spawn 1 | pass |
+| R14 | legacy | `r14_legacy_union_recovery:2592` | 4/4 B0 provider request 字节相等；两条 tool message 字节相等；v1 spawn 3（prepare 1+invoke 2）、无 spawn log；fresh `(1,1)`；v2 两个 read succeeded；`no_replay` | pass |
+
+R11/R13/R14/R15/R16 的子探针不另计 case：R11 的四个 artifact 形状、R13 的 restart 阶段、R14 的 success/known-error/crash 阶段、R15 的三个 pending、R16 的 settlement 补写都各算同一 case 的子探针。R11/R12 的零 spawn 由 spawn log 与 `CountingSpawn` 双证；R14 的 v1 计数用 `CountingSpawn(artifact=v1.entry.artifact_path)`（v1 没有 `--spawn-log`）。
+
+K 窗口覆盖与 §6 一致：K0=R01/R07/R08；K1=R02；K2=R03；K3=R04(model)/R05/R10/R14/R15；K3.5=R16；K4=R06；K5=R04。R09/R11/R12/R13 是 pre-spawn/timeout 的正交探针，不新增 K 标签。
+
+本轮 32 条串行命令全部 exit 0；第 1–31 条有命令专属末行，第 32 条 `git diff --exit-code c8c4bd0 -- v24/sql` 输出为空；无 exit 2/`[SKIP]`。第 14–24 条仍是 11 条 closeout 命令，**closeout 仍 11/11**，s13 不是第 12 条。七项 scope audit 先预检 7/7，再在全部文档落盘后、staging 前完整重跑，末行分别为 `[scope] passed frozen_modules_and_untracked`、`vectors_zero_diff`、`design_pins_zero_diff`、`registry_exact_patch`、`host_import_purity`、`sql_zero_diff`、`w7_candidate_only`。
+
+`v24/host`、`v24/sql`、`v24/s13/vectors`、其它 `v24/s13/test_*.py`、`design_conformance.json`、`test_contracts.py` 与 ABI design 均相对 `a41ce22` 零 diff；`DESIGN_SHA256` 仍为 `778b13a4df78f47987626bbe466b70ebada95fe939565253749b7e6105991a2d`。所有 tool effect 仍 `no_replay`，B0 v1 provider request 与 tool message 字节不变。完整命令、UTC、末行、SHA 与审计见 [W7 execution record](v24-tool-plugin-abi-w7-execution-2026-11-01.md)；证据目录 `/tmp/v24-abi-w7-20261031T200002Z/`。
