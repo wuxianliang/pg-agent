@@ -26,8 +26,10 @@ def main() -> int:
     try:
         before = _settlements(journal)
         db = HostDB(admin, service)
-        # _reconcile never calls a handler; if it ever does, exit loudly.
-        worker = HostWorker(db, journal, tool_handler=lambda effect: os._exit(97))
+        # _reconcile only reads journal/DB and never invokes a handler; a
+        # handler guard here would be dead code, so the evidence stays on the
+        # parent side (unchanged spawn log + one added settlement).
+        worker = HostWorker(db, journal)
         reconciled = worker._reconcile(scope)
         settlements = _settlements(journal) - before
         print(f"[w7-recover] reconciled={reconciled} settlements={settlements}")

@@ -278,7 +278,7 @@ class CountingSpawn:
 
     def __exit__(self, exc_type, exc, tb):
         line_json.run_process = self._saved
-        if self.expected is not None:
+        if self.expected is not None and exc_type is None:
             assert len(self.calls) == self.expected, (
                 self.expected, len(self.calls), self.ops)
         return False
@@ -510,6 +510,8 @@ def run_recover_process(harness, scope):
 
 def assert_no_live(pid, timeout_s=2.0):
     """Observe only: an empty or zombie ``ps`` state means the pid is gone."""
+    # Do not use os.kill(pid, 0): a zombie still owns the pid and kill() would
+    # succeed, turning the "exited but not reaped" state into a false live.
     deadline = time.monotonic() + timeout_s
     while True:
         completed = subprocess.run(
@@ -1140,7 +1142,10 @@ def r02_started_lease_expiry(fixture, base):
                 harness.db.host_effect(effect_id)["effect"]["lease_until"])
             if remaining <= 0:
                 break
-            assert time.monotonic() < deadline, remaining
+            assert time.monotonic() < deadline, (
+                f"lease did not expire before poll deadline: "
+                f"remaining={remaining}ms "
+                f"lease={harness.worker.default_lease_ms}ms")
             time.sleep(0.05)
 
         harness.run(None, max_rounds=4)
@@ -1774,7 +1779,7 @@ def r16_settlement_backfill(fixture, base):
 
 def r03_kill_parent_sigkill(fixture, base):
     """K2 tool: real spawn then SIGKILL of the host child; restart unknown."""
-    child_lease_ms = 6500
+    child_lease_ms = 8000
     portable = workspace(base / "r03" / "portable", "portable")
     spec = stub_spec(base / "r03" / "stub", portable.root, "kill_parent",
                      timeout_ms=1000,
@@ -1868,9 +1873,12 @@ def r03_kill_parent_sigkill(fixture, base):
             if len(invoke_pids) == 1:
                 plugin_pid = invoke_pids[0]
             assert not timed_out, "host child did not die within 30s"
+            gate_ms = spec.entry.tools[0].timeout_ms + 5000
             assert os.WIFSIGNALED(wait_status), (
                 f"host child was not signalled: status={wait_status}, "
-                f"WIFEXITED={os.WIFEXITED(wait_status)}, rows={rows}")
+                f"WIFEXITED={os.WIFEXITED(wait_status)}, rows={rows}, "
+                f"spawn_gate_ms={gate_ms}, "
+                f"child_lease_ms={child_lease_ms}")
             assert os.WTERMSIG(wait_status) == signal.SIGKILL, (
                 f"host child term signal {os.WTERMSIG(wait_status)}: "
                 f"status={wait_status}, rows={rows}")
@@ -1920,7 +1928,10 @@ def r03_kill_parent_sigkill(fixture, base):
                     effect["lease_until"])
                 if lease_remaining_at_recovery <= 0:
                     break
-                assert time.monotonic() < deadline, lease_remaining_at_recovery
+                assert time.monotonic() < deadline, (
+                    f"lease did not expire before poll deadline: "
+                    f"remaining={lease_remaining_at_recovery}ms "
+                    f"lease={child_lease_ms}ms")
                 time.sleep(0.05)
 
             stats = harness.run(None, max_rounds=4)
@@ -2626,6 +2637,9 @@ def r14_legacy_union_recovery(fixture, base):
         return records[0]["payload"]["tool_message"]["content"]
 
     try:
+        # CountingSpawn patches line_json in this interpreter only; a fresh
+        # recovery subprocess cannot be counted, and v2 spawns are filtered by
+        # artifact.  Keeping the block open is therefore exact, not a leak.
         with CountingSpawn(expected=3,
                            artifact=v1.entry.artifact_path) as spawn:
             v1_id = harness.admit(v1)
@@ -2700,6 +2714,12 @@ def r14_legacy_union_recovery(fixture, base):
             known_content = v1_message(v1_mid2)
             assert (known_content.encode("utf-8")
                     == message_bytes("tool_message.known_error.content"))
+
+            # (c2) the crash point already has exactly prepare + 2 invokes;
+            # keep the context open to also catch a v1 spawn after recovery
+            # when the parent resumes (the fresh subprocess is not counted).
+            assert len(spawn.calls) == 3, spawn.calls
+            assert spawn.ops == {"prepare": 1, "invoke": 2}, spawn.ops
 
             # (d) fresh process settles the journal outcome exactly once.
             reconciled, settlements = run_recover_process(

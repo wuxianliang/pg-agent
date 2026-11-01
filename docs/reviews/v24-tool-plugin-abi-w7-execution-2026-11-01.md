@@ -21,13 +21,13 @@ W7 is a post-M5 recovery-closure stage, not a new design §10 milestone. M4 rema
 - The W7-0 untracked baseline has 35 `sha256  path` entries. It was captured with ignored files included (`v20/experiments/ce_native_d5/__pycache__/*.pyc`), so audit 7 compares inside that same universe: non-ignored untracked paths plus still-present baseline paths. That keeps unchanged ignored files out of the `removed` set without scanning `.venv` or other large ignored trees.
 - The W7-7 brief names `v24/s13/vectors/b0_golden/golden.json` as a source-digest input. That path does not exist anywhere in this checkout (`git ls-files` and a repository-wide grep return no hit). The B0 goldens actually used by the lifecycle cases are the four files under `v24/b0/golden/`; the two consumed by R14 are listed below. This is a documentation-input correction, not a gate deviation.
 
-The current code and artifact digests are:
+The current code and artifact digests are (the two test-asset rows were refreshed by the v7/v8 follow-up; the rest are unchanged from the v6 sweep):
 
 | Source / artifact | SHA-256 |
 |---|---|
-| `v24/s13/test_lifecycle.py` | `4b11c4f4690b31bcfa4be912e38b879a754cba1c5a01a8080ae618302365e47f` |
+| `v24/s13/test_lifecycle.py` | `f189a5c83c91f34100e9056718139601bbe6a910fbc84763524c65f4f0df89fc` |
 | `v24/s13/w4_stub_plugin.py` | `916ca5b2e997a4ba0386c51b18b0da3663d00772d67497d7753c75d95fa634fa` |
-| `v24/s13/w7_recover.py` | `d5c3178038577053d651f1ad53e2d3895f417503253a17045995d8e36d39b85d` |
+| `v24/s13/w7_recover.py` | `64563988dbfe69cc7d61a5907954e247071b8433fe1aac168ee609b4c3531f1b` |
 | `v24/s13/plugins/fs_read.py` | `260274daba1efa87f4c33103fe53503c76a65187af68e610d5aedcfadad5165c` |
 | `v24/s13/plugins/fs_tools.js` | `efd05d63f028f0da4de333684dc3e63f506302f5a1c52a26c95efe36297348e5` |
 | `v24/b0/golden/provider_requests_v1.json` | `36ed983f0302c374fc92b3153c0c2a5dbb0fbb722665394ef5643bc51d86e921` |
@@ -111,6 +111,32 @@ The seven audits are the inherited `test_wiring.scope_audit` groups 1/4/5/6 agai
 ### Confirmation (after the post-audit record/Result edits)
 
 The confirmation pass re-ran the same seven audits after the final-audit table and the plan Result were written. Its labels, exits, last lines and log digests are recorded only in the external `publication-receipt.txt`, per the plan's rule that the confirmation results do not become a second in-repo audit table.
+
+## v7/v8 follow-up (2026-11-01)
+
+The v7/v8 review fixes were committed as a follow-up to `6297246`, without amending it and without force-pushing. The tracked delta is exactly four paths: this record, the W7 plan, `v24/s13/test_lifecycle.py` and `v24/s13/w7_recover.py`. The test edits are test-only: `CountingSpawn.__exit__` no longer asserts on the exception path, R03 uses an 8000 ms child lease and reports `child_lease_ms` / `spawn_gate_ms` when the child was not SIGKILLed, and R14 documents that `CountingSpawn` covers only the parent interpreter. `w7_recover.py` drops the never-called `os._exit(97)` handler guard; `_reconcile` reads and writes only journal/DB and never invokes a handler. No host, SQL, vector, design, fixture or plugin byte changed.
+
+Evidence directory `/tmp/v24-abi-w7-followup-20261101T032744Z/`. It holds the U0 tracked/untracked snapshot, `30.log`, `scope-precheck/`, `run-audits-w7.py`, `baseline-untracked.txt` and `source-sha256.txt`. The audit harness is the W7 seven-audit `run-audits-w7.py`, re-based from `a41ce22` to `6297246`; audit 1 now treats `w7_recover.py` as tracked and requires no untracked `v24/s13` file.
+
+Row 30 was rerun on the follow-up worktree: `uv run python v24/s13/test_lifecycle.py` → exit 0, 45.0 s, and the exact marker:
+
+```text
+[passed] W4 lifecycle; cases=30; recovery_probes=16; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true; no_replay=true
+```
+
+All seven audits were rerun against `6297246`; each exited 0 with its exact last line:
+
+| # | Audit | Exit | Last line | Log SHA-256 |
+|---:|---|---:|---|---|
+| 1 | `frozen_modules_and_untracked` | 0 | `[scope] passed frozen_modules_and_untracked` | `4a8f0256959e056a0ed4b59032f90b9fd1629771f0bede4326ac79a81e7b79a4` |
+| 2 | `vectors_zero_diff` | 0 | `[scope] passed vectors_zero_diff` | `379c45bfa71d80be5bcb676858c594a4635f3fe3dbece9807b7429e2573bd7ce` |
+| 3 | `design_pins_zero_diff` | 0 | `[scope] passed design_pins_zero_diff` | `428460cdf274a1b450c1366693e26e53a560067f4bc3733ef060a06466599fb2` |
+| 4 | `registry_exact_patch` | 0 | `[scope] passed registry_exact_patch` | `ea1a744fa0f1430df824bcd3b98d7d48214af0b61e2e5d709a4b88f50e26e27c` |
+| 5 | `host_import_purity` | 0 | `[scope] passed host_import_purity` | `f22b3a92ba8926508ee266282111acb354f4098f7f21f77a6310568b520f98b3` |
+| 6 | `sql_zero_diff` | 0 | `[scope] passed sql_zero_diff` | `89f69d2e7dcd649ca47f5094ff8820ba349bf688ca43708db3fcf2248985950d` |
+| 7 | `w7_candidate_only` | 0 | `[scope] passed w7_candidate_only` | `6882586fb74cd2f26c9002232edacd588cffaae3713e507868c4b39b2a6c2d28` |
+
+A final pass was rerun after this section and the refreshed digest table were written; its per-audit logs are in the same evidence directory under `scope-final/`, and the confirmation pass is recorded only in the external publication receipt. The follow-up's commit SHA, push exit code, remote ref update line, post-push `git rev-parse origin/main` and the 14-path manifest are in `/tmp/v24-abi-w7-followup-20261101T032744Z/publication-receipt.txt`; this record does not embed its own commit hash.
 
 ## R15/R16 fresh-process evidence
 

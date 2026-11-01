@@ -1,6 +1,6 @@
 # v24 Tool/Plugin ABI W7：完整生命周期与恢复收口 Deep Plan
 
-日期：2026-11-01。版本：v6（第三轮 2 路 Oracle 后的 P1/P2 落实；lane 1 `pass` / lane 2 `needs-edits`）。状态：计划（未执行）。基线：`main` @ `a41ce220b60af95070d93ce1571d09d70299a5cf`（"v24: close out Tool/Plugin ABI M5"），`origin/main` 与本地 HEAD 相同。工作区已跟踪文件干净；未跟踪的 `.ctx-export-*`、`.token-probe*`、`ctx_export_check*`、`v20/experiments/ce_native_d5/` 与本计划无关，不进入候选集。
+日期：2026-11-01。版本：v8（第五轮 P2 收尾；两路 Oracle 均 pass）。状态：v6 已执行并提交为 `6297246`（"v24: close out Tool/Plugin ABI W7 lifecycle recovery"）；v7 是 post-sweep 裁决修订，v8 只收尾 P2、不重开 F1–F12。基线：v6 sweep HEAD `a41ce220b60af95070d93ce1571d09d70299a5cf`（"v24: close out Tool/Plugin ABI M5"）；v7 工作树在 `6297246` 之上，`origin/main` 与 `6297246` 相同；v6 sweep 时工作区已跟踪文件干净。v7/v8 的 follow-up 工作树相对 `6297246` 有 4 个已跟踪改动（本计划、`v24/s13/test_lifecycle.py`、`v24/s13/w7_recover.py`、`docs/reviews/v24-tool-plugin-abi-w7-execution-2026-11-01.md`）：前三个是 v7/v8 修订，第四个记录本次 follow-up 的源码 SHA 与重跑证据；它们作为一次独立的 follow-up 提交，不 amend `6297246`。未跟踪的 `.ctx-export-*`、`.token-probe*`、`ctx_export_check*`、`v20/experiments/ce_native_d5/` 与本计划无关，不进入候选集。
 
 v2 已按 2026-11-01 两路 Oracle 审核（`needs-edits`）修订：P0 五项、P1 五项与 P2 建议全部落入正文；新增 R15（multiple pending tools）与 R16（K3.5），探针总数 16、`cases=30`。
 
@@ -13,6 +13,10 @@ v5 落实第三轮 2 路 Oracle（同一 L1/L2，`needs-edits`、**无 P0**）�
 v5 复核（2026-11-01，只读源码 + 一次性 `uv run python`，不作为 W7 pass 证据）：`harness.db.host_effects(scope)` 单参合法（`db.py:144-149` 的三个游标参数都有默认值），但该读只返回 `ready`/`claimed`（`49_host_reads.sql:184`），**不能**枚举已 settle 的 effect；`host_runs(scope)` 与 `host_run_effects(run)` 都不按状态过滤（`:76-127`、`:264-266`）。`line_json.py:274`（`_run_v2`）与 `:319`（v1 `run`）是两条路径上的 `run_process` 调用点，都调用模块级函数，patch `line_json.run_process` 一次覆盖 v1/v2。
 
 v6 落实第三轮 2 路 Oracle 的合并结果：lane 1 判 `pass`、lane 2 判 `needs-edits`、**无 P0**；两条 P1 是可执行性缺口，A23–A26 是 P2 的措辞/适用范围修正。v6 的实质变化：`assert_w7_invariants` 在入口把 `recovered_unknown` 归一为规范字符串，枚举 effect 也用 `str(effect_id)` 做成员判断（R02/R03 仍可传 `uuid.UUID`）；`install_crash_after_started` 改为返回 `(restore, original)`，R02 用 helper 返回的 `original` 做 `is` 断言；`close_connections` 的调用方限定为 R03 fork 前、R06 restart 前与 `run_recover_process` 内部；§9 I6 的“先观察、后清理”只约束 R13，R03 保持测试侧先 `killpg` 再 `assert_no_live`；R09/R10 改用 `tool_order`；I4 的 install 枚举改用 `host_scope_installs` 翻页，helper 只保证 log 自洽与无重复 prepare/release。§17.4 另记四项已核实的静态事实。v6 **未**改变 `cases=30`、`recovery_probes=16`、marker、closeout 11/11、32-command 形态、8 路径候选集或 helper 计数（15 组 / 17 个）。
+
+v7 逐条裁决第四轮 2 路 Oracle（两路都判 `needs-edits`，但审核对象是 v2；v3–v6 已关闭的条目不重开）：**接受 3 条**——`w7_recover.py` 删除永不触发的 `os._exit(97)` handler guard（guard 不构成证据）、R02/R03 的 lease 轮询到期必须 FAIL 并记录实际 `remaining_lease_ms`、R03 lease 从 6500ms 提到 8000ms（对 6000ms 门槛留 2s 余量）；**部分接受 1 条**——R14 `CountingSpawn` 作用域建议被驳回，但 v7 已加崩溃点断言与作用域注释，且 fresh-process 证据口径需收窄；**驳回 4 条**——R03 “`kill_parent` 杀祖父”、R15 “patch 对 fresh process 无效”、R16 “`reconciled=0 settlements=1` 是假绿”、R13 改用 `os.kill(pid, 0)`；**already-fixed 4 条**——R11 artifact 检查顺序、R03 host child `killpg`、R10 “read 先执行”假设、`assert_w7_invariants` 未列入 helper 清单。每条 finding 的结论、证据与落实位置见 §17.5。v7 **未**改变 `cases=30`、`recovery_probes=16`、marker、closeout 11/11、32-command 形态、8 路径候选集或 helper 计数（15 组 / 17 个）。
+
+v8 只收尾第五轮 2 路 Oracle 的 P2（两路都 pass、无 P0/P1，合并结论 "Approve with fixes"），不重开 F1–F12：§17.5 的 F8 改记 "rejected + 部分落实"，计数改为接受 3 / 部分接受 1 / 驳回 4 / already-fixed 4；F11 的 `target_ordinal=2` 更正为 search；§7.1 改记 `main()` 的实际调用顺序并声明顺序不承载语义；R14 的 fresh-process 证据收窄为“父进程阶段由 `CountingSpawn` 计数、子进程不 spawn 由结构保证”；D5/§13 R2 的门槛失败诊断收窄并在 R03 的 `WIFSIGNALED` 消息补 `child_lease_ms` 与门槛值；`CountingSpawn.__exit__` 只在正常路径断言。`cases=30`、`recovery_probes=16`、marker、closeout 11/11、32-command 形态、8 路径候选集与 helper 计数（15 组 / 17 个）不变；row 30 重跑 exit 0。详见 §17.6。
 
 本计划是 **M5 之后的恢复补证阶段**，不是 design §10 的新 M 阶段，也不是 M4 的重做。M4 已由 W4c 在 C.11 下声明完成；W7 只补 W4c 执行记录自己列出的三个未覆盖项：**每个 crash window、mixed-batch replay with multiple pending tools、real process restart**；其中“每个 crash window”按 §6 落成 K0–K5+K3.5 的枚举，而不是无限全集。W7 不改变 M4/M5 的完成状态，不新增 closeout 条目，不重开 design 正文。
 
@@ -110,18 +114,18 @@ W7 不重写 `fs_read.py` / `fs_tools.js`，不重写 registry、dispatcher、wo
    ```
    `cases` 计数约定：现有 14 个 + 新 R01–R16 各算 1 个 = 30。W4c 的 14 由子场景构成（A1+B1+C1+D3+E1+F3+G1+H1+L2）；W7 改用**函数级计数**（一个 `rNN_*` 函数算 1），R11 的四个 artifact 形状、R13 的 restart 阶段、R14 的 success/known-error/crash 阶段、R15 的三个 pending、R16 的 settlement 补写都算同一 case 的子探针。两种口径不同，§9/§17 必须写明。若实现时 inventory 不同，先改本计划再跑 sweep，不得事后改 marker 迁就结果。
 3. **crash 窗口矩阵覆盖 K0–K5 + K3.5**（定义见 §6）：K0 至少 R01/R07/R08，K1 至少 R02，K2 至少 R03，K3 至少 R04/R05，K3.5 至少 R16，K4 至少 R06，K5 至少 R04。
-4. **R03 是真实进程崩溃，不是同进程异常。** host 子进程必须由 `SIGKILL` 终止（`WIFSIGNALED` 且 `WTERMSIG==SIGKILL`）；插件已 spawn（spawn log 有 `invoke` 行）；恢复后 `invoke` 行数仍为 1。stub `timeout_ms=1000`、child `default_lease_ms=6500`，满足 `remaining >= timeout_ms + 5000` 的 spawn 门槛。
-5. **R05/R14/R15/R16 的恢复由独立 OS 进程完成。** `w7_recover.py` 退出 0，输出 `[w7-recover] reconciled=N settlements=M`；`settlements` 是**本次进程的增量**（`after - before`），不是 journal 总数。R05/R14 要求 `reconciled>=1`，R15 要求 `reconciled=3` 且三个 tool 的 `db.settle` 都在 fresh process 成功，R16 允许 `reconciled=0` 但必须 `settlements=1`。恢复进程不构造 registry、不 spawn；辅助证据是 journal 只新增 settlement、spawn 计数不变。`reconciled=3` 的依据是 `_reconcile` 遍历 `pending_settlements()` 的三个 effect，`status="claimed"`、journal claim token 与 DB `attempt_no/fence/claim_owner` 相等、`db.settle` 返回非 error，每成功一个 `settled += 1`（`worker.py:768-789`）。
+4. **R03 是真实进程崩溃，不是同进程异常。** host 子进程必须由 `SIGKILL` 终止（`WIFSIGNALED` 且 `WTERMSIG==SIGKILL`）；插件已 spawn（spawn log 有 `invoke` 行）；恢复后 `invoke` 行数仍为 1。stub `timeout_ms=1000`、child `default_lease_ms=8000`，满足 `remaining >= timeout_ms + 5000` 的 spawn 门槛，并留 2s 余量。
+5. **R05/R14/R15/R16 的恢复由独立 OS 进程完成。** `w7_recover.py` 退出 0，输出 `[w7-recover] reconciled=N settlements=M`；`settlements` 是**本次进程的增量**（`after - before`），不是 journal 总数。R05/R14 要求 `reconciled>=1`，R15 要求 `reconciled=3` 且三个 tool 的 `db.settle` 都在 fresh process 成功，R16 允许 `reconciled=0` 但必须 `settlements=1`。恢复进程不构造 registry、不注册 tool handler、不 spawn；辅助证据是 journal 只新增 settlement、spawn 计数不变。`reconciled=3` 的依据是 `_reconcile` 遍历 `pending_settlements()` 的三个 effect，`status="claimed"`、journal claim token 与 DB `attempt_no/fence/claim_owner` 相等、`db.settle` 返回非 error，每成功一个 `settled += 1`（`worker.py:768-789`）。
 6. **R10/R15 的 mixed batch 只有一个 continuation；R09 的 unknown 不建 continuation。** R09 三个 tool 全部产生 receipt（read unknown，list/search success），run `blocked_unknown`，model call 恰 1 次，model effect 仍 1、continuation 0；**R09 的 read 必须最后执行**：tool effect 按 `md5(model_id:tool_call:ordinal)` 的 UUID 升序执行，测试把 read 放在 UUID 最大的 ordinal（`order = tool_order(model_id, 3)`，`read_ord = order[-1]`；3 个 UUID 互不相同且全序，最大者一定存在，不需要 skip 分支）。若 read 先执行，run 立即 `blocked_unknown`，list/search 仍会被同一 worker claim 并 spawn，但 `db.settle` 返回 `blocked_unknown`，两个 effect 停留 `claimed` 且无 settlement；R09 不采用这个顺序，但把它写成显式已知分支（§8 R09）。R10 三个 tool 全部 success，model effect 恰 2 个（initial + continuation），continuation 恰 1 个；崩溃时只有 1 个 pending settlement、2 个 ready，崩溃目标是**执行顺序第一**（effect UUID 最小）的 tool。R15 三个 tool 的 `db.settle` 被注入 error，三个都是 pending；fresh process 一次 reconcile=3，随后 continuation 恰 1 个、无 tool 重 spawn。
 7. **R11/R12 的 tamper/workspace 失败全部零 spawn。** 每个失败形状都有 `ZeroSpawn` sentinel 与 spawn log 双证；恢复原始 artifact/workspace 后下一次调用成功。
 8. **R13 的 timeout 进程组无 live 残留。** 插件 pid 与孙进程 pid 在 timeout 后都不处于 live 状态；`invoke` spawn 恰 1 次；effect `unknown/timeout`；run `blocked_unknown`；重启不重投。
-9. **R14 的 v1 字节与恢复都不变。** v1 success/known-error 的 provider request 与 tool message 逐字节等于 B0；v1 known-error 在 `dispatch_finished` 后崩溃，fresh process reconcile 只补一次 settlement；v1 进程计数用 `CountingSpawn(artifact=v1.entry.artifact_path)`（prepare + success invoke + known-error invoke = 3），恢复前后不变；v2 同 scope 的 read 不受影响。v1 的 tool message 必须按 `parent_effect_id == v1_model_id` 过滤，不能取 journal 里第一个 `tool_call`（union 中 v2 read 会先写一条）。
+9. **R14 的 v1 字节与恢复都不变。** v1 success/known-error 的 provider request 与 tool message 逐字节等于 B0；v1 known-error 在 `dispatch_finished` 后崩溃，fresh process reconcile 只补一次 settlement；v1 进程计数用 `CountingSpawn(artifact=v1.entry.artifact_path)`（prepare + success invoke + known-error invoke = 3），只覆盖父进程阶段（崩溃前与 reopen 后的续跑），恢复前后不变；fresh recovery 子进程不 spawn 由结构保证（无 registry/handler、`_reconcile` 不 dispatch），不是被 `CountingSpawn` 测到；v2 同 scope 的 read 不受影响。v1 的 tool message 必须按 `parent_effect_id == v1_model_id` 过滤，不能取 journal 里第一个 `tool_call`（union 中 v2 read 会先写一条）。
 10. **不变量全部成立。** 所有 tool effect 的 `replay_policy` 都是 `no_replay`；DB recovery 的 action 是 `settle_unknown`，reason 是 `lease_expired`，绝不出现 `reset_ready` 的 tool_call；正常 settle 不要求 effect-level event，DB recovery 时 `effect_recovered_unknown` 恰 1、其余 tool effect 恰 0（期望集合由 `assert_w7_invariants(..., recovered_unknown=...)` 显式给出：R02/R03 为 `{target}`（`uuid.UUID`，helper 入口归一为规范字符串），其余 case 为空）；有 `dispatch_finished` 的 effect 的 journal `settlement_committed` 恰 1；K3.5 的 settlement 补写不改变 effect row；第二次 `_reconcile` 返回 0（K3.5 第一次也可能返回 0，用 settlements 判定）。
 11. **32 条串行命令全部 exit 0。** 第 1–31 条有命令专属 `[passed]` 末行，第 32 条 `git diff --exit-code c8c4bd0 -- v24/sql` 输出为空；无 exit 2 / `[SKIP]`；closeout 仍 **11/11**。第 30 条的 marker 使用上面的 30/16 版本。
 12. **七项 scope audit 在文档落盘后、staging 前重跑全过。** 候选集只含 §12 的 8 个路径；`v24/host`、`v24/sql`、`v24/s13/vectors`、design、冻结测试零 diff。
 13. **文档一致。** README、matrix、ledger、execution record、本计划 Result 对 W7 的描述一致；不得把 W7 写成 M4 重开、M6 完成或 closeout 12/12。
 14. **按路径提交并非 force push。** 提交信息 `v24: close out v2 lifecycle and recovery evidence`；不使用 `git add -A`/`git add .`/`--no-verify`/force。
-15. **运行时间可控。** 先测现有 14 case 的基线（本次实测 12.5s）；加入 16 个探针后 `test_lifecycle.py` 单次目标 ~48s、硬上限 90s。R03 约 6.5s lease 等待、R02 约 3s，均为轮询；其余 case 的预算见 §10.5。不得用长 sleep 换稳定，不得为省时间删 case。
+15. **运行时间可控。** 先测现有 14 case 的基线（本次实测 12.5s）；加入 16 个探针后 `test_lifecycle.py` 单次目标 49.0s（§10.5）、硬上限 90s。R03 约 8s lease 等待、R02 约 3s，均为轮询；其余 case 的预算见 §10.5。不得用长 sleep 换稳定，不得为省时间删 case。
 
 ---
 
@@ -222,7 +226,7 @@ model batch
 
 **Oracle 评审后的修订**（这些探针不作为 W7 pass 证据）：
 
-- R03 原计划的 500ms lease 不满足 spawn 门槛（read timeout=5000 → 需 ≥10000ms），改为 stub `timeout_ms=1000`、child `default_lease_ms=6500`。
+- R03 原计划的 500ms lease 不满足 spawn 门槛（read timeout=5000 → 需 ≥10000ms），改为 stub `timeout_ms=1000`、child `default_lease_ms=6500`（v7 改为 8000ms，§17.5 F10）。
 - R14 原顺序（先跑完 known-error 再在 finish 后崩溃）拿不到 B0 request2；改为“success 完整跑 → known-error 在 `dispatch_finished` 后崩溃 → fresh reconcile → 父进程续跑出 request2”。
 - R15/R16 是评审新增窗口；v2 计划编写时未做临时探针，v3 只做了 in-process `_reconcile` 复核，fresh-process `w7_recover.py` 仍需实现后实测。
 - R02 lease 从 1000ms 提到 3000ms，避免第一次 restart 前已经过期。
@@ -249,7 +253,7 @@ M4 已由 C.11 与 W4c 声明完成。W7 只补 W4c 记录中列出的三个缺�
 3. 不增加第 33 条串行命令，32-command sweep 的形态、closeout 行号（14–24）与 M5 记录保持可比。
 4. 现有 helper（`two_install_harness`、`run_stub`、`batch_reply`、`tool_effects`）可直接复用。
 
-代价是文件会从 645 行涨到约 1,300–1,600 行；用清晰的小节（`# --- W7 R01 ...`）控制可读性。以加法为主：原有 case/helper 的行为与断言不变；允许 `stub_spec` 增加可选 `realm` 参数、`main()` 顺序与 marker 变化。
+代价是文件会从 645 行涨到约 1,300–1,600 行；用清晰的小节（`# --- W7 R01 ...`）控制可读性。以加法为主：原有 case/helper 的行为与断言不变；允许 `stub_spec` 增加可选 `realm` 参数、`main()` 调用清单与 marker 变化。
 
 ### D3 — cut-point 注入用测试侧 journal wrapper，不加生产 crash hook
 
@@ -289,12 +293,12 @@ K3.5 另用 **pre-append** 的 `inject_before(harness, "settlement_committed", e
 
 R03 的步骤：
 
-1. 父 gate 进程建好 harness，admit/prepare/activate，`start_run` 得到 `run_id`/`model_id`；此时**尚未 claim** 任何 tool effect，父进程不得先跑 worker，否则 6500ms lease 不在子进程生效。
+1. 父 gate 进程建好 harness，admit/prepare/activate，`start_run` 得到 `run_id`/`model_id`；此时**尚未 claim** 任何 tool effect，父进程不得先跑 worker，否则 8000ms lease 不在子进程生效。
 2. 父进程按 `journal → db → owner` 关闭连接（与 `PluginHarness.close()` 的 `424-429` 同序），再 `os.fork()`。必须先关 journal：`HostJournal.open` 在 fd 上做 `flock(LOCK_EX|LOCK_NB)`（`journal.py:121-127`）；fork 后父子共享同一个 open file description，子进程再用同一路径 `HostJournal.open` 会看到锁被占（`JournalLocked`）。同时 psycopg2 连接不能跨 fork 共享 socket，父进程必须先把 `db`/`owner` 关掉。
 3. fork 前调用 `assert_fork_safe(harness)`：`journal._fd == -1`；`db._closed is True` 且 `db.control.closed == 1`、`db.service.closed == 1`；`owner.closed == 1`；`all(conn.closed == 1 for conn in fixture._connections)`；`fixture._lock_conn` 仍非空且 `closed == 0`。除 registry/scope/run_id/DSN 字符串与这个测试库锁外，父进程不得持有任何可变连接。`fixture._lock_conn` 必须保留：`setup_db.cleanup()` 依赖它释放测试库锁（`setup_db.py:461-483`）；子进程继承 fd 但不使用它，SIGKILL 只关子进程副本，父进程的锁仍在。
-4. 子进程分支**整体**包在 `try:` 里：`except BaseException: os._exit(1)`，正常结束也 `os._exit(0)`。`os._exit` 不展开栈、不跑 `finally`/`__exit__`/`atexit`，因此子进程不会替父进程关闭继承来的上下文管理器或连接。分支内：用继承的 `harness.fixture.role_dsn("admin"/"service")` 重开 `HostDB`，用 `PluginDispatcher(child_db, harness.registry)` 新建 dispatcher，重开 `HostJournal`，`child_adapter, _transport = model_adapter(script)`（`model_adapter` 返回 `(adapter, transport)` 元组，不能直接当 adapter 传），再新建 `HostWorker(default_lease_ms=6500, adapter=child_adapter)`，再 `run_until_idle`。claim 必须由子进程执行，`default_lease_ms=6500` 才会写进 tool effect 的 `lease_until`；`_lease_for` 对 tool/resource 返回 `default_lease_ms`，对 model 返回 adapter lease（`worker.py:919-922`）。插件的 `kill_parent` scenario 在 append spawn log 后 `os.kill(os.getppid(), SIGKILL)`；被杀的是 host child（plugin 的父进程），不是 gate 父进程。
+4. 子进程分支**整体**包在 `try:` 里：`except BaseException: os._exit(1)`，正常结束也 `os._exit(0)`。`os._exit` 不展开栈、不跑 `finally`/`__exit__`/`atexit`，因此子进程不会替父进程关闭继承来的上下文管理器或连接。分支内：用继承的 `harness.fixture.role_dsn("admin"/"service")` 重开 `HostDB`，用 `PluginDispatcher(child_db, harness.registry)` 新建 dispatcher，重开 `HostJournal`，`child_adapter, _transport = model_adapter(script)`（`model_adapter` 返回 `(adapter, transport)` 元组，不能直接当 adapter 传），再新建 `HostWorker(default_lease_ms=8000, adapter=child_adapter)`，再 `run_until_idle`。claim 必须由子进程执行，`default_lease_ms=8000` 才会写进 tool effect 的 `lease_until`；`_lease_for` 对 tool/resource 返回 `default_lease_ms`，对 model 返回 adapter lease（`worker.py:919-922`）。插件的 `kill_parent` scenario 在 append spawn log 后 `os.kill(os.getppid(), SIGKILL)`；被杀的是 host child（plugin 的父进程），不是 gate 父进程。
 5. 父进程 `waitpid(child_pid, WNOHANG)` 轮询（30s deadline），断言 `WIFSIGNALED` 且 `WTERMSIG==SIGKILL`。用 `reaped` 标志记录该 pid 是否已被回收：同一 pid 只允许成功 `waitpid` 一次，后续清理先看 `reaped`，避免第二次 `waitpid` 的 `ECHILD` 掩盖原始失败。超时或断言失败时用 **`os.kill(child_pid, SIGKILL)`**——**不能** `killpg(child_pid)`：`fork()` 出的 child 不是进程组 leader，它的 pgid 仍是父测试进程的 pgid，`killpg(child_pid)` 要么 `ESRCH` 静默失败（child 继续存活），要么误杀 pgid 恰好等于该 pid 的无关进程组——然后再 `waitpid` 收尸并置 `reaped=True`。插件仍按 spawn log 的 pid `killpg`（插件由 `process_io` 以 `start_new_session=True` 启动，pid == pgid），再用只观察的 `assert_no_live`。
-6. 父进程重开 DB/journal（`reopen_harness`），轮询 `host_effect(effect_id)["lease_until"]` 到 `remaining <= 0`（上限 lease+2s），再 `h.run(None)`；断言 effect unknown、run blocked、`invoke` 行仍 1、DB `effect_recovered_unknown` 恰 1。
+6. 父进程重开 DB/journal（`reopen_harness`），轮询 `host_effect(effect_id)["lease_until"]` 到 `remaining <= 0`（上限 lease+2s），再 `h.run(None)`；到期仍 `remaining > 0` 即 FAIL 并记录实际值。断言 effect unknown、run blocked、`invoke` 行仍 1、DB `effect_recovered_unknown` 恰 1。
 
 选择 fork 而不是独立 driver + spec JSON：registry/scope/run_id 已经在内存里，fork 后子进程直接继承，避免序列化 `ApprovedPlugin` 与重建 fixture；DB 连接在 fork 前关闭，子进程全部重开，不共享 psycopg2 socket。
 
@@ -303,11 +307,11 @@ R03 的步骤：
 测试在 claim 前设置 `worker.default_lease_ms`。`_lease_for` 只对 tool/resource 用它；model claim 用 `DeepSeekAdapter.lease_ms(adapter.timeout_s)`（`worker.py:919-922`），所以 R02/R03 的 model effect 不会因短 lease 被提前回收：
 
 - **R02 用 3000ms**，保证第一次 restart 时 lease 仍 live，随后过期；R02 工具不 spawn，不受 spawn 门槛影响。
-- **R03 用 6500ms**。这里必须先过 `plugins.py:173` 的 spawn 门槛：`remaining >= tool.timeout_ms + 5000`。stub `timeout_ms=1000` → 需要 ≥6000ms；6500ms 只留 **500ms 余量**，是本计划里最紧的一处时序。子进程 claim 后立即 spawn，中间不插入其它 IO；若 CI 抖动导致 `remaining < 6000`，测试 **FAIL** 并把实际 `remaining` 写进失败信息，**不得**把 lease 调到 30s 规避——那只是把余量换成墙钟，同时掩盖门槛本身。
+- **R03 用 8000ms**。这里必须先过 `plugins.py:173` 的 spawn 门槛：`remaining >= tool.timeout_ms + 5000`。stub `timeout_ms=1000` → 需要 ≥6000ms；8000ms 留 **2000ms 余量**（v6 gate 实测 spawn 时 `lease_remaining_at_spawn=6473`，即 claim→spawn 只花约 27ms；v7 仍把余量从 473ms 扩到约 2s，避免 CI 抖动）。子进程 claim 后立即 spawn，中间不插入其它 IO；若 `remaining < 6000`，`plugins.py:173` 直接返回 `lease_insufficient`，spawn 不会发生，测试的失败表现是 **child 未被 SIGKILL**（`WIFSIGNALED` 或 `invoke_pids == 1` 断言失败），child 不回传门槛检查值；断言消息带 `child_lease_ms` 与 `timeout_ms + 5000` 作为上下文，**不得**把 lease 调到 30s 规避——那只是把余量换成墙钟，同时掩盖门槛本身。
 
-崩溃后轮询 `host_effect(effect_id)["lease_until"]` 的 `remaining_lease_ms`，上限为 **lease + 2s**（R02 约 5s、R03 约 8.5s），每 50ms 检查一次，再让 recovery 看到 `remaining <= 0`。R02 的 effect_id 从 journal 唯一的 tool `dispatch_started` 取，R03 的 effect_id 从 child 写入的 `dispatch_started` 取；不直接 `UPDATE v24.effects SET lease_until=...`，也不改 host 时钟。
+崩溃后轮询 `host_effect(effect_id)["lease_until"]` 的 `remaining_lease_ms`，上限为 **lease + 2s**（R02 约 5s、R03 约 10s），每 50ms 检查一次，再让 recovery 看到 `remaining <= 0`。**轮询到期仍 `remaining > 0` 即 FAIL**，失败信息必须带实际 `remaining_lease_ms` 与 lease 值；不得把超时当成“已过期”继续跑，也不得用 SKIP 或加长 sleep 掩盖。R02 的 effect_id 从 journal 唯一的 tool `dispatch_started` 取，R03 的 effect_id 从 child 写入的 `dispatch_started` 取；不直接 `UPDATE v24.effects SET lease_until=...`，也不改 host 时钟。
 
-代价是 R02 约 3s、R03 约 6.5s；可接受。若 CI 抖动导致窗口不够，只能延长轮询到 lease+2s；**不得**把 lease 调到 30s 后 sleep，也不得把 R03 标 SKIP。
+代价是 R02 约 3s、R03 约 8s；可接受。若 CI 抖动导致窗口不够，只能把轮询上限保持在 lease+2s 并在到期时 FAIL（记录实际剩余），**不得**把 lease 调到 30s 后 sleep，也不得把 R03 标 SKIP。
 
 ### D6 — 磁盘 tamper 测真实 artifact path；registry tamper 留给 G12-F
 
@@ -377,7 +381,7 @@ K1/K2 的 journal 只有 `dispatch_started`，没有 `dispatch_finished`；DB re
 
 ### D12 — 不引入长时间 sleep / 墙钟 gate
 
-- 唯一固定等待是 lease 过期：R02 约 3s、R03 约 6.5s，轮询上限 lease+2s；其余 case 无固定 sleep。§10.5 给出每 case 预算表。
+- 唯一固定等待是 lease 过期：R02 约 3s、R03 约 8s，轮询上限 lease+2s，到期仍 >0 即 FAIL；其余 case 无固定 sleep。§10.5 给出每 case 预算表。
 - timeout 用 300ms deadline（R13 用 1000ms 给孙进程启动留余量），不 sleep 12s。
 - 不断言精确 wall-clock；只断言 bounded（例如 timeout case < 5s）。
 - 不把 12 秒 search budget 拉进 W7。
@@ -425,13 +429,13 @@ K1/K2 的 journal 只有 `dispatch_started`，没有 `dispatch_finished`；DB re
 10. `def assert_single_receipt(harness, effect_id, *, journal_finish, db_recovery=False, snapshot=None)`：**不**用“effect row 恰 1 行”（主键同义反复）。断言 effect 是 terminal（`succeeded`/`failed`/`unknown`/`cancelled`）、`settled_at` 非空；若给 `snapshot`，逐项比 `attempt_no`/`fence`/`settled_at`。正常 settle 不要求 effect-level event；`db_recovery=True` 时 `v24.events` 的 `effect_recovered_unknown` 恰 1，payload `action="settle_unknown"`、`reason="lease_expired"`（与 #15 的 I2 是同一判定，此处只针对单个 effect）。`journal_finish=True` 时 `dispatch_finished` 恰 1 且 `settlement_count(effect_id)==1`；第二次 `_reconcile` 返回 0（K3.5 的第一次也可能 0，用 settlement 增量）。
 11. `def capture_effect(harness, effect_id) -> dict`：保存 status/outcome/settled_at/attempt_no/fence，用于 K4/K3.5 不变断言。
 12. `def run_recover_process(harness, scope) -> tuple[int, int]`：先 `close_connections(harness)`（journal 释放 flock），再 `subprocess.run([sys.executable, str(HERE / "w7_recover.py"), str(harness.workdir / "plugin-journal.jsonl"), str(scope)], env={**os.environ, "V24_W7_ADMIN_DSN": ... , "V24_W7_SERVICE_DSN": ...}, timeout=30)`；解析 `[w7-recover] reconciled=N settlements=M`，断言 exit 0；返回 `(N, M)` 由 case 判定期望。**调用者不得再重复 `close_connections`**：本 helper 独占 journal→db→owner 的关闭责任（重复 close 虽幂等，但会把关闭点分散到四个 case）；R05/R14/R15/R16 的 recovery action 只恢复自己的 patch/快照，然后直接调用本 helper。
-13. `def assert_no_live(pid, timeout_s=2.0)`：**只观察，不发任何信号**。用 `ps -o stat= -p <pid>` 轮询，空或 `Z` 视为已退出；超时即 FAIL。函数内不得 `kill`/`killpg`/`waitpid`：若它在 `finally` 里清理，R13 先检查插件 pid 时会顺带杀死同组孙进程，随后检查孙进程必然通过——这是假阳性。清理只由 R13 的 case 最外层 `finally` 做；R03 的测试侧 `killpg` 在 `assert_no_live` 之前（见 §9 I6）。
+13. `def assert_no_live(pid, timeout_s=2.0)`：**只观察，不发任何信号**。用 `ps -o stat= -p <pid>` 轮询，空或以 `Z` 开头（Linux 的 `Z`/`Z+`、macOS 的 `Z`）视为已退出；超时即 FAIL。**不得**改用 `os.kill(pid, 0)`：zombie 仍占有 pid，`kill(pid, 0)` 会成功返回，正好把 §13 R6 允许的“已 exit、未 reap”判成 live；而且它会对无关进程发信号前的权限检查引入 `EPERM` 分支。函数内不得 `kill`/`killpg`/`waitpid`：若它在 `finally` 里清理，R13 先检查插件 pid 时会顺带杀死同组孙进程，随后检查孙进程必然通过——这是假阳性。清理只由 R13 的 case 最外层 `finally` 做；R03 的测试侧 `killpg` 在 `assert_no_live` 之前（见 §9 I6）。
 14. `def settlement_count(harness, effect_id=None) -> int`：统计 journal 中 `settlement_committed` 的数量，可按 effect 过滤；R15/R16 用它做增量断言。
 15. `def assert_w7_invariants(harness, *, recovered_unknown=frozenset())`：§9 的 aggregate 断言（I1 `no_replay`、I2 DB receipt、I3 journal receipt、I4 spawn 双证、I5 无重复 spawn/rerender 的聚合部分），**scope 级、不带 `run_id`**。effect 枚举：先 `harness.db.host_runs(harness.scope)` 逐页取 scope 内全部 run（`host_runs` 不按状态过滤，`49_host_reads.sql:76-127`），再对每个 run 调 `harness.db.host_run_effects(run_id)` 取其全部 effect（该读**不**按状态过滤，只含 `model_call`/`tool_call`，`49_host_reads.sql:264-266`），筛 `kind == "tool_call"`；两级读都按 `has_more`/`next_cursor` 翻页，不写死 64（实际每个 case ≤ 5 run、≤ 3 tool effect）。`recovered_unknown` 是期望出现 `effect_recovered_unknown` 的 effect_id 集合（元素可以是 `uuid.UUID` 或字符串），默认空。helper 入口先 `expected = {str(item) for item in recovered_unknown}`；枚举得到的每个 effect 用 `key = str(effect["effect_id"])`；成员判断一律用**规范字符串**（`key in expected`），**不能**写 `effect_id in recovered_unknown`——R02/R03 传 `{target}` 时 `target` 是 `uuid.UUID`，而枚举出的 `effect_id` 是字符串，直接比较恒为 False。对每个 tool effect，若 `key in expected`，断言 `v24.events`（`entity_type='effect'`、`entity_id=<effect_id>`、`event_kind='effect_recovered_unknown'`）恰 1 条且 payload `action="settle_unknown"`、`reason="lease_expired"`；否则断言 0 条（run 级的 `tool_call_unknown`/`run_blocked_unknown` 不计入）。I4 的 install 枚举同样在 helper 内：用 `harness.db.host_scope_installs(harness.scope, None, 64)` 按 `has_more`/`next_cursor` 翻页取全部 install（`db.py:159-161`；`next_cursor` 形如 `{"install_id": ...}`，下一轮 `after = next_cursor["install_id"]`），再逐个 `install_spawn_log(harness, install_id)` 取 log；`install_spawn_log` 返回 `None` 的 install（R14 的 v1）跳过日志自洽部分，由 case 内 `CountingSpawn` 负责。helper 另外用单参 `harness.db.host_effects(harness.scope)` 断言 scope 内没有残留 `tool_call`（即没有 `ready`/`claimed` 的 tool effect）；**不能**只靠它枚举“全部 effect”：它只返回 `ready`/`claimed`（`49_host_reads.sql:184`），case 结束时已 settle 的 effect 全部不在结果里，枚举会退化为空集（见 §17.3 注）。每个 `rNN_*` 结束前调用一次，失败信息带 `scope`/`effect_id`；run 级断言（continuation 计数、model effect 计数）留在 case 内，不进 helper。
 
 新增 case 函数：`r01_prepared_resume` … `r16_settlement_backfill`。每个函数只做一件事，失败信息带 effect_id/run_id/spawn_ops。
 
-`main()` 的顺序：现有 G12-A…H → G12-L → R01…R16 → marker。R03 的 fork 放在 R01–R02 之后、R04 之前或最后都行，但必须保证它不会污染前一个 case 的 journal/连接；每个 case 用独立 `harness`/`base` 目录。`stub_spec` 增加 `realm=None` 参数并同步 scenario enum（`grandchild`/`kill_parent`），R09 用同一 realm 建 stub 与 Node。`main()` 必须按 `r01`…`r16` 顺序调用；fork 子进程不得执行父进程的 atexit。
+`main()` 的实际调用清单：G12-A…H → G12-L → `r01`, `r02`, `r07`, `r08`, `r05`, `r06`, `r15`, `r16`, `r03`, `r04`, `r09`, `r10`, `r11`, `r12`, `r13`, `r14` → marker。这个顺序只是实现选择，**不承载语义**：每个 case 使用独立 `harness`/`base` 目录、自己建 run 与连接，没有跨 case 的状态依赖；把 R03 的 fork 放在任意位置都行，只要它不污染前一个 case 的 journal/连接。`stub_spec` 增加 `realm=None` 参数并同步 scenario enum（`grandchild`/`kill_parent`），R09 用同一 realm 建 stub 与 Node。fork 子进程不得执行父进程的 atexit。
 
 ### 7.2 `v24/s13/w4_stub_plugin.py`（改，test-only）
 
@@ -451,7 +455,7 @@ K1/K2 的 journal 只有 `dispatch_started`，没有 `dispatch_finished`；DB re
 
 ### 7.3 `v24/s13/w7_recover.py`（新，test-only）
 
-职责：一个独立 OS 进程，只做 journal→DB settlement，不构造 registry、不 spawn。它打开真实 `HostDB`（不是父进程的 patch 对象），`_reconcile` 的 handler 是 `os._exit(97)`，一旦误调 handler 就非零退出。
+职责：一个独立 OS 进程，只做 journal→DB settlement，不构造 registry、不 spawn。它打开真实 `HostDB`（不是父进程的 patch 对象），调用 `_reconcile`，不注册 tool/resource handler。`_reconcile` 只读写 journal/DB，本身**从不调用** handler（`worker.py:754-798`）；因此“恢复进程没有执行工具”不能靠一个永不触发的 guard 证明，而由父测试的 spawn log 不变 + journal 只新增 settlement 证明。
 
 ```python
 """W7 fresh-process recovery: reconcile journal outcomes, never call a tool."""
@@ -482,8 +486,10 @@ def main() -> int:
     try:
         before = _settlements(journal)
         db = HostDB(admin, service)
-        # _reconcile never calls a handler; if it ever does, exit loudly.
-        worker = HostWorker(db, journal, tool_handler=lambda effect: os._exit(97))
+        # _reconcile only reads journal/DB and never invokes a handler; a
+        # handler guard here would be dead code, so the evidence stays on the
+        # parent side (unchanged spawn log + one added settlement).
+        worker = HostWorker(db, journal)
         reconciled = worker._reconcile(scope)
         settlements = _settlements(journal) - before
         print(f"[w7-recover] reconciled={reconciled} settlements={settlements}")
@@ -498,7 +504,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-父测试通过 subprocess 启动：DSN 走 `V24_W7_ADMIN_DSN`/`V24_W7_SERVICE_DSN` 环境变量（不放在 argv，避免进程列表/日志泄漏），journal/scope 走 argv；父进程必须先 `journal.close()` 释放 flock。子进程退出 0 且 marker 匹配才算通过；子进程若调用 handler 会以 97 退出。
+父测试通过 subprocess 启动：DSN 走 `V24_W7_ADMIN_DSN`/`V24_W7_SERVICE_DSN` 环境变量（不放在 argv，避免进程列表/日志泄漏），journal/scope 走 argv；父进程必须先 `journal.close()` 释放 flock。子进程退出 0 且 marker 匹配才算通过。`HostWorker` 未注册 handler；`_reconcile` 不调用 handler 是代码事实（`worker.py:754-798`），不作为本脚本的 guard 证据；恢复进程不 spawn 由父测试的 spawn log 行数不变与 journal 只新增 settlement 证明。
 
 输出同时给出 `reconciled` 与 `settlements`：K3 类窗口看 `reconciled`，K3.5 看 `settlements`；R16 的 `reconciled=0` 不是失败。`HostDB` 构造失败时 `journal` 仍由 `finally` 关闭，避免下一个进程锁不上。`settlements` 是本次进程的 `after - before` 增量，不是 journal 累计条数。
 
@@ -567,7 +573,7 @@ W7 不修改：
 3. `restore, original = install_crash_after_started(harness.worker)`；用 `with ZeroSpawn() as zero:` 包住这次 `harness.run`：`try: harness.run([batch_reply([("call_read", "read", {"path": "tail"})])], max_rounds=20) except HostCrash: pass`；`finally: restore()`（恢复先于后续断言）；断言 `zero.calls == []`（tool 在 handler 前崩，model adapter 不 spawn）、`harness.worker.crash_after is None`、`harness.worker._execute_tool is original`（用 helper 返回的对象；restore 必须重新赋值 bound method，见 §7.1 #9）。
 4. 从 journal 唯一的 tool `dispatch_started` 取 `effect_id`（不要用 `tool_effects`，它只扫 `dispatch_finished`）；断言 `str(effect_id) == str(target)`；断言 effect `claimed`、journal 无 `dispatch_finished`、`S(install).get("invoke", 0) == 0`。
 5. 立即 `stats = harness.run(None, max_rounds=2)`；断言 `stats.skipped >= 1`、effect 仍 `claimed`、`_orphan_state` 的 live 分支生效。
-6. 轮询 `host_effect(effect_id)["lease_until"]` 的 `remaining_lease_ms` 到 `<= 0`（上限 lease+2s，每 50ms）。
+6. 轮询 `host_effect(effect_id)["lease_until"]` 的 `remaining_lease_ms` 到 `<= 0`（上限 lease+2s，每 50ms）；到期仍 `remaining > 0` 即 FAIL，失败信息带实际 `remaining_lease_ms` 与 lease 值。
 7. `harness.run(None, max_rounds=4)`；断言 effect `unknown`、run `blocked_unknown`、DB `effect_recovered_unknown` 恰 1（payload `action="settle_unknown"`、`reason="lease_expired"`）、journal 仍停在 `dispatch_started`、`S(install)["invoke"] == 0`。
 8. `third = harness.run(None, max_rounds=2)`；断言无新 journal 记录、无新 settlement、`third.recovered == 0`。
 9. `E(effect_id, journal_finish=False, db_recovery=True)`。
@@ -582,18 +588,18 @@ W7 不修改：
 
 1. `close_connections(harness)`（journal → db → owner）；`assert_fork_safe(harness)`。`fixture._lock_conn` 必须仍 open；`fixture._connections` 全部 closed；`db._closed`、`journal._fd == -1`、`owner.closed == 1`。除 registry/scope/run_id/DSN 字符串与测试库锁外，父进程不得持有可变连接。
 2. `pid = os.fork()`。
-3. 子进程：整个分支 `try: ... except BaseException: os._exit(1)`，正常结束 `os._exit(0)`（`os._exit` 不展开栈，不跑继承的 `finally`/`__exit__`/`atexit`/连接清理）。分支内：用 `fixture.role_dsn("admin"/"service")` 新建 `HostDB`；`HostJournal.open(workdir/"plugin-journal.jsonl")`；`PluginDispatcher(child_db, harness.registry)`；`child_adapter, _child_transport = model_adapter([batch])`；`HostWorker(child_db, child_journal, tool_handler=..., resource_handler=..., default_lease_ms=6500, adapter=child_adapter)`；`run_until_idle(harness.scope, max_rounds=4)`。claim 必须由子进程执行，6500ms 才会写进 tool effect 的 `lease_until`。
+3. 子进程：整个分支 `try: ... except BaseException: os._exit(1)`，正常结束 `os._exit(0)`（`os._exit` 不展开栈，不跑继承的 `finally`/`__exit__`/`atexit`/连接清理）。分支内：用 `fixture.role_dsn("admin"/"service")` 新建 `HostDB`；`HostJournal.open(workdir/"plugin-journal.jsonl")`；`PluginDispatcher(child_db, harness.registry)`；`child_adapter, _child_transport = model_adapter([batch])`；`HostWorker(child_db, child_journal, tool_handler=..., resource_handler=..., default_lease_ms=8000, adapter=child_adapter)`；`run_until_idle(harness.scope, max_rounds=4)`。claim 必须由子进程执行，8000ms 才会写进 tool effect 的 `lease_until`。
 4. 插件 `kill_parent` 在 append spawn log 后杀 `os.getppid()`（host child），父 gate 进程不受影响。
 5. 父进程 `waitpid(child_pid, WNOHANG)` 轮询 30s，用 `reaped` 标志记录是否已回收（同一 pid 只允许成功 `waitpid` 一次）；断言 `WIFSIGNALED` 且 `WTERMSIG == SIGKILL`。用 spawn log 的 plugin pid `killpg(SIGKILL)`，再 `assert_no_live(plugin_pid)`。整个 fork/wait 包在 `try/finally` 里：超时或断言失败时对 **child pid** 用 `os.kill(child_pid, SIGKILL)`（不能 `killpg(child_pid)`——fork 出的 child 不是进程组 leader，pgid 仍属于父测试进程），对**插件**用 `killpg(plugin_pid, SIGKILL)`；然后 `waitpid` 收尸并置 `reaped`，不留下 live 进程，也不因重复 `waitpid` 的 `ECHILD` 覆盖原始失败。这里先杀组再 `assert_no_live`，是**测试侧清理**：它只证明测试侧清理干净，不证明 host 会自动清理插件/孙进程；host 自动组杀的唯一证据是 R13 的 timeout 路径（`process_io._kill_group`）。
-6. `reopen_harness(harness)`；轮询 `target` 的 `lease_until` 到 `<= 0`（上限 lease+2s）；`harness.run(None, max_rounds=4)`。
+6. `reopen_harness(harness)`；轮询 `target` 的 `lease_until` 到 `<= 0`（上限 lease+2s）；到期仍 `remaining > 0` 即 FAIL 并记录实际值；`harness.run(None, max_rounds=4)`。
 
 **Assert**：
 
 - `S(install)` 的 `prepare=1`、`invoke=1`；spawn log 恰 1 条 `invoke`。
-- 恢复后 effect `unknown`；run `blocked_unknown`；DB `effect_recovered_unknown` 恰 1；`invoke` 仍 1；`S` 的 `prepare=1`；插件 pid 无 live 残留（`ps -o stat=` 空或 `Z`）。
+- 恢复后 effect `unknown`；run `blocked_unknown`；DB `effect_recovered_unknown` 恰 1；`invoke` 仍 1；`S` 的 `prepare=1`；插件 pid 无 live 残留（`ps -o stat=` 空或以 `Z` 开头）。
 - `E(target, journal_finish=False, db_recovery=True)`；第二次 `_reconcile` 返回 0。结束前 `assert_w7_invariants(harness, recovered_unknown={target})`。
 
-**门槛说明**：`plugins.py:173` 是 `remaining < tool.timeout_ms + 5000` 拒绝；`timeout_ms=1000` 需要 `remaining >= 6000`。6500ms 才允许 spawn；若 lease 设 500ms，`kill_parent` 根本不会执行。
+**门槛说明**：`plugins.py:173` 是 `remaining < tool.timeout_ms + 5000` 拒绝；`timeout_ms=1000` 需要 `remaining >= 6000`。8000ms 才允许 spawn，留 2000ms 余量；若 lease 设 500ms，`kill_parent` 根本不会执行。
 
 ### R04 — model `dispatch_finished` 后崩溃，journal replay + 三 tool
 
@@ -619,7 +625,7 @@ W7 不修改：
 
 1. `restore = inject_after(harness, "dispatch_finished", effect_id=target, kind="tool_call")`；`try: harness.run([batch_reply([("call_read","read",{"path":"tail"})])], max_rounds=20) except HostCrash: pass`；`finally: restore()`。
 2. 断言 effect `claimed`；journal `dispatch_finished` 恰 1；`settlement_count(target) == 0`；`S(install)["invoke"] == 1`。
-3. `reconciled, settlements = run_recover_process(harness, harness.scope)`；断言 `reconciled >= 1`、`settlements == 1`，子进程 exit 0。`w7_recover.py` 的 tool handler 是 `os._exit(97)`，若被调用会非零退出。
+3. `reconciled, settlements = run_recover_process(harness, harness.scope)`；断言 `reconciled >= 1`、`settlements == 1`，子进程 exit 0。恢复进程不构造 registry、不注册 tool handler，也不 spawn；能证明“没有第二次执行”的是 spawn log 行数不变与 journal 只新增 1 条 `settlement_committed`，而不是一个永不触发的 handler guard（`_reconcile` 从不调用 handler，`worker.py:754-798`）。
 4. `reopen_harness(harness)`；`harness.run([final_reply("r05-final")], max_rounds=20)`。
 
 **Assert**：
@@ -744,7 +750,7 @@ W7 不修改：
 **Assert**：
 
 - effect `unknown` `timeout`；run `blocked_unknown`；`S(install)["invoke"] == 1`；`c.ops == {"prepare":1,"invoke":1}`；timeout 返回 < 5s。
-- plugin/孙进程无 live（`ps -o stat=` 空或 `Z`）；restart 无新 spawn/settlement；effect 仍 `unknown`；`E(effect_id, journal_finish=True)`。`recovered_unknown` 为空集（timeout 是正常 settle，不写 effect-level event），`assert_w7_invariants(harness)` 省略参数。
+- plugin/孙进程无 live（`ps -o stat=` 空或以 `Z` 开头）；restart 无新 spawn/settlement；effect 仍 `unknown`；`E(effect_id, journal_finish=True)`。`recovered_unknown` 为空集（timeout 是正常 settle，不写 effect-level event），`assert_w7_invariants(harness)` 省略参数。
 - **ESRCH 语义**：两条 `assert_no_live` 都通过后，最外层 `finally` 的 `killpg(plugin_pid, SIGKILL)` 可能因进程组已不存在而抛 `ProcessLookupError`（`ESRCH`）；这视为**成功**（already_gone），不记失败。其它 errno 只记录到日志，不掩盖主断言。
 - **证据链**：`.child` 证明孙进程启动过；测试在观察前不发任何信号；stub 与孙进程都 `sleep(60)`，远大于 2s 观察窗口；插件被 SIGKILL 不会连带杀死孙进程（孙进程被 reparent 后继续 sleep），因此孙进程在窗口内消失只能来自组级 kill。
 - case 最外层 `finally` 的 `killpg` 在插件 pid 与孙进程 pid 两条 `assert_no_live` **之后**执行；`assert_no_live` 自身不发信号，所以先检查插件 pid 不会顺手杀死孙进程，孙进程的检查有真实证据价值。`finally` 的 killpg 不掩盖原始失败。
@@ -762,17 +768,17 @@ W7 不修改：
 1. v2 read 跑通（不计入 v1 计数）：`start_run` on v2；`harness.run([batch_reply([read]), final_reply(...)])`；success。
 2. v1 success：`run_id, v1_mid = start_run(harness, v1_id, ["echo.python"], "B0 fixed echo")`；脚本为 `tool_reply("call_b0_success", "echo.python", {"text":"snow 雪","zero":0}, reasoning="B0 fixed", usage=(17,9), response_id="resp_b0_success")` + `final_reply("B0 final", reasoning="B0 done", usage=(22,3), response_id="final_b0_success")`；`harness.run(..., max_rounds=30)`；transport 恰 2 calls；逐字节比对 B0 `provider.success.request1/request2`；v1 tool message 按 `parent_effect_id == v1_mid` 取，比对 `tool_message.success.content`；effect success。
 3. v1 known-error：`run2, v1_mid2 = start_run(...)`；`target = T(v1_mid2, 0)`；`restore = inject_after(harness, "dispatch_finished", effect_id=target, kind="tool_call")`；`try: harness.run([tool_reply("call_b0_known_error", "echo.python", {"__tool_error__": True}, reasoning="B0 fixed", usage=(17,9), response_id="resp_b0_known_error")], max_rounds=20) except HostCrash: pass`；`finally: restore()`；transport 恰 1 call，比对 B0 `provider.known_error.request1`；journal 有 `dispatch_finished`、无 settlement；effect `claimed`；tool message 比对 `tool_message.known_error.content`（按 `parent_effect_id == v1_mid2` 取）。
-4. `reconciled, settlements = run_recover_process(harness, harness.scope)`；断言 exit 0、`reconciled >= 1`、`settlements == 1`；`reopen_harness(harness)`。
+4. `reconciled, settlements = run_recover_process(harness, harness.scope)`；断言 exit 0、`reconciled >= 1`、`settlements == 1`；`reopen_harness(harness)`。恢复进程不构造 registry、不注册 tool handler，也不 spawn：`_reconcile` 只读写 journal/DB、不 dispatch（`worker.py:754-798`），所以 fresh process 不 spawn 是**结构性保证**。`CountingSpawn` patch 只在父解释器生效，覆盖不到 `w7_recover.py` 子进程；v1 又没有 spawn log，因此跨进程没有 spawn 计数，`C(3)` 只承担父进程阶段（崩溃前 + reopen 后父进程续跑）的证据。
 5. `harness.run([final_reply("B0 final", reasoning="B0 done", usage=(22,3), response_id="final_b0_known_error")], max_rounds=20)`；transport 恰 1 call，逐字节比对 B0 `provider.known_error.request2`；run `completed`；continuation 恰 1；tool message 仍等于 B0。
 6. `c.calls` 恰 3、`c.ops == {"prepare":1,"invoke":2}`；v1 `"--spawn-log" not in v1.entry.argv`；`install_spawn_log(harness, v1_id) is None`；`spawn_count(harness, v1_id) == 0`。证明链：`build_adapter` 只写 `argv=(interpreter, artifact)`（`plugin_fixtures.py:136`）→ `install_spawn_log` 找不到 `--spawn-log` 返回 None（`fixtures.py:436-447`）→ `spawn_count` 返回 0（`fixtures.py:450-453`）→ v1 只能用 `CountingSpawn` 计进程。
 7. 再跑一次 v2 read success；v1 tool effect `replay_policy == "no_replay"`；v1 success/known-error 各 `E(..., journal_finish=True)`；v2 read `E`。
 
 **Assert**：
 
-- v1 success/known-error 的 provider request 与 tool message 逐字节等于 B0；v1 进程计数 = 3，恢复后不增；无第二次 spawn。
+- v1 success/known-error 的 provider request 与 tool message 逐字节等于 B0；父进程阶段的 v1 进程计数 = 3（崩溃点与恢复后续跑各断言一次），不增；父进程无第二次 spawn。fresh process 不 spawn 由结构保证，不是被 `CountingSpawn` 测到。
 - v1 崩溃恢复：无第二次 spawn；`settlement_committed` 恰 1；effect terminal；run `completed`。
 - v2 同 scope 的 read 前后都 success；无 v1 生产代码改动；不给 v1 加 `--spawn-log`。
-- R14 不 off/dispose/close_scope；`C(3)` 在 `finally` 前断言，release 不在 C 作用域内。
+- R14 不 off/dispose/close_scope；`C(3)` 在崩溃点先断言一次（`prepare=1` + `invoke=2`），在 `finally` 前再断言一次；release 不在 C 作用域内。v2 read 的 spawn 被 `artifact` 过滤，所以 `C(3)` 在父进程内仍精确，而且能拦住同进程崩溃后额外的 v1 spawn；它**不能**观测 fresh process（独立解释器、patch 不跨进程）。不需要在崩溃后提前退出 `C` 再重进（§17.5 F8 驳回该建议，但已在崩溃点加断言）；`__exit__` 现在只在 `exc_type is None` 时断言数量（§17.6 P2-4）。
 
 ### R15 — 三个 pending settlement，fresh process reconcile
 
@@ -793,7 +799,7 @@ harness.db.settle = patched
 
 - 返回形状必须是 `{"error": {"code": ...}}`，`is_error` 才识别（`db.py:244-245`）。
 - `_settle` 先 `db.settle`（`worker.py:1278`），再 `db.assert_all_idle()`（`:1279`），然后 `is_error`（`:1282-1285`）。patched settle 不碰连接，所以 `assert_all_idle` **仍会跑并通过**；`_settle` 返回 False，effect 保持 `claimed`，不写 journal settlement。
-- patch 只作用于父 `harness.db`；fresh process 用真实 `HostDB`，不受影响。
+- patch 只作用于父 `harness.db`；fresh process 用真实 `HostDB`，不受影响。**父进程 patch 的目的只是留下 3 个 pending；子进程不继承 patch 正是要求**——它必须用真实 `db.settle` 成功 settle 三个 effect，`reconciled=3` 才成立。
 
 **Action**：
 
@@ -801,7 +807,7 @@ harness.db.settle = patched
 
 1. `stats = harness.run([batch_reply([read,list,search])], max_rounds=30)`；断言 `stats.idle is True`。
 2. 断言 3 个 tool effect 都是 `claimed`；每个都有 `dispatch_finished`；对每个 `target in targets`，`settlement_count(target) == 0`；`S(read)` 为 `{"prepare":1,"invoke":1}`，`S(node)` 为 `{"prepare":1,"invoke":2}`；run 仍 `running`。
-3. 恢复 `harness.db.settle = original`；`reconciled, settlements = run_recover_process(harness, harness.scope)`；断言 `reconciled == 3`、`settlements == 3`、exit 0；spawn log 不变。
+3. 恢复 `harness.db.settle = original`；`reconciled, settlements = run_recover_process(harness, harness.scope)`；断言 `reconciled == 3`、`settlements == 3`、exit 0；spawn log 不变。恢复进程不构造 registry、不注册 tool handler，也不 spawn。
 4. `reopen_harness(harness)`；断言 3 个 tool effect 都 terminal、每个 `target in targets` 的 settlement 恰 1；`harness.run([final_reply("r15-final")], max_rounds=30)`。
 
 **为什么 `h.run` 会终止**：3 个 effect 都是 `claimed`，`_reconcile` 每轮重试 `db.settle` 但 patched 返回 error、`settled=0`；`_resume_prepared` 没有 `prepared_without_dispatch`；`_orphan_state` 没有 `unfinished_dispatches`（三个都有 `dispatch_finished`）；`_discover_ready` 为空；`run_once` 的 `progress==0`，`run_until_idle` 置 `idle=True` 返回。临时探针实测 5 轮后 idle。
@@ -835,7 +841,7 @@ wrapper 在**不调用**原 append 的情况下命中，条件全部满足才抛
 
 1. `try: harness.run([batch_reply([("call_read","read",{"path":"tail"})]), final_reply("r16-final")], max_rounds=30) except HostCrash: pass`；`finally: restore()`；断言 `len(hits) == 1`。
 2. 断言 effect `succeeded`、`settled_at` 非空（DB 已 settle）；journal 有 `dispatch_finished`、`settlement_count(target) == 0`；`S(install)["invoke"] == 1`。
-3. `snapshot = capture_effect(harness, target)`；`reconciled, settlements = run_recover_process(harness, harness.scope)`；断言 `reconciled == 0`、`settlements == 1`、exit 0；`reopen_harness(harness)`。
+3. `snapshot = capture_effect(harness, target)`；`reconciled, settlements = run_recover_process(harness, harness.scope)`；断言 `reconciled == 0`、`settlements == 1`、exit 0；`reopen_harness(harness)`。恢复进程不构造 registry、不注册 tool handler，也不 spawn；K3.5 的补写由 journal 增量证明。
 4. 断言 journal settlement 恰 1；payload `reason == "database_terminal"`、`conflict is False`；effect 的 `status/outcome/settled_at/attempt_no/fence` 与 `snapshot` 逐项相等。
 5. `harness.run([final_reply("r16-final")], max_rounds=30)`；run `completed`、continuation 恰 1；再 `harness.run(None, max_rounds=2)`，断言不再新增 settlement、`_reconcile` 返回 0。
 
@@ -873,11 +879,11 @@ wrapper 在**不调用**原 append 的情况下命中，条件全部满足才抛
 
 ### I4 — spawn 双证
 
-- **log 自洽 + 无重复 prepare/release**（helper 内，scope 级）：用 `harness.db.host_scope_installs(harness.scope, None, 64)` 按 `has_more`/`next_cursor` 翻页取 scope 内全部 install（`db.py:159-161`；下一轮 `after = next_cursor["install_id"]`）；对每个 install 调 `install_spawn_log(harness, install_id)` 取 log（`fixtures.py:436-447`），`spawn_ops` 解析出的 operation 计数之和等于 log 有效行数，且没有无法解析的行；`prepare <= 1`、`release <= 1`（同一 install 不得二次 prepare/release）。`install_spawn_log` 返回 `None` 的 install（R14 的 v1 没有 `--spawn-log`）**跳过**这段日志自洽，由 case 内 `CountingSpawn` 负责。精确 `invoke` 期望属于 case，不在 helper 重列；helper 的 `<= 1` 只能证明“没有重复 prepare/release”，不能单独支撑 marker 的 `second_spawn=false`。
+- **log 自洽 + 无重复 prepare/release**（helper 内，scope 级）：用 `harness.db.host_scope_installs(harness.scope, None, 64)` 按 `has_more`/`next_cursor` 翻页取 scope 内全部 install（`db.py:159-161`；下一轮 `after = next_cursor["install_id"]`）；对每个 install 调 `install_spawn_log(harness, install_id)` 取 log（`fixtures.py:436-447`），`spawn_ops` 解析出的 operation 计数之和等于 log 有效行数，且没有无法解析的行；`prepare <= 1`、`release <= 1`（同一 install 不得二次 prepare/release）。`install_spawn_log` 返回 `None` 的 install（R14 的 v1 没有 `--spawn-log`）**跳过**这段日志自洽，由 case 内 `CountingSpawn` 负责父进程阶段。精确 `invoke` 期望属于 case，不在 helper 重列；helper 的 `<= 1` 只能证明“没有重复 prepare/release”，不能单独支撑 marker 的 `second_spawn=false`。
 - 有 `C` 的 v2 case（R01/R05/R07/R08/R13）：`CountingSpawn` 次数 == spawn log 行数 == 期望 operation 计数（`C.__exit__` 在 case 内断言）。只读 spawn log 的 case（R04/R09/R10/R15，以及 R11/R12 的成功子探针）：spawn log 的 operation 计数 == 期望值；不要为了“双证”给这些 case 强塞 `CountingSpawn`。`second_spawn=false` 由 case 内精确计数（`C` 的 `expected`/`ops` 或 spawn log 的精确 operation 期望）支撑，不由 helper 的 `<= 1` 推出。
 - v1 没有 `--spawn-log`：只用 `CountingSpawn(artifact=v1.entry.artifact_path)`，过滤 `spec.argv[1]` 的真实路径，期望 `prepare=1`、`invoke=2`、总数 3；不得补一个测试专用 log 参数。证明链是 `plugin_fixtures.py:136`（argv 只有 interpreter+artifact）→ `fixtures.py:436-447`（无 flag 返回 None）→ `fixtures.py:450-453`（spawn_count 返回 0）。
 - 零 spawn 的 case：`ZeroSpawn` calls == 0 且 spawn log 行数不变。
-- R15/R16 的 fresh process：spawn log 行数在恢复前后不变（恢复进程没有 registry）。
+- R05/R14/R15/R16 的 fresh process：spawn log 行数在恢复前后不变（恢复进程没有 registry）。这是父进程观测到的“没有新增 spawn”，不是跨进程计数；R14 的 v1 本来就没有 spawn log，fresh process 不 spawn 由“无 registry/handler、`_reconcile` 不 dispatch”的结构保证，`CountingSpawn` 只覆盖父进程阶段。
 - 不用 journal `dispatch_started` 数量代替进程计数（C.14）。
 
 ### I5 — 无重复 spawn / 无 rerender
@@ -891,7 +897,7 @@ wrapper 在**不调用**原 append 的情况下命中，条件全部满足才抛
 
 ### I6 — 进程清理
 
-- R03 的 host 子进程必须是 `WIFSIGNALED`/`SIGKILL`；**R03 的插件 pid** 与 **R13 的插件 pid、孙进程 pid** 在测试结束前无 live 状态（`ps -o stat=` 空或 `Z`）。两者的证据口径不同：**R03 先 `killpg` 再 `assert_no_live`，只证明测试侧清理干净**；**R13 先观察、后清理，才证明 host timeout 路径自己做了组级 kill**。
+- R03 的 host 子进程必须是 `WIFSIGNALED`/`SIGKILL`；**R03 的插件 pid** 与 **R13 的插件 pid、孙进程 pid** 在测试结束前无 live 状态（`ps -o stat=` 空或以 `Z` 开头）。两者的证据口径不同：**R03 先 `killpg` 再 `assert_no_live`，只证明测试侧清理干净**；**R13 先观察、后清理，才证明 host timeout 路径自己做了组级 kill**。
 - **ESRCH 语义（R03/R13 都适用）**：R03 的测试侧 `killpg(plugin_pid, SIGKILL)` 与 R13 最外层 `finally` 的 `killpg`，在进程组已不存在时都可能抛 `ProcessLookupError`（`ESRCH`）；这视为**成功**（already_gone），不记失败。其它 errno 只记录，不掩盖主断言。
 - **清理顺序（仅 R13）**：R13 必须先对插件 pid 与孙进程 pid **都**完成 `assert_no_live`（只观察，不发任何信号），再由 case 最外层 `finally` 对插件进程组 `os.killpg(plugin_pid, SIGKILL)` 清理；检查失败也保留失败，不因清理而变成通过。R03 **不适用**这条顺序：R03 在断言插件 pid 无 live 之前就是测试侧 `killpg(plugin_pid, SIGKILL)`，然后 `assert_no_live`，只证明测试侧清理干净，不证明 host 自动清理。`assert_no_live` 内不得 `kill`/`killpg`/`waitpid`——否则先检查插件 pid 会顺带杀死同组孙进程，孙进程检查必然通过（假阳性）。
 - 清理失败只记录，不掩盖原始失败；同一 pid 只允许成功 `waitpid` 一次并用 `reaped` 记录。
@@ -949,7 +955,7 @@ env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_N
 
 - 审计 1 必须允许 `test_lifecycle.py`、`w4_stub_plugin.py`、新 `w7_recover.py`、README 的改动；但不允许 `v24/host`、`v24/sql`、vectors、其他测试改动。
 - 审计 3 不用 `ab4636fc…` 或 `2307077` 的替代 SHA；用当前 `a41ce22` 的真实字节。
-- 审计 7 的 allowlist 必须覆盖实际改动，不能再写“只增 helper/case”：`test_lifecycle.py` 的 imports（`re`/`signal`/`subprocess`/`time`；从 `plugin_fixtures` 引入 `_owner`；从 `v24.host.db` 引入 `HostDB`；从 `v24.host.plugins` 引入 `PluginDispatcher`；从 `fixtures` 引入 `install_spawn_log`）、15 组 helper（17 个函数/类：`CountingSpawn`/`spawn_ops`/`tool_effect_id`/`tool_order`/`reopen_harness`/`close_connections`/`open_connections`/`assert_fork_safe`/`inject_after`/`inject_before`/`install_crash_after_started`/`assert_single_receipt`/`capture_effect`/`run_recover_process`/`assert_no_live`/`settlement_count`/`assert_w7_invariants`）、R01–R16、`stub_spec` 的 `realm` 参数与 13 值 scenario enum、`main()` 顺序、marker；`w4_stub_plugin.py` 的 `import signal`/`subprocess`/`pathlib`、`SCENARIOS` 两个值、`_invoke` 两个分支与 `_spawn_log_path(sys.argv)` 自取。`main()`/`_invoke` 签名不变，现有 scenario 分支逐字节不变。v5 补充：`assert_w7_invariants` 的 scope 级枚举只用 `harness.db` 的既有读方法（`host_runs`/`host_run_effects`/`host_effects`），**不新增模块级 helper、不新增 import**；计数仍为 15 组 / 17 个。v6 再补 `host_scope_installs`（同样是 `HostDB` 既有方法，不新增 import）与 `recovered_unknown` 的规范字符串归一，计数仍为 15 组 / 17 个。
+- 审计 7 的 allowlist 必须覆盖实际改动，不能再写“只增 helper/case”：`test_lifecycle.py` 的 imports（`re`/`signal`/`subprocess`/`time`；从 `plugin_fixtures` 引入 `_owner`；从 `v24.host.db` 引入 `HostDB`；从 `v24.host.plugins` 引入 `PluginDispatcher`；从 `fixtures` 引入 `install_spawn_log`）、15 组 helper（17 个函数/类：`CountingSpawn`/`spawn_ops`/`tool_effect_id`/`tool_order`/`reopen_harness`/`close_connections`/`open_connections`/`assert_fork_safe`/`inject_after`/`inject_before`/`install_crash_after_started`/`assert_single_receipt`/`capture_effect`/`run_recover_process`/`assert_no_live`/`settlement_count`/`assert_w7_invariants`）、R01–R16、`stub_spec` 的 `realm` 参数与 13 值 scenario enum、`main()` 调用清单（顺序不承载语义）、marker；`w4_stub_plugin.py` 的 `import signal`/`subprocess`/`pathlib`、`SCENARIOS` 两个值、`_invoke` 两个分支与 `_spawn_log_path(sys.argv)` 自取。`main()`/`_invoke` 签名不变，现有 scenario 分支逐字节不变。v5 补充：`assert_w7_invariants` 的 scope 级枚举只用 `harness.db` 的既有读方法（`host_runs`/`host_run_effects`/`host_effects`），**不新增模块级 helper、不新增 import**；计数仍为 15 组 / 17 个。v6 再补 `host_scope_installs`（同样是 `HostDB` 既有方法，不新增 import）与 `recovered_unknown` 的规范字符串归一，计数仍为 15 组 / 17 个。
 
 ### 10.4 证据目录
 
@@ -973,7 +979,7 @@ W7-0 已实测现有 14 case 基线为 **12.5s**（`/usr/bin/time -p`，2026-11-
 | G12-A…H + G12-L（现有 14） | 12.5 | 实测 |
 | R01 | 1.0 | 1 prepare + 1 invoke |
 | R02 | 3.5 | 3s lease 轮询 + 3 次 `run(None)` |
-| R03 | 7.0 | 6.5s lease + 一次 fork/waitpid |
+| R03 | 8.5 | 8s lease + 一次 fork/waitpid |
 | R04 | 1.5 | 2 model call + 3 tool spawn |
 | R05 | 1.5 | 1 tool + 1 fresh process |
 | R06 | 1.5 | 3 tool + restart |
@@ -987,11 +993,11 @@ W7-0 已实测现有 14 case 基线为 **12.5s**（`/usr/bin/time -p`，2026-11-
 | R14 | 2.5 | v1 prepare+2 invoke + 两次 v2 read + fresh |
 | R15 | 2.5 | 3 tool + fresh + final |
 | R16 | 2.0 | 1 tool + fresh + final |
-| **探针小计** | **35.0** | 各 case 串行 |
-| **合计** | **47.5** | 12.5 + 35.0 |
+| **探针小计** | **36.5** | 各 case 串行 |
+| **合计** | **49.0** | 12.5 + 36.5 |
 | **硬上限** | **90.0** | 留 1.9× 余量 |
 
-- 唯一固定等待是 R02 的 3s 与 R03 的 6.5s lease（共 9.5s）；其余是 R13 的 1s timeout、4 次 fresh process（各约 0.3s）与轮询，没有长 sleep。
+- 唯一固定等待是 R02 的 3s 与 R03 的 8s lease（共 11s）；其余是 R13 的 1s timeout、4 次 fresh process（各约 0.3s）与轮询，没有长 sleep。
 - R03 只 fork 一次，不重试；超时 30s 只作为失败保护，不进正常预算。
 - R11 的五个子 run 复用同一个 harness/install，不重复 DB setup；R15/R16 的 fresh process 复用同一 fixture 的 DSN，不重建测试库。
 - 全套 32 条 ≤ 6min 不变。若实测 > 90s，先优化等待/复用 harness，不得删 case、不得把 R03 标 SKIP；若 R03 连续 3 次不稳定，先修时序/清理，仍不稳定则 STOP 改写为 subprocess driver（§13 R1）。
@@ -1003,7 +1009,7 @@ W7-0 已实测现有 14 case 基线为 **12.5s**（`/usr/bin/time -p`，2026-11-
 | # | 工作项 | Done when | 关键文件 | 依赖 | 量级 |
 |---:|---|---|---|---|---:|
 | W7-0 | 基线复核 | 读 W4c record、design §7.3/C.11/C.14、现有 14 case；确认 HEAD `a41ce22`；现有 gate 绿；实测 14 case 12.5s | 只读 | — | 0.5h |
-| W7-1 | 测试 helper + stub scenario | 见 §7.1 #1–#15：15 组 helper（17 个函数/类）可用，`assert_w7_invariants` 为 scope 级、`recovered_unknown` 归一为规范字符串、I4 用 `host_scope_installs` 翻页；§17.4 的四项静态事实已核实，W7-1 只保留运行时探针（helper 实跑、stub 两 scenario、`realm`）；stub 两 scenario 可 import；`stub_spec` 支持 `realm` | `test_lifecycle.py`、`w4_stub_plugin.py` | W7-0 | 3h |
+| W7-1 | 测试 helper + stub scenario | 见 §7.1 #1–#15：15 组 helper（17 个函数/类）可用，`assert_w7_invariants` 为 scope 级、`recovered_unknown` 归一为规范字符串、I4 用 `host_scope_installs` 翻页；§17.4 的四项静态事实已核实，W7-1 只保留运行时探针（helper 实跑、stub 两 scenario、`realm`）；stub 两 scenario 可 import；`stub_spec` 支持 `realm`；`main()` 调用清单与 §7.1 一致（顺序不承载语义） | `test_lifecycle.py`、`w4_stub_plugin.py` | W7-0 | 3h |
 | W7-2 | K0/K1 资源与 tool cut-point | R01/R02/R07/R08 绿；`spawn_ops`/`E` 成立 | `test_lifecycle.py` | W7-1 | 3h |
 | W7-3 | fresh-process recovery | R05/R06/R15/R16 绿；`w7_recover.py` 输出 reconciled/settlements | `test_lifecycle.py`、`w7_recover.py` | W7-1 | 3h |
 | W7-4 | 真实进程崩溃 | R03 绿：SIGKILL、spawn 1、unknown、无第二次 spawn、无 live 残留 | `test_lifecycle.py`、`w4_stub_plugin.py` | W7-1 | 3h |
@@ -1058,11 +1064,11 @@ W7-2…W7-6 → W7-7
 | # | 风险 | 影响 | 缓解 / STOP |
 |---:|---|---|---|
 | R1 | fork 子进程在 macOS 上不稳定/挂起 | R03 无法证明真实进程崩溃 | 30s 超时 + `os.kill(child_pid, SIGKILL)` 后 `waitpid`（不是 `killpg(child_pid)`），插件进程组另按 spawn log 的 pid `killpg`；连续 3 次失败则 STOP，改写为 subprocess driver；不得把 R03 标 SKIP |
-| R2 | lease 太短，spawn 前就过期；或太长，测试变慢 | R02/R03 抖动 | R02 用 3000ms、R03 用 6500ms（满足 1000+5000 门槛）；6500ms 对 6000ms 门槛只有 500ms 余量，抖动导致 `remaining < 6000` 时 FAIL 并记录实际值，不得把 lease 调到 30s 规避；用 `remaining_lease_ms` 轮询上限 lease+2s；不 sleep 30s；不直接改 DB lease |
+| R2 | lease 太短，spawn 前就过期；或太长，测试变慢 | R02/R03 抖动 | R02 用 3000ms、R03 用 8000ms（满足 1000+5000 门槛）；8000ms 对 6000ms 门槛留 2000ms 余量，抖动导致 `remaining < 6000` 时 spawn 被 `plugins.py:173` 拒绝，测试的失败表现是 child 未被 SIGKILL（`WIFSIGNALED`/`invoke_pids==1`），阈值检查值不回传；断言消息带 `child_lease_ms` 与 `timeout_ms+5000`，不得把 lease 调到 30s 规避；用 `remaining_lease_ms` 轮询上限 lease+2s；到期仍 `remaining > 0` 也 FAIL 并记录实际值（这一条是轮询，不是门槛）；不 sleep 30s；不直接改 DB lease |
 | R3 | journal wrapper 漏掉目标 effect，或注入不恢复 | K0/K3.5 注入未命中或污染后续 case | `inject_after`/`inject_before` 一次性，命中后立即 restore；注入后断言 journal 最后事件是 `effect_prepared`（K0）或 `dispatch_finished` 且无 settlement（K3.5）；未命中/`hits != 1` 即 FAIL；`finally` 再恢复一次 |
 | R4 | K1/K2 journal 没有 settlement，被误判为缺 receipt | 测试错误地要求补事件 | D8 明确：DB `effect_recovered_unknown` 是 receipt；不伪造 journal 事件 |
 | R5 | fork 前未关闭 DB/journal，子进程继承锁/连接 | R03 挂起或 journal locked | `close_connections` 关 journal→db→owner；`assert_fork_safe` 检查 `journal._fd == -1`、`db._closed`、`owner.closed`、`fixture._connections` 全 closed；保留 `fixture._lock_conn`；子进程只重开；父用 WNOHANG 30s 后重开 |
-| R6 | 插件孙进程变成 zombie，`kill(pid,0)` 仍成功 | R13 误判 live | 用 `ps -o stat=` 判定空或 `Z`；R13 的清理由 case 最外层 `finally` 做 `killpg`（`assert_no_live` 只观察、不发信号）；不把 zombie 当 live；`.child` 文件轮询 2s |
+| R6 | 插件孙进程变成 zombie，`kill(pid,0)` 仍成功 | R13 误判 live | 用 `ps -o stat=` 判定空或以 `Z` 开头（`Z`/`Z+`）；**不得**用 `os.kill(pid, 0)`：zombie 仍存在，`kill(pid,0)` 返回成功，会把已退出判成 live；R13 的清理由 case 最外层 `finally` 做 `killpg`（`assert_no_live` 只观察、不发信号）；不把 zombie 当 live；`.child` 文件轮询 2s |
 | R7 | v1/v2 union registry 构造错误，或 R14 时序错 | R14 无法 start 或 B0 request2 拿不到 | 同一 realm；`ApprovedAdapterRegistry((v1.entry, v2.entry))`；先 v2、再 v1 success、再 known-error 崩溃续跑；失败即 STOP，不改 v1 |
 | R8 | 测试 runtime > 90s | sweep 超时 | W7-0 先测基线；复用 harness；R03 只做一次；R02/R03 轮询而非长 sleep；不删 case |
 | R9 | 探针暴露 host 真缺陷 | 需要改 host | W7-8 host-only 最小修复；若需 SQL/kernel/replay/design → STOP，另立设计修订 |
@@ -1169,12 +1175,12 @@ W7-2…W7-6 → W7-7
 
 ## 17. Oracle 裁决记录（2026-11-01）
 
-两路 Oracle：L1 = `claude-opus-5-5`，L2 = `gpt-6.1-sol-xhigh`；2/2 完成，合并结论 **`needs-edits`**。不需要改 SQL/design；若探针暴露 host 缺陷，走 W7-8 host-only 分支。下表保留 v2 裁决原文，作为落实索引；v3 的修订逐条见 §17.1，其中 #16 已由 v3 关闭。
+两路 Oracle：L1 = `claude-opus-5-5`，L2 = `gpt-6.1-sol-xhigh`；2/2 完成，合并结论 **`needs-edits`**。不需要改 SQL/design；若探针暴露 host 缺陷，走 W7-8 host-only 分支。下表保留 v2 裁决原文，作为落实索引；v3–v7 的逐条裁决见 §17.1–§17.5，其中 #16 已由 v3 关闭。
 
 | # | 优先级 | 裁决 | 落实位置 |
 |---:|---|---|---|
-| 1 | P0 | R03 的 500ms lease 不满足 `timeout_ms + 5000` spawn 门槛 | R03 改 stub `timeout_ms=1000`、child `default_lease_ms=6500`；D5/D12/§10.5 同步 |
-| 2 | P0 | `w7_recover.py` 缺 `main()` 入口；`reconciled` 不是被恢复 effect 数 | 补 `__main__` 与 `reconciled/settlements` 双输出；handler 改 `os._exit(97)`；R05/R14/R15/R16 |
+| 1 | P0 | R03 的 500ms lease 不满足 `timeout_ms + 5000` spawn 门槛 | R03 改 stub `timeout_ms=1000`、child `default_lease_ms=6500`；D5/D12/§10.5 同步；v7 改为 8000ms（§17.5 F10） |
+| 2 | P0 | `w7_recover.py` 缺 `main()` 入口；`reconciled` 不是被恢复 effect 数 | 补 `__main__` 与 `reconciled/settlements` 双输出；handler 改为 `os._exit(97)`（v7 删除，§17.5 F3）；R05/R14/R15/R16 |
 | 3 | P0 | R14 先跑完 known-error 再崩溃，拿不到 B0 request2 | 改为 v1 success 完整跑 → known-error 在 `dispatch_finished` 崩溃 → fresh reconcile → 续跑 request2；v1 计数用 `CountingSpawn`=3 |
 | 4 | P0 | `assert_single_receipt` 与 I2 的“每个 effect 有终态 event”矛盾 | helper 改为 terminal/attempt/fence/settled_at + DB recovery event 恰 1；正常 settle 不要求 event |
 | 5 | P0 | R09 要同 realm，但 `stub_spec` 写死 realm | `stub_spec(realm=None)`；R09 用同 realm 建 stub+Node；audit 7 allowlist 列入 |
@@ -1198,8 +1204,8 @@ W7-2…W7-6 → W7-7
 
 v2 表保留为历史；v3 不重开任何裁决，只把未决项与自洽性缺口落成可执行步骤。逐条：
 
-1. **#1 / R03**：保留 stub `timeout_ms=1000`、child `default_lease_ms=6500`；D4 补“先关 journal（flock）→ db → owner 再 fork”、`assert_fork_safe`、claim 必须由子进程执行、父 waitpid 后重开并轮询 lease；`fixture._lock_conn` 保留。§8 R03 给出完整 6 步。
-2. **#2 / `w7_recover.py`**：保留 `main()` 与 `os._exit(97)` handler；新增 `settlements` 是 `after-before` 增量；fresh process 用真实 `HostDB`；R16 允许 `reconciled=0 settlements=1`。
+1. **#1 / R03**：v3 保留 stub `timeout_ms=1000`、child `default_lease_ms=6500`（v7 改为 8000ms，§17.5 F10）；D4 补“先关 journal（flock）→ db → owner 再 fork”、`assert_fork_safe`、claim 必须由子进程执行、父 waitpid 后重开并轮询 lease；`fixture._lock_conn` 保留。§8 R03 给出完整 6 步。
+2. **#2 / `w7_recover.py`**：v3 保留 `main()` 与 `os._exit(97)` handler；`settlements` 是 `after-before` 增量；fresh process 用真实 `HostDB`。v7 删除该 handler（§17.5 F3）：`_reconcile` 从不调用它，guard 不可证；正面证据改为父测试的 spawn log 不变 + journal 只新增 settlement。R16 允许 `reconciled=0 settlements=1`。
 3. **#3 / R14**：v1+v2 union 明确为 `ApprovedAdapterRegistry((v1.entry, v2.entry))` + `PluginHarness(fixture, registry, ...)`；`build_registry` 只作单 spec 便捷构造；`CountingSpawn(artifact=v1.entry.artifact_path)` 过滤 `spec.argv[1]`，期望 `prepare=1`/`invoke=2`/总数 3；v1 无 `--spawn-log` 的三段证明链写进 §8 R14；B0 tool message 必须按 `parent_effect_id` 取。
 4. **#4 / `assert_single_receipt`**：保持 terminal + `settled_at` + `attempt_no/fence/settled_at` 快照；正常 settle 不要求 effect-level event；`db_recovery=True` 时 `effect_recovered_unknown` 恰 1；K3.5 用 settlement 增量。I2/I3 同步。
 5. **#5 / `stub_spec`**：加 `realm=None`；descriptor enum 从 11 个值扩到 13 个（`grandchild`/`kill_parent`）；R09 用同一 realm 建 stub + Node；audit 7 allowlist 列入。
@@ -1232,7 +1238,7 @@ v2 表保留为历史；v3 不重开任何裁决，只把未决项与自洽性�
 | A4 | P1 | helper 清单缺 `assert_w7_invariants`；audit 7 的 import allowlist 漏项 | **accept** | §9 要求每个 case 调 `assert_w7_invariants`（v5 明确为只对 `rNN_*`，现有 G12 不调用），但 §7.1 的清单与 §10.3 审计 7 都没列。补为第 15 组，计数从 **14 组 / 16 个**改为 **15 组 / 17 个函数·类**（§7.1、§10.3、§12.1、§11 W7-1、§17.1 #10 指针）。import allowlist 补 `HostDB`（`v24/host/db.py`）、`PluginDispatcher`（`v24/host/plugins.py:75`）、`install_spawn_log`（`v24/s13/fixtures.py`）与既有的 `_owner`。只改清单/allowlist 文字，不改审计判定标准，不加文件 |
 | A5 | P2 | Result 要求回填本次 commit SHA，与“先落文档、再一次里程碑提交”矛盾 | **accept** | 文件不可能包含自身 commit SHA。Result 只记 sweep HEAD、验证结果与 **external publication receipt 的位置**；commit SHA / push 结果留在 receipt。§14、Result |
 | A6 | P2 | R09 的 `read_ord = order[-1]; assert order.index(read_ord) == 2` 是同义 guard | **accept** | `order[-1]` 按定义就在末位，断言恒真、无证据价值。删除该断言，保留 §8 R09 对**实际 `dispatch_finished` 顺序 == `order`** 的断言；并写明 3 个 UUID 互不相同且必然可排序、最大者一定存在、不需要 skip 分支。§3 第 6 条、§8 R09 第 4 步与负分支、§9 I5、§13 R15、§17.1 #16 |
-| A7 | P2 | 6500ms 对 6000ms 门槛只有 500ms 余量，计划未写抖动处理 | **accept** | 补：子进程 claim 后立即 spawn；CI 抖动导致 `remaining < 6000` 时测试 **FAIL** 并记录实际 `remaining`，**不得**把 lease 调到 30s 规避。D5、§13 R2 |
+| A7 | P2 | 6500ms 对 6000ms 门槛只有 500ms 余量，计划未写抖动处理 | **accept** | 补：子进程 claim 后立即 spawn；CI 抖动导致 `remaining < 6000` 时测试 **FAIL** 并记录实际 `remaining`，**不得**把 lease 调到 30s 规避。D5、§13 R2。v7 进一步把 lease 提到 8000ms（§17.5 F10）；v8 收窄“记录实际 `remaining`”的承诺（§17.6 P2-3） |
 | A8 | P2 | R07 第 5 步只断言 `S(install)["prepare"] == 1`，幂等不够硬 | **accept** | 增加 `host_effects(scope)` 中 `host_prepare` effect 计数不增加。注意 `host_effects` 只返回 `ready`/`claimed`（`49_host_reads.sql:183-184`），第 4 步后 prepare effect 已 settle、计数为 0；重复 prepare 会以 `ready` 出现、计数变 1。R07 只有一个 install，不需要“允许其它 install 新增 prepare”的例外。§8 R07 第 5 步 |
 
 **驳回记录（附证据，保留原写法）**
@@ -1302,6 +1308,46 @@ v5 送第三轮 2 路 Oracle：lane 1 判 `pass`，lane 2 判 `needs-edits`，**
 
 **v6 一致性**：`cases=30`、`recovery_probes=16`、marker 全文、closeout 11/11、32-command 形态、8 路径候选集与 helper 计数（15 组 / 17 个）**全部不变**。A21/A22 只改 helper 的返回值与比较口径，不改任何 case 的期望；A23 只收窄 `close_connections` 的调用点，不增加/删除 case 步骤；A24 只改 I6 的适用范围文字；A25 只把 R09/R10 的临时排序换成 §7.1 #3 的 helper；A26 只改 I4 的枚举与命名，不改精确 `invoke` 期望。v6 不重开 X1–X6，也不把“已驳回”重述为“未决”。
 
+### 17.5 v7 修订（第四轮：逐条裁决）
+
+第四轮 2 路 Oracle 审核的是 v2 正文；v3–v6 已关闭的条目不重开。逐条盘点两路全部 material finding 后，v7 **接受 3 条（F3/F5/F10）、部分接受 1 条（F8）、驳回 4 条（F1/F2/F4/F6）、确认 4 条 already-fixed（F7/F9/F11/F12）**。gate 证据来自 2026-11-01 的 row-30 运行（命令同 §10.1，exit 0、43.6s）：R03 `lease_ms=8000`、`lease_remaining_at_spawn=7975`，R15 `pending=3/reconciled=3/settlements=3/injected_settle_calls=9`，R16 `reconciled=0/settlements=1/effect_row_unchanged=true`。
+
+| # | 优先级 | 裁决 | 结论 | 证据 | 落实位置 |
+|---:|---|---|---|---|---|
+| F1 | L1 P0-1 | R03 的 `kill_parent` 杀的是祖父（gate），不是 host child，所以 `waitpid` 看不到 SIGKILL | **rejected** | `w4_stub_plugin.py:143-145` 是 `os.kill(os.getppid(), SIGKILL)`；R03 的 stub 由 fork 出的 host child 直接 spawn，`getppid()` 就是该 child（`test_lifecycle.py` 的 R03 子进程分支）；gate `r03.wait_status={"WIFSIGNALED":true,"WTERMSIG":9}`，gate 父进程继续跑完断言；lane1 建议的 `kill_self` 只证明插件自杀，不证明 host child 被外部 SIGKILL，且改变了 crash window | 不改 R03 设计；§8 R03 第 3–5 步保留 |
+| F2 | L1 P0-2 | R15 的 `db.settle` patch 在 fresh process 不生效，无法制造 3 pending | **rejected** | `worker.py:754-798` 的 `_reconcile` 用新 `HostDB`；patch 只需在父进程把 3 个 tool 留在 `claimed`+`dispatch_finished`；子进程继承 patch 反而会破坏 `reconciled=3`。gate `r15.pending=3`、`reconciled=3`、`settlements=3`、`injected_settle_calls=9`；R15 的 3 pending 与 R10 的 1 pending + 2 ready 不等价，不能合并 | §8 R15 Patch 新增“父进程 patch / 子进程不 patch”说明 |
+| F3 | L1 P0-3 | `w7_recover.py` 的 `tool_handler=lambda: os._exit(97)` 永不触发，guard 不可证 | **accepted** | `worker.py:754-798` 的 `_reconcile` 只读写 journal/DB，不调用 handler；`tool_handler` 只在 `_execute_tool` 用（`worker.py:1050-1057`）。gate 的 R05/R14/R15/R16 恢复进程均 exit 0，但 97 从未发生 | `v24/s13/w7_recover.py:29-32` 删除 lambda；§7.3、§8 R05 第 3 步、§17.1 #2 |
+| F4 | L1 P1-1 | R16 的 `reconciled=0 settlements=1` 是假绿；建议改 `reconciled>=1 or settlements>=1` | **rejected** | `journal.py:290-302` 的 `pending_settlements()` 语义是“有 `dispatch_finished`、无 `settlement_committed`”；`worker.py:790-797` 的 terminal 分支补 settlement 但不 `settled += 1`，所以 K3.5 必然是 0/1；`reconciled + settlements >= 1` 与建议式等价。gate `r16.reconciled=0`、`settlements=1`、`effect_row_unchanged=true` | 不改 R16；§17.1 #7 保留 |
+| F5 | L1 P1-2 | R02/R03 的 lease 轮询只写“上限 lease+2s”，没写超时后怎么办 | **accepted** | 代码已有 deadline 断言（`test_lifecycle.py:1138-1150`、`:1921-1933`），但失败信息只有数字；v7 改为带 `remaining` 与 `lease` 的 FAIL，并写进计划 | D5、§8 R02 第 6 步、§8 R03 第 6 步、§13 R2；`test_lifecycle.py` 两处断言消息 |
+| F6 | L1 P2-1 | R13 的 `assert_no_live` 应改用 `os.kill(pid, 0)` | **rejected** | `os.kill(pid,0)` 对 zombie 仍成功，会把“已 exit、未 reap”判成 live，正是 §13 R6 要避免的；`ps -o stat=` 的 `Z`/`Z+` 前缀判定已覆盖 macOS/Linux。gate `r13.plugin_ps=""`、`child_ps=""` | §7.1 #13、§9 I6、§13 R6；`assert_no_live` 只加注释，不改实现 |
+| F7 | L1 P2-2 | R11 的 artifact 校验顺序写成 digest→missing→not_regular→outside | **already-fixed**（v3） | `registry.py:66-83` 的实际顺序是 resolve → commonpath → `S_ISREG` → digest；§8 R11 表已按 missing → outside_cwd → not_regular → digest 排列；gate `r11.order=[artifact_missing, artifact_outside_cwd, artifact_not_regular, artifact_digest_mismatch]` | §8 R11 表（v3 已改），v7 不改 |
+| F8 | L1 P2-3 | R14 的 `CountingSpawn` 应在崩溃后退出，否则 fresh process 会被误计 | **rejected + 部分落实** | 原建议（提前退出 `C`）被驳回：`C(3)` 已包住 `admit`/`prepare` + 两次 v1 invoke，并在崩溃点（`test_lifecycle.py:2721-2722`）与收尾（`:2750-2751`）各断言一次 3；v2 read 的 spawn 被 `artifact` 过滤，宽作用域反而能拦住同进程崩溃后额外的 v1 spawn。但证据口径要收窄：`CountingSpawn` patch 只在父解释器生效，覆盖不到 `w7_recover.py` 子进程；v1 又没有 spawn log，所以 fresh process 不 spawn 只能由结构保证（无 registry/handler、`_reconcile` 不 dispatch），**不是**被 `CountingSpawn` 测到（§17.6 P2-1）。v7 实际新增了崩溃点断言与作用域注释，故记“部分落实”。gate `r14.spawn_calls=3`、`spawn_ops={"prepare":1,"invoke":2}` | §8 R14 Assert / 第 4 步、§9 I4；`test_lifecycle.py` 崩溃点断言 + 作用域注释 |
+| F9 | L2 P1 | R03 超时清理没有区分 host child 与插件进程组 | **already-fixed**（v4 A2） | `test_lifecycle.py` 的 R03 对 child 用 `os.kill(child_pid, SIGKILL)`（不是 `killpg(child_pid)`）、对插件用 spawn log 的 pid `killpg`；§7.4 与 §8 R03 第 5 步已写死；gate `r03.wait_status` 是 SIGKILL，`plugin_state_after_cleanup=""` | §8 R03 第 5 步、§9 I6；v7 不改 |
+| F10 | L2 P2 | R03 lease 6500ms 对 6000ms 门槛余量太窄；R02 也应加长 | **accepted** | v6 gate 实测 `lease_remaining_at_spawn=6473`（claim→spawn 约 27ms），余量 473ms；v7 取 8000ms，对门槛留 2s，重跑 `lease_remaining_at_spawn=7975`、`lease_ms=8000`，gate 仍 exit 0。R02 没有 spawn 门槛，3000ms 只覆盖同进程的第一次 restart，加长只会拉长轮询。但门槛拒绝时 child 不回传实际 `remaining`，失败表现为 child 未被 SIGKILL；v8 收窄 D5/§13 R2 的诊断承诺，并在 R03 的 `WIFSIGNALED` 消息补 `child_lease_ms` 与 `timeout_ms+5000`（§17.6 P2-3） | `test_lifecycle.py` 的 `child_lease_ms=8000`；D4/D5/D12、§3 #4、§8 R03、§10.5、§13 R2 |
+| F11 | L2 P2 | R10 假设 read 先执行 | **already-fixed**（v6 A25） | §7.1 #3 的 `tool_order` 返回 UUID 升序；R10 用 `target_ordinal = tool_order(model_id, 3)[0]`、`target = T(model_id, target_ordinal)`，不假设 ordinal = 执行顺序；gate `r10.target_ordinal=2` 是 `search`（batch 的 ordinal 2；read 仍在 ordinal 0，但执行顺序按 UUID）；目标落在 ordinal 2 的 search，正说明目标选择不依赖 read 先执行（该值随 model_id 变化，v8 重跑中见过 0，断言不依赖具体 ordinal） | §7.1 #3、§8 R10 |
+| F12 | L2 P2 | `assert_w7_invariants` 未列入 §7.1 helper 清单 | **already-fixed**（v4 A4 / v5 A9 / v6 A21） | §7.1 #15 已定义 scope 级签名与 `recovered_unknown` 归一；§10.3 审计 7、§11 W7-1、§12.1 均按 15 组 / 17 个计数；gate 每个 `rNN_*` 均被调用（16 个函数；调用顺序不承载语义） | §7.1 #15、§10.3、§11 W7-1、§12.1 |
+
+**v7 gate 重跑**：`env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 uv run python v24/s13/test_lifecycle.py` → exit 0，43.6s；末行 marker 与 §10.1 逐字相同：`[passed] W4 lifecycle; cases=30; recovery_probes=16; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true; no_replay=true`。本次只重跑 row 30，未重跑 32-command sweep；Result 的 32/32、7 audits 与 8 路径 SHA 仍是 v6 sweep 记录，v7 的代码改动只涉及 `test_lifecycle.py` 与 `w7_recover.py`。
+
+**v7 一致性**：`cases=30`、`recovery_probes=16`、marker 全文、closeout 11/11、32-command 形态、8 路径候选集与 helper 计数（15 组 / 17 个）**全部不变**。接受的 F3 只删死代码，F5 只把失败信息写清，F10 只把 R03 lease 从 6500 提到 8000（gate 43.6s，仍低于 90s 上限）；驳回的 F1/F2/F4/F6 保留原实现，F8 保留结构并收窄证据口径（部分接受）。v7 不重开 X1–X6，也不把“已驳回”重述为“未决”。
+
+### 17.6 v8 修订（第五轮：pass + P2 收尾）
+
+第五轮 2 路 Oracle（L1 `claude-opus-5-5`、L2 `gpt-6.1-sol-xhigh`）对 v7 给出 **两路 pass、无 P0/P1**，合并结论 "Approve with fixes"；本计划不重开任何 F1–F12 裁决。两路原始 P2 共 8 条，去重合并为 6 个问题域（L1 的 P2-1/P2-2/P2-3/P2-4/P2-5；L2 的 #1/#2/#3，其中 R14 与门槛诊断两路重复）：
+
+| # | P2 | 来源 | 处置 | 落实位置与证据 |
+|---:|---|---|---|---|
+| P2-1 | R14 把父进程 `CountingSpawn` 当成 fresh-process 不 spawn 的证据，超出观察范围 | L1 P2-1 / L2 #1 | **accept（收窄证据，不改结构）** | `CountingSpawn` patch 只在父解释器；`w7_recover.py` 是独立进程，v1 又没有 spawn log。§8 R14 第 4 步/Assert、§9 I4、§3 #9、§17.5 F8 统一为：父进程阶段（崩溃前 + reopen 后父进程续跑）有计数证据（各断言 3）；fresh process 不 spawn 由结构保证——脚本无 registry/handler，`_reconcile` 只读写 journal/DB、不 dispatch（`worker.py:754-798`），**不是**被 `CountingSpawn` 测到。`test_lifecycle.py` 的 r14 注释已写明 "a fresh recovery subprocess cannot be counted"，保留。 |
+| P2-2 | §7.1 要求 `main()` 按 r01…r16 调用，与实际顺序不符；F11 把 `target_ordinal=2` 误读为 "read 不在 0" | L2 #2；L1 P2-4 的 F11 行 | **accept** | §7.1 改为实际清单 `G12-A…H → G12-L → 01,02,07,08,05,06,15,16,03,04,09,10,11,12,13,14 → marker`，并说明顺序不承载语义（每个 case 独立 harness/base、自建 run，无跨 case 依赖）；D2、§10.3 审计 7、§11 W7-1 同步为 "调用清单"。F11 改为：`target_ordinal=2` 是 batch ordinal 2 的 search；read 仍在 ordinal 0，但执行顺序按 UUID，目标落在 search 正说明目标选择不依赖 read 先执行。证据：`test_lifecycle.py:2236-2237`；v8 重跑见过 0（随 model_id 变化），断言不依赖具体 ordinal。 |
+| P2-3 | D5/§13 R2/F10 承诺 "`remaining<6000` 时 FAIL 并记录实际值"，但子进程不回传门槛检查值 | L1 P2-2 / L2 #3 | **accept（收窄文字 + 补诊断上下文）** | 门槛拒绝时 `plugins.py:170-176` 直接返回 `lease_insufficient`，`kill_parent` 不会执行；失败表现是 child 未被 SIGKILL（`WIFSIGNALED`）或 `invoke_pids != 1`。D5、§13 R2、§17.5 F10 改为这个口径。`r03_kill_parent_sigkill` 的 `WIFSIGNALED` 消息补 `spawn_gate_ms = spec.entry.tools[0].timeout_ms + 5000` 与 `child_lease_ms`（test-only，与 gate 同式）；门槛时刻的真实 `remaining` 仍不回传，spawn 成功后才有 `lease_remaining_at_spawn` 反推值。 |
+| P2-4 | `CountingSpawn.__exit__` 在异常路径也断言数量，次生 AssertionError 会先于真实失败出现 | L1 P2-3 | **accept** | `test_lifecycle.py` 改为 `if self.expected is not None and exc_type is None:` 才断言；`ZeroSpawn` 旧代码不动。正常路径的 R01/R05/R07/R08/R13/R14 计数证据不变。 |
+| P2-5 | §17.5 的 F8 标签、prompt 行号元信息、48/49s 不一致 | L1 P2-4 | **accept** | F8 改 "rejected + 部分落实"；§17.5 开头与文首 v7 摘要计数改为接受 3（F3/F5/F10）/ 部分接受 1（F8）/ 驳回 4（F1/F2/F4/F6）/ already-fixed 4（F7/F9/F11/F12）；删除关于 prompt 内行号的评审元信息；§3 #15 的 "约 48s" 统一为 §10.5 的 49.0s。 |
+| P2-6 | follow-up 提交前需重跑 audit 1/2/3/6/7、刷新 `source-sha256.txt`、另出 publication receipt | L1 P2-5 | **accept（执行要求，非计划文字缺陷）** | 本轮不 commit/push。follow-up 提交前按 §3 #12/§14 重跑 audit 1/2/3/6/7、刷新 `source-sha256.txt`、另出 receipt，并使用新提交（不 amend 已推送的 `6297246`、不 force push）；Result 的 v8 段与 §14 已写明。 |
+
+**v8 gate 重跑**：命令同 §10.1 → exit 0、43.1s；末行 marker 与 §10.1 逐字相同（`cases=30; recovery_probes=16; ... no_replay=true`）。本次只重跑 row 30，未重跑 32-command sweep；§17.5 引用的 gate 数据与 Result 的 32/32、7 audits、≈40.4 s、8 路径 SHA 仍是 v6/v7 记录。v8 只改 `test_lifecycle.py`（三处 test-only 改动：`CountingSpawn.__exit__` 条件、R03 诊断消息、R14 注释）、本计划；`w7_recover.py`、`w4_stub_plugin.py`、`v24/host`、SQL、design、vectors、pins 均未改。
+
+**v8 一致性**：`cases=30`、`recovery_probes=16`、marker 全文、closeout 11/11、32-command 形态、8 路径候选集与 helper 计数（15 组 / 17 个）**全部不变**；不重开 F1–F12、X1–X6。
+
 ## Result
 
 实际执行日期 **2026-11-01**（+08:00；证据目录 UTC 标记 `/tmp/v24-abi-w7-20261031T200002Z/`）。sweep HEAD **`a41ce22`**（`a41ce220b60af95070d93ce1571d09d70299a5cf`），`origin/main` 同点；工作区只含本计划的 8 路径候选。
@@ -1314,7 +1360,7 @@ row 30 末行：
 [passed] W4 lifecycle; cases=30; recovery_probes=16; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true; no_replay=true
 ```
 
-`cases=30` 为函数级计数（W4c 的 14 个子场景 + R01–R16 各 1），`recovery_probes=16`；`test_lifecycle.py` 2,849 行，实测墙钟 ≈40.4 s，sweep row-30 窗口 `2026-10-31T20:03:34Z` → `2026-10-31T20:04:14Z`，低于 90 s 硬上限。
+`cases=30` 为函数级计数（W4c 的 14 个子场景 + R01–R16 各 1），`recovery_probes=16`；v6 sweep 时 `test_lifecycle.py` 2,849 行、实测墙钟 ≈40.4 s，sweep row-30 窗口 `2026-10-31T20:03:34Z` → `2026-10-31T20:04:14Z`，低于 90 s 硬上限。
 
 七项 scope audit 的末行（precheck 与文档落盘后的 final 均 exit 0；confirmation 结果只记入外置 receipt）：
 
@@ -1328,7 +1374,7 @@ row 30 末行：
 | 6 | `sql_zero_diff` | `[scope] passed sql_zero_diff` | exit 0 | exit 0 |
 | 7 | `w7_candidate_only` | `[scope] passed w7_candidate_only` | exit 0 | exit 0 |
 
-候选 8 路径 SHA-256（final audit 后、本 Result 落盘前；本文件不能包含自身 digest）：
+v6 sweep 时的候选 8 路径 SHA-256（final audit 后、本 Result 落盘前；本文件不能包含自身 digest）：
 
 | 路径 | SHA-256 |
 |---|---|
@@ -1348,3 +1394,7 @@ R15：3 个 pending（`claimed`、`dispatch_finished` 有、settlement 0）由 f
 Publication：commit SHA / push 退出码 / 远端 ref 更新行 / push 后 `git rev-parse origin/main` / UTC 时间 / 8 路径 manifest，全部记录在 **`/tmp/v24-abi-w7-20261031T200002Z/publication-receipt.txt`**；本文件不嵌 commit SHA（§17.2 A5）。
 
 **无 W7-8 偏差**：`v24/host`、`v24/sql`、`v24/s13/vectors`、design、pins 与其余 s13 测试零 diff，B0 字节不变，所有 tool effect 仍 `no_replay`；W7 不是 M4 重开、不是 M6、不是 closeout 第 12 条。
+
+**v7 复核**：2026-11-01 在 `6297246` 工作树上应用 §17.5 的裁决后，只重跑 row 30（命令同 §10.1）：exit 0、43.6 s、末行 marker 与上面逐字相同；R03 lease 改为 8000ms（gate `lease_remaining_at_spawn=7975`）。`test_lifecycle.py` 当时（v7）为 2,866 行、`w7_recover.py` 为 44 行；上面表格里的 32/32、7 项 audit、≈40.4 s 与 8 路径 SHA 仍是 **v6 sweep** 记录，v7 未重跑。v7 只改 `test_lifecycle.py`、`w7_recover.py` 与本计划：两个测试资产当时（v7）的 SHA-256 为 `4664a5743fd18ba39ff38ecb4a44b733304ca18e30c77b305f1ea7f12c9af512` 与 `64563988dbfe69cc7d61a5907954e247071b8433fe1aac168ee609b4c3531f1b`；`w4_stub_plugin.py`、README、matrix、ledger、execution record 5 个路径未变，本计划自身 digest 按惯例不嵌入。
+
+**v8 复核（第五轮：pass + P2 收尾）**：2026-11-01 在同一工作树落实 §17.6 的 6 个 P2 问题域；只改 `v24/s13/test_lifecycle.py`（`CountingSpawn.__exit__` 的异常路径条件、R03 的 `WIFSIGNALED` 诊断上下文、R14 的计数作用域注释）与本计划；`v24/s13/w7_recover.py`、`w4_stub_plugin.py`、`v24/host`、SQL、design、vectors、pins 均未改。row 30 重跑（命令同 §10.1）→ exit 0、43.1 s，末行 marker 与 §10.1 逐字相同：`[passed] W4 lifecycle; cases=30; recovery_probes=16; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true; no_replay=true`。两个测试资产当前 SHA-256：`test_lifecycle.py` = `f189a5c83c91f34100e9056718139601bbe6a910fbc84763524c65f4f0df89fc`（2,869 行），`w7_recover.py` = `64563988dbfe69cc7d61a5907954e247071b8433fe1aac168ee609b4c3531f1b`（44 行）。上面的 **32/32**、7 项 scope audit、≈40.4 s 与 8 路径 SHA 仍是 **v6 sweep** 记录（v7/v8 都未重跑 32-command sweep）；follow-up 提交前必须重跑 audit 1/2/3/6/7、刷新 `source-sha256.txt`、另出 publication receipt，并使用新提交（不 amend 已推送的 `6297246`、不 force push）。
