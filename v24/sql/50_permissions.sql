@@ -25,7 +25,7 @@ GRANT EXECUTE ON FUNCTION v24.advance(uuid, jsonb)
 GRANT EXECUTE ON FUNCTION v24.scope_control(text, uuid, jsonb, text, text)
   TO v24_admin, v24_service, v24_operator;
 GRANT EXECUTE ON FUNCTION v24.install(uuid, uuid, bytea, bytea, text)
-  TO v24_service, v24_operator;
+  TO v24_admin, v24_service, v24_operator;
 -- S3 W1 read surface: STABLE DEFINER, fixed search_path, writes nothing.
 GRANT EXECUTE ON FUNCTION v24.resolve(uuid, text[])
   TO v24_admin, v24_service, v24_operator;

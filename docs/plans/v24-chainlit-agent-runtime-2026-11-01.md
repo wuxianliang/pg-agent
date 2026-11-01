@@ -1668,6 +1668,24 @@ uv run python v24/s13/test_node.py --node    # Node 缺失 → [SKIP] 退出 2�
 15. **预算适配算法 + 512 的正确表述**：40960 适配 = 先 2000 行/32768 字节（`read` head、`bash` tail）再循环缩短到 `compact_json(value) ≤ 40960−SPILL_RESERVE`；把旧的"超限会被截短成 final"说法拆成 `build()` 的 clamp（无害）与 provider `finish_reason="length"` → `_unknown("finish_length")`（整轮失败）；`write` 大内容不是被截断而是本轮失败，主缓解是 `write.append` + 小步；`MAX_SAFE_ARGS_BYTES` 单一常量取代 1.5KB，页脚/README 写"超限本轮失败"（§2.4、§4.2、§4.6、§4.7、§11、§13 W12）。
 16. **让 digest 断言真的能失败 + 两处一致性**：断言 1 降级为辅助，断言 3 改为对 `host_scope_installs`/`host_install_fibers` 的 **DB 回读行**、每 scope 每族都跑；新增负控制（artifact 改一字节 → `lookup_install` 空；manifest `realm` 改一字符 → `AdapterNotFound`）；§8.7 的 `respond` 去掉 `driving_generation`；`ScriptedUiAdapter` 统一落 `fake.py` 并进 M1 文件列表（§3 A2、§4.3、§6.1-6、§8.7、§10 M1）。
 
+## D-UI-6 · Authorized M1 install ACL and immutable audit exception
+
+User authorization (2026-11-01): M1 may add `v24_admin` only to the public `v24.install(uuid,uuid,bytea,bytea,text)` EXECUTE GRANT in `v24/sql/50_permissions.sql`; the interpreter already authorizes admin. Preserve all 27 SQL statements. Update only the S1 admin exposed set/remove its install-42501 negative, and S9 admin exposed set/count 26→27/positive install privilege assertion. Use the public wrapper; never construct `command_install` in UI code.
+
+The authorized audit files are `v24/s13/test_wiring.py`, `v24/cordis/dp4/test_closeout.py`, and DP5/DP6 `test_boundaries.py`. Retain every original BASE and full scope, all 12 SQL hashes (update only permissions), S13's 12 frozen paths, whole-module renderer AST stripping exactly five W9 additions, and `checks=6`. No skips or rebaseline. Relative to DP5/DP6 BASE `57e2c1e`, the exact six modified paths must be permissions SQL, S1 `test_g1.py`, S9 `test_g8.py`, and the three immutable historical READMEs below. Require status M for all six, reject missing deltas or a seventh path. First three must equal raw BASE bytes transformed by unique approved literal substitutions; all other frozen paths remain unchanged.
+
+| Historical path (never edit) | Immutable source commit | Blob | SHA256 |
+|---|---|---|---|
+| `v24/s9/README.md` | `f3c48a1fc11567e6f7e6bd422eb97fac3c3a29a9` | `3ac204b4ef399091e6cc2aa43765c8b22eeca981` | `0a3c64ddb0e4997d287de81b5c93582cb97320bcb18416c18f7e54fcd318551b` |
+| `v24/s10/README.md` | `d8029b73e230d68c4a3817fa14a95c72151f4c02` | `b37b5fe03ab43d09565d3a17a08d1c6677cdeb02` | `a25595bf64d05a649313ba9a48b1e8f1c1c385a365330799be2a126787610ae3` |
+| `v24/s11/README.md` | `d13391d27f9c7363906282af4cea4160c5aa97a8` | `2fb92cdcdee994ad030a2b9046b4d8fc5cb267b4` | `dc9e0e575d3cb2061eff286ae5fefa3d83b2bf8a2d36cae200c4eca484262063` |
+
+All source commits are ancestors of pre-M1 `9ba0b782797c5c2c421f6355f01d0047d1955b23`; current README bytes equal that HEAD. The earlier `0189029` pins and five-path assumption were false and are superseded by these exact pins. Negative controls must reject an extra byte, SQL admin removal/PUBLIC/second-line mutation, the old S1 admin-denied block, old S9 count/negative assertion, README mutation, and a seventh changed path.
+
+A dedicated `v24/ui/d_ui_6_acl.py` (`--check`/`--apply` only) may preserve the existing environment: recognize only exact preupgrade, ACL-upgraded/metadata-old, or completed states; hold `.uidata/lock` for apply; validate database `agent_v24_ui`, server identity, database OID and fingerprint; execute only the target admin GRANT and atomically rebind permissions `file_digests` plus `sql_manifest_digest` in `loaded.json`. Test disposable first, then existing check/apply/check. No reset, `load_stage`, full replay, or ordinary migration; `--migrate` remains unsupported/2. These plan/ledger/audit/ACL/helper paths are explicit exceptions to the original M1 whitelist; no host/load/design changes.
+
+Factual correction to A2/§6: `PluginRegistry.lookup_install` raises `AdapterNotFound('adapter_not_approved')` on mismatch; it never returns None. Test both artifact and manifest mismatch accordingly. UI RPC commits any successfully returned domain envelope (including rejection), rolls back Python/SQL exceptions, and leaves the connection IDLE.
+
 ## Post-approval correction (2026-11-02)
 
 本节是追加更正，不重写 §12.7/§12.8 的正文；两节原文保留为当时的批准文本，最终权威是 [W9 execution record](../reviews/v24-tool-plugin-abi-w9-text-plain-2026-11-02.md)。

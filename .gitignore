@@ -12,6 +12,7 @@ wheels/
 # Local embedded Postgres data
 .pgdata/
 .pgdata.*/
+/.uidata/
 
 # Oracle/session prompt dumps
 prompt-exports/

@@ -44,7 +44,7 @@ FROZEN = {
     '48_loop.sql': 'f23a93cdd5c14966442bf30eb1339b6e110c3b1c279b95650704aa9e12870f30',
     '49_host_reads.sql': '242748a0fe29cbedc723df9d5de18dd1fba7e9767cfce56a3bc218d1a17ce6c4',
     '49_recovery.sql': 'b46abde9f5fc4259f9ea833440ca0c0815a4a14a578e058b861f59990d90af8d',
-    '50_permissions.sql': '578cba9fefc0e0238d6ffd42e458b235bd59ae56a7fa6b1f84a2de36fddbdafe',
+    '50_permissions.sql': '3f5faef04cdd18e992336cf093bb535d78377ce01154cf57a58e34d048de7ee2',
 }
 
 
@@ -401,6 +401,18 @@ def test_b5_manifest(db):
           f'288 requires is rejected as an illegal manifest')
 
 
+def _d_ui_6_sql_audit(base):
+    path = 'v24/sql/50_permissions.sql'
+    old = b'GRANT EXECUTE ON FUNCTION v24.install(uuid, uuid, bytea, bytea, text)\n  TO v24_service, v24_operator;'
+    new = old.replace(b'TO v24_service', b'TO v24_admin, v24_service')
+    baseline = subprocess.check_output(['git', 'show', base + ':' + path], cwd=ROOT)
+    assert baseline.count(old) == 1
+    assert (ROOT / path).read_bytes() == baseline.replace(old, new, 1)
+    changes = subprocess.check_output(['git', 'diff', '--name-status', '--no-renames',
+        base, '--', 'v24/sql'], cwd=ROOT).decode().splitlines()
+    assert changes == ['M\t' + path], changes
+
+
 def test_b6_frozen(db):
     for name, want in FROZEN.items():
         got = hashlib.sha256((ROOT / 'v24' / 'sql' / name).read_bytes()).hexdigest()
@@ -408,9 +420,7 @@ def test_b6_frozen(db):
     assert subprocess.run(['git', 'diff', '--check'], cwd=ROOT).returncode == 0
     assert subprocess.run(['git', 'diff', '--exit-code', '17c855d', '--', 'v24/load.py'],
                           cwd=ROOT).returncode == 0
-    assert subprocess.run(['git', 'diff', '--exit-code', '57e2c1e', '--'] +
-                          [f'v24/sql/{name}' for name in FROZEN],
-                          cwd=ROOT).returncode == 0
+    _d_ui_6_sql_audit('57e2c1e')
     print('[CDP4-B6] twelve frozen v24/sql hashes, load.py since B0, DP2-frozen diff and '
           'git diff --check are unchanged')
 

@@ -66,7 +66,7 @@ FROZEN = {
     '48_loop.sql': 'f23a93cdd5c14966442bf30eb1339b6e110c3b1c279b95650704aa9e12870f30',
     '49_host_reads.sql': '242748a0fe29cbedc723df9d5de18dd1fba7e9767cfce56a3bc218d1a17ce6c4',
     '49_recovery.sql': 'b46abde9f5fc4259f9ea833440ca0c0815a4a14a578e058b861f59990d90af8d',
-    '50_permissions.sql': '578cba9fefc0e0238d6ffd42e458b235bd59ae56a7fa6b1f84a2de36fddbdafe',
+    '50_permissions.sql': '3f5faef04cdd18e992336cf093bb535d78377ce01154cf57a58e34d048de7ee2',
 }
 
 # Exact observer column whitelist granted by 50_permissions.sql.
@@ -782,6 +782,80 @@ def test_b5_bounds(db):
 
 # ---------------------------------------------------------------- CDP6-B6
 
+# D-UI-6: closed-world exception; retain BASE and the entire frozen scope.
+D_UI_6_SUBSTITUTIONS = {'v24/sql/50_permissions.sql': [(b'  TO v24_service, v24_operator;\n', b'  TO v24_admin, v24_service, v24_operator;\n')], 'v24/s1/test_g1.py': [(b'        if alias != "admin":\n            expected.add("install")\n', b'        expected.add("install")\n'), (b'        if alias == "admin":\n            sqlstate(conn, "42501", lambda: one(conn,\n                "SELECT v24.install(NULL,NULL,\'\'::bytea,\'\'::bytea,\'admin-denied\')"))\n', b'')], 'v24/s9/test_g8.py': [(b'        "admin": base | set(h.HOST_READS),\n', b'        "admin": base | set(h.HOST_READS) | {"install"},\n'), (b'    assert len(expected["admin"]) == 26 and len(expected["service"]) == 27\n    assert not h.one(admin, "SELECT has_function_privilege(session_user,"\n                            "\'v24.install(uuid,uuid,bytea,bytea,text)\'::regprocedure,"\n                            "\'EXECUTE\')")\n', b'    assert len(expected["admin"]) == 27 and len(expected["service"]) == 27\n    assert h.one(admin, "SELECT has_function_privilege(session_user,"\n                         "\'v24.install(uuid,uuid,bytea,bytea,text)\'::regprocedure,"\n                         "\'EXECUTE\')")\n'), (b'    print("[G8-H10] 17 definers exact, 27 GRANTs, 26/27/27 EXECUTE, helper "\n          "hidden, admin install denied, STABLE/fixed path/no PUBLIC/zero "\n', b'    print("[G8-H10] 17 definers exact, 27 GRANTs, 27/27/27 EXECUTE, helper "\n          "hidden, admin install allowed, STABLE/fixed path/no PUBLIC/zero "\n')]}
+D_UI_6_READMES = {'v24/s9/README.md': ('f3c48a1fc11567e6f7e6bd422eb97fac3c3a29a9', '3ac204b4ef399091e6cc2aa43765c8b22eeca981', '0a3c64ddb0e4997d287de81b5c93582cb97320bcb18416c18f7e54fcd318551b'), 'v24/s10/README.md': ('d8029b73e230d68c4a3817fa14a95c72151f4c02', 'b37b5fe03ab43d09565d3a17a08d1c6677cdeb02', 'a25595bf64d05a649313ba9a48b1e8f1c1c385a365330799be2a126787610ae3'), 'v24/s11/README.md': ('d13391d27f9c7363906282af4cea4160c5aa97a8', '2fb92cdcdee994ad030a2b9046b4d8fc5cb267b4', 'dc9e0e575d3cb2061eff286ae5fefa3d83b2bf8a2d36cae200c4eca484262063')}
+D_UI_6_HEAD = '9ba0b782797c5c2c421f6355f01d0047d1955b23'
+
+
+def _d_ui_6_expected():
+    def git(*args):
+        return subprocess.check_output(['git', *args], cwd=ROOT)
+    expected = {}
+    for path, substitutions in D_UI_6_SUBSTITUTIONS.items():
+        raw = git('show', '57e2c1e:' + path)
+        for old, new in substitutions:
+            assert raw.count(old) == 1, (path, 'nonunique substitution')
+            raw = raw.replace(old, new, 1)
+        expected[path] = raw
+    for path, (source, blob, digest) in D_UI_6_READMES.items():
+        assert subprocess.run(['git', 'merge-base', '--is-ancestor', source,
+                               D_UI_6_HEAD], cwd=ROOT).returncode == 0
+        assert git('rev-parse', source + ':' + path).decode().strip() == blob
+        raw = git('show', source + ':' + path)
+        assert hashlib.sha256(raw).hexdigest() == digest, path
+        assert raw == git('show', D_UI_6_HEAD + ':' + path), path
+        expected[path] = raw
+    return expected
+
+
+def _d_ui_6_assert(expected, current, changes):
+    assert changes == {path: 'M' for path in expected}, changes
+    assert current == expected, 'D-UI-6 bytes outside exact approved transformations'
+
+
+def d_ui_6_frozen_audit(frozen_paths):
+    expected = _d_ui_6_expected()
+    result = subprocess.check_output(['git', 'diff', '--name-status',
+        '--no-renames', '57e2c1e', '--', *frozen_paths], cwd=ROOT).decode()
+    changes = {}
+    for line in result.splitlines():
+        status, path = line.split('\t')
+        assert path not in changes
+        changes[path] = status
+    current = {path: (ROOT / path).read_bytes() for path in expected}
+    _d_ui_6_assert(expected, current, changes)
+    # All negative controls are in memory; the checkout is never mutated.
+    def reject(data, changed=None):
+        try:
+            _d_ui_6_assert(expected, data, changes if changed is None else changed)
+        except AssertionError:
+            return
+        raise AssertionError('D-UI-6 negative control admitted')
+    for path in expected:
+        reject(dict(current, **{path: current[path] + b' '}))
+        reject(current, {p: s for p, s in changes.items() if p != path})
+        reject(current, dict(changes, **{path: 'A'}))
+    path = 'v24/sql/50_permissions.sql'
+    grant = b'GRANT EXECUTE ON FUNCTION v24.install(uuid, uuid, bytea, bytea, text)\n  TO v24_admin, v24_service, v24_operator;'
+    for altered in (grant.replace(b'v24_admin, ', b''), grant.replace(b'v24_admin', b'PUBLIC')):
+        reject(dict(current, **{path: current[path].replace(grant, altered, 1)}))
+    reject(dict(current, **{path: current[path].replace(b'v24_admin', b'PUBLIC', 1)}))
+    for path, substitutions in D_UI_6_SUBSTITUTIONS.items():
+        reject(dict(current, **{path: subprocess.check_output(
+            ['git', 'show', '57e2c1e:' + path], cwd=ROOT)}))
+        for old, new in substitutions:
+            if new:
+                assert new in current[path]
+                reject(dict(current, **{path: current[path].replace(new, old, 1)}))
+    # The removed S1 denial block must also remain absent.
+    path = 'v24/s1/test_g1.py'
+    removed = next(old for old, new in D_UI_6_SUBSTITUTIONS[path] if not new)
+    reject(dict(current, **{path: current[path] + removed}))
+    reject(current, dict(changes, **{'v24/s12/seventh.py': 'M'}))
+    print('[D-UI-6] exact six M paths; immutable provenance and in-memory negatives passed')
+
+
 def test_b6_frozen():
     for name, want in FROZEN.items():
         got = hashlib.sha256((ROOT / 'v24' / 'sql' / name).read_bytes()).hexdigest()
@@ -800,8 +874,7 @@ def test_b6_frozen():
                                     cwd=ROOT, capture_output=True, text=True)
         assert whitespace.returncode == 0, whitespace.stdout + whitespace.stderr
     frozen_paths = ['v24/load.py', 'v24/sql'] + [f'v24/s{i}' for i in range(1, 13)]
-    assert subprocess.run(['git', 'diff', '--exit-code', '57e2c1e', '--'] + frozen_paths,
-                          cwd=ROOT).returncode == 0
+    d_ui_6_frozen_audit(frozen_paths)
 
     spec = importlib.util.spec_from_file_location('frozen_v24_loader', ROOT / 'v24' / 'load.py')
     loader = importlib.util.module_from_spec(spec)

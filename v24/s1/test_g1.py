@@ -807,8 +807,7 @@ def permissions(db, owner, connections):
                            "host_scopes", "host_runs", "host_effects",
                            "host_run_effects", "host_effect", "host_scope_installs",
                            "host_install_fibers", "host_run_pins", "host_request"}
-        if alias != "admin":
-            expected.add("install")
+        expected.add("install")
         assert set(exposed) == expected, (alias, exposed)
         before = state(owner)
         for table in sorted(EXPECTED_TABLES):
@@ -835,9 +834,6 @@ def permissions(db, owner, connections):
         sqlstate(conn, "42501", lambda: one(conn, "CREATE TABLE v24.acl_bypass(id int)"))
         sqlstate(conn, "42501", lambda: one(conn,
             "SELECT v24.validate_and_apply_delta(NULL,NULL,'{}','{}','{}')"))
-        if alias == "admin":
-            sqlstate(conn, "42501", lambda: one(conn,
-                "SELECT v24.install(NULL,NULL,''::bytea,''::bytea,'admin-denied')"))
         conn.commit()
         assert state(owner) == before
         owner.rollback()

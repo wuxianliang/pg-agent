@@ -936,6 +936,18 @@ def _renderer_identity_audit():
     _assert_renderer_identity(baseline_source, current_source)
 
 
+def _d_ui_6_sql_audit(base):
+    path = 'v24/sql/50_permissions.sql'
+    old = b'GRANT EXECUTE ON FUNCTION v24.install(uuid, uuid, bytea, bytea, text)\n  TO v24_service, v24_operator;'
+    new = old.replace(b'TO v24_service', b'TO v24_admin, v24_service')
+    baseline = subprocess.check_output(['git', 'show', base + ':' + path], cwd=ROOT)
+    assert baseline.count(old) == 1
+    assert (ROOT / path).read_bytes() == baseline.replace(old, new, 1)
+    changes = subprocess.check_output(['git', 'diff', '--name-status', '--no-renames',
+        base, '--', 'v24/sql'], cwd=ROOT).decode().splitlines()
+    assert changes == ['M\t' + path], changes
+
+
 def scope_audit():
     """Six pinned-baseline audits; [passed] is deliberately not printed."""
     checks = 0
@@ -1023,8 +1035,7 @@ def scope_audit():
         assert found.returncode != 0, (label, found.stdout)
     checks += 1
 
-    sql = _git("diff", "--exit-code", BASE, "--", "v24/sql")
-    assert sql.returncode == 0, sql.stdout
+    _d_ui_6_sql_audit(BASE)
     checks += 1
     assert checks == 6, checks
     print(f"[scope] passed base={BASE} checks={checks}")

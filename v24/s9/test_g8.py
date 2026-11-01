@@ -558,7 +558,7 @@ def g8_h10(db, owner, conns, pmap):
                    "fiber_control", "dispose", "start", "cancel", "steer",
                    "respond", "recoverable_effects", "command_recover"}
     expected = {
-        "admin": base | set(h.HOST_READS),
+        "admin": base | set(h.HOST_READS) | {"install"},
         "service": base | set(h.HOST_READS) | {"install"},
         "operator": base | set(h.HOST_READS) | {"install"},
     }
@@ -572,10 +572,10 @@ def g8_h10(db, owner, conns, pmap):
         assert not h.one(conn, """SELECT has_function_privilege(session_user,
             'v24.host_scope_allowed(uuid)'::regprocedure,'EXECUTE')""")
         conn.rollback()
-    assert len(expected["admin"]) == 26 and len(expected["service"]) == 27
-    assert not h.one(admin, "SELECT has_function_privilege(session_user,"
-                            "'v24.install(uuid,uuid,bytea,bytea,text)'::regprocedure,"
-                            "'EXECUTE')")
+    assert len(expected["admin"]) == 27 and len(expected["service"]) == 27
+    assert h.one(admin, "SELECT has_function_privilege(session_user,"
+                         "'v24.install(uuid,uuid,bytea,bytea,text)'::regprocedure,"
+                         "'EXECUTE')")
     admin.rollback()
 
     for row in h.rows(owner, """SELECT p.proname, p.provolatile, p.proconfig,
@@ -643,8 +643,8 @@ def g8_h10(db, owner, conns, pmap):
                           "AND locktype='advisory'") == 0
     service.rollback()
     assert_fingerprint_stable(owner, service, scope_id)
-    print("[G8-H10] 17 definers exact, 27 GRANTs, 26/27/27 EXECUTE, helper "
-          "hidden, admin install denied, STABLE/fixed path/no PUBLIC/zero "
+    print("[G8-H10] 17 definers exact, 27 GRANTs, 27/27/27 EXECUTE, helper "
+          "hidden, admin install allowed, STABLE/fixed path/no PUBLIC/zero "
           "table rights, scoped denials, ten-table unchanged, no G lock")
 
 
