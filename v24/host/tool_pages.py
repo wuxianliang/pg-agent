@@ -11,6 +11,7 @@ immutable built-in renderer registry.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -21,6 +22,7 @@ MAX_LINE_BYTES = 16384
 MAX_READ_LINES = 2000
 MAX_LIST_ENTRIES = 500
 MAX_SEARCH_HITS = 200
+MAX_TEXT_BYTES = 32768
 _SKIPPED_KEYS = frozenset({
     "hidden", "symlink", "binary", "too_large", "non_utf8", "long_lines",
 })
@@ -44,6 +46,11 @@ BUILTIN_PAGE_CONTRACTS: Mapping[str, PageContract] = {
     "v24.fs.list.text": PageContract("v24.fs.list.text", "list", MAX_LIST_ENTRIES),
     "v24.fs.search.text": PageContract("v24.fs.search.text", "search",
                                        MAX_SEARCH_HITS),
+}
+
+
+TEXT_PAGE_CONTRACTS: Mapping[str, PageContract] = {
+    "v24.text.plain": PageContract("v24.text.plain", "text", 2000),
 }
 
 
@@ -216,6 +223,32 @@ def _check_search(value: dict, offset: int, limit: int) -> None:
     _check_cursor(value, offset, count, truncated)
 
 
+def _check_text(value: Any, limit: int) -> None:
+    if type(value) is not dict:
+        _fail()
+    text = value.get("text")
+    truncated = value.get("truncated")
+    spill_path = value.get("spill_path")
+    if (not isinstance(text, str) or type(truncated) is not bool
+            or not isinstance(spill_path, str)):
+        _fail()
+    if "\x00" in text:
+        _fail()
+    try:
+        encoded = text.encode("utf-8")
+    except UnicodeEncodeError:
+        _fail()
+    if len(text.splitlines()) > limit or len(encoded) > MAX_TEXT_BYTES:
+        _fail()
+    if truncated is False:
+        if spill_path != "":
+            _fail()
+    elif not re.fullmatch(r"\.v24/spill/[0-9a-f]{32}\.txt", spill_path):
+        _fail()
+    if "exit_code" in value and "status" in value:
+        _fail()
+
+
 def validate_page(render: RendererRef, args: dict, value: Any) -> None:
     """Reject success pages whose fields contradict design §5.6.
 
@@ -225,17 +258,21 @@ def validate_page(render: RendererRef, args: dict, value: Any) -> None:
     """
     if not isinstance(render, RendererRef):
         _fail()
-    contract = BUILTIN_PAGE_CONTRACTS.get(render.id)
+    contract = (BUILTIN_PAGE_CONTRACTS.get(render.id)
+                or TEXT_PAGE_CONTRACTS.get(render.id))
     if contract is None:
         _fail()
     try:
         RENDERERS.lookup(render)
     except Exception:
         _fail()
-    offset, limit = _check_args(args, contract)
     if not isinstance(value, dict):
         _fail()
     _check_safe_domain(value)
+    if contract.kind == "text":
+        _check_text(value, contract.default_limit)
+        return
+    offset, limit = _check_args(args, contract)
     if contract.kind == "read":
         _check_read(args, value, offset, limit)
     elif contract.kind == "list":
@@ -246,7 +283,8 @@ def validate_page(render: RendererRef, args: dict, value: Any) -> None:
 
 # The page-contract table and the immutable renderer registry must agree at
 # import time; a drift would silently disable one of the three checks.
-if set(BUILTIN_PAGE_CONTRACTS) != {entry.ref.id for entry in RENDERERS.entries}:
+if (set(BUILTIN_PAGE_CONTRACTS) | set(TEXT_PAGE_CONTRACTS)
+        != {entry.ref.id for entry in RENDERERS.entries}):
     raise RuntimeError("page contract drift")
 if {key: item.default_limit for key, item in BUILTIN_PAGE_CONTRACTS.items()} != {
         "v24.fs.read.text": MAX_READ_LINES,

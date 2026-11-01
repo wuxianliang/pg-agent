@@ -1,6 +1,6 @@
 """W2 renderer contract gate: golden bytes, registry identity and digests.
 
-Read-only over ``v24/s13/vectors/renderers.json``.  DB-free, Node-free,
+Read-only over the frozen renderer vectors.  DB-free, Node-free,
 socket-free and subprocess-free.
 """
 from __future__ import annotations
@@ -18,8 +18,10 @@ if str(ROOT) not in sys.path:
 from v24.host import renderers  # noqa: E402
 from v24.host.canonical import compact_json, escaped_len  # noqa: E402
 from v24.host.tool_results import measure as production_measure  # noqa: E402
+from v24.host.tool_pages import ToolPageError, validate_page  # noqa: E402
 
 VECTORS = Path(__file__).resolve().parent / "vectors" / "renderers.json"
+TEXT_VECTORS = Path(__file__).resolve().parent / "vectors" / "text_plain_v1.json"
 SOURCE = Path(renderers.__file__).read_text(encoding="utf-8")
 
 RENDERER_BY_CASE = {
@@ -29,6 +31,30 @@ RENDERER_BY_CASE = {
 }
 
 GOLDEN_KEYS = ("id", "args", "value", "content", "meta")
+
+TEXT_NEGATIVE_EXPECT = {
+    ("text.plain.nul", "renderer"): "render_failed",
+    ("text.plain.nul", "page"): "invalid_tool_output",
+    ("text.plain.both_exit_status", "renderer"): "render_failed",
+    ("text.plain.both_exit_status", "page"): "invalid_tool_output",
+    ("text.plain.spill_empty_when_truncated", "renderer"): "render_failed",
+    ("text.plain.spill_empty_when_truncated", "page"): "invalid_tool_output",
+    ("text.plain.spill_nonempty_when_plain", "renderer"): "render_failed",
+    ("text.plain.spill_nonempty_when_plain", "page"): "invalid_tool_output",
+    ("text.plain.exit_code_256", "renderer"): "render_failed",
+    ("text.plain.exit_code_neg1", "renderer"): "render_failed",
+    ("text.plain.exit_code_true", "renderer"): "render_failed",
+    ("text.plain.exit_code_float", "renderer"): "render_failed",
+    ("text.plain.unknown_key", "renderer"): "render_failed",
+    ("text.plain.lone_surrogate", "renderer"): "invalid_tool_content",
+    ("text.plain.spill_absolute", "page"): "invalid_tool_output",
+    ("text.plain.spill_dotdot", "page"): "invalid_tool_output",
+    ("text.plain.spill_wrong_namespace", "page"): "invalid_tool_output",
+    ("text.plain.spill_wrong_ext", "page"): "invalid_tool_output",
+    ("text.plain.spill_nonhex", "page"): "invalid_tool_output",
+    ("text.plain.lines_2001", "page"): "invalid_tool_output",
+    ("text.plain.text_32769", "page"): "invalid_tool_output",
+}
 
 
 def budget_measures(args, value, content, meta):
@@ -59,12 +85,13 @@ def main() -> int:
     assert len(cases) == 7
     by_id = {case["id"]: case for case in cases}
 
-    # 1. The production registry contains exactly the three built-ins, with
+    # 1. The production registry contains exactly the four built-ins, with
     # version 1 and projection 1, and exposes no mutator.
-    assert len(renderers.RENDERERS) == 3
+    assert len(renderers.RENDERERS) == 4
     assert isinstance(renderers.RENDERERS.entries, tuple)
     assert {entry.ref.id for entry in renderers.RENDERERS.entries} == {
         "v24.fs.read.text", "v24.fs.list.text", "v24.fs.search.text",
+        "v24.text.plain",
     }
     for entry in renderers.RENDERERS.entries:
         assert entry.ref.version == 1
@@ -243,9 +270,81 @@ def main() -> int:
     assert "s13/vectors" not in SOURCE
     assert "tool_results" not in SOURCE
 
+    # 7. text_plain_v1: 9 positives run through both layers, 21 negatives
+    # through exactly one declared layer.
+    text_document = json.loads(TEXT_VECTORS.read_text(encoding="utf-8"))
+    assert text_document["format"] == "v24-text-plain-1"
+    text_cases = text_document["cases"]
+    assert len(text_cases) == 30
+    text_positives = [case for case in text_cases if case["expect"] == "ok"]
+    text_negatives = [case for case in text_cases if case["expect"] != "ok"]
+    assert len(text_positives) == 9
+    assert len(text_negatives) == 21
+
+    assert len(TEXT_NEGATIVE_EXPECT) == 21
+    negative_keys = [(case["id"], case["layer"]) for case in text_negatives]
+    assert len(negative_keys) == len(set(negative_keys)) == 21
+    assert {(case["id"], case["layer"]): case["expect"]
+            for case in text_negatives} == TEXT_NEGATIVE_EXPECT
+
+    embedded_text = {case["id"]: case for case in renderers._GOLDEN["text"]}
+    assert len(embedded_text) == 9
+    for case in text_positives:
+        assert set(case) == {
+            "id", "args", "value", "content", "meta", "layer", "expect"}
+        assert case["layer"] == "both"
+        embedded = embedded_text[case["id"]]
+        for key in GOLDEN_KEYS:
+            assert case[key] == embedded[key], (case["id"], key)
+
+    text_entry = renderers.RENDERERS.by_id("v24.text.plain", 1)
+    assert text_entry is not None
+    text_ref = text_entry.ref
+    for case in text_positives:
+        content, meta = renderers.RENDERERS.render(
+            text_ref, case["args"], case["value"])
+        assert content == case["content"], case["id"]
+        assert meta == case["meta"], case["id"]
+        validate_page(text_ref, case["args"], case["value"])
+
+    for case in text_negatives:
+        if case["layer"] == "renderer":
+            try:
+                renderers.RENDERERS.render(
+                    text_ref, case["args"], case["value"])
+            except renderers.RendererError as exc:
+                assert exc.reason == case["expect"], case["id"]
+            else:
+                raise AssertionError(f"renderer accepted {case['id']}")
+        else:
+            assert case["layer"] == "page"
+            try:
+                validate_page(text_ref, case["args"], case["value"])
+            except ToolPageError as exc:
+                assert exc.reason == "invalid_tool_output", case["id"]
+            else:
+                raise AssertionError(f"page accepted {case['id']}")
+
+    positive_by_id = {case["id"]: case for case in text_positives}
+    negative_by_key = {(case["id"], case["layer"]): case
+                       for case in text_negatives}
+    lines_2000 = positive_by_id["text.plain.lines_2000"]["value"]["text"]
+    lines_2001 = negative_by_key[
+        ("text.plain.lines_2001", "page")]["value"]["text"]
+    assert len(lines_2000.splitlines()) == 2000
+    assert len(lines_2001.splitlines()) == 2001
+    text_32768 = positive_by_id["text.plain.text_32768"]["value"]["text"]
+    text_32769 = negative_by_key[
+        ("text.plain.text_32769", "page")]["value"]["text"]
+    assert len(text_32768.encode("utf-8")) == 32768
+    assert len(text_32769.encode("utf-8")) == 32769
+    assert len(compact_json(
+        positive_by_id["text.plain.value_40960"]["value"])) == 40960
+
     print(
         "[passed] W2 renderer contract; cases=7; "
-        "golden_cases=21; digest_pairs=3"
+        "golden_cases=21; digest_pairs=3; "
+        "text_positives=9; text_negatives=21"
     )
     return 0
 

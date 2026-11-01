@@ -11,6 +11,7 @@ only.  No provider socket is opened and no real provider is constructed.
 """
 from __future__ import annotations
 
+import ast
 import copy
 import dataclasses
 import hashlib
@@ -787,26 +788,98 @@ def _git(*args, check=True):
                           capture_output=True, text=True)
 
 
+def _renderer_identity_audit():
+    """Pin embedded renderer identity without freezing the additive entry."""
+    baseline_source = _git("show", f"{BASE}:v24/host/renderers.py").stdout
+    current_source = (ROOT / "v24/host/renderers.py").read_text(encoding="utf-8")
+    baseline = ast.parse(baseline_source)
+    current = ast.parse(current_source)
+
+    def assignment(module, name):
+        for node in module.body:
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == name):
+                return node
+        raise AssertionError(f"missing {name} assignment")
+
+    def subscript_assignment(module, name, key):
+        for node in module.body:
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Subscript)
+                    and isinstance(node.targets[0].value, ast.Name)
+                    and node.targets[0].value.id == name
+                    and isinstance(node.targets[0].slice, ast.Constant)
+                    and node.targets[0].slice.value == key):
+                return node
+        raise AssertionError(f"missing {name}[{key!r}] assignment")
+
+    def segment(source, node):
+        text = ast.get_source_segment(source, node)
+        assert text is not None
+        return text
+
+    old_goldens = assignment(baseline, "_GOLDEN")
+    new_goldens = assignment(current, "_GOLDEN")
+    assert segment(baseline_source, old_goldens.value) == segment(
+        current_source, new_goldens.value), "embedded golden bytes drifted"
+
+    def specs(module, expected_count):
+        node = assignment(module, "_BUILTIN_SPECS").value
+        assert isinstance(node, ast.Tuple)
+        assert len(node.elts) == expected_count
+        by_id = {}
+        for entry in node.elts:
+            assert isinstance(entry, ast.Tuple) and entry.elts
+            first = entry.elts[0]
+            assert isinstance(first, ast.Constant) and isinstance(first.value, str)
+            by_id[first.value] = entry
+        return by_id
+
+    old_specs = specs(baseline, 3)
+    new_specs = specs(current, 4)
+    old_ids = {
+        "v24.fs.read.text", "v24.fs.list.text", "v24.fs.search.text",
+    }
+    assert set(old_specs) == old_ids, sorted(old_specs)
+    assert set(new_specs) == old_ids | {"v24.text.plain"}, sorted(new_specs)
+    for renderer_id in old_ids:
+        assert segment(baseline_source, old_specs[renderer_id]) == segment(
+            current_source, new_specs[renderer_id]), renderer_id
+
+    text = subscript_assignment(current, "_GOLDEN", "text").value
+    assert isinstance(text, ast.List) and len(text.elts) == 9, \
+        "text_plain golden must contain 9 cases"
+
+
 def scope_audit():
     """Six pinned-baseline audits; [passed] is deliberately not printed."""
     checks = 0
     frozen = (
         "v24/b0", "v24/s10", "v24/s11", "v24/load.py",
         "v24/host/canonical.py", "v24/host/descriptor.py",
-        "v24/host/tool_schema.py", "v24/host/renderers.py",
+        "v24/host/tool_schema.py",
         "v24/host/tool_results.py", "v24/host/line_json.py",
         "v24/host/journal.py", "v24/host/db.py", "v24/host/process_io.py",
     )
     assert _git("diff", "--exit-code", BASE, "--", *frozen).returncode == 0
+    _renderer_identity_audit()
     untracked = _git("ls-files", "--others", "--exclude-standard", "--",
                      "v24/b0", "v24/s10", "v24/s11", "v24/sql",
                      "v24/s13/vectors").stdout
-    assert untracked == "", untracked
+    assert set(untracked.splitlines()) <= {
+        "v24/s13/vectors/text_plain_v1.json"}, untracked
     checks += 1
 
     vectors = _git("diff", "--exit-code", BASE, "--", "v24/s13/vectors",
-                   ":!v24/s13/vectors/design_conformance.json")
+                   ":!v24/s13/vectors/design_conformance.json",
+                   ":!v24/s13/vectors/text_plain_v1.json")
     assert vectors.returncode == 0, vectors.stdout
+    changed = _git("diff", "--name-only", BASE, "--",
+                   "v24/s13/vectors").stdout
+    assert set(changed.splitlines()) <= {
+        "v24/s13/vectors/design_conformance.json",
+        "v24/s13/vectors/text_plain_v1.json"}, changed
     checks += 1
 
     path = "v24/s13/vectors/design_conformance.json"

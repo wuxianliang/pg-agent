@@ -963,3 +963,66 @@ Item 5 是唯一的 `PASS-LIMITED`。其余七项为 `PASS`；没有 `NOT-DEMONS
 W8 的有边界声明、17 行 register、32 行表、SUP-1 与三轮审计见 [W8 execution record](v24-tool-plugin-abi-w8-execution-2026-11-01.md)；证据目录 `/tmp/v24-abi-w8-20261101T033123Z/`。本小节不重开 M4/M5，不重新裁决 34 个冻结 `status` 位置，不做 promotion。
 
 不声明硬实时 12 秒上界；C.18.3 的 T1/T2/T3 保持分层。`linux_real=not_run`；非 UTF-8 文件名证据仅为 macOS root-level shim，不覆盖子目录真实非法名称。不声明工具自动重执行，tool 仍为 `no_replay`。不承诺慢 scope 的分页收敛。不调用真实 provider，不进行 gate 对外网络访问；"无网络"是逐行构造论证，不是 OS 级隔离证明。
+
+## Post-closeout Tool/Plugin ABI W9 text.plain（2026-11-02）
+
+W9 是 ABI v1 的一次**显式加性修订**（`D-UI-5`），不是 M6，不是 design §10 的新阶段，也不重开 M4/M5/W7/W8。它只新增一个通用文本 renderer `v24.text.plain` v1 / projection 1、它的页合同与固定向量；既有 3 个 renderer 的 id、version、projection、21 条 embedded golden 与 3 对 `golden_digest`/`render_digest` 逐字节不变。closeout 仍 **11/11**，s13 是 extension evidence，不是第 12 条。本轮 `HEAD=1143dce6`，分支 `v24/ui-chainlit`，未 staging、未提交、未推送。
+
+### 加性变更
+
+| 文件 | 变更 | 冻结面 |
+|---|---|---|
+| `v24/host/renderers.py` | 新增 `_text`、`_GOLDEN["text"]`（9 例）、第 4 条 `_BUILTIN_SPECS`（`v24.text.plain` v1 / projection 1；golden `676b634b7bcae4ebdcb8a68f6aa221612eb8ef5a808f33d0d591676f996de524`、render `30ff1803fc2a2ec0f375da475a08f23c99e83e0ddf8c32502c26bc82a026a011`） | 纯加性 `+111/−0`；`_GOLDEN` 前三条与旧 3 条 spec 未被编辑 |
+| `v24/host/tool_pages.py` | 新增 `TEXT_PAGE_CONTRACTS`（1 条）与 `_check_text`；`validate_page` 先查 BUILTIN 再查 TEXT；import 期漂移断言改两表并集 | `contracts=3`、kind 映射、limit 映射仍 BUILTIN-only |
+| `v24/s13/test_renderers.py` | registry 计数 3→4；id 集合改四 id 字面并集；加载 `text_plain_v1.json`；marker 追加 `text_positives=9; text_negatives=21` | 冻结子串 `cases=7; golden_cases=21; digest_pairs=3` 逐字保留 |
+| `v24/s13/test_pages.py` | 一行 import + 两行集合断言改并集 | 其余断言不改 |
+| `v24/s13/vectors/text_plain_v1.json` | 新增，W9 唯一新向量文件；format `v24-text-plain-1`，409 行 / 206826 bytes / `e42b765ea27053c73a11652907c10d5246826b7954af89f53515051136adfbaf` | 既有 8 个契约向量文件零字节变动 |
+| `v24/s13/test_wiring.py` | `scope_audit` 定向修订（见下） | 其余 5 项 audit 与 `checks=6` 不变 |
+
+`renderers.json`、`design_conformance.json`、`test_contracts.py`、`test_vectors.py`、`test_tools.py`、`capture_vectors.py` 与 ABI design 正文均零 diff；`DESIGN_SHA256` 仍为 `778b13a4df78f47987626bbe466b70ebada95fe939565253749b7e6105991a2d`。
+
+### Gate set（13/13 exit 0）
+
+命令行前缀统一为 `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1`，串行执行。
+
+| # | gate | exit | 末行 |
+|---:|---|---:|---|
+| 1 | `test_contracts` | 0 | `[passed] W1 contract inventory; suites=10; cases=71; fixed_ids=true; tool_fixtures=concrete; read_only=true` |
+| 2 | `test_descriptor` | 0 | `[passed] W2 descriptor contract; cases=16; canonical_python=9; reasons=4` |
+| 3 | `test_pages` | 0 | `[passed] W4 page contract; contracts=3; cases=5417; oracle_differential=4281; unknown_ref_rejected=true` |
+| 4 | `test_registry` | 0 | `[passed] W3 registry contract; cases=17; manifest_bytes=3; zero_spawn_paths=6; construction_reasons=14` |
+| 5 | `test_renderers` | 0 | `[passed] W2 renderer contract; cases=7; golden_cases=21; digest_pairs=3; text_positives=9; text_negatives=21` |
+| 6 | `test_results` | 0 | `[passed] W2 result contract; cases=8; envelope_bytes=3; frame_boundaries=4; replay_claimed=false` |
+| 7 | `test_schema` | 0 | `[passed] W2 schema contract; cases=9; first_error_order=frozen; defaults_injected=false` |
+| 8 | `test_tools` | 0 | `[passed] W4 fs tools; cases=140; read=16; read_probes=29; list=7; list_probes=11; search=24; search_probes=26; pagination_converged=true; page_contracts_imported=3` |
+| 9 | `test_vectors` | 0 | `[passed] W1 read-only vectors; cases=71; PG+Python canonical=9; Node=not_requested` |
+| 10 | `test_line_json` | 0 | `[passed] W3 line-json v2 contract; cases=10; frame_bytes=7; parse_rows=55; preflight_rejections=5; unknown_outcomes=4; v1_bytes_unchanged=true` |
+| 11 | `test_lifecycle` | 0 | `[passed] W4 lifecycle; cases=30; recovery_probes=16; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true; no_replay=true` |
+| 12 | `test_wiring` | 0 | `[scope] passed base=c8c4bd0 checks=6` / `[passed] W4 dispatch wiring; cases=56; zero_spawn_paths=6; model_text_bytes=11; v1_bytes_unchanged=true; resource_receipt_v1=true` |
+| 13 | `test_node.py --node` | 0 | `[passed] W4 node contract; node=/Users/wxl/.nvm/versions/node/v24.13.1/bin/node` |
+
+无 exit 2、无 `[SKIP]`。Node `v24.13.1` 在场，故第 13 条是实跑通过，不是 `toolchain absent`。
+
+### 冻结证据
+
+- 六个旧 digest 字面量与 `git show c8c4bd0:v24/host/renderers.py:254-269` 逐字符相同：read `b803bdd5c1cd3fd25ef62f564c949d2aebd6cafdd04dcf8d740d07dc31961a1d` / `ca52198cf6c2edae798f2340ba4f370f658d422fa05f5d529c28510dea0a680c`，list `a23d757c36073b6d5cd1b609d21a1e0ae41ad8336eccde4ce6eb3bb0f5896a5f` / `5b0bbe8d0fc70ea68c73baeb01b4df1d6be1a4e31e303dc22e3079605376f9c7`，search `e4075fe195b7f030bd1d335ec37e9ae2a87af3ba4b497fe0a7a3dfc8565b13ac` / `fd2f51e8c3d7328b0af7ceafcbefc21418f799921e9e470f12b3f7b1b6344011`。
+- `git diff --stat -- v24/s13/vectors/renderers.json v24/s13/vectors/design_conformance.json v24/s13/test_contracts.py v24/s13/test_vectors.py` 输出为空；把 `test_tools.py`、`capture_vectors.py` 与 design 正文加入后仍为空。
+- `git diff --name-only c8c4bd0 -- v24/b0 v24/s10 v24/s11 v24/load.py v24/host/canonical.py v24/host/descriptor.py v24/host/tool_schema.py v24/host/tool_results.py v24/host/line_json.py v24/host/journal.py v24/host/db.py v24/host/process_io.py` 输出为空。
+- `_renderer_identity_audit` 用 `ast` 对 `c8c4bd0` 与工作树逐段比较 `_GOLDEN` 字典字面量与旧 3 条 `_BUILTIN_SPECS` tuple 的 source segment；要求基线恰 3 条 spec、当前恰 4 条、id 集合为旧 3 id 加 `v24.text.plain`、`_GOLDEN["text"]` 恰 9 例。它与「`renderers.py` 的 diff 为 `+111/−0`」互为独立证据。
+
+### 授权的 `test_wiring.py` 例外
+
+**§12.7 的允许改文件清单没有 `v24/s13/test_wiring.py`，§12.8 的命中表也漏了它；计划文件未被编辑**（仍是未跟踪的 `docs/plans/v24-chainlit-agent-runtime-2026-11-01.md`，本轮未改）。§12.8 的 grep 只枚举了 `RENDERERS.entries`/`len(RENDERERS)`/`BUILTIN_PAGE_CONTRACTS`/`v24.fs.`/`render.manifest`/design SHA 六类，而该命中把 `renderers.py` 写在 `frozen` 路径元组里，spike 后的重跑才在 `test_wiring.py:800` 以 `CalledProcessError` 暴露。
+
+需要它的原因：加第 4 个 renderer 必然改 `v24/host/renderers.py`，而该 audit 要求该文件相对 `c8c4bd0` 整文件相等。用户批准的窄修订只有四处：
+
+1. 从 `frozen` 元组移除 `"v24/host/renderers.py"`；其余 12 条冻结路径仍整文件相等。
+2. 新增 `_renderer_identity_audit()`：逐字节钉住 `_GOLDEN` 字典字面量与旧 3 条 `_BUILTIN_SPECS` tuple，并要求 spec 数 3→4、id 集合为旧 3 id 加 `v24.text.plain`、`_GOLDEN["text"]` 恰 9 例。
+3. `v24/b0`、`v24/s10`、`v24/s11`、`v24/sql`、`v24/s13/vectors` 的 untracked 断言收窄为**只允许** `v24/s13/vectors/text_plain_v1.json`。
+4. vectors diff 额外排除 `text_plain_v1.json`，并新增「变更文件集合 ⊆ {`design_conformance.json`, `text_plain_v1.json`}」断言。
+
+这不是放松：audit 数仍 `checks=6`，13 条冻结路径中的 12 条仍整文件相等；失去整文件相等的那一条被钉在旧检查保护的确切字节上，并新增了旧检查没有的形状要求。`test_wiring` 的 marker 形状不变。
+
+### Verdict
+
+**W9 passed。** 13/13 命令 exit 0 且末行精确；Node 在场，故不是 `passed-with-unverified`。向量口径：30 cases = 9 positives + 21 negatives / 17 个不同负面场景（4 个 dual-layer 场景同 id 各占两个 case）；正例 `layer:"both"` 双跑，反例各只跑一层；边界为 2000/2001 行、32768/32769 bytes、序列化 40960；NUL 双层（renderer `render_failed`、page `invalid_tool_output`）；lone surrogate 仅 renderer `invalid_tool_content`。Deviation 一条：`render.manifest.text` 由 `text_plain_v1.json` 承载，不在 `renderers.json`，设计正文未改。无 SQL、无真实 provider、无网络；DB 仅一次性测试库。W9 不证明 UI/Chainlit wiring，也不证明某个真实工具已产出该 value 形状。完整命令、逐条 marker、审计与限制见 [W9 execution record](v24-tool-plugin-abi-w9-text-plain-2026-11-02.md)。

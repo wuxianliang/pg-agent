@@ -16,7 +16,7 @@ env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_N
 
 ## W2 host contracts
 
-W2 adds five pure modules under `v24/host/`: `canonical.py` (PostgreSQL canonical text, `J`, strict JSON, deep-freeze), `tool_schema.py` (closed schema subset), `renderers.py` (three host renderers, immutable registry, embedded goldens), `descriptor.py` (descriptor v2 validation), and `tool_results.py` (v2 envelopes, model text, budget measurement, frame classification). All five are synchronous, deterministic, and free of file/database/network/clock access.
+W2 adds five pure modules under `v24/host/`: `canonical.py` (PostgreSQL canonical text, `J`, strict JSON, deep-freeze), `tool_schema.py` (closed schema subset), `renderers.py` (four host renderers — the three `v24.fs.*` renderers plus the W9 additive `v24.text.plain` — immutable registry, embedded goldens), `descriptor.py` (descriptor v2 validation), and `tool_results.py` (v2 envelopes, model text, budget measurement, frame classification). All five are synchronous, deterministic, and free of file/database/network/clock access.
 
 Run the four W2 gates from the repository root:
 
@@ -29,7 +29,7 @@ env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_N
 
 Exit 0 with the command-specific `[passed]` marker is passed; exit 2/`[SKIP]` is unverified and blocks W2 completion; exit 1 or a missing marker is failed. W2 covers four of the nine s13 gates; W3 adds `test_registry.py` and `test_line_json.py` below; `test_tools.py`, `test_lifecycle.py`, and `test_node.py` remain downstream.
 
-W2 reproduces 40 W2-domain cases from production code: descriptor 16 (including 9 canonical byte cases), schema 9, renderers 7 (including 21 inner golden cases and three digest pairs), and results 8. The three `m4_pending` result/lifecycle cases are asserted to remain unexecuted. A post-review hardening pass adds internal probes for decoder normalization, the `J` value domain, deep finite values, `ToolDispatchResult` outer-shape checks, renderer exception precedence, and object-shaped schemas; it does not change any vector case ID, status, owner, or expected value. The s13 checks are extension evidence; closeout remains 11/11 and s13 is not a twelfth closeout item. W2 does not prove M2 completion, W3 registry/line-json v2 behavior, W4 dispatcher/worker/provider wiring, filesystem tool semantics, or replay.
+W2 reproduces 40 W2-domain cases from production code: descriptor 16 (including 9 canonical byte cases), schema 9, renderers 7 (including 21 inner golden cases and three digest pairs, unchanged from W1), and results 8. `test_renderers.py` reads `renderers.json` and, since W9, `v24/s13/vectors/text_plain_v1.json` as well: the registry holds 4 renderers, and the text suite runs 9 positives through both layers (renderer and page) and 21 negatives through exactly one declared layer. The three `m4_pending` result/lifecycle cases are asserted to remain unexecuted. A post-review hardening pass adds internal probes for decoder normalization, the `J` value domain, deep finite values, `ToolDispatchResult` outer-shape checks, renderer exception precedence, and object-shaped schemas; it does not change any vector case ID, status, owner, or expected value. The s13 checks are extension evidence; closeout remains 11/11 and s13 is not a twelfth closeout item. W2 does not prove M2 completion, W3 registry/line-json v2 behavior, W4 dispatcher/worker/provider wiring, filesystem tool semantics, or replay.
 
 ## W3 registry approval and line-json v2
 
@@ -48,7 +48,7 @@ The measured 26-command serial run passed every command, including all inherited
 
 ## W4a dispatcher, worker and provider wiring (M2)
 
-W4a wires the W3 approval model and line-json v2 transport into the live paths: `tool_pages.validate_page` enforces the §5.6 success-page relations before rendering, `plugins._tool_v2` follows the fixed thirteen-step order, `worker._execute_tool` uses the handler-provided `model_text`, `deepseek._tools` accepts v2 descriptors, and `registry._ApprovedEntry.environment()` injects the approved `V24_WORKSPACE_ROOT` when the allowlist names it. `w4_stub_plugin.py` is a test asset only; `plugins/fs_read.py` and `plugins/fs_tools.js` remain W4b.
+W4a wires the W3 approval model and line-json v2 transport into the live paths: `tool_pages.validate_page` enforces the §5.6 success-page relations before rendering (since W9 it consults a sibling `TEXT_PAGE_CONTRACTS` table after `BUILTIN_PAGE_CONTRACTS`, i.e. BUILTIN-then-TEXT dispatch; `contracts=3`, the kind map and the limit map remain BUILTIN-only), `plugins._tool_v2` follows the fixed thirteen-step order, `worker._execute_tool` uses the handler-provided `model_text`, `deepseek._tools` accepts v2 descriptors, and `registry._ApprovedEntry.environment()` injects the approved `V24_WORKSPACE_ROOT` when the allowlist names it. `w4_stub_plugin.py` is a test asset only; `plugins/fs_read.py` and `plugins/fs_tools.js` remain W4b.
 
 Run the two new gates from the repository root:
 
@@ -242,3 +242,5 @@ Capture is candidate generation, not a gate. It requires two fresh external dest
 2026-10-30 W1 execution: both independent captures matched byte-for-byte; contract inventory passed (10 suites/71 cases); Python/PostgreSQL/Node fixed-vector comparison passed (9 canonical cases); all 20 final serial W1/B0/inherited checks passed, recorded in the [`W1 execution record`](../../docs/reviews/v24-tool-plugin-abi-w1-execution-2026-10-30.md). No provider call or real filesystem tool execution was performed.
 
 2026-10-30 W2 execution: the four W2 gates plus all 20 inherited W1/B0/closeout/G9/G10/Node/multilingual commands exited 0 with no exit 2/SKIP; evidence is recorded in the [`W2 execution record`](../../docs/reviews/v24-tool-plugin-abi-w2-execution-2026-10-30.md). No provider call or real filesystem tool execution was performed.
+
+2026-11-02 W9 execution: all 13 s13 gates exited 0 in one serial sweep (Node `v24.13.1` present, so `test_node.py --node` printed `[passed]`, not `[SKIP]`/exit 2). `test_wiring` pins the old 3 renderers by AST source-segment identity against `c8c4bd0` (the `_GOLDEN` dict literal and the three old `_BUILTIN_SPECS` tuples) and allows exactly the additive 4th renderer plus `v24/s13/vectors/text_plain_v1.json`. No SQL, no real provider, no network; evidence is in the [W9 record](../../docs/reviews/v24-tool-plugin-abi-w9-text-plain-2026-11-02.md).

@@ -27,6 +27,7 @@ from v24.host.tool_pages import (  # noqa: E402
     MAX_LIST_ENTRIES,
     MAX_READ_LINES,
     MAX_SEARCH_HITS,
+    TEXT_PAGE_CONTRACTS,
     ToolPageError,
     validate_page,
 )
@@ -201,7 +202,7 @@ def main() -> int:
     assert set(BUILTIN_PAGE_CONTRACTS) == {
         "v24.fs.read.text", "v24.fs.list.text", "v24.fs.search.text"}
     assert {entry.ref.id for entry in RENDERERS.entries} == set(
-        BUILTIN_PAGE_CONTRACTS)
+        BUILTIN_PAGE_CONTRACTS) | set(TEXT_PAGE_CONTRACTS)
     assert {key: contract.kind for key, contract in
             BUILTIN_PAGE_CONTRACTS.items()} == {
         "v24.fs.read.text": "read", "v24.fs.list.text": "list",
