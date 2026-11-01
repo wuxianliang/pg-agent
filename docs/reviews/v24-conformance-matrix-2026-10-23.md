@@ -1026,3 +1026,15 @@ W9 是 ABI v1 的一次**显式加性修订**（`D-UI-5`），不是 M6，不是
 ### Verdict
 
 **W9 passed。** 13/13 命令 exit 0 且末行精确；Node 在场，故不是 `passed-with-unverified`。向量口径：30 cases = 9 positives + 21 negatives / 17 个不同负面场景（4 个 dual-layer 场景同 id 各占两个 case）；正例 `layer:"both"` 双跑，反例各只跑一层；边界为 2000/2001 行、32768/32769 bytes、序列化 40960；NUL 双层（renderer `render_failed`、page `invalid_tool_output`）；lone surrogate 仅 renderer `invalid_tool_content`。Deviation 一条：`render.manifest.text` 由 `text_plain_v1.json` 承载，不在 `renderers.json`，设计正文未改。无 SQL、无真实 provider、无网络；DB 仅一次性测试库。W9 不证明 UI/Chainlit wiring，也不证明某个真实工具已产出该 value 形状。完整命令、逐条 marker、审计与限制见 [W9 execution record](v24-tool-plugin-abi-w9-text-plain-2026-11-02.md)。
+
+### Follow-up hardening（2026-11-02）
+
+**更正上节「这不是放松」。** 该句对当时实现不成立：初始窄修订只钉住 `_GOLDEN` 字典字面量与旧 3 条 `_BUILTIN_SPECS` tuple，`renderers.py` 其余部分（`_read`/`_list`/`_search` 函数体、`_decimal`、`_validate_result`、`RendererRegistry`、`RENDERERS`、两个 digest 函数、import 期 digest 循环）已失去整文件保护，所以覆盖面确实被放松；"被钉在旧检查保护的确切字节上"是高估。
+
+**替代机制（closed-world）。** `_renderer_identity_audit()` 降为薄加载器，逻辑移入纯函数 `_assert_renderer_identity(baseline_source, current_source)`：deepcopy 当前 AST，恰好剥离 5 个已记录的 W9 加性节点（`_TEXT_KEYS`、`_TEXT_STATUS`、`_text`、`_GOLDEN["text"]`、`_BUILTIN_SPECS` 中首元素为 `v24.text.plain` 的 tuple；tuple 4→3），每个剥离必须恰好命中一次，否则报 `expected exactly one W9 additive node, matched N`；余下 AST 必须与 `c8c4bd0` 的 `ast.dump(..., include_attributes=False)` 完全相等，不等则抛出带 `difflib.unified_diff`（`indent=1` 双侧）的 `AssertionError`。旧有断言（`_GOLDEN` 字面量、旧 3 条 spec tuple、spec 数 3→4、四 id 集合、`_GOLDEN["text"]` 9 例）全部保留。
+
+**变异自检（`/tmp`，不写工作树）。** 未改源码通过；`_search` 改一字符、`RendererRegistry.lookup` 插一条语句、删 import 期 digest 循环三者均以带 diff 的 `AssertionError` 失败；仅删 `_text` 与复制 `_text` 分别以 `matched 0` / `matched 2` 失败。每条变异在审计前均可解析，故失败是覆盖面失败而非 `SyntaxError`。
+
+**范围与台账。** 其余 12 条冻结路径仍整文件相等；`v24/s13/vectors` 只允许 `text_plain_v1.json`；`checks=6`、`[scope] passed base=c8c4bd0 checks=6` 与 `BASE=c8c4bd0` 不变；`renderers.py`、`tool_pages.py`、`test_renderers.py`、`test_pages.py` 与 vectors 在本 follow-up 中零 diff（`test_wiring.py` 相对 `014da82` 为 `+97/−13`）。台账新增两条：`D-ABI-W9-1`（`render.manifest.text` 由 `text_plain_v1.json` 承载，设计正文未改）、`D-ABI-W9-2`（计划漏 `test_wiring.py` + 授权扩展；窄修订曾放松，follow-up 改整模块 AST 等价；不重新基线化 `BASE`）。
+
+**验收。** 13/13 gate 重新串行执行全部 exit 0，无 exit 2/`[SKIP]`；`test_wiring` 末行与 `[scope]` 行不变，`test_renderers` marker 不变。W9 结论仍 `passed`。

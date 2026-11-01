@@ -170,3 +170,40 @@ All 13 commands were run serially from the repository root with the prefix `env 
 - No gate makes an outbound network connection. As in the earlier W-stage records, "no network" is a per-line construction argument, not an OS-level isolation proof.
 - W9 does **not** prove: UI/Chainlit wiring or any M1+ behavior; that a real tool already emits this value shape (`bash`/apply-patch families arrive later); a hard real-time budget; or any promotion of the frozen `status` tokens. Every `status` position in `design_conformance.json` is untouched, because the file is byte-identical (`git diff` empty); W9 does not re-adjudicate any of them.
 - `40960` acceptance here is the serialized-value boundary in the renderer/page layer. The host `40960`/`41984` budgets remain covered by `test_tools.py` and are not duplicated in `text_plain_v1.json`.
+
+## Follow-up hardening (2026-11-02)
+
+**Correction to "Why this is not a relaxation" above.** That paragraph is wrong for the state it describes. The initial amendment pinned only the `_GOLDEN` dict literal and the three old `_BUILTIN_SPECS` tuples; it removed `v24/host/renderers.py` from the `frozen` tuple without pinning the rest of the module. Everything the old whole-file check protected but those four segments did not cover — the `_read`/`_list`/`_search` bodies, `_decimal`, `_validate_result`, `RendererRegistry`, `RENDERERS`, `golden_digest`/`render_digest`, and the import-time digest loop — became editable with no gate noticing. Coverage therefore *was* relaxed, and "pinned at exactly the bytes the old check protected" over-claimed: source-segment equality on two node kinds is not the old target.
+
+**Closed-world replacement.** `_renderer_identity_audit()` is now a thin loader (`git show c8c4bd0:v24/host/renderers.py` plus the working-tree read). The logic moved into the pure helper `_assert_renderer_identity(baseline_source, current_source)`, which performs no git or filesystem access, so a `/tmp` script can exercise it against mutated sources without touching the worktree.
+
+The helper keeps every earlier assertion — `_GOLDEN = {...}` dict-literal source-segment equality, the three old spec-tuple source-segment equality, exactly 3 baseline specs, exactly 4 current specs, the four-ID set, and `_GOLDEN["text"]` with exactly 9 cases — and adds:
+
+1. `copy.deepcopy` of the current AST.
+2. Stripping exactly five additive nodes from the copy, each required to match **exactly once**:
+   - module body: `Assign` to `Name` `_TEXT_KEYS`, `Assign` to `Name` `_TEXT_STATUS`, `FunctionDef` `_text`, `Assign` to `Subscript` `_GOLDEN["text"]`;
+   - the `_BUILTIN_SPECS` element whose first item is the constant `v24.text.plain` (4 elements before, 3 after).
+
+   A strip matching 0 or 2+ nodes raises `AssertionError: <label>: expected exactly one W9 additive node, matched N`, so a deleted or duplicated node cannot silently shrink or duplicate the additive surface.
+3. `ast.dump(stripped, include_attributes=False) == ast.dump(baseline, include_attributes=False)`. On mismatch the `AssertionError` carries `difflib.unified_diff` of both `ast.dump(..., indent=1)` renderings, labelled `c8c4bd0:v24/host/renderers.py` → `v24/host/renderers.py (W9 additive nodes stripped)`.
+
+`checks=6` and `[scope] passed base=c8c4bd0 checks=6` are unchanged; `BASE` is still `c8c4bd0`, and the other twelve frozen paths keep whole-file equality.
+
+**Mutation self-check (`/tmp`, no worktree write).** The helper was exercised directly against the real baseline:
+
+| mutation | expected | observed |
+|---|---|---|
+| unchanged current source | pass | accepted |
+| change one character inside `_search` (`[no matches]` → `[no matched]`) | fail | `AssertionError` + diff naming `orelse=Constant(value='[no matches]')` |
+| insert `pass` as the first statement of `RendererRegistry.lookup` | fail | `AssertionError` + diff showing the added `Pass()` |
+| delete the import-time digest-verification loop | fail | `AssertionError` + diff removing the trailing `For` |
+| remove only `def _text` | fail | `def _text: expected exactly one W9 additive node, matched 0` |
+| duplicate `def _text` | fail | `def _text: expected exactly one W9 additive node, matched 2` |
+
+Every mutation still parsed before the audit ran, so each failure is a coverage failure, not a `SyntaxError`.
+
+**Delta vs `014da82`.** `v24/s13/test_wiring.py` only: `+97/−13` (110 changed lines). `import difflib` is added; `_renderer_identity_audit()` keeps its name and its single call site in `scope_audit()`; `_assert_renderer_identity()` is the only new top-level function. `v24/host/renderers.py`, `v24/host/tool_pages.py`, `v24/s13/test_renderers.py`, `v24/s13/test_pages.py` and `v24/s13/vectors/**` are **unchanged by the follow-up** — `git diff --name-only 014da82` lists none of them, and `git diff --name-only 014da82 -- v24/s13/vectors` is empty: `text_plain_v1.json` remains the only vector file W9 added, and the follow-up adds none. The other follow-up edits are documentation: this record, `v24/s13/README.md`, the plan's `## Post-approval correction (2026-11-02)`, the conformance matrix and the deviation ledger.
+
+**Final gates.** All 13 §12.9 commands were re-run serially after the hardening with the same `env -u …` prefix: **13/13 exit 0**, no exit 2 and no `[SKIP]`. Gate 12 still ends `[passed] W4 dispatch wiring; cases=56; zero_spawn_paths=6; model_text_bytes=11; v1_bytes_unchanged=true; resource_receipt_v1=true` and still prints `[scope] passed base=c8c4bd0 checks=6`; `test_renderers` still reports `cases=7; golden_cases=21; digest_pairs=3; text_positives=9; text_negatives=21`; every other marker is the one tabulated above.
+
+The follow-up does not change the W9 verdict (`passed`), the 30-case vector accounting, the design body, `DESIGN_SHA256`, `renderers.json`/`design_conformance.json`, or `v24/sql/`.

@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import copy
 import dataclasses
+import difflib
 import hashlib
 import json
 import os
@@ -788,29 +789,44 @@ def _git(*args, check=True):
                           capture_output=True, text=True)
 
 
-def _renderer_identity_audit():
-    """Pin embedded renderer identity without freezing the additive entry."""
-    baseline_source = _git("show", f"{BASE}:v24/host/renderers.py").stdout
-    current_source = (ROOT / "v24/host/renderers.py").read_text(encoding="utf-8")
+def _assert_renderer_identity(baseline_source, current_source):
+    """Closed-world renderer identity: whole-module AST equivalence.
+
+    The current module may differ from ``c8c4bd0`` only by the five additive
+    ``v24.text.plain`` v1 nodes.  Everything else -- ``_decimal``,
+    ``_read``/``_list``/``_search``, ``golden_digest``/``render_digest``,
+    ``_validate_result``, ``RendererRegistry``, ``_GOLDEN``, ``RENDERERS``
+    and the import-time digest loop -- must be AST-identical, so a change to
+    any of them fails here even when the old golden/spec byte pins still
+    match.  Pure over its two sources: no git or filesystem access.
+    """
     baseline = ast.parse(baseline_source)
     current = ast.parse(current_source)
 
+    def is_name_assignment(node, name):
+        return (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == name)
+
+    def is_subscript_assignment(node, name, key):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            return False
+        target = node.targets[0]
+        return (isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == name
+                and isinstance(target.slice, ast.Constant)
+                and target.slice.value == key)
+
     def assignment(module, name):
         for node in module.body:
-            if (isinstance(node, ast.Assign) and len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Name)
-                    and node.targets[0].id == name):
+            if is_name_assignment(node, name):
                 return node
         raise AssertionError(f"missing {name} assignment")
 
     def subscript_assignment(module, name, key):
         for node in module.body:
-            if (isinstance(node, ast.Assign) and len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Subscript)
-                    and isinstance(node.targets[0].value, ast.Name)
-                    and node.targets[0].value.id == name
-                    and isinstance(node.targets[0].slice, ast.Constant)
-                    and node.targets[0].slice.value == key):
+            if is_subscript_assignment(node, name, key):
                 return node
         raise AssertionError(f"missing {name}[{key!r}] assignment")
 
@@ -819,6 +835,8 @@ def _renderer_identity_audit():
         assert text is not None
         return text
 
+    # The historical pins: the 21 embedded goldens and the three old spec
+    # tuples stay byte-for-byte equal, including the six digest literals.
     old_goldens = assignment(baseline, "_GOLDEN")
     new_goldens = assignment(current, "_GOLDEN")
     assert segment(baseline_source, old_goldens.value) == segment(
@@ -850,6 +868,72 @@ def _renderer_identity_audit():
     text = subscript_assignment(current, "_GOLDEN", "text").value
     assert isinstance(text, ast.List) and len(text.elts) == 9, \
         "text_plain golden must contain 9 cases"
+
+    # Closed world: strip exactly the five documented additive nodes and
+    # require the remainder to be AST-identical to the baseline.  Each strip
+    # must match exactly once, so a deleted or duplicated node fails here
+    # instead of silently shrinking or duplicating the additive surface.
+    def is_text_keys(node):
+        return is_name_assignment(node, "_TEXT_KEYS")
+
+    def is_text_status(node):
+        return is_name_assignment(node, "_TEXT_STATUS")
+
+    def is_text_function(node):
+        return isinstance(node, ast.FunctionDef) and node.name == "_text"
+
+    def is_golden_text(node):
+        return is_subscript_assignment(node, "_GOLDEN", "text")
+
+    stripped = copy.deepcopy(current)
+    additive_body = (
+        (is_text_keys, "_TEXT_KEYS"),
+        (is_text_status, "_TEXT_STATUS"),
+        (is_text_function, "def _text"),
+        (is_golden_text, '_GOLDEN["text"]'),
+    )
+    for predicate, label in additive_body:
+        matches = [node for node in stripped.body if predicate(node)]
+        assert len(matches) == 1, (
+            f"{label}: expected exactly one W9 additive node, "
+            f"matched {len(matches)}")
+        stripped.body.remove(matches[0])
+
+    builtin_specs = assignment(stripped, "_BUILTIN_SPECS").value
+    assert isinstance(builtin_specs, ast.Tuple)
+    assert len(builtin_specs.elts) == 4, len(builtin_specs.elts)
+    text_specs = [
+        entry for entry in builtin_specs.elts
+        if (isinstance(entry, ast.Tuple) and entry.elts
+            and isinstance(entry.elts[0], ast.Constant)
+            and entry.elts[0].value == "v24.text.plain")
+    ]
+    assert len(text_specs) == 1, (
+        "v24.text.plain spec: expected exactly one W9 additive node, "
+        f"matched {len(text_specs)}")
+    builtin_specs.elts.remove(text_specs[0])
+    assert len(builtin_specs.elts) == 3, len(builtin_specs.elts)
+
+    baseline_dump = ast.dump(baseline, include_attributes=False)
+    stripped_dump = ast.dump(stripped, include_attributes=False)
+    if baseline_dump != stripped_dump:
+        diff = difflib.unified_diff(
+            ast.dump(baseline, indent=1).splitlines(),
+            ast.dump(stripped, indent=1).splitlines(),
+            fromfile=f"{BASE}:v24/host/renderers.py",
+            tofile="v24/host/renderers.py (W9 additive nodes stripped)",
+            lineterm="",
+        )
+        raise AssertionError(
+            "renderer identity drifted outside the five W9 additive nodes:\n"
+            + "\n".join(diff))
+
+
+def _renderer_identity_audit():
+    """Load the baseline and the working tree, then audit closed-world."""
+    baseline_source = _git("show", f"{BASE}:v24/host/renderers.py").stdout
+    current_source = (ROOT / "v24/host/renderers.py").read_text(encoding="utf-8")
+    _assert_renderer_identity(baseline_source, current_source)
 
 
 def scope_audit():
