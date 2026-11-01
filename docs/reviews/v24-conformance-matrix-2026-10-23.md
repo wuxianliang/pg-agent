@@ -877,3 +877,89 @@ K 窗口覆盖与 §6 一致：K0=R01/R07/R08；K1=R02；K2=R03；K3=R04(model)/
 本轮 32 条串行命令全部 exit 0；第 1–31 条有命令专属末行，第 32 条 `git diff --exit-code c8c4bd0 -- v24/sql` 输出为空；无 exit 2/`[SKIP]`。第 14–24 条仍是 11 条 closeout 命令，**closeout 仍 11/11**，s13 不是第 12 条。七项 scope audit 先预检 7/7，再在全部文档落盘后、staging 前完整重跑，末行分别为 `[scope] passed frozen_modules_and_untracked`、`vectors_zero_diff`、`design_pins_zero_diff`、`registry_exact_patch`、`host_import_purity`、`sql_zero_diff`、`w7_candidate_only`。
 
 `v24/host`、`v24/sql`、`v24/s13/vectors`、其它 `v24/s13/test_*.py`、`design_conformance.json`、`test_contracts.py` 与 ABI design 均相对 `a41ce22` 零 diff；`DESIGN_SHA256` 仍为 `778b13a4df78f47987626bbe466b70ebada95fe939565253749b7e6105991a2d`。所有 tool effect 仍 `no_replay`，B0 v1 provider request 与 tool message 字节不变。完整命令、UTC、末行、SHA 与审计见 [W7 execution record](v24-tool-plugin-abi-w7-execution-2026-11-01.md)；证据目录 `/tmp/v24-abi-w7-20261031T200002Z/`。
+
+## Post-closeout Tool/Plugin ABI W8 v1 acceptance（2026-11-01）
+
+W8 是 design §7.4 的首次逐项验收，不是 M6，不是 M5 重做，也不新增 M 阶段。M4 仍按 C.11 完成、M5 仍完成；W8 只链接它们的既有声明。本轮在 `HEAD_sweep=5dcbf63` 上跑冻结 32 条串行命令，32/32 exit 0 且末行精确匹配；随后独立运行 SUP-1（exit 0，`[pass]`），它不进入八项裁决。closeout 仍 **11/11**，s13 为 extension evidence，不是第 12 条。
+
+### §7.4 projection
+
+| # | clauses | clause tokens | verdict | this-round evidence |
+|---:|---|---|---|---|
+| 1 | 1a, 1b | `1a=PASS`; `1b=PASS` | **PASS** | rows 3–8、29–31 exit 0 且末行精确；`test_node.py:75-77` 的 `[SKIP]`/return 2 分支为静态契约 |
+| 2 | 2a, 2b | `2a=PASS`; `2b=PASS` | **PASS** | row 30 `python=ok node=ok`；`g12_a` spawn 2/3；`teardown_two_install` 断言 disposed/released/`closed_at` |
+| 3 | 3a, 3b | `3a=PASS`; `3b=PASS` | **PASS** | row 30 `pins["list"]==pins["search"]` 且 `!= pins["read"]`；同一 start 的三 key requires |
+| 4 | 4a | `4a=PASS` | **PASS** | row 30 `g12_b`：`continuation==1`、`transport.calls==2`、三 tool effect |
+| 5 | 5a, 5b | `5a=PASS-LIMITED`; `5b=PASS` | **PASS-LIMITED** | row 30 `g12_c`、`tamper_case`、R11/R12 均在 `ZeroSpawn` 下；5a 的 "all" 读作枚举集合 |
+| 6 | 6a, 6b, 6c | `6a=PASS`; `6b=PASS`; `6c=PASS` | **PASS** | rows 12–13 B0 `_compare`；row 30 `g12_l` 的 request body 与 tool message 字节比较 |
+| 7 | 7a, 7b, 7c | `7a=PASS`; `7b=PASS`; `7c=PASS` | **PASS** | row 32 零字节 SQL diff + audits 1/6；32+SUP-1 构造清单与 ENVPFX |
+| 8 | 8a, 8b | `8a=PASS`; `8b=PASS` | **PASS** | rows 14–24 恰 11 条 closeout；s13 不是第 12 条；audit 7(d) 在 final 复查 |
+
+Canonical token sequence: `1a=PASS; 1b=PASS; 2a=PASS; 2b=PASS; 3a=PASS; 3b=PASS; 4a=PASS; 5a=PASS-LIMITED; 5b=PASS; 6a=PASS; 6b=PASS; 6c=PASS; 7a=PASS; 7b=PASS; 7c=PASS; 8a=PASS; 8b=PASS`
+
+Item 5 是唯一的 `PASS-LIMITED`。其余七项为 `PASS`；没有 `NOT-DEMONSTRATED`、`BLOCKED` 或 `FAIL`。SUP-1 不在 17 个 token 里，也不参与 §6.4 的汇总。
+
+### Gate set and closeout
+
+- 九个 design 点名 gate 是 rows 3–8（`test_descriptor`、`test_schema`、`test_renderers`、`test_results`、`test_registry`、`test_line_json`）与 rows 29–31（`test_tools`、`test_lifecycle`、`test_node --node`）。它们分别对应 design §7.4 的九条 s13 命令。
+- 继承回归行是 rows 1–2、9–11（`test_pages`、`test_wiring`、`test_contracts`、`test_vectors` 两次）；它们不是 §7.4 条目，但必须全绿。
+- s13 目录有 13 个 `test_*.py` 文件；本 sweep 有 14 次 s13 调用（`test_vectors.py` 以 Python 与 `--node` 各跑一次）。因此 "九 gate"、"十三文件" 与 "十四调用" 是三个不同口径，不能互相替代。
+- rows 14–24 是 `v24/s7/README.md:215-227` 的十一条冻结 closeout 命令。closeout 仍 **11/11**；s13 是 extension evidence，不是第 12 条。SUP-1 也不是第 12 条，也不占 row 33。
+- row 32 是 `git diff --exit-code c8c4bd0 -- v24/sql`，比 design 原文的 `git diff --exit-code -- v24/sql` 更强：它覆盖 SQL 冻结以来的全部变化，并与审计 1 的无 untracked SQL 检查叠加。
+
+### §9 risk disposition
+
+| # | risk | verdict | this-round evidence | remaining boundary |
+|---:|---|---|---|---|
+| 1 | 多 `provides` 激活 | **MITIGATED** | rows 30/31：`g12_a` 的 list/search 同 install、read 不同；`test_node.py:114-119` 两 key 同 `provider_install_id`；SUP-1 正向行只作 DB 层佐证 | 第二个 pin 缺失即 `TRIGGERED-STOP`；不得拆 install 绕过 |
+| 2 | v2 投影破坏 v1 bytes | **MITIGATED** | rows 12–13 B0 `_compare`（byte_cases=29/34）；row 30 `g12_l` provider request body 字节相等 | 任一字节差异停止；不得更新 B0 基线 |
+| 3 | 真实成功帧超 64 KiB | **MITIGATED** | row 29 `cases=140`、四域预算、`pagination_converged=true`；row 1 `contracts=3`；row 8 `frame_bytes=7` | 不证明任意未来不可分页单结果；60000 是目标、65536 是 transport 硬上限，不抬 cap |
+| 4 | preflight 的保守 unknown | **ACCEPTED-LIMITATION** | `_execute_tool` 在 handler 之前写 `dispatch_started`；K1/K2 无可信完成 outcome 时为 unknown；零 spawn 用进程计数（row 30） | 不自动重执行 tool；unknown 是承接的边界 |
+| 5 | Node TOCTOU | **ACCEPTED-LIMITATION** | preflight 与 R11/R12 的 `ZeroSpawn` 双证（row 30） | workspace 仍受信；不构成恶意并发或 symlink race 的安全证明 |
+| 6 | renderer digest 漂移 | **MITIGATED** | row 5 `digest_pairs=3`；rows 9–11 冻结检查；goldens 未重生成 | 行为变更必须升 renderer version 并更新 golden；注释格式化不算行为修订 |
+| 7 | 工具 timeout > 25s | **DEFERRED-REVISION** | read/list 5000、search 15000；registry cap 与源码冻结（row 29） | 未来超范围需 claim 前 lease 读取设计；W8 不放宽 |
+| 8 | `replay_class` 被当授权 | **MITIGATED** | row 30 `no_replay=true`；R14 `replay_policy=no_replay` | 完成 outcome 的 reconcile 与重新执行 tool 必须分开陈述 |
+| 9 | 非 UTF-8 的平台差异 | **ACCEPTED-LIMITATION** | row 29 `non_utf8_source=preload_shim; linux_real=not_run` | 仅 macOS root-level shim；真实 SKIP 仍阻断 W8 |
+| 10 | 10001 entry 用例耗时 | **MITIGATED** | row 29 `cases=140`；`l03` 的 10000/10001 边界实跑，无 skip | 以实跑为条件；过慢或被跳过即 STOP |
+
+### §8 deferred revisions
+
+| revision | verdict | v1 behavior and future trigger |
+|---|---|---|
+| §8.1 只读工具 `replay_safe` | **DEFERRED-REVISION** | tool successor 仍 `no_replay`，lease 过期转 unknown；自动重投需原子修改 `48_loop.sql` 的 successor/validator/applier、`49_recovery.sql` 的 recovery 闭集，并同步合同、gate 与文档；W8 不实现其中任何部分 |
+| §8.2 K1 transcript 派生 | **DEFERRED-REVISION** | journal 仍是 transcript 权威；没有 `derive_model_messages(run_id)`，也没有"删掉 journal 仍能复现请求"的声明；此处 K1 是 §8.2 的设计标签，不与 W7 的 crash-window K1 混用 |
+| §8.3 preflight / `dispatch_started` 顺序 | **DEFERRED-REVISION** | 接受 preflight 窗口可能保守 unknown；将来需要 host 侧 `tool_preflight` 钩子；这是 host 修订，不是已交付的 SQL 修订 |
+
+### Design exit conditions
+
+| # | condition | verdict | W8 handling | if observed |
+|---:|---|---|---|---|
+| 1 | 非法 args 必须在 model settlement 拒绝、不建 tool effect | **NOT-TRIGGERED** | 不提出；保持 spawn 前拒绝 | STOP，另立 effect/model 边界设计 |
+| 2 | 真正只读 replay、写工具、交互 approval、资源撤销、in-flight cancel | **NOT-TRIGGERED** | 均不在本轮 | STOP，独立协议/kernel 设计 |
+| 3 | 合法不可分页单结果必然超 64 KiB | **NOT-TRIGGERED** | 当前内建工具依赖有限候选分页 | STOP，不抬 transport cap |
+| 4 | 图片或二进制 content block | **NOT-TRIGGERED** | 仍为既有文本合同 | STOP，独立内容协议设计 |
+| 5 | 不可信插件或恶意并发 workspace | **NOT-TRIGGERED** | workspace 仍受信 | STOP，独立隔离/权限设计 |
+| 6 | PostgreSQL `jsonb::text` 与 Python/Node 在接受输入上不一致 | **NOT-TRIGGERED** | 跑既有三方 canonical vectors；不宣称有限向量穷尽所有输入 | 任一反例即 STOP，不 re-bless |
+
+### Stale query surfaces and current markers
+
+两处 `cases=14` 与一处 `CountingSpawn` 都是其所在阶段的真实测量或历史误记，本身不改；W8 只标注它们的"当前查询"用途：
+
+| location | nature | disposition |
+|---|---|---|
+| `docs/reviews/v24-conformance-matrix-2026-10-23.md:805` | M5 当轮 `cases=14` | 标注为 M5 时点查询面；当前值为 `cases=30; recovery_probes=16`；原行不改 |
+| `v24/s13/README.md:100` | W4c 当轮 `cases=14` | 由 W8 块的 supersedes 声明覆盖其当前状态用途；原行不改 |
+| `docs/reviews/v24-conformance-matrix-2026-10-23.md:708` | W4c 当轮 `cases=14` | 仅由 W8 小节点名；原行不改 |
+| `docs/reviews/v24-conformance-matrix-2026-10-23.md:873` | W7 小节把零 spawn sentinel 写成 `CountingSpawn` | 由 `D-ABI-W8-8` 记录更正；原行不改 |
+
+当前权威值来自 `v24/s13/README.md:184` 与 W7 record 的 row 30。当前 row-29/30/31 marker 为：
+
+```text
+[passed] W4 fs tools; cases=140; read=16; read_probes=29; list=7; list_probes=11; search=24; search_probes=26; pagination_converged=true; page_contracts_imported=3
+[passed] W4 lifecycle; cases=30; recovery_probes=16; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true; no_replay=true
+[passed] W4 node contract; node=/Users/wxl/.nvm/versions/node/v24.13.1/bin/node
+```
+
+W8 的有边界声明、17 行 register、32 行表、SUP-1 与三轮审计见 [W8 execution record](v24-tool-plugin-abi-w8-execution-2026-11-01.md)；证据目录 `/tmp/v24-abi-w8-20261101T033123Z/`。本小节不重开 M4/M5，不重新裁决 34 个冻结 `status` 位置，不做 promotion。
+
+不声明硬实时 12 秒上界；C.18.3 的 T1/T2/T3 保持分层。`linux_real=not_run`；非 UTF-8 文件名证据仅为 macOS root-level shim，不覆盖子目录真实非法名称。不声明工具自动重执行，tool 仍为 `no_replay`。不承诺慢 scope 的分页收敛。不调用真实 provider，不进行 gate 对外网络访问；"无网络"是逐行构造论证，不是 OS 级隔离证明。

@@ -206,6 +206,35 @@ W7 adds no host, SQL, vector, fixture-module, design or pin changes. `git diff -
 
 The [W7 execution record](../../docs/reviews/v24-tool-plugin-abi-w7-execution-2026-11-01.md) contains provenance, source digests, the 32-row serial table, seven audit tables, R15/R16 fresh-process evidence, R03/R13 cleanup observations, limits and deviations. Raw evidence is in `/tmp/v24-abi-w7-20261031T200002Z/`; the publication receipt there records the commit/push outcome externally.
 
+## W8 v1 acceptance（2026-11-01）
+
+W8 是 design §7.4 done-when 1–8 的首次逐项验收，不是 M6，不是 M5 重做，也不新增 M 阶段。M1–M5 与 W7 的既有 authority 不变：M4 按 C.11 完成，M5 按 C.18.1/C.18.7 完成，W7 是 M5 之后的恢复收口；W8 只链接这些声明，不重新裁决 34 个冻结 `status` 位置，也不做 promotion。
+
+本轮实际执行日为 2026-11-01（+08:00），`HEAD_sweep=5dcbf633ca7b08e171255ee3cf2900d0e5dd6008`，`origin/main` 同点。冻结的 32 条串行命令全部 exit 0，第 1–31 条末行精确匹配，第 32 条 SQL diff 输出为空；无 exit 2/`[SKIP]`。**32/32**；closeout 仍 **11/11**；s13 是 extension evidence，不是第 12 条。SUP-1 在 row 32 之后独立运行，exit 0，末行 `[pass] B0-2 DB-only multi-provides probe; zero process spawns`；它是 W8 自加的补充观察，不进入八项裁决，不占 row 33，也不是第 12 条。
+
+八项 projection 为 1 PASS、2 PASS、3 PASS、4 PASS、5 PASS-LIMITED、6 PASS、7 PASS、8 PASS；17 个 canonical token 与 17 行 register 见 [W8 execution record](../../docs/reviews/v24-tool-plugin-abi-w8-execution-2026-11-01.md)，8 行投影与三张残余债务表见 [conformance matrix](../../docs/reviews/v24-conformance-matrix-2026-10-23.md) 的 W8 小节。七项 scope audit 已完成 precheck 7/7；final 7/7 见 record 的 final 表；confirmation 只记外置 receipt，不成为第二张仓库内审计表。
+
+当前 row-29/30/31 marker：
+
+```text
+[passed] W4 fs tools; cases=140; read=16; read_probes=29; list=7; list_probes=11; search=24; search_probes=26; pagination_converged=true; page_contracts_imported=3
+[passed] W4 lifecycle; cases=30; recovery_probes=16; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true; no_replay=true
+[passed] W4 node contract; node=/Users/wxl/.nvm/versions/node/v24.13.1/bin/node
+```
+
+不声明硬实时 12 秒上界；C.18.3 的 T1/T2/T3 保持分层。`linux_real=not_run`；非 UTF-8 文件名证据仅为 macOS root-level shim，不覆盖子目录真实非法名称。不声明工具自动重执行，tool 仍为 `no_replay`。不承诺慢 scope 的分页收敛。不调用真实 provider，不进行 gate 对外网络访问；"无网络"是逐行构造论证，不是 OS 级隔离证明。
+
+以下 supersedes **只作用于"当前状态查询"用途**，原文保留、不改字节：
+
+- 开篇 "dispatcher/worker/provider wiring and filesystem-tool behavior remain downstream work"；
+- W1 的 artifact/timing/replay pending 当前状态表述（冻结 token 的 provenance 含义仍保留）；
+- W4a 的 W4b/W4c downstream 表述；
+- W4b/W4c/W5 的 "M3 timing/cutoff remains pending"；
+- W6 的 "not an M3-complete declaration" 与 "C.18 仍待后续声明"；
+- W4c 小节的 `cases=14` marker（`:100`）。
+
+这些 supersedes 不抹掉真实的阶段证据边界；例如 "W2 单独不能证明 M2" 仍然有效。W8 只更新整个系列当前状态的读法，并把当前权威值指向 `cases=30; recovery_probes=16`（本文件 `:184` 与 W7 record 的 row 30）。证据目录 `/tmp/v24-abi-w8-20261101T033123Z/`；发布 commit/push 结果只进外置 `publication-receipt.txt`，不进入本节。
+
 ## Execution
 
 Capture is candidate generation, not a gate. It requires two fresh external destinations and byte comparison before promotion. Checkers are read-only, have no re-bless mode, and do not execute production tools.
