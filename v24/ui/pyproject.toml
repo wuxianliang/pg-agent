@@ -1,0 +1,11 @@
+[project]
+name = "v24-ui"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["chainlit==2.12.0", "psycopg2-binary>=2.9.12", "pgembed>=0.3.0rc1"]
+
+[tool.uv]
+prerelease = "allow"
+
+[tool.uv.sources]
+pgembed = { path = "../../../pgembed", editable = true }

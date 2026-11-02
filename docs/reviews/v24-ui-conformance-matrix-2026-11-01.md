@@ -1,6 +1,6 @@
 # v24 Chainlit UI conformance matrix (2026-11-02)
 
-Current status: M1 (`5dfaea8`) and M2 (`459ee317f9f31fa5f7af0e5be24bdfd237dec4ec`) are committed on local `v24/ui-chainlit`; no push or main update. M2's final UI gate and all 13 S13 commands exited 0 with no SKIP. See [final M2 acceptance](#final-post-review-m2-acceptance-2026-11-02), [README](../../v24/ui/README.md#final-post-review-m2-acceptance-2026-11-02) and [ledger](v24-ui-deviation-ledger-2026-11-01.md#final-post-review-m2-acceptance-2026-11-02). Next: M3 fake Chainlit, persistent sessions/history/toolset and cross-process resume. M2's interaction simulation is not Chainlit acceptance; `MAX_SAFE_ARGS_BYTES` remains unmeasured until M5.
+Current status: M3 fake Chainlit acceptance is complete on local `v24/ui-chainlit`; no push or main update. Baselines: M1 `5dfaea8`, M2 `459ee317f9f31fa5f7af0e5be24bdfd237dec4ec`, preparation `7703a5d`. The final UI gate, all 13 S13 commands (no SKIP), three-process recovery, review fault checks and §6.3 eight browser checks passed. See [M3 acceptance](#m3-final-acceptance-2026-11-02), [README](../../v24/ui/README.md#m3-closeout-2026-11-02) and [ledger](v24-ui-deviation-ledger-2026-11-01.md#m3-closeout-and-review-dispositions-2026-11-02). M4/M5 have not started; `MAX_SAFE_ARGS_BYTES` remains unmeasured. Historical records below retain their original scope.
 
 Preparation exception (2026-11-02): `open_env()` now supplies default `V24_SKILLS_ROOT` while retaining explicit values. Disposable mocked-server default/explicit checks passed; existing `uv run python v24/ui/test_ui_gate.py` exited 0, last line `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2` (log `/tmp/v24-m3-prep-ui-gate.log`). Skill mounting remains M4.
 
@@ -207,3 +207,56 @@ Full-log integrity (logs are local temporary evidence, not committed):
 
 
 Frozen/whitelist audit before staging: branch v24/ui-chainlit, parent HEAD 5dfaea8422efb6bde8b214cec9f7ff19e340908e; main remains 1143dce6da0572bccab083da9a6be0175210b062. All 92 baseline frozen paths have unchanged SHA256 (frozen-before.json -> frozen-audit-final.json under the evidence directory); no tracked changes outside the eight authorized paths. SQL/host/S13/load/root pyproject/design files are unchanged. Only the 2001 fixture and D-UI-7 semantic-contract corrections touch the authoritative plan. Historical D-UI-6 is intact. Commit scope is M2 only; no push or main update.
+
+## M3 final acceptance (2026-11-02)
+
+M3 adds only `app.py`, `sessions.py` and the independent UI `pyproject.toml`, plus README/matrix/ledger closeout. Chainlit is pinned at 2.12.0; mode is fake, effective pins stay `{read,file_search}`. No host/SQL/S13/load/root project/design/vector or other M1/M2 runtime source changed from preparation HEAD `7703a5d`. No environment reset, W9/D-UI-6 replay, real provider call, push or main update occurred. Local generated `uv.lock` and Chainlit configuration/markdown are not part of this whitelist commit.
+
+All commands below actually finished with exit 0. Shell tests used `UV_CACHE_DIR=/tmp/v24-m3-uv-cache` and `XDG_RUNTIME_DIR=/tmp/v24-m3-runtime`. Embedded PostgreSQL needed sandbox escalation for shared memory; the earlier sandbox `shmat` startup failure did not reach M3 assertions.
+
+| Check / command | Exit | Exact final line | Evidence |
+|---|---:|---|---|
+| `uv run python v24/ui/test_ui_gate.py` (final source) | 0 | `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2` | `/tmp/v24-m3-closeout/ui-final.log` |
+| `uv run python /tmp/v24-m3-closeout/backend-check.py` | 0 | `[passed] M3 three-process running/waiting rehydrate; installs reused; history; steer/cancel/close; lock lifecycle` | `/tmp/v24-m3-closeout/backend-final.log` |
+| `uv run python /tmp/v24-m3-closeout/edge-check.py` | 0 | `[passed] M3 review edge cases` | `/tmp/v24-m3-closeout/edge.log` |
+
+The backend script uses three actual child processes on a disposable database: runtime #1 leaves running/waiting runs; runtime #2 rehydrates those exact bindings, checks unchanged install IDs/install-effect counts, answers waiting, starts a second run in the same scope and checks injected history; runtime #3 replays terminal without worker execution, refuses catalog drift, restores and closes. Each child checks second-process lock refusal and lock reacquisition after close. Unit fault checks cover malformed UUID records, torn/unterminated turns tails, flush failure and cancellation during backend construction on its owner thread.
+
+Edge checks cover a paused `Step.send()` followed by the old idle and a new submission; persistent consumption delivers the next output without a third message. They also cover answer/cancel task-end pairing, attachment-only token recovery of a waiting run at 32 conversations, blocked-unknown no-start/no-drive/no-reclaim, partial installation cleanup in a later process, and synthetic sensitive final/waiting projection refusal with no final/ask payload emitted. The attempted sensitive read was correctly rejected earlier by the frozen journal secret scanner; it is not claimed as durable sensitive-text admission evidence.
+
+| S13 command | Exit | Exact final line |
+|---|---:|---|
+| `uv run python v24/s13/test_contracts.py` | 0 | `[passed] W1 contract inventory; suites=10; cases=71; fixed_ids=true; tool_fixtures=concrete; read_only=true` |
+| `uv run python v24/s13/test_descriptor.py` | 0 | `[passed] W2 descriptor contract; cases=16; canonical_python=9; reasons=4` |
+| `uv run python v24/s13/test_lifecycle.py` | 0 | `[passed] W4 lifecycle; cases=30; recovery_probes=16; python=ok node=ok; second_spawn=false; rerender=false; journal_events_unchanged=true; no_replay=true` |
+| `uv run python v24/s13/test_line_json.py` | 0 | `[passed] W3 line-json v2 contract; cases=10; frame_bytes=7; parse_rows=55; preflight_rejections=5; unknown_outcomes=4; v1_bytes_unchanged=true` |
+| `uv run python v24/s13/test_node.py --node` | 0 | `[passed] W4 node contract; node=/opt/homebrew/bin/node` |
+| `uv run python v24/s13/test_pages.py` | 0 | `[passed] W4 page contract; contracts=3; cases=5417; oracle_differential=4281; unknown_ref_rejected=true` |
+| `uv run python v24/s13/test_registry.py` | 0 | `[passed] W3 registry contract; cases=17; manifest_bytes=3; zero_spawn_paths=6; construction_reasons=14` |
+| `uv run python v24/s13/test_renderers.py` | 0 | `[passed] W2 renderer contract; cases=7; golden_cases=21; digest_pairs=3; text_positives=9; text_negatives=21` |
+| `uv run python v24/s13/test_results.py` | 0 | `[passed] W2 result contract; cases=8; envelope_bytes=3; frame_boundaries=4; replay_claimed=false` |
+| `uv run python v24/s13/test_schema.py` | 0 | `[passed] W2 schema contract; cases=9; first_error_order=frozen; defaults_injected=false` |
+| `uv run python v24/s13/test_tools.py` | 0 | `[passed] W4 fs tools; cases=140; read=16; read_probes=29; list=7; list_probes=11; search=24; search_probes=26; pagination_converged=true; page_contracts_imported=3` |
+| `uv run python v24/s13/test_vectors.py` | 0 | `[passed] W1 read-only vectors; cases=71; PG+Python canonical=9; Node=not_requested` |
+| `uv run python v24/s13/test_wiring.py` | 0 | `[passed] W4 dispatch wiring; cases=56; zero_spawn_paths=6; model_text_bytes=11; v1_bytes_unchanged=true; resource_receipt_v1=true` |
+
+Results and exact final lines were rechecked against all complete logs and `/tmp/v24-m3-closeout/s13-results.json`; no SKIP. The optional Node vectors path is not claimed here; the required Node gate was explicitly enabled.
+
+### §6.3 browser checklist — all eight passed
+
+Real Chainlit frontend at `127.0.0.1:8000`, driven through kimi-webbridge; snapshots were inspected and waiting screenshot visually checked. This records browser automation, not independent human signoff. Files below are private local evidence under `/tmp/v24-m3-closeout/`, not Git artifacts because tokens appear in snapshots.
+
+| §6.3 | Observed behavior | Private evidence |
+|---|---|---|
+| 1 | Initial page shows FAKE, `agent_v24_ui`, workspace, effective toolset 2, scope and token; no run before first message | `01-initial.json` |
+| 2 | Ordered install Pi/RP → started → generating → model tools → read → model final → completed, final bubble visible | `02-completed.json` |
+| 3 | `/tools` shows read/file_search; `/skills` shows empty available-skills block and M4 notice | `03-tools.json`, `03-skills.json` |
+| 4 | Busy ordinary text produces `steer queued`, then final `steered: please change direction now` | `04-steered.json` |
+| 5 | `/cancel` acknowledges request and eventually projects `run · cancelled` | `05-cancelled.json` |
+| 6 | Reload creates fresh scope; wrong token denied; original token replays old completed run; valid token with unrelated run also denied | `06-refreshed.json`, `06-denied.json`, `06-resumed.json`, `06-wrong-run.json` |
+| 7 | Interaction stays waiting without answer; answer produces final `answered` and completed; composer usable afterwards | `07-waiting.json`, `07-still-waiting.json`, `07-waiting.png`, `07-fixed-waiting.json`, `07-fixed-answered.json` |
+| 8 | `/close` displays converged → off/dispose → scope closed; subsequent resume denied | `08-closed.json`, `08-denied.json` |
+
+The original post-answer busy indicator defect was fixed by balancing `AskUserMessage.send()`'s unconditional task restart in `finally`; #7/#8 were rerun after server restart. The acceptance browser group was closed, the fake server exited gracefully (exit 0), and the persistent process lock was reacquired/released successfully. Recoverable scopes were not reset. Review dispositions are in the ledger. M4/M5 remain outside this milestone.
+
+Final pre-stage audit: all 1443 tracked paths outside the three closeout documents are byte-identical to preparation HEAD `7703a5da7c13f994c7265610b253c5a118d1c483`; per-path SHA256 records are in `/tmp/v24-m3-closeout/frozen-final.json`. Main remains `1143dce6da0572bccab083da9a6be0175210b062`. `git diff --check` and M3 source syntax/credential-marker checks passed. The six staged paths are app/session/project plus README/matrix/ledger; generated dependency/configuration files and unrelated work remain untracked. No amend or push.

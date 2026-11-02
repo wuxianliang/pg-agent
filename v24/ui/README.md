@@ -1,10 +1,10 @@
-# v24 UI — M2 file_search and durable rendering
+# v24 UI — M3 fake Chainlit runtime
 
-Current committed baseline: M1 `5dfaea8`, M2 `459ee317f9f31fa5f7af0e5be24bdfd237dec4ec`. [Final M2 acceptance](#final-post-review-m2-acceptance-2026-11-02) supersedes the historical RED/NOT RUN records. Next is M3; no Chainlit acceptance is claimed yet.
+Current status: M3 fake Chainlit acceptance is complete on local `v24/ui-chainlit`; see [M3 closeout](#m3-closeout-2026-11-02). Baselines: M1 `5dfaea8`, M2 `459ee317f9f31fa5f7af0e5be24bdfd237dec4ec`, preparation `7703a5d`. The final UI gate, all 13 S13 commands and §6.3 eight browser checks passed. No push or main update; M4/M5 have not started. Historical RED/NOT RUN records remain below.
 
 Preparation (2026-11-02): authorized minimal `open_env()` exception exports default `V24_SKILLS_ROOT=<repo>/v24/ui/skills` with `setdefault`, preserving explicit configuration. A disposable, mocked-server check passed for default skills/spill exports and explicit skills preservation; the existing UI gate exited 0, last line `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2` (log `/tmp/v24-m3-prep-ui-gate.log`). This does not implement skill mounting (M4).
 
-M2 adds `file_search` alongside `read`, with durable rendering and a disposable UI gate. Both keys are required and pinned; Pi owns the run and RP supplies `file_search`. The final acceptance and formal review records appear below. No Chainlit or real provider is used; M3 is separate. The following M1 notes and historical RED record retain their original scope.
+M2 added `file_search` alongside `read`, with durable rendering and a disposable UI gate. Both keys remain required and pinned; Pi owns the run and RP supplies `file_search`. M3 adds the fake Chainlit frontend and durable conversation recovery. The following M1/M2 evidence retains its original scope; no real provider is used.
 
 From the repository root:
 
@@ -30,6 +30,25 @@ Raw `remaining_tokens` includes admission reservation/refund and was `[15904,199
 The pre-existing fingerprint encoding uses the deterministic functions-then-columns compact JSON field order. M1 preserves that encoding and fingerprint instead of silently migrating existing metadata; the D-UI-6 helper changes exactly the two authorized digests. SQL-manifest arrays retain SQL_LOAD_ORDER.
 
 Exact acceptance commands, exits and final lines are recorded in [the UI conformance matrix](../../docs/reviews/v24-ui-conformance-matrix-2026-11-01.md) and [deviation ledger](../../docs/reviews/v24-ui-deviation-ledger-2026-11-01.md). The commit stays on `v24/ui-chainlit`; no push.
+
+## M3 closeout (2026-11-02)
+
+Launch from the repository root after the existing environment has been initialized:
+
+```sh
+V24_UI_MODE=fake uv run --project v24/ui chainlit run v24/ui/app.py \
+  --host 127.0.0.1 --port 8000 --headless
+```
+
+The independent project pins `chainlit==2.12.0`. A single executor thread owns PostgreSQL connections, journal, runtime, session files and the process lock. Async callbacks submit commands; one persistent consumer per browser session renders immutable events. Callbacks return promptly so busy text reaches the steer inbox. Fake adapter latency is 0.5 seconds on the worker thread. `AskUserMessage` answer/cancel cleanup balances Chainlit 2.12's task restart, keeping the composer usable.
+
+Refresh creates a new conversation without destroying the old scope. Keep the displayed token private; `/resume <run_id> <token>` reattaches an indexed run, while `/resume <run_id>` only accepts the current conversation. Tokens are SHA256-only in `sessions.json`. Running/waiting recovery rehydrates and validates the original workspace/toolset/catalog and durable install identities; terminal runs replay without worker execution. Same-scope subsequent runs inject bounded user/final history. Catalog mismatch is replay-only. `blocked_unknown` is replay-only and cannot start new work or be reclaimed.
+
+`/tools` currently exposes effective `{read,file_search}`. `/skills` displays an empty block with the M4 notice. `real` mode is refused (`real_mode_not_enabled`); skill mounting, the remaining tools and safe-args measurement remain M4/M5. No real provider was called.
+
+`/close` converges bound runs, turns fibers off/disposes installs, closes scope and removes local bindings; failures retain recovery metadata. At 32 unreclaimable conversations, an attachment-only session still permits token resume. A failed setup persists ownership before installation; its recovery hint uses `/resume <scope_id> <token>` solely for cleanup with `/close`. Normal run resume rules are unchanged. Shutdown closes thread-owned resources and releases the process lock; it preserves recoverable scopes. Sensitive render failures show only `presentation refused`; no raw exception, final or question payload is sent.
+
+Acceptance: the final `uv run python v24/ui/test_ui_gate.py` exited 0 (`steps=10; effects=5; artifacts=2; families=2`), all 13 S13 commands exited 0 without SKIP, and three-process running/waiting recovery plus review fault cases exited 0. Browser checks used the real Chainlit 2.12 frontend through kimi-webbridge and inspected its timeline, waiting state, steer/cancel, refresh/resume and close ordering. This is browser automation evidence, not an assertion of an independent human signoff. See the [M3 matrix](../../docs/reviews/v24-ui-conformance-matrix-2026-11-01.md#m3-final-acceptance-2026-11-02) for commands, exact final lines and all eight checklist outcomes, and the [M3 ledger](../../docs/reviews/v24-ui-deviation-ledger-2026-11-01.md#m3-closeout-and-review-dispositions-2026-11-02) for review dispositions and limits. Private browser snapshots contain resume tokens and remain outside Git in `/tmp/v24-m3-closeout/`.
 
 ## Historical M2 RED (2026-11-02; superseded by closeout below)
 
