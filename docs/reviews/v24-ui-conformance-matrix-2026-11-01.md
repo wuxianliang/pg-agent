@@ -1,6 +1,12 @@
-# v24 Chainlit UI conformance matrix — M1 (2026-11-02)
+# v24 Chainlit UI conformance matrix (2026-11-02)
 
-Scope is M1 only on `v24/ui-chainlit`. W9 was green before this work; no W9 implementation or M2 work was started. The S13 regression commands below verify compatibility after D-UI-6.
+Current status: M1 (`5dfaea8`) and M2 (`459ee317f9f31fa5f7af0e5be24bdfd237dec4ec`) are committed on local `v24/ui-chainlit`; no push or main update. M2's final UI gate and all 13 S13 commands exited 0 with no SKIP. See [final M2 acceptance](#final-post-review-m2-acceptance-2026-11-02), [README](../../v24/ui/README.md#final-post-review-m2-acceptance-2026-11-02) and [ledger](v24-ui-deviation-ledger-2026-11-01.md#final-post-review-m2-acceptance-2026-11-02). Next: M3 fake Chainlit, persistent sessions/history/toolset and cross-process resume. M2's interaction simulation is not Chainlit acceptance; `MAX_SAFE_ARGS_BYTES` remains unmeasured until M5.
+
+Preparation exception (2026-11-02): `open_env()` now supplies default `V24_SKILLS_ROOT` while retaining explicit values. Disposable mocked-server default/explicit checks passed; existing `uv run python v24/ui/test_ui_gate.py` exited 0, last line `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2` (log `/tmp/v24-m3-prep-ui-gate.log`). Skill mounting remains M4.
+
+## Historical M1 acceptance (scope at execution time)
+
+Scope was M1 only. W9 was green before that work; M2 had not started. The following S13 commands verify compatibility after D-UI-6.
 
 | Acceptance | Actual command | Exit | Last line / observed result |
 |---|---|---:|---|
@@ -61,7 +67,7 @@ The mandatory Oracle review used explicit selection plus git diff artifacts snap
 
 Observed compatibility deviation: db_fingerprint retains the pre-existing deterministic functions-then-columns compact JSON encoding so the existing environment remains loadable. No host/load/design changes. Physical checkout `/Users/wxl/Projects/pg-agent`; pre-M1 HEAD `9ba0b782797c5c2c421f6355f01d0047d1955b23`; main baseline `1143dce6da0572bccab083da9a6be0175210b062` remains unchanged. No push. Next milestone: M2, assigned separately.
 
-## M2 execution addendum — BLOCKED (2026-11-02)
+## Historical M2 execution addendum — BLOCKED (2026-11-02; superseded by final acceptance)
 
 M1 tables above are preserved as historical results. M2 acceptance is still red; this addendum records only the execution below.
 
@@ -93,7 +99,7 @@ Independent cases reached and logged before the remaining large-text failure:
 
 These are scenario observations within the failing gate, not an M2 pass. Other §6.1 checks not evidenced by these lines remain unfinished/unverified; see the M2 ledger addendum. In particular, the current gate does not claim full crash-after-started recovery, drift probes, unpinned SQL negative, complete independent descriptor vocabulary, or dispatcher-level malformed-output checks.
 
-### S13 during M2
+### Historical S13 during blocked M2 (NOT RUN; superseded by final acceptance)
 
 All 13 S13 commands below were **NOT RUN during M2** because the acceptance gate is red. The M1 rows above remain prior historical evidence and must not be represented as M2 regression results.
 

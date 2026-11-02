@@ -1,6 +1,10 @@
 # v24 UI deviation ledger (2026-11-01)
 
-M1 only; feature branch `v24/ui-chainlit`, no push (plan D7 overrides general AGENTS main/push rule). W9 was already green before this work and is not reimplemented.
+Current status: M1 (`5dfaea8`) and M2 (`459ee317f9f31fa5f7af0e5be24bdfd237dec4ec`) are committed on local `v24/ui-chainlit`, no push or main update (plan D7 overrides general AGENTS main/push rule). W9 is complete. The final M2 UI gate and all 13 S13 commands exited 0, no SKIP; see [final acceptance](#final-post-review-m2-acceptance-2026-11-02), [matrix](v24-ui-conformance-matrix-2026-11-01.md#final-post-review-m2-acceptance-2026-11-02) and [README](../../v24/ui/README.md#final-post-review-m2-acceptance-2026-11-02). Next is M3: fake Chainlit, sessions/history/toolset and cross-process rehydrate/resume, including dedicated-thread ownership, process-lock lifetime and presentation-refusal handling. M2 simulation does not prove Chainlit behavior; `MAX_SAFE_ARGS_BYTES` remains for M5.
+
+## Authorized M3 preparation exception (2026-11-02)
+
+User authorizes only adding the default `V24_SKILLS_ROOT` export in `open_env()`, preserving explicit environment configuration, before M3. No other control-plane exception is inferred. Disposable mocked-server checks passed for default skills/spill and explicit skills preservation. Existing UI gate exit 0; exact last line `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2`, log `/tmp/v24-m3-prep-ui-gate.log`. Navigation summaries now point to the final M2 record; historical RED/NOT RUN bodies are retained. Separate preparation commit, no amend or push.
 
 ## D-UI-6 — approved install ACL and exact immutable audit manifest
 
@@ -20,7 +24,7 @@ Authorized dedicated helper `v24/ui/d_ui_6_acl.py` has --check/--apply only: exa
 
 Factual correction: lookup_install raises AdapterNotFound(adapter_not_approved), never None. UI RPC commits returned domain rejection envelopes and rolls back Python/SQL exceptions, leaving IDLE.
 
-## M1 execution evidence (2026-11-02)
+## Historical M1 execution evidence (2026-11-02; next-step status superseded)
 
 - Physical checkout: `/Users/wxl/Projects/pg-agent`, branch `v24/ui-chainlit`, pre-commit HEAD `9ba0b782797c5c2c421f6355f01d0047d1955b23`; main baseline `1143dce6da0572bccab083da9a6be0175210b062`; no push.
 - `uv run python -m v24.ui.env --init` exit 0, last line `{"status": "ok", "loaded": ["already_initialized"]}`; `--status` exit 0, last line `{"status": "ok", "diffs": [], "db_name": "agent_v24_ui"}`; `--migrate` exit 2, last line `migration_unsupported`.
@@ -31,7 +35,7 @@ Factual correction: lookup_install raises AdapterNotFound(adapter_not_approved),
 
 Next milestone: M2, not started.
 
-## M2 execution addendum — BLOCKED / acceptance RED (2026-11-02)
+## Historical M2 execution addendum — BLOCKED / acceptance RED (2026-11-02; superseded by final acceptance)
 
 The M1 record above is preserved unchanged as historical evidence. This addendum supersedes its forward-looking M2 status. HEAD remains `5dfaea8422efb6bde8b214cec9f7ff19e340908e`, branch `v24/ui-chainlit`; main remains `1143dce6da0572bccab083da9a6be0175210b062`. M2 is incomplete and uncommitted. Cleanup was cancelled before any restore/delete; all M2 source work remains in the working tree. No commit or push.
 

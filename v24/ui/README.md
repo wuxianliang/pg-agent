@@ -1,5 +1,9 @@
 # v24 UI — M2 file_search and durable rendering
 
+Current committed baseline: M1 `5dfaea8`, M2 `459ee317f9f31fa5f7af0e5be24bdfd237dec4ec`. [Final M2 acceptance](#final-post-review-m2-acceptance-2026-11-02) supersedes the historical RED/NOT RUN records. Next is M3; no Chainlit acceptance is claimed yet.
+
+Preparation (2026-11-02): authorized minimal `open_env()` exception exports default `V24_SKILLS_ROOT=<repo>/v24/ui/skills` with `setdefault`, preserving explicit configuration. A disposable, mocked-server check passed for default skills/spill exports and explicit skills preservation; the existing UI gate exited 0, last line `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2` (log `/tmp/v24-m3-prep-ui-gate.log`). This does not implement skill mounting (M4).
+
 M2 adds `file_search` alongside `read`, with durable rendering and a disposable UI gate. Both keys are required and pinned; Pi owns the run and RP supplies `file_search`. The final acceptance and formal review records appear below. No Chainlit or real provider is used; M3 is separate. The following M1 notes and historical RED record retain their original scope.
 
 From the repository root:

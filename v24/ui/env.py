@@ -50,6 +50,7 @@ def open_env(*, init=False, root=None):
         (data / name).mkdir(mode=0o700, exist_ok=True)
     params = _server_info()
     os.environ.setdefault("V24_SPILL_ROOT", str((data / "spill").resolve()))
+    os.environ.setdefault("V24_SKILLS_ROOT", str((repo / "v24" / "ui" / "skills").resolve()))
     maintenance = _dsn(params, "postgres")
     admin = _dsn(params, DB_NAME, f"{DB_NAME}_admin")
     service = _dsn(params, DB_NAME, f"{DB_NAME}_service")
