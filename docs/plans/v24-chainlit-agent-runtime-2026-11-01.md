@@ -209,7 +209,7 @@ pgembed = { path = "../../../pgembed", editable = true }
 - 默认：工作区根是 `.uidata/workspace`（scratch）→ `exec`；`V24_UI_WORKSPACE_ROOT` 指向真实仓库 → `read`。`V24_UI_TOOLSET=read|write|exec` 可显式覆盖。
 - **effective toolset** = 请求 toolset ∩ 当前 catalog 已落地条目；`requires` 由 effective 集合生成。M1 的默认 `exec` 只得到 `{read}`、M2 得到 `{read,file_search}`——这是有意的里程碑形状，不是降级。若 effective 里的某个 key 已请求但 install/slot 未就绪，`start` 以 `dependency_unresolved` 硬失败（`40_interpreters.sql:3213-3219`）；**不要**把「catalog 还没实现某工具」当成这种失败。
 - 未 pin 的调用有两道拒绝，**都不是** `match_pin`：
-  1. SQL 层：`interpret_model` 为每个 tool_call 按 `(run_id, key, released_at IS NULL)` 找 pin，找不到直接 `invalid_outcome`，**不会创建 tool_call effect**（`48_loop.sql:1116-1126`）；
+  1. SQL 层：结构合法的 model success receipt 若调用未 pin 的 key，`interpret_model_settlement` 的首次 pin-membership 检查设置 `v_semantic=true`，随后提交 model effect `unknown`、run `blocked_unknown`；`close_intent.reason="semantic_violation"`、`result.close_reason="unknown"`，原 success receipt 保留，**不会创建 tool_call effect**。后面的 `invalid_outcome` 是工具 admission 分支的防御性检查，不是本公开场景的结果（`48_loop.sql:565-580,865-881,1116-1126`；D-UI-7）；
   2. dispatcher 层：`registry.match_tool()` 用 pin 里的 descriptor/digest 与 install 五元组比对，不匹配即 `AdapterNotFound`（`registry.py:437-462`）。
   `match_pin()` 对 `ApprovedPlugin` 直接 `protocol_mismatch`（`registry.py:464-467`），v2 不走它。
 
@@ -984,7 +984,7 @@ run · completed             run
 6. **manifest/digest 三处对齐**（不经 `from_manifest`，A2）：断言 1（`plugin.manifest_digest == sha256(raw)`）只是**辅助**（同义反复）；**主断言**是对 `host_scope_installs(scope)` / `host_install_fibers(install_id)` **从 DB 回读**的每一行调 `lookup_install`，逐字段比对 `manifest_digest` / `artifact_digest` / `adapter_digest`，并对每个 provide 用 `pg_jsonb_text(descriptor)` 比对字节、复算 `descriptor_digest`；**每个 scope 的每个族都跑**，不是只跑第一个。负控制各跑一次（`finally` 恢复原字节）：artifact 改一字节 → `lookup_install` 返回空；manifest 的 `realm` 改一字符 → `AdapterNotFound`。
 7. **共享区字节一致**：两个 artifact 的 `SHARED CORE` 区逐字节相等；每个文件恰好一段；共享区里的 `canonical_json` 与 `v24.host.canonical.compact_json` 在 12 组值上逐字节相同（含非 ASCII 键、控制字符、嵌套；否则 40960 预算会漂移）。
 8. **descriptor 合法**：每个 provide 的 `set(tool) == TOOL_KEYS` 九键；取值在 `LIMIT_RANGES`/`CONCURRENCY`/`REPLAY_CLASSES`/`ANNOTATION_KEYS` 内；`read_only`/`parallel` 的跨字段规则成立（用 `validate_descriptor` + 一份**独立**的词表断言，不只信 host）。
-9. **pin 分层**：`V24_UI_TOOLSET=read` 时 `host_run_pins` 的 key 集合 == `read` toolset ∩ 当前 catalog（M2 为 `{read,file_search}`，M4 为 7 个只读 key）；当前 catalog 里没有的 `write`/`edit`/`bash` 不在集合里，也不出现在 `build()` 产出的 `body.tools` 里。另设一个**独立负例 run**（不放进主序列）：脚本强制调用一个未 pin 的 key → 在 SQL 层 `invalid_outcome`（`48_loop.sql:1116-1126`），**没有 tool_call effect、没有子进程**。
+9. **pin 分层**：`V24_UI_TOOLSET=read` 时 `host_run_pins` 的 key 集合 == `read` toolset ∩ 当前 catalog（M2 为 `{read,file_search}`，M4 为 7 个只读 key）；当前 catalog 里没有的 `write`/`edit`/`bash` 不在集合里，也不出现在 `build()` 产出的 `body.tools` 里。另设一个**独立负例 run**（不放进主序列）：`ScriptedUiAdapter` 提交结构合法、但 key 未被 pin 的 model success receipt（绕过真实 adapter 的 `unknown_tool_name`，只验 SQL 后盾）。真实 public settlement 必须 `committed`、`emitted=[]`；唯一 model effect 为 `unknown`，run 为 `blocked_unknown`，`close_intent.reason="semantic_violation"`、`result.close_reason="unknown"`；原 success receipt 保留。断言无 successor、无 tool_call effect、无子进程、无目标文件，且两条连接回到 IDLE；不重试、不 cancel。不得要求此场景返回 `invalid_outcome`，不得减少 `{read,file_search}` requires 或直接修改 SQL 状态（D-UI-7）。
 10. **敏感路径拒绝**：`read`/`file_search` 对 `.env`、`a.pem`、`id_rsa`、`.git/config`、`.uidata/x` → `path_excluded`；不存在的路径也先过栅栏，不能用来探测存在性（M4 再把 `write`/`grep`/`find`/`ls`/`read_file` 纳入）。
 11. **spill 可经挂载读回**：构造超限 `read` 输出（M4 再加 `bash`）→ `truncated:true` + `.v24/spill/<32hex>.txt`；用 `read` **分页**读回（每页 ≤2000 行/32 KiB，拼起来与 spill 文件逐字节相同）；直接 `read .uidata/spill/<id>.txt` → `path_excluded`。
 12. **增量时间线 == 全量**：每轮记录增量视图，末尾从 `(NULL,NULL)` 全量回放一次；两个 `effect_id → 终态记录` 映射相等；`finalized` 无重复。
@@ -1024,7 +1024,9 @@ run · completed             run
 - (a) 技能加载：脚本里加一次 `read` 读 `.v24/skills/repo-recon/SKILL.md`，断言读到 frontmatter，证明虚拟挂载可读；
 - (b) 同一个 run 里 `exec` toolset 的全部 key 都被 pinned（11 个）。
 
-**大文本场景（独立 run，M2 起）**：workspace 预置 `long.txt`（3001 个 ASCII 字符），脚本 `read {"path":"long.txt"}` → 断言该 step output 与 `build()` 产出的 tool message `content` **逐字节相同**、长度 >2000、且不含 `[truncated`；同场景再断言 `model · tools (n)` 的 args 摘要仍受 §4.4 的说明文本帽约束、`run · …` 说明文本同样受限——证明帽子还在，只是不落在 tool step 上。
+> **2026-11-02 dated amendment（Oracle 已批准，用户授权）**：本条 fixture 从 3001 改为 2001 个 ASCII 字符；只修订本验收输入，保留 >2000、真实第二次 `build()`/transport continuation 与逐字节相等要求。冻结 host/SQL/reserve=4096 不变；原 3001 的 reserve_insufficient/RED 历史保留在 deviation ledger。
+
+**大文本场景（独立 run，M2 起）**：workspace 预置 `long.txt`（2001 个 ASCII 字符），脚本 `read {"path":"long.txt"}` → 断言该 step output 与 `build()` 产出的 tool message `content` **逐字节相同**、长度 >2000、且不含 `[truncated`；同场景再断言 `model · tools (n)` 的 args 摘要仍受 §4.4 的说明文本帽约束、`run · …` 说明文本同样受限——证明帽子还在，只是不落在 tool step 上。
 
 **交互场景（独立 run，M2 起，用 `ScriptedUiAdapter`）**：脚本先返回 `interaction` → 断言 `status == 'waiting'`、`interaction.payload` 可读、出现 `run · waiting`；空回答 → 仍 waiting，不调 `respond`；`{"text":"ok"}` → 恢复并跑到终止；token-0 的 respond → 内核转 budget seal，UI 显示对应终止态而不是"完成"。**不要**用 `plugin_fixtures.model_adapter` 构造该场景：真实 `DeepSeekAdapter.interpret` 不产出 `interaction`（§2.4）。
 
@@ -1121,7 +1123,7 @@ v24/ui/skills/surgical-edit/SKILL.md
 7. `interaction` 到达 → `status='waiting'`，`cl.AskUserMessage` 取回答，`respond(run, interaction_id, response, key)`——**generation 由 runtime 内部读**（§4.3 的 verb 契约，调用方不传）；空回答 → 继续等；token-0 的 respond 会被内核转为 budget seal，UI 要能显示。
 8. `pending_steer` 被覆盖 → 上屏 `run · steer superseded`。**不能**靠 `pending_steer.generation < driving_generation` 判断：每次 steer 都把 pending 的 generation 设成 `old+1`、同时把 driving 也推到同一个值（`40_interpreters.sql:916-923`），所以该谓词永远是 false。必须由 `AgentRuntime` 本地记录 `(seq, text, generation_at_submit)`，当一条更新的 steer 在旧指令被消费前落地时，把旧条目标 superseded。
 9. `blocked_unknown` → 上屏 reason，**不自动重试**；`/resume` 让人看现场（只回放，不重试）。
-10. `unknown_tool_name` / `zero_tool_calls` / `too_many_tool_calls` → `model · failed` + reason，run 终止。
+10. `unknown_tool_name` / `zero_tool_calls` / `too_many_tool_calls` → `model · failed` + reason，run 终止。经 adapter 之外的路径提交未 pin key，则为 `blocked_unknown / semantic_violation`，同样不自动重试；UI 从 `close_intent.reason` 显露原因（D-UI-7）。
 11. batch barrier：一次 model 可能给 ≤16 个 tool children；渲染层不许假设"一模型一工具"，step 名带 count 或 ordinal，所有 child 都进 `active`。
 12. 64 行分页：`host_run_effects` 的 `next_cursor` 在最后一面是 `NULL`；cursor 必须由调用方记住最后一条 item 的 `(created_at, effect_id)`。`host_effect` 的刷新也按 64 条/轮上限控制。
 13. `output_too_large`：artifact 先按 32 KiB/2000 行/40960 字节截断并 spill；host 的 `max_value_bytes` 是最后一道。两层都可能触发，报错文本不同（artifact `output_too_large` exit 3；host `output_too_large` failure）。
@@ -1180,7 +1182,7 @@ v24/ui/skills/surgical-edit/SKILL.md
 |---|---|---|---|---|---|
 | **W9** | 协议扩展：`v24.text.plain` v1（§12） | §12.9 的 13 条 s13 gate 全绿；旧 3 个 renderer 的 golden/digest 逐字节不变；`renderers.json`/`design_conformance.json`/`test_contracts.py`/`test_vectors.py` 零 diff；新向量表全过。Node 缺失时 `--node` 为 `[SKIP]`，ledger 记 `toolchain absent`，W9 记为 **`passed-with-unverified`**，不冒充通过。**W9 未过，不开始 M1** | `v24/host/{renderers,tool_pages}.py`、`v24/s13/{test_renderers,test_pages}.py`、`vectors/text_plain_v1.json`、W9 记录 | 无 | L |
 | **M1** | 持久环境 + 控制面 + 首个真实工具闭环（scripted，无 Chainlit） | `python -m v24.ui.env --init` 建出十表库并写 `loaded.json`；`--status` 可用；`--migrate` 以 `migration_unsupported` 退出 2（零迁移，不假装成功）；`--reset --yes` 可用；漂移检测按预期退出 2；`python -m v24.ui.control --selftest` 退出 0（adapter 从 `fake.py` import），打印完整 effect 时间线，`host_run_pins` 恰好 `{read}`，`build()` 的 `body.tools` 名字恰为 `{"read"}`，tokens 预算扣减单调，**断言 3 对 DB 回读的 install 行执行**，**同 scope 二次 `start` 的实测结果写进 README** | `v24/ui/{__init__,env,migrations,catalog,control,fake}.py`、`plugins/pi_tools.py`（只含 `read`）、`.gitignore`、`README.md` | W9 | L |
-| **M2** | 第二个工具 + 渲染映射 + UI 门；A4 的第一次真正检验 | `uv run python v24/ui/test_ui_gate.py` 退出 0；§6.1 的 10 行 step 序列精确；pin 集合恰为 `{read, file_search}`（2 requires / 1 个非 owner 提供者）；时间线性质（12–13）、两层校验（15）、大文本逐字节（16）通过；`text.plain` 在 `read`/`file_search` 上的 W9 语义在 gate 中复验 | `plugins/rp_tools.py`（只含 `file_search`）、`render.py`、`fake.py`（扩展 big-text/interaction 脚本）、`test_ui_gate.py` | M1 | L |
+| **M2** | 第二个工具 + 渲染映射 + UI 门；A4 的第一次真正检验 | `uv run python v24/ui/test_ui_gate.py` 退出 0；未 pin negative 按 D-UI-7 精确验证 semantic wall，requires/pins 不减；§6.1 的 10 行 step 序列精确；pin 集合恰为 `{read, file_search}`（2 requires / 1 个非 owner 提供者）；时间线性质（12–13）、两层校验（15）、大文本逐字节（16）通过；`text.plain` 在 `read`/`file_search` 上的 W9 语义在 gate 中复验 | `plugins/rp_tools.py`（只含 `file_search`）、`render.py`、`fake.py`（扩展 big-text/interaction 脚本）、`test_ui_gate.py` | M1 | L |
 | **M3** | Chainlit 端到端（fake）+ 持久会话/历史/toolset + 跨进程恢复 | §6.3 人工 8 项全过；M2 门仍绿；刷新后 `/resume <run_id> <token>` 可回放；`/close` 顺序正确；**丢弃 runtime#1 → runtime#2 `rehydrate` → `/resume` 同一 `running`/`waiting` run 可继续，install 不重复，同 scope 可再 `start`**（不变量 24） | `app.py`、`sessions.py`、`pyproject.toml`、`README.md` | M1（同 scope 二次 start 证据） | L |
 | **M4** | 补齐 11 工具 + 技能挂载 + 安全默认 + 完整 gate | 同一 run 里 `exec` toolset 的 11 个 key 全部 pinned；每族至少调用一次；`.v24/skills/...` 可读且 `ls('.')` 无 `.v24`；catalog 恰好 7/4；敏感路径/尺寸/共享区/环境隔离不变量全过；族级 artifact 实测尺寸写进 gate | 两个 artifact 补齐、两个 `SKILL.md`、`test_ui_gate.py` | M3 | L |
 | **M5** | 真实 provider 入口 + 收尾工件 | `DEEPSEEK_API_KEY` 手动跑通；ledger/matrix 落盘；AGENTS.md 两处增补；**实测 `finish_length` 的出现条件、把 `MAX_SAFE_ARGS_BYTES` 常量回填并同步 README/页脚/system prompt** | `AGENTS.md`、两个 reviews、`README.md` | M4 | M |
@@ -1621,7 +1623,7 @@ uv run python v24/s13/test_node.py --node    # Node 缺失 → [SKIP] 退出 2�
 - `v24/host/tool_results.py:128-157`（message leak 规则）、`:252-268`（`measure`）。
 - `v24/sql/49_host_reads.sql` — `host_run_effects:209`、`host_effect:289`、末页 `next_cursor NULL:285`。
 - `v24/sql/45_capability.sql:50-59` — `(realm, key)` join，无 scope 过滤。
-- `v24/sql/48_loop.sql:1116-1126` — 未 pin 的 tool_call → `invalid_outcome`。
+- `v24/sql/48_loop.sql:565-580,865-881` — `interpret_model_settlement` 首次 pin-membership 检查与 `ELSIF v_semantic` 分支：未 pin 调用提交为 `unknown / blocked_unknown`，reason 为 `semantic_violation`；`:1116-1126` 后续 C22 admission guard 保留为防御性校验（D-UI-7）。
 - `v24/sql/40_interpreters.sql:2748-2791` — `requires` 形状、≤16、owner 非空；`:3035` — manifest digest。
 - `v24/s1/setup_db.py:540` — 十表封闭集；`:555` — disposable `setup_db()`。
 - `v24/host/smoke.py:155-196` — 真实 provider boot recipe（注意：固定 realm、无 installs）。
@@ -1685,6 +1687,12 @@ All source commits are ancestors of pre-M1 `9ba0b782797c5c2c421f6355f01d0047d195
 A dedicated `v24/ui/d_ui_6_acl.py` (`--check`/`--apply` only) may preserve the existing environment: recognize only exact preupgrade, ACL-upgraded/metadata-old, or completed states; hold `.uidata/lock` for apply; validate database `agent_v24_ui`, server identity, database OID and fingerprint; execute only the target admin GRANT and atomically rebind permissions `file_digests` plus `sql_manifest_digest` in `loaded.json`. Test disposable first, then existing check/apply/check. No reset, `load_stage`, full replay, or ordinary migration; `--migrate` remains unsupported/2. These plan/ledger/audit/ACL/helper paths are explicit exceptions to the original M1 whitelist; no host/load/design changes.
 
 Factual correction to A2/§6: `PluginRegistry.lookup_install` raises `AdapterNotFound('adapter_not_approved')` on mismatch; it never returns None. Test both artifact and manifest mismatch accordingly. UI RPC commits any successfully returned domain envelope (including rejection), rolls back Python/SQL exceptions, and leaves the connection IDLE.
+
+## D-UI-7 — M2 unpinned-call acceptance correction (2026-11-02)
+
+用户授权并经两路 Oracle plan 通过（导出 `oracle-plan-2026-11-02-113919-new-chat-d7eab8-f940.md`）：更正 D4、§6.1-9、§8、§10 与 §14 对冻结 SQL 的描述；本修订也取代「本轮修订记录」第 3 项中原 `invalid_outcome` 解释，历史原文保留。首次 pin-membership 检查先置 semantic，公开路径提交 model `unknown`、run `blocked_unknown`，`close_intent.reason=semantic_violation`、`result.close_reason=unknown`，原 success receipt 保留；后续 missing-pin `invalid_outcome` guard 不会成为本场景的公开结果。
+
+SQL、host、S13、requires 与 owner fiber 设计不改；M2 requires/pins 始终恰为 `{read,file_search}`，拒绝 Oracle lane2 早段误写的 `{read}`。不变量保留且精确验收：committed/emitted[]、唯一 model unknown、上述 run 终态/原因、无 tool effect、无子进程、无目标文件、连接 IDLE；不 cancel、不自动重试。真实 provider 对未知函数名先以 `unknown_tool_name` 失败，本负例仅通过 scripted adapter 验 SQL 后盾；未 quiesce 的 unknown 不证明 `/close` 可收敛。既有 2001 fixture amendment 不变，3001 RED 与所有未验证历史保留在 ledger。
 
 ## Post-approval correction (2026-11-02)
 

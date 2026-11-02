@@ -19,8 +19,8 @@ class ScriptedUiAdapter(DeepSeekAdapter):
             text = outcome.get("text", "done")
             return {"class":"success","result":{"final":{"text":text},"usage":usage},"reply":None,
                     "assistant_message":{"role":"assistant","content":text,"reasoning_content":"scripted"},"tool_calls":None,"reason":None}
-        if kind == "tool":
-            key, args = outcome["key"], outcome.get("args", {})
+        if kind in ("tool", "big_text"):
+            key, args = outcome.get("key", "read"), outcome.get("args", {})
             ident = outcome.get("id", "call_1")
             arguments = json.dumps(args, ensure_ascii=False, separators=(",", ":"))
             assistant = {"role":"assistant","content":None,"reasoning_content":"scripted",
