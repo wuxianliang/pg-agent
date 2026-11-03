@@ -27,10 +27,30 @@ from v24.ui.render import (StepRecord, _record, render_effect, render_generating
 from v24.ui.sessions import SessionStore, TERMINAL
 
 
+UI_BODY_BYTE_CEILING = 8000
+
+
+def build_system_prompt(skills_block: str, history: str) -> str:
+    return (
+        "You are a workspace assistant. Use small steps.\n"
+        "stream:false; each reply is the complete answer. Reply in the user's language.\n"
+        "| Tool choice | Pi | RPCE |\n|---|---|---|\n"
+        "| Read | read: verbatim, offset paging | read_file: start_line; -N takes tail, never with limit |\n"
+        "| Search | grep: glob/literal | file_search: mode/filter/regex |\n"
+        "| Edit | edit: one edits batch against the same original, no overlaps | apply_edits: exactly one of rewrite, search+replace, edits; on_missing only with rewrite |\n"
+        'Each reply has a 512-token cap including reasoning; finish_reason="length" causes '
+        '_unknown("finish_length") and terminates the run, rather than truncating an answer or arguments. '
+        "Keep tool arguments small; split new content into small write.append calls.\n"
+        "When a skill matches the task, first use read or read_file to read its location in full.\n"
+        + skills_block + "\n" + history
+    )
+
+
 class FakeAppAdapter(ScriptedUiAdapter):
     """Derive the fake script from the durable effect cause, including on restart."""
     def __init__(self):
         super().__init__([])
+        self.body_byte_ceiling = UI_BODY_BYTE_CEILING
 
     def send(self, prepared):
         # Visible fake latency makes the actual stop/steer UI exercisable.
@@ -132,6 +152,7 @@ class Backend:
                 else:
                     with os.fdopen(fd, "w") as stream:
                         stream.write("# v24 ui scratch\n")
+            self.skills_block = catalog.available_skills()
             self.rt = AgentRuntime(self.env, adapter=FakeAppAdapter())
             self.store = SessionStore(data_dir, read_run=self.run)
         except BaseException:
@@ -284,7 +305,7 @@ class Backend:
         elif verb == "/tools":
             self.send(st, "message", "\n".join(t.key + ": " + t.description for f in self.families(st.realm) for t in f.tools))
         elif verb == "/skills":
-            self.send(st, "message", "<available_skills>\n</available_skills>\nSkills arrive in M4.")
+            self.send(st, "message", self.skills_block)
         elif st.run_id and self.run(st.run_id).get("status") == "blocked_unknown":
             self.send(st, "message", "blocked_unknown; replay only")
         elif (self.store.get(st.conversation_id) or {}).get("setup_incomplete"):
@@ -322,7 +343,7 @@ class Backend:
                     self.send(st, "idle")
                     return
             history = self.store.history_block(st.conversation_id)
-            system = "You are a workspace assistant. Tools are bounded; use small steps.\n" + history
+            system = build_system_prompt(self.skills_block, history)
             st.run_id, _ = self.rt.start_run(st.scope, self.rt.fiber_for(st.scope, "v24.ui.pi_tools"),
                 [{"role": "system", "content": system}, {"role": "user", "content": text}],
                 toolset=self.toolset, key=self.key(st, "start"))
@@ -680,7 +701,7 @@ async def _submit(method, *args):
     await _ensure_hub()
     if _HUB_TASK.done():
         error = _HUB_TASK.exception()
-        code = str(error) if str(error) in {"already_running", "invalid_mode", "invalid_toolset", "workspace_invalid", "real_mode_not_enabled", "schema_drift", "migration_required", "not_initialized"} else "startup_failed"
+        code = str(error) if str(error) in {"already_running", "invalid_mode", "invalid_toolset", "invalid_skill", "workspace_invalid", "real_mode_not_enabled", "schema_drift", "migration_required", "not_initialized"} else "startup_failed"
         raise RuntimeError(code)
     done = asyncio.get_running_loop().create_future()
     await _DISPATCH.put((method, args, done))

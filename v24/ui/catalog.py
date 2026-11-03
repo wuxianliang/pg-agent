@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import ast
+import os
+import re
+import stat
 import sys
+from html import escape
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +22,93 @@ _TOOLSETS = {
     "write": frozenset({"read", "grep", "find", "ls", "read_file", "file_search", "get_file_tree", "write", "edit", "apply_edits"}),
     "exec": frozenset({"read", "grep", "find", "ls", "read_file", "file_search", "get_file_tree", "write", "edit", "apply_edits", "bash"}),
 }
+
+
+def _skill_metadata(data: bytes, directory: str) -> dict[str, str]:
+    # A deliberately small plain-scalar frontmatter grammar, not general YAML.
+    lines = data.split(b"\n")
+    if len(lines) < 4 or [line.removesuffix(b"\r") for line in (lines[0], lines[3])] != [b"---", b"---"]:
+        raise ValueError("invalid_skill")
+    fields = {}
+    for raw in lines[1:3]:
+        line = raw.removesuffix(b"\r").decode("utf-8")
+        match = re.fullmatch(r"(name|description): +(.+)", line)
+        if not match or match[1] in fields:
+            raise ValueError("invalid_skill")
+        value = match[2].strip(" ")
+        if (not value or value[0] in "\"'[]{} ,#&*!|>%@`"
+                or re.search(r"^[-?:](?:\s|$)|:(?:\s|$)|\s#", value)
+                or any(ord(c) < 32 or 127 <= ord(c) <= 159 or ord(c) in (0xFFFE, 0xFFFF) for c in value)):
+            raise ValueError("invalid_skill")
+        fields[match[1]] = value
+    if (not re.fullmatch(r"[a-z0-9-]{1,64}", fields["name"])
+            or fields["name"] != directory or len(fields["description"]) > 1024):
+        raise ValueError("invalid_skill")
+    return fields
+
+
+def available_skills() -> str:
+    """Describe immediate skills from the effective root without following links.
+
+    An unavailable root is empty; a malformed discovered skill fails closed.
+    open_env owns the default root. This pure discovery helper never changes it.
+    """
+    empty = "<available_skills>\n</available_skills>"
+    configured = os.environ.get("V24_SKILLS_ROOT")
+    if not configured:
+        return empty
+    root_fd = None
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        root = Path(configured)
+        if not root.is_absolute() or root.resolve() != root:
+            return empty
+        # Anchor every component so symlink replacement cannot escape the root.
+        root_fd = os.open(root.anchor, directory_flags)
+        for part in root.parts[1:]:
+            next_fd = os.open(part, directory_flags, dir_fd=root_fd)
+            os.close(root_fd)
+            root_fd = next_fd
+        entries = sorted(os.listdir(root_fd))
+    except (OSError, ValueError, RuntimeError):
+        if root_fd is not None:
+            os.close(root_fd)
+        return empty
+    skills = []
+    try:
+        for name in entries:
+            info = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode):
+                raise ValueError("invalid_skill")
+            if not stat.S_ISDIR(info.st_mode):
+                continue
+            skill_fd = os.open(name, directory_flags, dir_fd=root_fd)
+            try:
+                try:
+                    info = os.stat("SKILL.md", dir_fd=skill_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError("invalid_skill")
+                fd = os.open("SKILL.md", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=skill_fd)
+                with os.fdopen(fd, "rb") as stream:
+                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                        raise ValueError("invalid_skill")
+                    # Only frontmatter is loaded. Legal metadata fits in 8 KiB.
+                    fields = _skill_metadata(stream.read(8192), name)
+                location = f".v24/skills/{name}/SKILL.md"
+                skills.append("  <skill>\n"
+                    f"    <name>{escape(fields['name'])}</name>\n"
+                    f"    <description>{escape(fields['description'])}</description>\n"
+                    f"    <location>{escape(location)}</location>\n"
+                    "  </skill>")
+            finally:
+                os.close(skill_fd)
+    except (OSError, ValueError, UnicodeError):
+        raise ValueError("invalid_skill") from None
+    finally:
+        os.close(root_fd)
+    return "<available_skills>\n" + "\n".join(skills) + ("\n" if skills else "") + "</available_skills>"
 
 
 @dataclass(frozen=True)

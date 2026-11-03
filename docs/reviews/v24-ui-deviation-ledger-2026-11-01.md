@@ -1,6 +1,6 @@
 # v24 UI deviation ledger (2026-11-01)
 
-Current status: M3 fake Chainlit acceptance is complete on local `v24/ui-chainlit`; no push or main update. Baselines: M1 `5dfaea8`, M2 `459ee317f9f31fa5f7af0e5be24bdfd237dec4ec`, preparation `7703a5d`. The final UI gate, all 13 S13 commands (no SKIP), three-process recovery, review fault checks and §6.3 eight browser checks passed. See [M3 closeout and review dispositions](#m3-closeout-and-review-dispositions-2026-11-02), matrix and [README](../../v24/ui/README.md#m3-closeout-2026-11-02). M4/M5 have not started; `MAX_SAFE_ARGS_BYTES` remains unmeasured. Historical records retain their original status.
+Current status: **M4 final acceptance is GREEN (2026-11-03).** The final UI gate exited 0 with `steps=10; effects=5; artifacts=2; families=2` (SHA256 `312c6e2b8521c99f13dd1f2012a0a4368d83b29e29ba71a2e165adb19929704b`); the 13 authorized S13 executions all exited 0 including explicit `--node`; the final M3 aggregation passed 12/12 checks with read7 and exec11 each in three distinct actual processes (SHA256 `d82389ab0768c2b17ae0d837272e80d393cc0e2d78dcb38115bc0c4970bbac2e`); browser §6.3 is 8/8 with a real database close proof; the integrated review completed 2/2 lanes with B1/B2/skill A8 resolved; and the pre-doc-final source audit passed (2,143 snapshot path hashes, 1,449 tracked blobs, 10 authorized tracked changes + 2 new skill files, 52 original untracked hashes unchanged, empty index, `main` unchanged, no browser-token leak). Acceptance baseline: HEAD `243dd9d33cc54725955709f10e162f153757141d`; `main` `1143dce6da0572bccab083da9a6be0175210b062`. A single local M4 closeout commit follows these three docs; it is not pushed. M5 has not started; `MAX_SAFE_ARGS_BYTES` remains `None`. Historical RED/NOT RUN/preflight-BLOCKED and interim-pending records below retain their original dates and scope.
 
 ## M3 closeout and review dispositions (2026-11-02)
 
@@ -26,7 +26,7 @@ M3 command/evidence index: UI gate `/tmp/v24-m3-closeout/ui-final.log`, three-pr
 
 The local `uv.lock` is generated dependency state and is excluded from this strict M3 source whitelist, along with `.chainlit/`, generated root `chainlit.md` and unrelated untracked work. Only app/session/project and the three closeout documents are committed. No SQL was added, so SQL_LOAD_ORDER remains unchanged. Setup-cleanup `/resume <scope_id> <token>` is a narrowly scoped recovery hint for `setup_incomplete`; it does not admit arbitrary scope IDs as normal run bindings. Persistent environment reset and historical D-UI-6/W9 replay were not performed. The fake server and browser group were closed; process lock reacquisition succeeded. Final pre-stage audit compared all 1443 tracked non-closeout paths byte-for-byte with preparation `7703a5da7c13f994c7265610b253c5a118d1c483` and saved SHA256 in `/tmp/v24-m3-closeout/frozen-final.json`; all matched. Main remains `1143dce6da0572bccab083da9a6be0175210b062`. Diff whitespace and source syntax/credential-marker checks passed. This is one M3 commit, no amend or push.
 
-Limits remain explicit: effective UI pins are `{read,file_search}`; `/skills` is an empty M4 notice; real mode is disabled; provider network was never called; `MAX_SAFE_ARGS_BYTES` is unmeasured for M5. The attempted sensitive-read fixture was rejected by the frozen journal scanner before durable admission, so the M3 assertion covers synthetic final/waiting projection refusal and separately records journal rejection. M4/M5 are not started.
+Limits remain explicit: effective UI pins are `{read,file_search}`; `/skills` is an empty M4 notice; real mode is disabled; provider network was never called; `MAX_SAFE_ARGS_BYTES` is unmeasured for M5. The attempted sensitive-read fixture was rejected by the frozen journal scanner before durable admission, so the M3 assertion covers synthetic final/waiting projection refusal and separately records journal rejection. At the M3 closeout, M4/M5 had not started.
 
 ## Authorized M3 preparation exception (2026-11-02)
 
@@ -181,7 +181,7 @@ All 13 S13 commands below actually completed with exit 0 and no SKIP. Each comma
 
 The §4.4 credential recheck is implemented by refusing the record with `ValueError(render_secret_detected)`. It does not redact, truncate, replace, modify durable bytes, or turn the refused case into a byte-equivalence PASS. Every emitted succeeded/failed tool record still equals host join_content byte-for-byte; the 2001 continuation is a separate successful equality case. The negative tests establish refusal only. Credential-shaped examples in ordinary source/docs (Bearer followed by a token, PostgreSQL URLs), or structured keys such as api_key, can trigger false positives; plain token/Authorization words are not automatically secrets. This heuristic is not a complete secret detector and does not remove text already present in durable history/model context. M3 must surface the refusal explicitly; that application flow is not implemented or verified by M2. No plan exception permitting altered tool bytes was added.
 
-Artifact output up to 32 KiB does not imply that every such result fits frozen model admission. The measured 2001-byte continuation leaves only 185 completion tokens, below the requested cap 512; 3001 was rejected at estimate 4913. The limit depends on the whole body, not a universal text-length threshold. Reserve/host/SQL remain frozen. M4/M5 must evaluate tool budget/reserve tradeoffs separately. File enumeration and catastrophic regex backtracking remain known risks; no timeout benchmark is claimed. `/close` convergence, real provider behavior, and actual Chainlit empty-answer/refusal handling remain outside M2 evidence.
+Artifact output up to 32 KiB does not imply that every such result fits frozen model admission. The measured 2001-byte continuation leaves only 185 completion tokens, below the requested cap 512; 3001 was rejected at estimate 4913. The limit depends on the whole body, not a universal text-length threshold. Reserve/host/SQL remain frozen. M4/M5 were to evaluate tool budget/reserve tradeoffs separately. File enumeration and catastrophic regex backtracking remain known risks; no timeout benchmark is claimed. `/close` convergence, real provider behavior, and actual Chainlit empty-answer/refusal handling remain outside M2 evidence.
 
 
 ## Final post-review M2 acceptance (2026-11-02)
@@ -232,3 +232,144 @@ Full-log integrity (logs are local temporary evidence, not committed):
 
 
 Frozen/whitelist audit before staging: branch v24/ui-chainlit, parent HEAD 5dfaea8422efb6bde8b214cec9f7ff19e340908e; main remains 1143dce6da0572bccab083da9a6be0175210b062. All 92 baseline frozen paths have unchanged SHA256 (frozen-before.json -> frozen-audit-final.json under the evidence directory); no tracked changes outside the eight authorized paths. SQL/host/S13/load/root pyproject/design files are unchanged. Only the 2001 fixture and D-UI-7 semantic-contract corrections touch the authoritative plan. Historical D-UI-6 is intact. Commit scope is M2 only; no push or main update.
+
+## M4 admission preflight record (2026-11-03)
+
+> **Historical preflight snapshot.** This section records the 2026-11-03 preflight before M4 source implementation and the final acceptance. Its NOT RUN/BLOCKED statements describe that checkpoint only; M4 final acceptance is GREEN below.
+
+M3 remains complete. M4 preflight executed and is blocked, unimplemented and unverified; there is no completed M4 commit. This record allocates no deviation: **D-UI-8 remains unused**, and no exception, production pin reduction or reserve change was approved or implemented. The authoritative report is `/tmp/v24-m4-preflight-20261103/REPORT.md`; the matrix records all 18 build rows and every command exit, log and hash.
+
+Baseline: branch `v24/ui-chainlit`, HEAD `243dd9d33cc54725955709f10e162f153757141d`, `main` `1143dce6da0572bccab083da9a6be0175210b062`. Before this documentation update, all 1,449 tracked hashes and 52 unrelated untracked paths were unchanged and tracked/index diffs were empty. This update changes only README/matrix/ledger. No production source, authoritative plan, SQL, host, reserve, `FRAMING_MARGIN` or fake-adapter bytes were edited. No persistent UI reset/init/migrate and no provider/network call occurred; sizing probes made zero sends. `MAX_SAFE_ARGS_BYTES` remains `None`; it measures model-generated tool-argument capacity for M5 and is distinct from this input-context admission conflict.
+
+### Candidate-specific blockage (not a universal impossibility)
+
+With reserve 4,096 and margin 256, a body must be ≤3,839 bytes to admit (≤3,328 for 512 completion tokens). The complete 11-tool proposal at its 5,251-byte start is estimate 5,507 (`available=-1,411`) and rejected. The complete proposed schema with all descriptions removed is 4,041/4,297 (`-201`), but it is noncompliant and candidate-specific; a relaxed noncompliant 3,584-byte skeleton admits with 256 tokens, so the field names alone are not a universal mathematical impossibility. No compliant candidate was established: full-schema minimum prose is 4,666/4,922 (`-826`); relaxed skeleton plus 625 bytes of required descriptor prose is 4,209/4,465 (`-369`); the shortest complete app prompt with that skeleton is 4,940/5,196 (`-1,100`); complete-schema app is 5,397/5,653 (`-1,557`). For 4,041 bytes the reserve would need at least 4,298 for one token (4,809 for 512); for 5,397 at least 5,654 (6,165 for 512). These are arithmetic requirements for these candidates, not permission to edit policy. The admitted 7-pin application row (3,693/147 tokens) has no history and is not complete workload acceptance.
+
+The preflight stopped because no compliant admission solution was established under the frozen policy, not because implementation was prohibited. A dated model-admission/reserve policy decision or an explicit acceptance-scope amendment is required before implementation; nothing here approves one.
+
+### Historical two-key regression and coexistence
+
+The original historical subset was executed separately against gate-local baseline artifacts and a disposable private PostgreSQL database, preserving the planned production read7/exec11 requirements and the 2,001-byte fixture. `historical.py` exited 0: original primary exactly 10 steps/5 effects/2 artifacts/2 families/3 transports; original 2,001-byte continuation two builds/two sends, second estimate 3,911/reserve 4,096/max_tokens 185, body 3,655/wire 3,672, body SHA256 `45e4c7ee14c455b392d5a5b942a140a08fafe5bfdaad0949ca54d8cd741cb945` and wire `f847ca9f102c2a64768a5130c432e60525cc962eee4fa34703f9760d0b22c060`; original D-UI-7 two-requires contract exact (committed/`emitted=[]`, sole `unknown`, `blocked_unknown`, `semantic_violation`, `close_reason=unknown`, receipt retained, no tool effect/subprocess/target file, IDLE, no cancel/retry). The first attempt exited 1 on a 0755 journal directory; after the temporary directory was corrected to 0700 the rerun exited 0. These are separate historical regression results, not new M4 acceptance.
+
+The temporary `coexist.py` simultaneous old/full-11 probe exited 1 with `ValueError: invalid_catalog` because its generator emitted pin dictionaries as `TOOL_SPECS`. Simultaneous fixture coexistence is unverified; this RED is a harness error, not a pass and not a product/admission blocker. No simultaneous durable-install PASS is claimed.
+
+### Review and stopping point
+
+Oracle reconciliation for this preflight: one lane completed (`gpt-6.1-sol-xhigh`); `claude-opus-5-5` failed with provider 401 and supplied no usable plan. This is admission preflight, not the required formal implementation review. Full M4 UI gate, all-stage S13, M3 three-process/lifecycle, browser, new-handler behavior, simultaneous integration and formal review were **NOT RUN**. No M4 commit was created; nothing was staged, committed, pushed or reset. The next step is a user decision on the frozen model admission/reserve conflict before implementation.
+
+## M4 interim implementation ledger — historical, superseded (2026-11-03)
+
+> **Historical interim snapshot.** This section records the 2026-11-03 checkpoint before the final M3, browser, review and audit results. Its pending/RED statements are not current status; **M4 final acceptance is GREEN** in [M4 final acceptance](#m4-final-acceptance--green-2026-11-03). The final D-UI-9 accepted record is below. Retained for provenance without rewriting the preflight BLOCKED record above.
+
+This record supplemented the preflight BLOCKED section above without rewriting it. At this interim checkpoint, the user had explicitly authorized the 8,000-byte M4 admission ceiling, recorded as D-UI-8. A second exception was allocated as D-UI-9 for the confirmed multi-family uninstall-progression defect exposed by the browser `/close` check; it was pending and not yet applied. M4 was not yet accepted or committed.
+
+### D-UI-8 — authorized 8,000-byte build admission ceiling
+
+**Final status: accepted in M4 final acceptance.** User authorization covers only raising the opt-in input-admission ceiling to 8,000 canonical UTF-8 body bytes for M4. This is the host admission exception in the final M4 source set.
+
+| Element | Authorized actual state |
+|---|---|
+| Allowed file | `v24/host/deepseek.py` only; exact diff `+10/−2`, patch SHA256 `1d3f8df554e12097212bfde6690769d1f73d68f8c37fecbd20b31e742b9b81dd`, resulting source SHA256 `4278fb9a55a91e0f809748a07d8dfef7bbc40d76350d351a3820310f1d236620` |
+| Constructor | Additive keyword/property `body_byte_ceiling: int | None = None`; stores `None` unchanged; no new constructor/configuration validation |
+| Measurement point | Canonical UTF-8 provider body **before** `max_tokens`, after the canonical body construction; `FRAMING_MARGIN=256` is excluded from the measured body bytes |
+| Rejection | Configured ceiling and body bytes > ceiling → `AdapterFailure("body_too_large")`; no transport send |
+| Default `None` | Frozen path unchanged: reserve 4,096, margin 256, cap 512; body 3,655 → estimate 3,911 / `max_tokens` 185; body 3,840 (estimate 4,096) → `reserve_insufficient`; 485 default comparisons (8 body sizes × 6 reserves × 10 caps + 5 malformed cases) |
+| Configured ceiling | 8,000 admitted (estimate 8,256 / 512); 8,001 `body_too_large`; 3,839 admitted with 1 token; 3,840 admitted with 512; small positive reserves 1/2/7/64/185/256 respected and never exceeded |
+| Fallback | Only when the computed `max_tokens` is below 1 (nonpositive allowance): `min(cap, tokens)` instead of `reserve_insufficient`; positive allowances such as 185 are preserved, and `cap` remains 512 |
+| Invalid input | Zero, negative, boolean and invalid reserves still raise `reserve_zero`; `None`/malformed caps retain prior behavior |
+| Unchanged | SQL reserve 4,096, completion cap 512, margin 256, `PreparedCall`, provider wire format, S13/B0/S11 audits and all 111 other frozen host/SQL/S13/load/project/design/vector sources |
+| Evidence | `admission-focused.log` exit 0, SHA256 `bad6c106a8ebd7943f346a1cf7d68c11a3857a6b172ea33867b88a837c1d71a9`; exact host diff in `admission-handoff.md`; reused B0/S11 exits 0 |
+| Explicit non-claims | Not provider token safety; `ProviderReply.tokens` still includes prompt+completion and SQL guards are frozen; `MAX_SAFE_ARGS_BYTES` stays `None` (M5 output-argument capacity); 8,000 is not a general safety bound |
+
+The integrated UI gate exercises both the configured 8,000 path and the default `None` path. Its durable `body_too_large` case is `failed`/class failure with zero sends, tools or successors and both connections IDLE. The historical 2,001 continuation under the default path remains 3,911/185, and under the configured ceiling produces the same body/wire bytes and two consumed sends; the ceiling does not rewrite the fixture.
+
+### D-UI-9 — historical interim note
+
+At the interim checkpoint, the browser §6.3 check 8 failure was confirmed read-only as a **product multi-family uninstall-progression defect**, not a harness error. Pi install remained `dispose_pending` with the episode retiring, zero active effects and no release. SQL advanced one fiber per advance; `control._retire_install` performed only one dispose, and the worker could not clear multiple tool families. The `/close` timeline therefore showed `run · converged` followed by `close_incomplete` without the off/dispose/closed sequence.
+
+D-UI-9 was allocated for the minimal `v24/ui/control.py` repair at that checkpoint but was not yet applied. The final accepted two-method repair, focused Oracle reconciliation and actual DB close proof are recorded in [M4 final acceptance](#m4-final-acceptance--green-2026-11-03). The original interim pending table is superseded and not repeated as current status.
+
+### Interim measurements, historical coexistence and source scope — historical
+
+Interim numbers follow; the final gate and M3 numbers are in the final acceptance section. The plan's artifact hard cap remains 3,000 lines / 160 KiB. Interim `wc -l -c` was Pi 1,159 / 52,689 B and RP 1,120 / 52,179 B; the interim gate pinned `ceil(actual×1.20)` at Pi 1,391 / 63,227 B and RP 1,344 / 62,615 B. Final is Pi 1,160/52,732 → 1,392/63,279 and RP 1,121/52,222 → 1,346/62,667. Catalog toolsets are `read` 7 / `write` 10 / `exec` 11; Pi provides 7 and RP provides 4. The production `exec` run pins exactly those 11 in one run and invokes both families; the independent production `read` 7-pin path is also green. The historical fixtures remain independent: original primary exactly 10 steps/5 effects/2 artifacts/2 families/3 transports; D-UI-7 exactly two requires `{read,file_search}` with the recorded semantic wall and original success receipt; original 2,001 continuation two actual builds/two sends, second 3,655/3,911/4,096/185, body/wire `f847ca9f102c2a64768a5130c432e60525cc962eee4fa34703f9760d0b22c060`. No production pin was reduced to two and no historical fixture was rewritten.
+
+Actual complete-app admission bodies are `read7` 4,728 / 5,191 / 5,416 B and `exec11` 6,712 / 7,175 / 7,400 B (reserve 4,096, cap 512). The skills-owner construction used `Inspect README.md.` and measured `read7` 4,739 / 4,995 and `exec11` 6,723 / 6,979; the gate's `inspect` is 11 B shorter and the rest of the app/skills/descriptor content is the same. These rows are tested observations under the configured ceiling, **not a general 8,000-byte safety guarantee**.
+
+### Oracle-directed M4 bug dispositions
+
+The artifact-source defects found during M4 were dispositioned with focused Oracle advice and repaired by the artifact owner; this documentation turn edited and re-ran no source. The integrated UI gate subsequently exercised the repaired behavior.
+
+| Named failure | Disposition |
+|---|---|
+| `spill_page_republishes_source` / >50-page retention | Accepted and resolved by managed-spill provenance/snapshot reuse. The failing 220,000 B fixture stopped at page 39/offset 73,683, removed the original and left 38 files; the repaired gate pages 63 pages each for four Pi/RP relative/absolute cases with exact bytes, no new allocations, no pruning and unchanged original mtime. Unrelated-generation pruning remains an explicit limitation. |
+| Generated-notice placeholder | Accepted and resolved by preserving literal placeholders in source content; bash and finish-text cases retain the literal `.v24/spill/<32 zeros>.txt` spelling. |
+| Separators | Accepted and resolved; mixed LF/CRLF/lone-CR/U+2028/VT and UTF-8 payloads page back byte-exactly. |
+| Cleanup `EPERM` masking | Accepted and resolved: Darwin `killpg(0)`/`SIGTERM` both returned `EPERM` before `poll()`, then `poll()` returned 0 and `killpg(0)` returned `ESRCH`; cleanup now reaps first, is bounded at 0.55 s, succeeds only on `ESRCH` + reaped child, and maps unprovable cleanup to the existing exit 1/unknown without a new protocol code or leaked diagnostics. |
+
+These dispositions are recorded from `artifacts/review-reconciliation.md`, `artifacts/final-report.json` and `gate/named-failures.md`. The formal integrated review covers the immutable 2026-11-03/1223 formal-snapshot source hashes; later final hashes were covered by the subsequent item-by-item fix/regression reconciliation (B1/B2/skill A8 and the final runtime gates), not by a second formal review of those final hashes.
+
+## M4 final acceptance — GREEN (2026-11-03)
+
+**M4 acceptance is complete.** The final UI gate, the 13 authorized S13 gates, the final M3 aggregation, browser §6.3 and its database close proof, the 2/2 integrated review, and the pre-doc-final source audit are green. A single local M4 closeout commit follows these three docs; it is not pushed. Acceptance baseline: HEAD `243dd9d33cc54725955709f10e162f153757141d`; `main` `1143dce6da0572bccab083da9a6be0175210b062`.
+
+D-UI-8 remains accepted exactly as recorded above: `v24/host/deepseek.py` only, `+10/−2`, source SHA256 `4278fb9a55a91e0f809748a07d8dfef7bbc40d76350d351a3820310f1d236620`; 8,000 admitted, 8,001 `body_too_large`; default `None` still 4,096/256/512; 3,655→3,911/185 and `reserve_insufficient` at 3,840 preserved; 485 default comparisons; fallback only when the computed allowance is below 1.
+
+### D-UI-9 — minimal `control.py` uninstall-progression exception (accepted)
+
+| Element | Accepted actual state |
+|---|---|
+| Allowed file | `v24/ui/control.py` only; the 12th allowed path. Exact diff `+38/−9`, patch SHA256 `0a04b8f5f99c8bc8992f3fefeb65619bb3ec7b10ec0bece7c4ce3045e64106ed`; final file SHA256 `e2a608de1d7bacaf722e4665ee8b4807d911b3299639623f98ee87d5f79dac8b`, 369 lines / 23,323 B |
+| Scope | Only `_retire_install` and `close_scope` changed. `_retire_install` method hash `e13355f7c181c23edc74e3c707e4645a6a4dccdbc7aeb4461dc3ec9eaaf2e1b1`; `close_scope` method hash `0d655ada6084d5c5214bb18eee80b8e86ab416fdf007056211492fcbc1c0e43c`; all raw line content outside the two method spans is byte-identical to HEAD; no SQL/host/app/session/rehydrate helper change |
+| `_retire_install` behavior | Reads the target install/fibers; sends off only for undisposed `want_on` fibers; each of at most 64 rounds issues a fresh-key public dispose, accepts only committed/replay, runs one existing worker and rereads until `disposed_at`; exhaustion is `close_incomplete`. No direct handler/SQL/effect reset and no extra model send |
+| `close_scope` behavior | Exact version-1 scope read with false `has_more`, null cursor, one exact item and explicit `closed_at`; bounded 64 distinct public close keys; accepts committed/deferred/replay acknowledgements but requires the authoritative reread to prove closure; nonempty emitted work fails incomplete rather than dispatching; no uncertain-RPC retry; already-closed needs no close RPC; already-terminal race is verified by `closed_at`; final scope/cache pops only after proved closure |
+| Focused Oracle | `close_scope`: 2/2 lanes completed and read through the end marker; export `prompt-exports/oracle-plan-2026-11-03-124036-new-chat-4638d8-16e9.md`; reconciliation `/tmp/v24-m4-implementation/m3/oracle-scope-reconciliation.md`. Accepted Lane 2's core algorithm and strict read contract plus Lane 1's nonempty-emitted fail-closed guard; rejected outright replay rejection, broad error masking and an extra all-local-installs precondition. `_retire_install` follows the recovered focused disposal response (`m3/oracle-retire-lane2-recovered.md`); it is not claimed as a separately completed two-lane review |
+| Runtime proof | Browser DB proof exit 0, log SHA256 `53bc4e1b40d4b0e0fb39c54e6ab7ac97fd2bb4668a51d869ff5a67d6adec7169`: scope `8ea869b2-04ca-4a29-abb4-688610c78756`, real `closed_at`, 2 installs disposed, 2 fibers off/disposed, 2 `host_prepare` and 2 `host_release` exactly once each, six close phases, binding removed, old partial metadata retained, no tokens. Focused `scope-proof`, guard and close-failure proofs exit 0 (`15232796…`, `978d6cc4…`, `35dc3437…`) |
+| Limits / non-claims | Arbitrary child-tree topology is not fully proved; the old partly disposed binding remains read-only `catalog_changed` with metadata preserved and no rewrite/recovery; no real provider, no extra scope worker/model sends and no M5 claim |
+
+D-UI-9 authorizes only this minimal two-method repair; it does not relax the SQL, other host, lock/thread or remaining frozen-source boundaries.
+
+### Final tests and measurements
+
+| Check | Result |
+|---|---|
+| Final UI gate | exit 0; `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2`; log SHA256 `312c6e2b8521c99f13dd1f2012a0a4368d83b29e29ba71a2e165adb19929704b`; gate source SHA256 `47962ce868d7be50bcde4045a576b5658ede6d8592841b015bb03a6133b6cdb3` |
+| S13 | 13/13 exit 0 including explicit `test_node.py --node`; authorized reuse checked by the final frozen-source/host-patch audit; exact rows/logs/hashes in the matrix |
+| M3 final aggregate acceptance | **GREEN.** read7 `10812/10866/10892`, exec11 `10992/11047/11077`, all exit 0; 7 actual builds per toolset; final `final3-validation` exit 0, 12/12 checks, SHA256 `d82389ab0768c2b17ae0d837272e80d393cc0e2d78dcb38115bc0c4970bbac2e` |
+| Browser | 8/8 §6.3 checks; 46 private snapshot SHA256 values in `acceptance-final.json`; actual DB proof as above; no token/raw snapshot in Git |
+| Frontend / historical / audit | frontend probes, historical read-only replay, frozen audit and immediate-steer edges all exit 0 (`72b5aa0d…`, `e67d6a21…`, `0237b76e…`, `eed3775a…`); cleanup verification exit 0 (`cee25d25…`) |
+| Review | 2/2 lanes against the immutable 2026-11-03/1223 formal-snapshot hashes; later final hashes were covered by item-by-item fix/regression reconciliation, not a second formal review; no failed lane; B1/B2/skill A8 resolved; item-by-item accepted/rejected/deferred dispositions in `review/HANDOFF.md` and `DOCS-HANDOFF.md` |
+| Audit | pre-doc-final PASS: 2,143 snapshot path hashes; 1,449 tracked blobs, 1,439 unchanged, 10 authorized tracked changes; 52 original untracked hashes unchanged; 2 new skill files; index empty; `main` unchanged; no browser-token leak; credential scan of the 12 allowed paths no matches. Coordinator rechecks after these docs before the single closeout commit |
+
+The final M3 owner handoff is `/tmp/v24-m4-implementation/m3/FINAL-HANDOFF.md`; `final3-validation` is a verification-only aggregation of 12 existing results and did not rerun tests. It confirms 7 actual builds per toolset, unchanged final source manifest and append-only journals. The original `final3-all` remains exit 1 and the immediate-edge fixture is the Oracle-reconciled replacement.
+
+Canonical body bytes exclude `max_tokens` and the 256-byte margin; reserve 4,096.
+
+| Scenario | Builds (body B) | Result |
+|---|---|---|
+| `read7` actual app | 4,818 / 5,281 / 5,506 | 512 each |
+| `exec11` actual app | 6,802 / 7,265 / 7,490 | 512 each |
+| `write10` actual app | 6,434 / 6,721 / 6,980 | 512 each; bash excluded; permitted mutation plus readback and continuation |
+| `exec11` 2,001-byte tool output | 6,802 → 9,045 | first 512; next actual build `body_too_large`, zero extra send, IDLE |
+| `exec11` history | 6,849 / 7,575 / 8,303 | first two 512; third `body_too_large`, zero extra send, IDLE |
+| `read7` 2,001 | 3,485 / 5,718 | 355 / 512 |
+| historical 2,001 | 1,422 / 3,655 | 512 / 185 |
+
+The separate M3 real-process fixture recorded read bodies 4,871–5,191 B and exec 6,855–7,175 B across 7 builds per toolset; its text differs and it is not substituted for the gate rows. These are tested observations, **not general 8,000-byte or provider-token safety**.
+
+Artifacts: Pi `1,160` lines / `52,732` B → cap `1,392` / `63,279` B, SHA256 `3e5246557c02127e66d9532aafeb7ae4cd273b1668b222bd2d3d452a3137c688`; RP `1,121` / `52,222` → `1,346` / `62,667`, SHA256 `b9e9a17a6f213e87d65e0e5421fd8a4d695d192f5e3db6e4caf98ee995d9c338`; shared core SHA256 `f962502170e4412554cce3afd6cda80552be5bd09840b4b8364289e3afc06979` (`34,793` B; identical in Pi and RP; gate-defined `_only_shared` range from BEGIN marker through END marker inclusive, including both trailing newlines, each marker exactly once); hard cap 3,000 lines / 160 KiB. B1 release/inspect is workspace-independent while prepare/invoke retain root validation; B2 uses top-level `request.reservation` as the sole authority with 26 captured frames / 16 inspect cases green (`artifacts/b2-HANDOFF.json`, `artifacts/b2-focused-reconciliation.md`, `artifacts/b2-dispatcher-wire-results.json`); the lifecycle workspace copy is gone.
+
+**2026-11-03 correction.** The earlier final-doc shared-core SHA `3c2cb23f03f79819e505906bd3c55814da29ab2665348980c01e156be7f318d4` is superseded by `f962502170e4412554cce3afd6cda80552be5bd09840b4b8364289e3afc06979` under the gate's marker-inclusive definition. It does not reproduce from the final Pi/RP bytes; its origin is not inferred. This is a docs-only correction: no source, gate, test or historical evidence changed.
+
+### Review dispositions and deferred limitations
+
+One formal integrated review only, 2/2 lanes completed with no failed lane. Its own handoff left final runtime acceptance to the coordinator; the final UI/M3/browser runs above close that hold without a repeat review. B1 is resolved in final artifacts (stateless release/inspect; prepare/invoke still validate). B2 is resolved (top-level reservation is the sole authority; actual host frames pass; historical four failures apply only to the preserved formal-snapshot hashes). Skill A8 is implemented (explicit skill-read instruction; invisible-footer dependency removed; `MAX_SAFE_ARGS_BYTES` unmeasured `None`). No unresolved source blocker remains from the review inventory.
+
+B3 `write10` and A1 exec/history headroom are no longer deferred: the final sizing table supplies three `write10` builds and the durable 9,045/8,303 refusals. Deferred/known limitations: ordinary source-spill churn and current retention policy; unreadable/binary/non-UTF8 overwrite remains fail-closed with no lstat-only relaxation; fuzzy performance; workspace-relative slash-glob semantics; capped `find`/`ls` notice; conservative concurrent-directory failure; unused imports/shared code; historical git/env/test coupling; opt-in field validation. No performance/glob/retention/overwrite semantic refactor is implied.
+
+### Limits and next step
+
+`MAX_SAFE_ARGS_BYTES` remains `None` and unmeasured (M5 output-argument capacity). The 8,000 ceiling has real tested headroom refusal at the 9,045 B and 8,303 B durable cases; it is not a universal threshold and is not provider token safety. The old partly disposed binding remains read-only `catalog_changed` with metadata preserved; no rewrite or recovery was attempted. No real provider, `finish_length`, W9 redo, D-UI-6 replay, environment reset/init/migrate, or M5 work occurred; no push. The coordinator re-runs the final audit after these docs, then creates one local M4 closeout commit; M5 starts only after that commit.
+
+Preserved RED: `final3-all` exit 1, last line `[blocked] final3-backend-edges; stopped before next check; consult Oracle before repair`, SHA256 `8fba7804d4411be8fee652c4f7b3744c69ed285c1c3a0b8369303f01f2085277`; `final3-backend-edges` exit 1, last line `AssertionError`, SHA256 `c072ec6deb66d8e6a0856a908df40894353a68b7aa57e43376324d0a83391277`; and the earlier `final2-read-phase3` exit 1 at `close_scope`, SHA256 `7205b8e7242cce0a400a04b7679b35f938e7aa0831a77ae18b0606e805f28bf8`. The Oracle-driven replacement `final3-backend-edges-immediate` is exit 0, SHA256 `eed3775aea2d59b9b38892a9247199c5bd5e3c26fcc31e511274a773dd33bf91`, using `prompt-exports/oracle-plan-2026-11-03-130135-new-chat-5c5b5e-299e.md` and `m3/oracle-steer-reconciliation.md`; `final3-validation` aggregates 12/12 green and no historical result was rewritten.
+
+Historical RED/NOT RUN/preflight-BLOCKED records above, including the M2 RED, the M4 preflight BLOCKED record, the interim M4 pending record, `final2-read-phase3`, and the original `final3-all`/`final3-backend-edges` RED, remain at their original dates and scope; the interim M4 pending section is explicitly marked historical/superseded and retains its interim state alongside the final resolution. No historical RED/NOTRUN/preflight-BLOCKED evidence was deleted.

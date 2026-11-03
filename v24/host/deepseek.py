@@ -166,7 +166,8 @@ def _usage_result(tokens: int | None, wall_ms: int) -> dict:
 
 class DeepSeekAdapter:
     def __init__(self, *, api_key: str | None = None, timeout_s: float = 120.0,
-                 transport=None, clock=None, monotonic=None):
+                 transport=None, clock=None, monotonic=None,
+                 body_byte_ceiling: int | None = None):
         import os
 
         if api_key is None:
@@ -178,6 +179,7 @@ class DeepSeekAdapter:
             raise ValueError("timeout_s")
         self._api_key = api_key
         self.timeout_s = float(timeout_s)
+        self.body_byte_ceiling = body_byte_ceiling
         self.monotonic = monotonic or time.monotonic
         self.transport = (transport if transport is not None
                           else StdlibTransport(monotonic=self.monotonic))
@@ -229,6 +231,10 @@ class DeepSeekAdapter:
         if tools:
             body["tools"] = tools
         estimate = len(_canonical(body).encode("utf-8")) + FRAMING_MARGIN
+        body_bytes = estimate - FRAMING_MARGIN
+        ceiling = self.body_byte_ceiling
+        if ceiling is not None and body_bytes > ceiling:
+            raise AdapterFailure("body_too_large")
         output = request.get("input", {})
         cap = output.get("max_output_tokens") if isinstance(output, dict) else None
         if cap is None:
@@ -239,7 +245,9 @@ class DeepSeekAdapter:
         available = tokens - estimate
         max_tokens = min(cap, available)
         if max_tokens < 1:
-            raise AdapterFailure("reserve_insufficient")
+            if ceiling is None:
+                raise AdapterFailure("reserve_insufficient")
+            max_tokens = min(cap, tokens)
         body["max_tokens"] = max_tokens
         return PreparedCall(
             body=body,

@@ -117,18 +117,26 @@ class AgentRuntime:
         return {identity: value[0] for (sc,identity),value in installed.items() if sc==scope}
 
     def _retire_install(self, scope, install_id):
-        fibers=self.db.host_install_fibers(install_id,None,64).get("items",[])
-        for fiber in fibers:
-            if fiber.get("disposed_at") is not None: continue
+        rows=self.db.host_scope_installs(scope,None,64)
+        row=next((x for x in rows.get("items",[]) if str(x.get("install_id"))==str(install_id)),None)
+        if rows.get("has_more") or row is None: raise RuntimeError("close_incomplete")
+        if row.get("disposed_at") is not None: return
+        fibers=self.db.host_install_fibers(install_id,None,64)
+        if fibers.get("has_more") or "items" not in fibers: raise RuntimeError("close_incomplete")
+        for fiber in fibers["items"]:
+            if fiber.get("disposed_at") is not None or not fiber.get("want_on"): continue
             value=self._rpc("SELECT v24.fiber_control(%s,'off',%s,%s)",
                 (fiber["fiber_id"],fiber["control_seq"],f"ui-off-{uuid.uuid4().hex}"))
             if value.get("disposition") not in ("committed","deferred","replay"): raise RuntimeError("close_incomplete")
-        value=self._rpc("SELECT v24.dispose(%s,%s)",(install_id,f"ui-dispose-{uuid.uuid4().hex}"))
-        if value.get("disposition") not in ("committed","replay"): raise RuntimeError("close_incomplete")
         for _ in range(64):
+            # Each dispose advances one bounded SQL cleanup stage; the worker
+            # alone cannot release the remaining family contributions.
+            value=self._rpc("SELECT v24.dispose(%s,%s)",(install_id,f"ui-dispose-{uuid.uuid4().hex}"))
+            if value.get("disposition") not in ("committed","replay"): raise RuntimeError("close_incomplete")
             self.worker.run_once(scope)
-            rows=self.db.host_scope_installs(scope,None,64).get("items",[])
-            row=next((x for x in rows if str(x.get("install_id"))==install_id),{})
+            rows=self.db.host_scope_installs(scope,None,64)
+            row=next((x for x in rows.get("items",[]) if str(x.get("install_id"))==str(install_id)),None)
+            if rows.get("has_more") or row is None: raise RuntimeError("close_incomplete")
             if row.get("disposed_at") is not None: return
         raise RuntimeError("close_incomplete")
 
@@ -228,10 +236,31 @@ class AgentRuntime:
         if row is None: raise RuntimeError("fiber_missing")
         return row["control_seq"]
     def close_scope(self, scope):
+        def read_scope():
+            page=self.db.host_scopes(scope,None,64)
+            if (not isinstance(page,dict) or page.get("v")!=1 or "error" in page
+                    or page.get("has_more") is not False or "next_cursor" not in page
+                    or page["next_cursor"] is not None or not isinstance(page.get("items"),list)
+                    or len(page["items"])!=1): raise RuntimeError("close_incomplete")
+            row=page["items"][0]
+            if not isinstance(row,dict) or str(row.get("scope_id"))!=str(scope) or "closed_at" not in row:
+                raise RuntimeError("close_incomplete")
+            return row
+        row=read_scope()
         for (sc,identity) in list(self.caches.get(scope,{})):
             self.uninstall_tools(scope,[identity])
-        value=self._rpc("SELECT v24.scope_control('close',%s,NULL,NULL,%s)",(scope,f"ui-close-{uuid.uuid4().hex}"))
-        if value.get("disposition") not in ("committed", "replay"): raise RuntimeError("close_incomplete")
+        value=None
+        if row["closed_at"] is None:
+            for _ in range(64):
+                value=self._rpc("SELECT v24.scope_control('close',%s,NULL,NULL,%s)",(scope,f"ui-close-{uuid.uuid4().hex}"))
+                if isinstance(value.get("error"),dict) and value["error"].get("code")=="already_terminal":
+                    if read_scope()["closed_at"] is None: raise RuntimeError("close_incomplete")
+                    value=None
+                    break
+                if ("error" in value or value.get("disposition") not in ("committed","deferred","replay")
+                        or value.get("emitted")!=[]): raise RuntimeError("close_incomplete")
+                if read_scope()["closed_at"] is not None: break
+            else: raise RuntimeError("close_incomplete")
         self.scopes.pop(scope,None); self.caches.pop(scope,None); return value
     def close(self):
         try:self.journal.close()

@@ -1,10 +1,10 @@
-# v24 UI — M3 fake Chainlit runtime
+# v24 UI — M4 Chainlit agent runtime
 
-Current status: M3 fake Chainlit acceptance is complete on local `v24/ui-chainlit`; see [M3 closeout](#m3-closeout-2026-11-02). Baselines: M1 `5dfaea8`, M2 `459ee317f9f31fa5f7af0e5be24bdfd237dec4ec`, preparation `7703a5d`. The final UI gate, all 13 S13 commands and §6.3 eight browser checks passed. No push or main update; M4/M5 have not started. Historical RED/NOT RUN records remain below.
+Current status: **M4 final acceptance is complete and GREEN (2026-11-03).** The final UI gate exited 0 with `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2` (SHA256 `312c6e2b8521c99f13dd1f2012a0a4368d83b29e29ba71a2e165adb19929704b`), all 13 authorized S13 gates exited 0 including the explicit `--node` invocation, the final M3 aggregation passed 12/12 checks with read7 and exec11 each in three distinct actual processes (SHA256 `d82389ab0768c2b17ae0d837272e80d393cc0e2d78dcb38115bc0c4970bbac2e`), browser §6.3 is 8/8 with a real database close proof, the integrated review completed 2/2 lanes with B1/B2/skill A8 resolved, and the pre-doc-final source audit passed (2,143 snapshot path hashes, 1,449 tracked blobs, 10 authorized tracked changes + 2 new skill files, 52 original untracked hashes unchanged, empty index, `main` unchanged, no browser-token leak). Acceptance baseline: HEAD `243dd9d33cc54725955709f10e162f153757141d`; `main` `1143dce6da0572bccab083da9a6be0175210b062`. A single local M4 closeout commit follows these three docs; it is not pushed. M5 has not started; `MAX_SAFE_ARGS_BYTES` remains `None`. Historical RED/NOT RUN/preflight-BLOCKED and interim-pending records below retain their original dates and scope.
 
-Preparation (2026-11-02): authorized minimal `open_env()` exception exports default `V24_SKILLS_ROOT=<repo>/v24/ui/skills` with `setdefault`, preserving explicit configuration. A disposable, mocked-server check passed for default skills/spill exports and explicit skills preservation; the existing UI gate exited 0, last line `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2` (log `/tmp/v24-m3-prep-ui-gate.log`). This does not implement skill mounting (M4).
+Preparation (2026-11-02): authorized minimal `open_env()` exception exports default `V24_SKILLS_ROOT=<repo>/v24/ui/skills` with `setdefault`, preserving explicit configuration. A disposable, mocked-server check passed for default skills/spill exports and explicit skills preservation; the existing UI gate exited 0, last line `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2` (log `/tmp/v24-m3-prep-ui-gate.log`). At that preparation, this did not implement skill mounting (M4).
 
-M2 added `file_search` alongside `read`, with durable rendering and a disposable UI gate. Both keys remain required and pinned; Pi owns the run and RP supplies `file_search`. M3 adds the fake Chainlit frontend and durable conversation recovery. The following M1/M2 evidence retains its original scope; no real provider is used.
+M2 added `file_search` alongside `read`, with durable rendering and a disposable UI gate. Both keys remain required and pinned; Pi owns the run and RP supplies `file_search`. M3 added the fake Chainlit frontend and durable conversation recovery. The following M1/M2 evidence retains its original scope; no real provider is used.
 
 From the repository root:
 
@@ -25,7 +25,7 @@ Empirical same-scope result (2026-11-02): first run `31c5aefd-5bc5-4d90-95f9-280
 
 Raw `remaining_tokens` includes admission reservation/refund and was `[15904,19995,15899,19990]`. The monotonic unspent budget (raw plus outstanding model reservation) was `[20000,19995,19995,19990]`, spending 10 tokens. This records the actual SQL behavior; no budget SQL was changed.
 
-`read` is verbatim UTF-8 without line numbers, bounded to 2000 lines/32 KiB and the 40960-byte serialized-value budget; truncated text spills under `.v24/spill/`. It rejects sensitive paths, symlinks, traversal, nonregular files, invalid UTF-8, NUL, and files over 1 MiB. Known file failures use v2 failure frames/exit 3. Completion cap is 512; provider length termination fails the run rather than truncating a final. Skills and the other ten planned tools are later milestones.
+`read` is verbatim UTF-8 without line numbers, bounded to 2000 lines/32 KiB and the 40960-byte serialized-value budget; truncated text spills under `.v24/spill/`. It rejects sensitive paths, symlinks, traversal, nonregular files, invalid UTF-8, NUL, and files over 1 MiB. Known file failures use v2 failure frames/exit 3. Completion cap is 512; provider length termination fails the run rather than truncating a final. At that M2 record, skills and the other ten planned tools were later milestones.
 
 The pre-existing fingerprint encoding uses the deterministic functions-then-columns compact JSON field order. M1 preserves that encoding and fingerprint instead of silently migrating existing metadata; the D-UI-6 helper changes exactly the two authorized digests. SQL-manifest arrays retain SQL_LOAD_ORDER.
 
@@ -44,7 +44,7 @@ The independent project pins `chainlit==2.12.0`. A single executor thread owns P
 
 Refresh creates a new conversation without destroying the old scope. Keep the displayed token private; `/resume <run_id> <token>` reattaches an indexed run, while `/resume <run_id>` only accepts the current conversation. Tokens are SHA256-only in `sessions.json`. Running/waiting recovery rehydrates and validates the original workspace/toolset/catalog and durable install identities; terminal runs replay without worker execution. Same-scope subsequent runs inject bounded user/final history. Catalog mismatch is replay-only. `blocked_unknown` is replay-only and cannot start new work or be reclaimed.
 
-`/tools` currently exposes effective `{read,file_search}`. `/skills` displays an empty block with the M4 notice. `real` mode is refused (`real_mode_not_enabled`); skill mounting, the remaining tools and safe-args measurement remain M4/M5. No real provider was called.
+At the M3 closeout, `/tools` exposed effective `{read,file_search}` and `/skills` displayed an empty block with the then-current M4 notice. `real` mode was refused (`real_mode_not_enabled`); skill mounting, the remaining tools and safe-args measurement were scheduled for M4/M5. No real provider was called.
 
 `/close` converges bound runs, turns fibers off/disposes installs, closes scope and removes local bindings; failures retain recovery metadata. At 32 unreclaimable conversations, an attachment-only session still permits token resume. A failed setup persists ownership before installation; its recovery hint uses `/resume <scope_id> <token>` solely for cleanup with `/close`. Normal run resume rules are unchanged. Shutdown closes thread-owned resources and releases the process lock; it preserves recoverable scopes. Sensitive render failures show only `presentation refused`; no raw exception, final or question payload is sent.
 
@@ -145,3 +145,129 @@ Full-log integrity (logs are local temporary evidence, not committed):
 
 
 Frozen/whitelist audit before staging: branch v24/ui-chainlit, parent HEAD 5dfaea8422efb6bde8b214cec9f7ff19e340908e; main remains 1143dce6da0572bccab083da9a6be0175210b062. All 92 baseline frozen paths have unchanged SHA256 (frozen-before.json -> frozen-audit-final.json under the evidence directory); no tracked changes outside the eight authorized paths. SQL/host/S13/load/root pyproject/design files are unchanged. Only the 2001 fixture and D-UI-7 semantic-contract corrections touch the authoritative plan. Historical D-UI-6 is intact. Commit scope is M2 only; no push or main update.
+
+## M4 admission preflight — BLOCKED (2026-11-03)
+
+> **Historical preflight snapshot.** This section records the 2026-11-03 preflight before M4 source implementation. Its NOT RUN/BLOCKED statements describe that checkpoint only; M4 final acceptance is GREEN below.
+
+M4 has no source implementation yet. Preflight ran on `v24/ui-chainlit` at HEAD `243dd9d33cc54725955709f10e162f153757141d`; `main` is `1143dce6da0572bccab083da9a6be0175210b062`. Before this documentation update, all 1,449 tracked hashes and 52 unrelated untracked paths were unchanged and the index was empty. This update changes only README/matrix/ledger; no production source, plan, SQL, host, reserve, `FRAMING_MARGIN` or fake-adapter bytes were edited. `MAX_SAFE_ARGS_BYTES` remains `None` (M5 output-argument capacity, distinct from input admission). No persistent reset/init/migrate and no provider/network call occurred; sizing probes used local scripted transports with zero sends.
+
+With reserve 4,096 and margin 256, admission requires body ≤3,839 bytes (≤3,328 for a 512-token completion). The complete 11-tool proposal at 5,251 bytes measures estimate 5,507 (`available=-1,411`) and is rejected. The complete-schema candidate with all descriptions removed is 4,041/4,297; that is a candidate-specific size, not a universal impossibility — a relaxed noncompliant 3,584-byte body admits. No compliant candidate was established: the full-schema 11-pin minimum-prose probe is 4,666/4,922 (`-826`), the relaxed skeleton plus 625 bytes of required prose is 4,209/4,465 (`-369`), the shortest complete app prompt with that skeleton is 4,940/5,196 (`-1,100`), and the complete-schema 11-pin app is 5,397/5,653 (`-1,557`). For 4,041 bytes the reserve would need at least 4,298 for one token (4,809 for 512); for 5,397 it would need at least 5,654 (6,165 for 512). These are arithmetic requirements, not authorization to change policy.
+
+A 7-pin read-only start admits at 3,263/3,519 and its continuation at 3,471/3,727; the 7-pin 2,001 continuation rejects at 5,471/5,727. A 7-pin minimum-prose app start admits at 3,693/3,949 with 147 tokens, but it has no history and is not complete workload acceptance. Every admitted sizing row made zero sends.
+
+A separate historical regression using baseline two-key artifacts and disposable PostgreSQL passed: original primary exactly 10 steps/5 effects/2 families/3 transports; original 2,001-byte continuation two builds/two sends with second estimate 3,911/reserve 4,096/max_tokens 185; original D-UI-7 two-requires semantic wall. The first attempt exited 1 on a 0755 journal directory; the corrected 0700 rerun exited 0. A temporary simultaneous old/full-11 probe exited 1 (`invalid_catalog`), so coexistence integration is unverified. These historical results are not new M4 acceptance and do not weaken the planned production read7/exec11 requirements.
+
+Full M4 UI gate, all-stage S13, M3 regression, browser, new-handler, simultaneous-integration and formal implementation review were **NOT RUN**. No M4 commit was created; nothing was staged, committed, pushed or reset. The next step is a user decision on the frozen admission/reserve conflict or an explicit acceptance-scope amendment. Details: [matrix](../../docs/reviews/v24-ui-conformance-matrix-2026-11-01.md#m4-admission-preflight--blocked-2026-11-03), [ledger](../../docs/reviews/v24-ui-deviation-ledger-2026-11-01.md#m4-admission-preflight-record-2026-11-03).
+
+## M4 interim implementation record — historical, superseded (2026-11-03)
+
+> **Historical interim snapshot.** This section records the 2026-11-03 checkpoint before the final M3, browser, review and audit results. Its pending/RED statements are not current status; **M4 final acceptance is GREEN** in [M4 final acceptance](#m4-final-acceptance--green-2026-11-03). Retained for provenance without deleting the earlier records.
+
+This section superseded the preflight BLOCKED status above without deleting it. At this interim checkpoint, M4 source implementation was present on `v24/ui-chainlit`, but **M4 was not yet accepted or committed**. The full UI gate and all 13 S13 commands were green; the disposable M3 three-process regression and the browser `/close` check were RED or in progress; the single formal integrated review and the final frozen/whitelist audit were pending. The final resolution is recorded below.
+
+### Implemented scope
+
+- **Toolsets and families.** `v24/ui/catalog.py` exposes `read` 7 keys, `write` 10 and `exec` 11. `v24.ui.pi_tools` provides 7 (`read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`) and `v24.ui.rp_tools` provides 4 (`read_file`, `file_search`, `get_file_tree`, `apply_edits`); the `exec` union is exactly those 11. The production `exec` run pins all 11 and legitimately invokes Pi `read` and RP `get_file_tree`; independent production `read` (7) and `exec` (11) scenarios both exercise both families. Catalog counts are exactly 7/4.
+- **Skills.** `catalog.available_skills()` derives three-child frontmatter XML from `V24_SKILLS_ROOT` without following links, and `app.build_system_prompt()` appends the constructor snapshot. `.v24/skills/<name>/SKILL.md` is readable through the mounted `read` with bytes equal to its source; `ls('.')` contains no `.v24`; no workspace `.v24` is created or copied; `write`/`edit`/`apply_edits` virtual mounts are rejected. Malformed metadata fails closed as `invalid_skill`. The skills block is 439 B; the complete prompt including final newline is 1,190 B.
+- **Security/defaults.** Path fences cover existing and absent sensitive targets across all 11 tools; traversal, outside-absolute, symlink and `.v24` paths are refused; failure leaves input bytes unchanged. Approved subprocess environments contain no provider keys and no `PG*`; renderer credential refusal does not mutate durable bytes. The gate also preserves no-socket, SQL-closure, shared-core, descriptor, replay, drift and isolation checks.
+- **Artifact limits (interim record; final values are 1,160/1,121 in the final acceptance).** The plan's hard cap remains 3,000 lines / 160 KiB. Interim `wc -l -c` values were Pi 1,159 / 52,689 B and RP 1,120 / 52,179 B; the interim gate pinned `ceil(actual×1.20)` at Pi 1,391 / 63,227 B and RP 1,344 / 62,615 B. The shared core digest is `3a8e5823755c035210266372c20a3a383be2feeda4e1ac2682c2289d6b361b5d`.
+- **Admission (D-UI-8).** `app.py` sets `UI_BODY_BYTE_CEILING = 8000` on the fake adapter only. `v24/host/deepseek.py` gains the opt-in constructor property `body_byte_ceiling` (exact `+10/−2` patch, patch SHA256 `1d3f8df554e12097212bfde6690769d1f73d68f8c37fecbd20b31e742b9b81dd`). Canonical UTF-8 body bytes (before `max_tokens`, excluding the 256 B margin) above the configured ceiling fail as `body_too_large`. With `None`, the frozen path is unchanged: reserve 4,096, margin 256, cap 512, the historical 3,655→3,911/185 arithmetic, and `reserve_insufficient` at 3,840. With a configured ceiling, 8,000 is admitted, 8,001 is rejected, and a computed allowance below 1 uses `min(cap, tokens)`; positive allowances such as 185 are preserved. SQL/reserve/margin/cap are unchanged, and this change is not provider token safety.
+
+### Interim build measurements — historical, superseded
+
+Canonical admission body bytes from the actual complete app prompt, skills block and production descriptors with empty history; reserve 4,096 and `max_tokens` 512 for every actual-app row; margin excluded.
+
+| Scenario | Build | Body B | Estimate | `max_tokens` |
+|---|---:|---:|---:|---:|
+| `read7-actual-app` | 1 | 4,728 | 4,984 | 512 |
+| `read7-actual-app` | 2 | 5,191 | 5,447 | 512 |
+| `read7-actual-app` | 3 | 5,416 | 5,672 | 512 |
+| `exec11-actual-app` | 1 | 6,712 | 6,968 | 512 |
+| `exec11-actual-app` | 2 | 7,175 | 7,431 | 512 |
+| `exec11-actual-app` | 3 | 7,400 | 7,656 | 512 |
+| `read7-2001` | 1 | 3,485 | 3,741 | 355 |
+| `read7-2001` | 2 | 5,718 | 5,974 | 512 |
+| `historical-2001` | 1 | 1,422 | 1,678 | 512 |
+| `historical-2001` | 2 | 3,655 | 3,911 | 185 |
+
+The gate used user input `inspect`; the skills owner's construction used `Inspect README.md.` and measured `read7` 4,739/4,995 and `exec11` 6,723/6,979. The 11-byte input difference explains 4,728 vs 4,739 and 6,712 vs 6,723; the rest of the request is the same complete app/skills/descriptor content. These are tested construction/admission observations, **not a general 8,000-byte safety proof**: a different prompt or history can exceed the ceiling and then fails closed.
+
+The historical fixtures remain independent of the production 7/11 scenarios. The original primary is still exactly 10 steps, 5 effects, 2 artifacts/2 families and 3 scripted transports. The D-UI-7 wall still uses exactly the two historical requires `{read,file_search}`: committed with `emitted=[]`, sole model `unknown`, run `blocked_unknown`, `close_intent.reason=semantic_violation`, `result.close_reason=unknown`, original 5-token success receipt retained, no tool effect/subprocess/target file, both connections IDLE, no retry/cancel. The original 2,001-byte continuation still performs two actual builds and two consumed sends; the second body is 3,655, estimate 3,911, reserve 4,096, `max_tokens` 185, body/wire SHA256 `f847ca9f102c2a64768a5130c432e60525cc962eee4fa34703f9760d0b22c060`. No production pin reduction, 3,001 rewrite or historical replacement occurred.
+
+### Interim commands executed — historical
+
+The UI row is the earlier 12:14 run, superseded by the final 12:58 UI gate in the final acceptance; the S13 rows are the final authorized reuse. The UI gate and S13 sweep ran from the repository root under the sanitized private-cluster wrapper; all S13 exits are 0 and the explicit Node gate actually ran. B0/S11 rows are reused handoff executions under explicit user authorization after the identical host patch and 111 other frozen sources were rechecked.
+
+| Command | Exit | Exact last line | Full log | SHA256 |
+|---|---:|---|---|---|
+| `uv run python v24/ui/test_ui_gate.py` | 0 | `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2` | `/private/tmp/v24-m4-implementation/gate/ui-20261103T121431-1-test_ui_gate.log` | `83af4eb96046c783923d53585a663911b573f8f2c56ff245cacdeb08a498fa38` |
+| 13 S13 commands, including `test_node.py --node` | 0 each | exact per-command lines, logs and SHA256 in the [matrix](../../docs/reviews/v24-ui-conformance-matrix-2026-11-01.md#m4-interim-implementation-evidence--historical-superseded-2026-11-03); required Node line `[passed] W4 node contract; node=/Users/wxl/.nvm/versions/node/v24.13.1/bin/node` | `/private/tmp/v24-m4-implementation/gate/s13-20261103T121540-*.log` | `verification-results.json` |
+| `uv run python /tmp/v24-m4-implementation/gate/pure.py` | 0 | `[passed] M4 pure black-box gate checks` | `/private/tmp/v24-m4-implementation/gate/pure-stable-r2.log` | `322f8f365b4e0980874ed9b8dc62cb97fc047c5a0638b3ea83340a5bc76df0e7` |
+| `uv run python /tmp/v24-m4-implementation/gate/history_fixture.py` | 0 | `[passed] historical metadata fixture; two original keys; four simultaneous old/new approvals; no DB or handler execution` | `/private/tmp/v24-m4-implementation/gate/history-fixture.log` | `15589b5ea7b390e2243e74b962ddfebc7fd72ca71a9b1eae615bd436973ec30d` |
+| `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 PYTHONDONTWRITEBYTECODE=1 uv run python v24/b0/test_golden.py` (reused) | 0 | `[passed] B0 v1 golden read-only check; byte_cases=29; structural_cases=6; total_vectors=40; files={'descriptor_v1.json': 5, 'frames_v1.json': 18, 'provider_requests_v1.json': 4, 'tool_messages_v1.json': 2}; descriptor=PostgreSQL+Python; plugins=Python` | `/tmp/v24-m4-implementation/admission-b0.log` | `7026055f9dd0a45e7989602bb425cfc1e3681037a8739d96ec7e03b0de86d861` |
+| `env -u DEEPSEEK_API_KEY -u OPENAI_API_KEY -u OPENAI_API_URI -u OPENAI_MODEL UV_NO_ENV_FILE=1 PYTHONDONTWRITEBYTECODE=1 uv run python v24/s11/test_g10.py` (reused) | 0 | `[passed] v24 G10 M-P Python: 8 case(s): G10-A, G10-B, G10-C, G10-D, G10-E, G10-F, G10-G, G10-H` | `/tmp/v24-m4-implementation/admission-s11.log` | `0934eb58f94a031c45851e3168b4eb7e6af83ac6887ed732c6be2f265f609b7c` |
+
+The focused admission probe also exited 0: `[passed] focused byte admission; boundaries=10; default_comparisons=485; constructor_runtime=true; small_reserve=true; invalid_reserve=true; historical_2001=3911/185; provider_calls=0; db_calls=0` (`/tmp/v24-m4-implementation/admission-focused.log`, SHA256 `bad6c106a8ebd7943f346a1cf7d68c11a3857a6b172ea33867b88a837c1d71a9`). Its 485 comparisons cover 8 body sizes × 6 reserves × 10 caps plus 5 malformed cases; it proves the default `None` path unchanged, not provider token safety.
+
+### Interim pending items — all resolved in final acceptance
+
+| Item | Interim state (superseded) | Final resolution |
+|---|---|---|
+| Disposable M3 three-process regression | Phase 1/2 exited 0; phase 3 exited 1 at `close_scope`; the combined runner stopped. | **GREEN.** Final `final3-validation` exit 0 aggregates 12/12 checks; read7 and exec11 each passed in three distinct real processes; the original `final3-all` RED is retained and reconciled. |
+| Browser §6.3 check 8 (`/close`) | RED: `run · converged` then `close_incomplete`; first seven checks were acceptance-partial only. | **GREEN.** Final 8/8 checks; 46 private snapshot SHA256 values in `acceptance-final.json`; real `closed_at` DB proof, two installs/fibers disposed, two prepare/release exactly once, six close phases, binding removed. |
+| D-UI-9 `control.py` repair | Pending Oracle and a minimal uninstall-progression repair; `control.py` allocated as the 12th path. | **Accepted.** Two methods only, `+38/−9`, final SHA256 `e2a608de1d7bacaf722e4665ee8b4807d911b3299639623f98ee87d5f79dac8b`; focused Oracle 2/2 lanes; actual DB close proof green. |
+| Single formal integrated review | In progress (`3DF0`); no findings. | **Complete.** 2/2 lanes, no failed lane, no repeat review; B1/B2/skill A8 resolved; item-by-item accepted/rejected/deferred dispositions in `review/HANDOFF.md` and `DOCS-HANDOFF.md`. |
+| Final audit and closeout | Pending; no final pre-stage audit or commit. | **Pre-doc-final audit PASS**, followed by the coordinator's recheck after these docs and one local closeout commit; no push. |
+
+At the interim checkpoint, these items blocked acceptance. Final resolution: M3 and browser are GREEN, the review is complete and the pre-doc-final audit passed. The historical M3 §6.3 eight-check pass remains the 2026-11-02 record; the interim M3 phase 3 assertion and browser-close RED remain preserved as history. No source was edited for this documentation update.
+
+### Interim limits and next step — historical
+
+At this interim checkpoint, no real provider was called and no `finish_length` measurement existed. No W9 redo, D-UI-6 replay, persistent environment reset/init/migrate or M5 work occurred. `MAX_SAFE_ARGS_BYTES` remained `None` (M5 output-argument capacity, distinct from input admission). D-UI-8's `deepseek.py` admission ceiling was accepted; D-UI-9 was allocated but not yet applied. SQL, all other host files, lock/thread ownership and the remaining frozen sources were unchanged. The final section records the accepted D-UI-9 result, final limits and the M5 sequencing.
+
+## M4 final acceptance — GREEN (2026-11-03)
+
+**M4 acceptance is complete.** The final UI gate, all 13 authorized S13 gates, the final M3 aggregation, browser §6.3 and its database close proof, the 2/2 integrated review, and the pre-doc-final source audit are green. A single local M4 closeout commit follows these three docs; it is not pushed. Acceptance baseline: HEAD `243dd9d33cc54725955709f10e162f153757141d`; `main` `1143dce6da0572bccab083da9a6be0175210b062`.
+
+D-UI-8 remains accepted: `v24/host/deepseek.py` only, `+10/−2`, source SHA256 `4278fb9a55a91e0f809748a07d8dfef7bbc40d76350d351a3820310f1d236620`; 8,000 admitted, 8,001 `body_too_large`; default `None` 4,096/256/512, 3,655→3,911/185 and `reserve_insufficient` at 3,840 preserved; 485 default comparisons, fallback only below 1.
+
+### Final evidence
+
+| Check | Result |
+|---|---|
+| Final UI gate | exit 0; `[passed] v24 UI gate; steps=10; effects=5; artifacts=2; families=2`; log `/private/tmp/v24-m4-implementation/gate/ui-20261103T125824-1-test_ui_gate.log`; SHA256 `312c6e2b8521c99f13dd1f2012a0a4368d83b29e29ba71a2e165adb19929704b`; gate source SHA256 `47962ce868d7be50bcde4045a576b5658ede6d8592841b015bb03a6133b6cdb3` |
+| S13 | 13/13 exit 0, including explicit `test_node.py --node`; the logs are authorized reuse checked by the final frozen-source/host-patch audit; exact rows, logs and hashes are in the [matrix](../../docs/reviews/v24-ui-conformance-matrix-2026-11-01.md#m4-interim-implementation-evidence--historical-superseded-2026-11-03); Node line `[passed] W4 node contract; node=/Users/wxl/.nvm/versions/node/v24.13.1/bin/node` |
+| M3 final aggregate acceptance | **GREEN.** read7 PIDs `10812/10866/10892` and exec11 PIDs `10992/11047/11077`, all exit 0; 7 actual builds per toolset; final `final3-validation` exit 0, 12/12 checks, log SHA256 `d82389ab0768c2b17ae0d837272e80d393cc0e2d78dcb38115bc0c4970bbac2e` |
+| Browser | §6.3 8/8 PASS; `browser-evidence/acceptance-final.json` holds 46 private snapshot SHA256 values; no token or raw snapshot is copied into Git |
+| Browser DB proof | exit 0; real `closed_at`; 2 installs disposed; 2 fibers off/disposed; 2 `host_prepare` and 2 `host_release` exactly once each; six close phases `request/drain/retire/cascade/barrier/finalize`; binding removed; old partial metadata retained; log SHA256 `53bc4e1b40d4b0e0fb39c54e6ab7ac97fd2bb4668a51d869ff5a67d6adec7169` |
+| Review | 2/2 lanes completed (`claude-opus-5-5`, `gpt-6.1-sol-xhigh`) against the immutable 2026-11-03/1223 formal-snapshot hashes; later final hashes were covered by item-by-item fix/regression reconciliation, not a second formal review; no failed lane; B1/B2/skill A8 resolved; every material claim is accepted/rejected/deferred in `review/HANDOFF.md` and `DOCS-HANDOFF.md`. The review handoff left final runtime acceptance to the coordinator; the UI/M3/browser runs above close that hold without a repeat review |
+| Audit | pre-doc-final audit PASS: 2,143 snapshot path hashes; 1,449 tracked blobs, 1,439 unchanged, 10 authorized tracked changes + 2 new skill files; 52 original untracked content hashes unchanged; empty index; `main` unchanged; no browser-token leak. The coordinator's credential scan of the 12 allowed paths found no matches; the audit is re-run after these docs and before the single closeout commit. |
+
+### Final sizing
+
+Canonical body bytes exclude `max_tokens` and the 256-byte margin; reserve 4,096.
+
+| Scenario | Builds (body B) | Result |
+|---|---|---|
+| `read7` actual app | 4,818 / 5,281 / 5,506 | 512 each |
+| `exec11` actual app | 6,802 / 7,265 / 7,490 | 512 each |
+| `write10` actual app | 6,434 / 6,721 / 6,980 | 512 each; bash excluded; permitted mutation plus readback and continuation |
+| `exec11` 2,001-byte tool output | 6,802 → 9,045 | first 512; next actual build `body_too_large`, zero extra send, IDLE |
+| `exec11` history | 6,849 / 7,575 / 8,303 | first two 512; third `body_too_large`, zero extra send, IDLE |
+| `read7` 2,001 | 3,485 / 5,718 | 355 / 512 |
+| historical 2,001 | 1,422 / 3,655 | 512 / 185 |
+
+The separate M3 real-process fixture recorded canonical body ranges read 4,871–5,191 B and exec 6,855–7,175 B across 7 builds per toolset; its text differs, so it is not substituted for the gate rows. These are tested observations, **not general 8,000-byte or provider-token safety**.
+
+### Artifacts, B1/B2 and control
+
+Pi is `1,160` lines / `52,732` B → cap `1,392` / `63,279` B, SHA256 `3e5246557c02127e66d9532aafeb7ae4cd273b1668b222bd2d3d452a3137c688`; RP is `1,121` / `52,222` → `1,346` / `62,667`, SHA256 `b9e9a17a6f213e87d65e0e5421fd8a4d695d192f5e3db6e4caf98ee995d9c338`; shared core SHA256 `f962502170e4412554cce3afd6cda80552be5bd09840b4b8364289e3afc06979` (`34,793` B; identical in Pi and RP; gate-defined `_only_shared` range from BEGIN marker through END marker inclusive, including both trailing newlines, each marker exactly once); hard cap 3,000 lines / 160 KiB. B1 release/inspect is workspace-independent while prepare/invoke retain root validation. B2 uses top-level `request.reservation` as the sole authority; 26 captured frames / 16 inspect cases across both families, both targets, moved/deleted roots and known/absent all passed (`artifacts/b2-HANDOFF.json`, `artifacts/b2-focused-reconciliation.md`, `artifacts/b2-dispatcher-wire-results.json`). The lifecycle workspace copy is gone and the 16 actual frames are green. D-UI-9 (`v24/ui/control.py` only, `+38/−9`, final SHA256 `e2a608de1d7bacaf722e4665ee8b4807d911b3299639623f98ee87d5f79dac8b`, 369 lines/23,323 B) changed only `_retire_install` and `close_scope`; focused `close_scope` Oracle 2/2 lanes and the browser DB proof above close the runtime hold. The accepted exception record is in the [ledger](../../docs/reviews/v24-ui-deviation-ledger-2026-11-01.md#d-ui-9--minimal-controlpy-uninstall-progression-exception-accepted).
+
+### Limits and next step
+
+`MAX_SAFE_ARGS_BYTES` remains `None` and unmeasured (M5 output-argument capacity). The 8,000 ceiling has real tested headroom refusal at the 9,045 B and 8,303 B durable cases; it is not a universal threshold. The final `write10` row and those two `body_too_large` rows close the review's B3/A1 evidence gaps; they are not deferred. The old partly disposed binding remains read-only `catalog_changed` with metadata preserved; no rewrite or recovery was attempted. Optional review items remain deferred: capped `find`/`ls` notice, workspace-relative slash globs, unreadable/binary/non-UTF8 overwrite fail-closed, performance/retention/content-address changes. No real provider, `finish_length`, W9 redo, D-UI-6 replay, environment reset/init/migrate, or M5 work occurred; no push. M5 starts only after the M4 closeout commit.
+
+Preserved RED: `final3-all` exit 1, last line `[blocked] final3-backend-edges; stopped before next check; consult Oracle before repair`, SHA256 `8fba7804d4411be8fee652c4f7b3744c69ed285c1c3a0b8369303f01f2085277`; `final3-backend-edges` exit 1, last line `AssertionError`, SHA256 `c072ec6deb66d8e6a0856a908df40894353a68b7aa57e43376324d0a83391277`; and the earlier `final2-read-phase3` exit 1 at `close_scope`, SHA256 `7205b8e7242cce0a400a04b7679b35f938e7aa0831a77ae18b0606e805f28bf8`. The Oracle-driven replacement `final3-backend-edges-immediate` is exit 0, SHA256 `eed3775aea2d59b9b38892a9247199c5bd5e3c26fcc31e511274a773dd33bf91`, using `prompt-exports/oracle-plan-2026-11-03-130135-new-chat-5c5b5e-299e.md` and `m3/oracle-steer-reconciliation.md`; `final3-validation` aggregates 12/12 green and no historical result was rewritten.
+
+Historical RED/NOTRUN/preflight-BLOCKED records above, including the M2 RED, the M4 preflight BLOCKED record, the interim M4 pending record, and the original `final3-all`/`final3-backend-edges` RED, remain at their original dates and scope; the interim M4 pending section is explicitly marked historical/superseded and retains its interim state alongside the final resolution. No historical RED/NOTRUN/preflight-BLOCKED evidence was deleted.
