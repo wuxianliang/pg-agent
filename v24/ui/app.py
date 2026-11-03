@@ -32,16 +32,15 @@ UI_BODY_BYTE_CEILING = 8000
 
 def build_system_prompt(skills_block: str, history: str) -> str:
     return (
-        "You are a workspace assistant. Use small steps.\n"
-        "stream:false; each reply is the complete answer. Reply in the user's language.\n"
-        "| Tool choice | Pi | RPCE |\n|---|---|---|\n"
-        "| Read | read: verbatim, offset paging | read_file: start_line; -N takes tail, never with limit |\n"
+        "stream:false; complete answer. Reply in the user's language.\n"
+        "Call only this request's tools; skills add none.\n"
+        "| Choice | Pi | RPCE |\n|---|---|---|\n"
+        "| Read | read: verbatim, offset | read_file: start_line; -N tail, no limit |\n"
         "| Search | grep: glob/literal | file_search: mode/filter/regex |\n"
-        "| Edit | edit: one edits batch against the same original, no overlaps | apply_edits: exactly one of rewrite, search+replace, edits; on_missing only with rewrite |\n"
-        'Each reply has a 512-token cap including reasoning; finish_reason="length" causes '
-        '_unknown("finish_length") and terminates the run, rather than truncating an answer or arguments. '
-        "Keep tool arguments small; split new content into small write.append calls.\n"
-        "When a skill matches the task, first use read or read_file to read its location in full.\n"
+        "| Edit | edit: one batch, same original, no overlaps | apply_edits: exactly one of rewrite, search+replace, edits; on_missing only with rewrite |\n"
+        '512 tokens/reply including reasoning; finish_reason="length" => finish_length ends the run; '
+        "no truncated answers/arguments. Small write.append calls.\n"
+        "For a matching skill, first read its location in full with read/read_file.\n"
         + skills_block + "\n" + history
     )
 

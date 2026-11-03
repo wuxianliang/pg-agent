@@ -84,6 +84,17 @@ def _descriptor_contract(spec, item):
         idempotent=read_only, open_world=spec.key == "bash"), spec.key)
     check(item["parameters"]["additionalProperties"] is False, spec.key)
     if spec.key == "apply_edits": check(item["parameters"]["required"] == [], "apply required")
+    distinctions = {
+        'read': ('verbatim', 'no line numbers', 'offset', '2000', '32KiB'),
+        'read_file': ('start_line', '-N', 'limit invalid'),
+        'grep': ('glob', 'literal'),
+        'file_search': ('mode', 'filter'),
+        'edit': ('original', 'backwards', 'exact', 'NFKC'),
+        'apply_edits': ('exactly one', 'rewrite', 'search+replace', 'edits',
+            'on_missing only rewrite', 'mode_conflict', 'invalid_mode',
+            'success/partial/failed/no_change')}
+    check(all(fact.lower() in item['description'].lower() for fact in distinctions.get(spec.key, ())),
+          ('descriptor lost D4 distinction', spec.key))
 
 
 @contextlib.contextmanager
@@ -134,7 +145,7 @@ def _app_prompt(history=""):
     exec(compile(ast.Module(body=helpers, type_ignores=[]), "actual-app-prompt", "exec"), namespace)
     prompt = namespace["build_system_prompt"](catalog.available_skills(), history)
     check(prompt.endswith("\n" + history), 'actual app history-last ordering')
-    for fact in ("stream:false", "complete answer", "Reply in the user's language", "read_file", "start_line", "grep", "file_search", "edit", "apply_edits", "512", "reasoning", 'finish_reason="length"', 'finish_length', 'read its location in full'):
+    for fact in ("stream:false", "complete answer", "Reply in the user's language", "read_file", "start_line", "grep", "file_search", "edit", "apply_edits", "512", "reasoning", 'finish_reason="length"', 'finish_length', 'read its location in full', "Call only this request's tools; skills add none.", 'no truncated answers/arguments', 'write.append'):
         check(fact in prompt, ("app prompt fact", fact))
     check(prompt.count(catalog.available_skills()) == 1 and catalog.MAX_SAFE_ARGS_BYTES is None, "skills/safe args prompt")
     return prompt
@@ -444,22 +455,15 @@ def _interaction_runs(rt, scope, owner):
     check("continue?" in waiting_records[0].output, "waiting prompt missing from actual render")
     check(len(waiting_records) == 1 and waiting_records[0].name == "run · waiting" and waiting_records[0].type == "run" and waiting_records[0].effect_id == str(state["interaction"]["interaction_id"]), waiting_records)
     check(render_state({"run": state}, seen=frozenset({str(state["interaction"]["interaction_id"])})) == [], "waiting emitted twice")
-    before = len(adapter.calls)
-    # Empty UI answers must never call the runtime verb. SQL's nonempty-object
-    # contract alone does not reject {"text": ""}.
-    with patch.object(rt, "respond", wraps=rt.respond) as respond:
-        answer_text = ""
-        if answer_text:
-            respond(run, state["interaction"]["interaction_id"], {"text":answer_text}, f"m2-empty-{uuid.uuid4().hex}")
-        respond.assert_not_called()
-    check(len(adapter.calls) == before and (rt.run_state(run,0).get("run") or {}).get("status") == "waiting", "empty response changed waiting run")
+    # Actual Backend.answer("") suppression is exercised by
+    # test_backend_regressions.py, not simulated by a conditional here.
     response = rt.respond(run, state["interaction"]["interaction_id"], {"text":"ok"}, f"m2-respond-{uuid.uuid4().hex}")
     check(response.get("disposition") == "committed", response)
     rt._active_run = run
     completed = rt.drive(scope)
     check(completed.status == "completed" and completed.final_text == "answered", completed)
     check(adapter.outcomes == [] and len(adapter.calls) == 2, "interaction script not exhausted")
-    print("[case] interaction/respond: waiting payload readable; empty UI answer makes zero respond calls; nonempty answer -> answered", flush=True)
+    print("[case] interaction/respond: waiting payload readable; nonempty answer -> answered; empty-answer entry coverage: test_backend_regressions.py", flush=True)
     # The first real build needs a positive reserve. Its interaction outcome
     # spends the admitted 4096 tokens, leaving waiting with exactly zero.
     zero_adapter = ScriptedUiAdapter([{"kind":"interaction", "payload":{"prompt":"zero?"}, "usage":{"tokens":4096,"wall_ms":1}}])
@@ -905,7 +909,7 @@ def _production_run(rt, toolset):
                   tool_reply('readback', 'read_file', {'path': 'write10.txt'})]
         called_keys = {'write', 'read_file'}
     else:
-        script = [tool_reply("skill", "read", {"path": ".v24/skills/repo-recon/SKILL.md", "limit": 4}),
+        script = [tool_reply("skill", "read", {"path": ".v24/skills/repo-recon/SKILL.md"}),
                   tool_reply("rp", "get_file_tree", {"max_depth": 0})]
         called_keys = {'read', 'get_file_tree'}
     script.append(final_reply("m4 complete"))
@@ -964,6 +968,76 @@ def _production_run(rt, toolset):
     return scope, run, families
 
 
+def _skill_workflow_run(rt, toolset, skill_name):
+    """Capacity proof: full skill -> read -> edit -> readback -> final.
+
+    Scripted transport proves retention/execution, not autonomous skill adherence.
+    """
+    expected_keys = WRITE_KEYS if toolset == 'write' else EXEC_KEYS
+    scenario = f'{toolset}{len(expected_keys)}-full-{skill_name}'
+    scope = rt.create_scope('skill-' + uuid.uuid4().hex[:8])
+    families = rt._families(scope, toolset)
+    rt.install_tools(scope, families)
+    path = rt.env.workspace_root / 'sample.txt'
+    original_bytes, changed_bytes = b'M4_OLD\n', b'M4_NEW\n'
+    path.write_bytes(original_bytes)
+    skill_path = f'.v24/skills/{skill_name}/SKILL.md'
+    skill_bytes = (ROOT / 'v24/ui/skills' / skill_name / 'SKILL.md').read_bytes()
+    script = [tool_reply('skill', 'read', {'path': skill_path}),
+              tool_reply('original', 'read_file', {'path': path.name}),
+              tool_reply('batch', 'edit', {'path': path.name,
+                  'edits': [{'oldText': 'M4_OLD', 'newText': 'M4_NEW'}]}),
+              tool_reply('verify', 'read_file', {'path': path.name}),
+              final_reply('changed and verified')]
+    adapter, transport = model_adapter(script)
+    _v2_script_names(transport)
+    adapter.body_byte_ceiling = 8000
+    rt.adapter = rt.worker.adapter = adapter
+    system = _app_prompt()
+    run, _ = rt.start_run(scope, rt.fiber_for(scope, 'v24.ui.pi_tools'),
+        [{'role': 'system', 'content': system}, {'role': 'user', 'content': 'inspect then edit'}],
+        toolset=toolset, budget={'steps': 40, 'tool_calls': 24, 'tokens': 40000, 'wall_ms': 600000})
+    page = rt.db.host_run_pins(run, None, 64)
+    check(not page['has_more'] and {pin['key'] for pin in page['items']} == expected_keys, 'skill durable pins')
+    observed = []
+    build_original = adapter.build
+    def build(effect, history, pins):
+        prepared = build_original(effect, history, pins)
+        row = _measure(prepared, pins, scenario, len(observed) + 1)
+        check(row['body_bytes'] <= 8000 and {pin['key'] for pin in pins} == expected_keys
+              and {tool['function']['name'] for tool in prepared.body['tools']} == expected_keys, row)
+        check(prepared.messages[0] == {'role': 'system', 'content': system}, 'skill system changed')
+        observed.append(prepared)
+        return prepared
+    with patch.object(adapter, 'build', side_effect=build):
+        report = rt.drive(scope)
+    check(report.status == 'completed' and report.final_text == 'changed and verified', (scenario, report))
+    effects = rt.replay(run)
+    tools = [effect for effect in effects if effect['kind'] == 'tool_call']
+    check(len(effects) == 9 and len(tools) == 4
+          and len(observed) == len(transport.calls) == 5 and not transport.script, 'skill workflow counts')
+    check([effect['request']['key'] for effect in tools] == ['read', 'read_file', 'edit', 'read_file'], 'skill tool sequence')
+    tool_texts = []
+    for effect in tools:
+        check(effect['status'] == 'succeeded' and rt.db.host_effect(effect['effect_id'])['effect'] == effect, 'skill durable tool')
+        output = effect['outcome']['body']['result']['output']
+        check(not output['value']['truncated'] and output['value']['spill_path'] == '', 'skill unexpected truncation')
+        text = join_content(output['content'])
+        check(text == output['value']['text'] == render_effect(effect).output, 'skill UI/model tool bytes')
+        tool_texts.append(text)
+    check(tool_texts[0].encode() == skill_bytes and tool_texts[1].encode() == original_bytes
+          and tool_texts[-1].encode() == changed_bytes and path.read_bytes() == changed_bytes, 'skill/read/edit/readback bytes')
+    for ordinal, (prepared, sent) in enumerate(zip(observed, transport.calls)):
+        check(json.loads(sent['body']) == prepared.body, 'skill sent body differs')
+        actual = [message['content'] for message in prepared.messages if message['role'] == 'tool']
+        check(actual == tool_texts[:ordinal], ('skill full history retention', scenario, ordinal))
+    _database_digest_assertions(rt, scope, families)
+    check(rt.db.idle(rt.db.control) and rt.db.idle(rt.db.service), 'skill connections not IDLE')
+    sizes = [row['body_bytes'] for row in BUILD_MEASUREMENTS if row['scenario'] == scenario]
+    print(f'[case] {scenario}; builds/sends=5; durable_effects=9; pins={len(expected_keys)}; full_skill_bytes={len(skill_bytes)}; body_bytes={sizes}; headroom={8000-max(sizes)}; full_history=true; edited/readback/final=verified', flush=True)
+    path.unlink()
+
+
 def _observed_app_drive(rt, scope, adapter, scenario, *, expected_system=None, expected_tool_text=None):
     """Observe the real adapter's admission encoding without changing its policy."""
     from v24.host import deepseek
@@ -997,7 +1071,10 @@ def _observed_app_drive(rt, scope, adapter, scenario, *, expected_system=None, e
             BUILD_MEASUREMENTS.append(row)
             print('[measurement] ' + json.dumps(row, sort_keys=True), flush=True)
             raise
+        if expected_system is not None:
+            check(prepared.messages[0] == {'role': 'system', 'content': expected_system}, 'admitted app prompt/history altered')
         row = _measure(prepared, pins, scenario, len(rows) + 1)
+        check(row['body_bytes'] <= 8000 and {item['function']['name'] for item in prepared.body['tools']} == EXEC_KEYS, 'admitted actual app tools/bytes')
         rows.append(row)
         return prepared
     with patch.object(adapter, 'build', side_effect=build):
@@ -1019,8 +1096,10 @@ def _assert_app_admission_failure(rt, run, transport, sent_count):
 
 
 def _actual_app_limits(rt, scope):
-    path = rt.env.workspace_root / 'exec11-2001.txt'
-    data = b'q' * 2000 + b'\n'
+    path = rt.env.workspace_root / 'exec11-over-ceiling.txt'
+    # Text alone exceeds the admission ceiling, independent of prompt wording.
+    # This is distinct from the unchanged historical 2001B positive continuation.
+    data = b'q' * 8000 + b'\n'
     path.write_bytes(data)
     adapter, transport = model_adapter([tool_reply('full-read', 'read', {'path': path.name}), final_reply('must not send')])
     _v2_script_names(transport)
@@ -1028,18 +1107,18 @@ def _actual_app_limits(rt, scope):
     rt.adapter = rt.worker.adapter = adapter
     run, _ = rt.start_run(scope, rt.fiber_for(scope, 'v24.ui.pi_tools'),
         [{'role': 'system', 'content': _app_prompt()}, {'role': 'user', 'content': 'inspect'}], toolset='exec')
-    check({pin['key'] for pin in rt.db.host_run_pins(run, None, 64)['items']} == EXEC_KEYS, 'exec2001 pins')
-    report, rows = _observed_app_drive(rt, scope, adapter, 'exec11-actual-app-2001',
+    check({pin['key'] for pin in rt.db.host_run_pins(run, None, 64)['items']} == EXEC_KEYS, 'exec over-ceiling pins')
+    report, rows = _observed_app_drive(rt, scope, adapter, 'exec11-actual-app-over-ceiling',
         expected_system=_app_prompt(), expected_tool_text=data.decode())
-    check(len(rows) == 2 and rows[0]['body_bytes'] <= 8000 and rows[1].get('failure') == 'body_too_large', ('exec2001 builds', report, rows))
+    check(len(rows) == 2 and rows[0]['body_bytes'] <= 8000 and rows[1].get('failure') == 'body_too_large', ('exec over-ceiling builds', report, rows))
     _assert_app_admission_failure(rt, run, transport, 1)
     tool = next(effect for effect in rt.replay(run) if effect['kind'] == 'tool_call')
     output = tool['outcome']['body']['result']['output']
     check(tool['status'] == 'succeeded' and rt.db.host_effect(tool['effect_id'])['effect'] == tool
           and output['value']['text'].encode() == data and join_content(output['content']).encode() == data
-          and render_effect(tool).output.encode() == data, 'exec2001 retained exact durable/UI bytes')
+          and render_effect(tool).output.encode() == data, 'exec over-ceiling retained exact durable/UI bytes')
     path.unlink()
-    print('[case] exec11 complete actual-app + exact2001 read: first send succeeds; second real build body_too_large; result retained; no extra send; terminal failed; IDLE', flush=True)
+    print('[case] exec11 actual-app + complete8001 read: first send succeeds; second real build body_too_large; full result retained; no extra send; terminal failed; IDLE', flush=True)
 
     # Use the real SessionStore renderer and SQL final outcomes with the actual
     # app helper. Backend orchestration/Chainlit belongs to the separate M3 probe.
@@ -1048,11 +1127,11 @@ def _actual_app_limits(rt, scope):
         store = SessionStore(temp, read_run=lambda run_id: rt.run_state(run_id, 0)['run'])
         conversation = str(uuid.uuid4())
         prior = []
-        for ordinal in range(1, 4):
+        for ordinal in range(1, 14):
             history = store.history_block(conversation)
             for _, final in prior:
                 check(final in history, 'history was shortened before admission')
-            final = chr(64 + ordinal) * 700
+            final = f'turn-{ordinal:02d}:' + chr(64 + ordinal) * 692
             adapter, transport = model_adapter([final_reply(final)])
             adapter.body_byte_ceiling = 8000
             rt.adapter = rt.worker.adapter = adapter
@@ -1061,7 +1140,7 @@ def _actual_app_limits(rt, scope):
             report, rows = _observed_app_drive(rt, scope, adapter, 'exec11-actual-app-history-turn' + str(ordinal),
                 expected_system=_app_prompt(history))
             check(len(rows) == 1, 'history build count')
-            if ordinal < 3:
+            if rows[0].get('failure') is None:
                 check(report.status == 'completed' and report.final_text == final and len(transport.calls) == 1
                       and not transport.script and rows[0]['body_bytes'] <= 8000, ('history prior run', ordinal, report))
                 store.append_turn(conversation_id=conversation, run_id=run, seq=ordinal, user_text='inspect')
@@ -1069,10 +1148,13 @@ def _actual_app_limits(rt, scope):
             else:
                 check(rows[0].get('failure') == 'body_too_large', ('history failed boundary', rows))
                 _assert_app_admission_failure(rt, run, transport, 0)
-                check(len(store.history(conversation)) == 4 and store.history_block(conversation) == history, 'admission altered conversation history')
+                check(prior and len(store.history(conversation)) == 2 * len(prior) and store.history_block(conversation) == history, 'admission altered conversation history')
                 for old_run, old_final in prior:
                     check(rt.run_state(old_run, 0)['run']['result']['final_text'] == old_final, 'prior durable final lost')
-    print('[case] exec11 real SessionStore accumulated history + actual app helper: two durable final turns; third first-build body_too_large; no history trimming/extra send; prior results retained; IDLE; Backend/browser covered separately', flush=True)
+                print(f'[case] exec11 actual-app history: {len(prior)} complete durable finals retained; turn={ordinal} first-build body_too_large; no history trimming/extra send; IDLE', flush=True)
+                break
+        else:
+            raise AssertionError('complete history never reached 8000B ceiling')
 
 
 def _workspace_gone_lifecycle(rt):
@@ -1269,6 +1351,15 @@ def _skills_contract(env):
         check(raw.startswith(f"---\nname: {name}\ndescription: {description}\n---\n"), "skill frontmatter bytes")
         names.append(name)
     check(names == ["repo-recon", "surgical-edit"], names)
+    required = {
+        'repo-recon': ('get_file_tree(max_depth=2)', 'file_search(mode="path"', '3-5',
+            'start_line=-N', 'without `limit`', 'offset', 'continuation', '<=120 words', 'No edits'),
+        'surgical-edit': ('edits[{oldText,newText}]', 'same original', 'nonoverlapping',
+            'edit_ambiguous', 'Read back', 'No `apply_edits.rewrite` for small changes',
+            'write.append', 'MAX_SAFE_ARGS_BYTES=None', 'unmeasured')}
+    for name, facts in required.items():
+        raw = (env.skills_root / name / 'SKILL.md').read_text()
+        check(all(fact in raw for fact in facts), ('compressed skill lost plan requirement', name))
     with tempfile.TemporaryDirectory(prefix="v24-skills-invalid-") as temp:
         root = Path(temp).resolve()
         (root / "sample").mkdir()
@@ -1557,8 +1648,9 @@ def _teardown_runs(rt):
                   and all(row['state'] == 'disposed' and row['disposed_at'] is not None for row in rows['items']),
                   ('explicit uninstall did not converge', rows))
         # exec takes the actual browser close path, including implicit uninstall.
-        closed = rt.close_scope(scope)
-        check(closed.get('disposition') in ('committed', 'replay'), closed)
+        rt.close_scope(scope)
+        # The public plan specifies -> None; authority is the scope read below.
+        rt.close_scope(scope)  # Already-closed re-entry must be harmless.
         scopes = rt.db.host_scopes(scope, None, 64)
         check(not scopes['has_more'] and len(scopes['items']) == 1
               and scopes['items'][0]['closed_at'] is not None, ('SQL scope not terminal', toolset, scopes))
@@ -1640,6 +1732,9 @@ def _main():
                 read_scope, read_run, read_families = _production_run(rt, 'read')
                 exec_scope, exec_run, exec_families = _production_run(rt, 'exec')
                 _production_run(rt, 'write')
+                for toolset in ('write', 'exec'):
+                    for skill in ('repo-recon', 'surgical-edit'):
+                        _skill_workflow_run(rt, toolset, skill)
                 _actual_app_limits(rt, exec_scope)
                 _workspace_gone_lifecycle(rt)
                 _coexistence(rt, scope, families, read_scope, read_families)

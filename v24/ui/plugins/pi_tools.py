@@ -2,6 +2,7 @@
 """Standalone stdlib pi v2 tool family."""
 from __future__ import annotations
 
+import codecs
 import difflib
 import errno
 import fnmatch
@@ -21,8 +22,7 @@ from pathlib import Path
 FAMILY_IDENTITY = "v24.ui.pi_tools"
 FAMILY_VERSION = "1"
 TOOL_SPECS = ({'key': 'read',
-  'description': 'Read verbatim, no line numbers; head 2000 lines/32 KiB. Page with offset, unlike read_file '
-                 'start_line/tail.',
+  'description': 'Verbatim, no line numbers; head 2000 lines/32KiB; offset pages with notice.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': ['path'],
@@ -45,7 +45,7 @@ TOOL_SPECS = ({'key': 'read',
   'replay_class': 'read_only',
   'annotations': {'read_only': True, 'destructive': False, 'idempotent': True, 'open_world': False}},
  {'key': 'write',
-  'description': 'Write content; append defaults false. Creates parents. Returns supplied UTF-8 byte count.',
+  'description': 'Write UTF-8; creates parents; append=false.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': ['path', 'content'],
@@ -68,8 +68,7 @@ TOOL_SPECS = ({'key': 'read',
   'replay_class': 'mutating',
   'annotations': {'read_only': False, 'destructive': True, 'idempotent': False, 'open_world': False}},
  {'key': 'edit',
-  'description': 'One edits mode: match all oldText against original, apply backwards; exact then '
-                 'NFKC/whitespace/quotes/dashes fallback. Unlike apply_edits modes.',
+  'description': 'All edits match original, apply backwards; exact then NFKC/space/quote/dash fallback.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': ['path', 'edits'],
@@ -97,8 +96,7 @@ TOOL_SPECS = ({'key': 'read',
   'replay_class': 'mutating',
   'annotations': {'read_only': False, 'destructive': True, 'idempotent': False, 'open_world': False}},
  {'key': 'bash',
-  'description': 'Run shell in workspace; tail 2000 lines/32 KiB, full spill. Nonzero exit is success data '
-                 'with exit_code.',
+  'description': 'Workspace shell; bounded full spill, tail; nonzero exit is data.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': ['command'],
@@ -121,8 +119,7 @@ TOOL_SPECS = ({'key': 'read',
   'replay_class': 'external',
   'annotations': {'read_only': False, 'destructive': True, 'idempotent': False, 'open_world': True}},
  {'key': 'grep',
-  'description': 'Search with glob/literal/ignoreCase, context, limit=100; path:line:, 500-char lines. '
-                 'Ignore compatibility subset. Unlike file_search mode/filter.',
+  'description': 'path:line regex/literal, glob, ignoreCase, context; ignore subset; 500-char lines; limit=100.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': ['pattern'],
@@ -149,7 +146,7 @@ TOOL_SPECS = ({'key': 'read',
   'replay_class': 'read_only',
   'annotations': {'read_only': True, 'destructive': False, 'idempotent': True, 'open_world': False}},
  {'key': 'find',
-  'description': 'Find sorted relative file paths by glob; ignore compatibility subset; limit=1000.',
+  'description': 'Glob paths; ignore subset; limit=1000.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': ['pattern'],
@@ -172,7 +169,7 @@ TOOL_SPECS = ({'key': 'read',
   'replay_class': 'read_only',
   'annotations': {'read_only': True, 'destructive': False, 'idempotent': True, 'open_world': False}},
  {'key': 'ls',
-  'description': 'List sorted immediate entries; directory suffix /; limit=500; hidden entries excluded.',
+  'description': 'Sorted visible names, directories end /; limit=500.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': [],
@@ -203,6 +200,7 @@ MAX_VALUE_BYTES = 40960
 MAX_CONTENT_BYTES = 41984
 MAX_META_BYTES = 4096
 MAX_SPILL_BYTES = 8 * 1024 * 1024
+MAX_MANAGED_SPILL_BYTES = MAX_SPILL_BYTES // 2
 SPILL_RESERVE = 128
 SPILL_NAMESPACE = '.v24/spill'
 SKILLS_NAMESPACE = '.v24/skills'
@@ -413,7 +411,7 @@ def _location(path):
     raise ValueError('path_escape')
 
 
-def _read_at(root, parts):
+def _read_at(root, parts, *, limit=MAX_FILE_BYTES):
     if not parts: raise ValueError('not_a_file')
     parent = fd = None
     try:
@@ -421,17 +419,17 @@ def _read_at(root, parts):
         before = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
         if stat.S_ISLNK(before.st_mode): raise ValueError('symlink_denied')
         if not stat.S_ISREG(before.st_mode): raise ValueError('not_a_file')
-        if before.st_size > MAX_FILE_BYTES: raise ValueError('file_too_large')
+        if before.st_size > limit: raise ValueError('file_too_large')
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
         opened = os.fstat(fd)
         if _signature(before) != _signature(opened): raise ValueError('io_error')
         chunks, size = [], 0
         while True:
-            chunk = os.read(fd, min(65536, MAX_FILE_BYTES + 1 - size))
+            chunk = os.read(fd, min(65536, limit + 1 - size))
             if not chunk: break
             chunks.append(chunk)
             size += len(chunk)
-            if size > MAX_FILE_BYTES: raise ValueError('file_too_large')
+            if size > limit: raise ValueError('file_too_large')
         after = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
         if _signature(opened) != _signature(os.fstat(fd)) or _signature(opened) != _signature(after):
             raise ValueError('io_error')
@@ -458,8 +456,8 @@ def read_utf8(path): return _read_snapshot(path)[0]
 def read_source(raw):
     # Provenance comes from the same checked descriptor snapshot as the text.
     kind, root, parts = _classify_path(raw)
-    text, signature, identity = _read_at(root, parts)
     managed = kind == 'spill' and len(parts) == 1 and re.fullmatch(r'[0-9a-f]{32}\.txt', parts[0])
+    text, signature, identity = _read_at(root, parts, limit=MAX_MANAGED_SPILL_BYTES if managed else MAX_FILE_BYTES)
     return text, (root, identity, parts[0], signature) if managed else None
 
 
@@ -508,6 +506,14 @@ def _payload(text):
 
 class PostCommitError(Exception):
     """An effect or its cleanup is uncertain; the host must preserve unknown."""
+
+
+_BASH_OUTPUT_LIMIT_MESSAGE = ('Bash output exceeded the 4 MiB capture budget; the command was terminated '
+                              'and may have partially executed. No complete output spill is returned.')
+
+
+class BashOutputLimitError(ValueError):
+    def __init__(self): super().__init__('output_too_large')
 
 
 def atomic_mutation(raw, text, expected):
@@ -580,16 +586,51 @@ def _prune_spill(directory, keep):
     except OSError: pass
 
 
-def spill_write(text):
+def _reuse_spill(directory, payload):
+    """Bounded byte comparison; never refresh a snapshot's signature or follow links."""
+    candidates, compared = [], 0
+    with os.scandir(directory) as entries:
+        for index, item in enumerate(entries):
+            if index >= 100: break
+            if not re.fullmatch(r'[0-9a-f]{32}\.txt', item.name): continue
+            try: info = item.stat(follow_symlinks=False)
+            except OSError: continue
+            if stat.S_ISREG(info.st_mode) and info.st_size == len(payload):
+                candidates.append((info.st_mtime_ns, item.name, _signature(info)))
+    for _, name, signature in sorted(candidates, reverse=True):
+        if compared + len(payload) > MAX_SPILL_BYTES: break
+        compared += len(payload)
+        fd = None
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            if _signature(os.fstat(fd)) != signature: continue
+            position = 0
+            while position < len(payload):
+                chunk = os.read(fd, min(65536, len(payload) - position))
+                if not chunk or chunk != payload[position:position + len(chunk)]: break
+                position += len(chunk)
+            else:
+                if (_signature(os.fstat(fd)) == signature and
+                        _signature(os.stat(name, dir_fd=directory, follow_symlinks=False)) == signature):
+                    return SPILL_NAMESPACE + '/' + name
+        except OSError: pass
+        finally:
+            if fd is not None: os.close(fd)
+    return None
+
+
+def spill_write(text, *, limit=MAX_FILE_BYTES):
     _text(text)
     payload = text.encode('utf-8')
-    if len(payload) > MAX_FILE_BYTES: raise ValueError('output_too_large')
+    if len(payload) > limit: raise ValueError('output_too_large')
     temporary = '.' + uuid.uuid4().hex + '.tmp'
     name = uuid.uuid4().hex + '.txt'
     directory = fd = None
     try:
         root = _spill_root()
         directory = _open_root(root)
+        reused = _reuse_spill(directory, payload)
+        if reused is not None: return reused
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
         with os.fdopen(fd, 'wb') as stream:
             fd = None
@@ -609,7 +650,7 @@ def spill_write(text):
             os.close(directory)
 
 
-def spill_read(path): return read_utf8(resolve_path(path))
+def spill_read(path): return read_source(path)[0]
 
 
 def _fits(value):
@@ -621,7 +662,8 @@ def _fits(value):
 def finish_text(text, *, spill=True, offset=1, limit=MAX_TEXT_LINES, coordinate='offset', extra=None, source_spill=None):
     """Whole-line head projection; notices use original source coordinates."""
     _text(text)
-    if len(text.encode('utf-8')) > MAX_FILE_BYTES: raise ValueError('output_too_large')
+    if len(text.encode('utf-8')) > (MAX_MANAGED_SPILL_BYTES if source_spill else MAX_FILE_BYTES):
+        raise ValueError('output_too_large')
     lines = text.splitlines(keepends=True)
     start = offset - 1
     selected = lines[start:start + limit]
@@ -660,7 +702,7 @@ def finish_command(text, exit_code):
     text = _text(text.replace('\x00', '\ufffd'))
     footer = f'Command exited with code {exit_code}' if exit_code else ''
     full = text.rstrip('\r\n') + ('\n\n' if text.rstrip('\r\n') else '') + footer if footer else text
-    if len(full.encode('utf-8')) > MAX_FILE_BYTES: raise ValueError('output_too_large')
+    if len(full.encode('utf-8')) > MAX_MANAGED_SPILL_BYTES: raise ValueError('output_too_large')
     # Only command tails may cut a source line. Work in code points to keep UTF-8 valid.
     lines = text.splitlines(keepends=True)
     shown = ''.join(lines[-MAX_TEXT_LINES:])
@@ -673,7 +715,7 @@ def finish_command(text, exit_code):
         value = dict(text=rendered, truncated=truncated, spill_path=placeholder if truncated else '', exit_code=exit_code)
         if _fits(value):
             if truncated:
-                actual = spill_write(full)
+                actual = spill_write(full, limit=MAX_MANAGED_SPILL_BYTES)
                 value['text'] = notice.replace(placeholder, actual) + shown.rstrip('\r\n') + ('\n\n' if shown.rstrip('\r\n') else '') + footer if footer else notice.replace(placeholder, actual) + shown
                 value['spill_path'] = actual
             if '\x00' in value['text']: raise ValueError('binary_file')
@@ -976,7 +1018,8 @@ def main():
         response, code = {'ok': False, 'v': 2, 'error': {'code': 'io_error', 'message': 'io_error'}}, 1
     except Exception as exc:
         reason = str(exc) if isinstance(exc, ValueError) and str(exc) in _ERRORS else _os_error(exc) if isinstance(exc, OSError) else 'io_error'
-        response = {'ok': False, 'v': 2, 'error': {'code': reason, 'message': reason}}
+        message = _BASH_OUTPUT_LIMIT_MESSAGE if type(exc) is BashOutputLimitError else reason
+        response = {'ok': False, 'v': 2, 'error': {'code': reason, 'message': message}}
     finally: signal.setitimer(signal.ITIMER_REAL, 0)
     sys.stdout.buffer.write((frame(response) + '\n').encode('utf-8'))
     sys.stdout.buffer.flush()
@@ -1024,24 +1067,49 @@ def _group_absent(pgid):
     return False
 
 
-def _kill_group(process):
-    # Reap before signalling: Darwin can return EPERM for an unreaped zombie.
-    process.poll()
-    if _group_absent(process.pid) and process.returncode is not None: return True
+def _kill_group(process, *, terminal=False):
+    # Hold the unreaped leader PID until the LAST real group signal; never signal a reused PGID.
+    if process.returncode is not None: return _group_absent(process.pid)
     deadline = time.monotonic() + 0.55
-    for sig, grace in ((signal.SIGTERM, 0.15), (signal.SIGKILL, 0.40)):
-        try: os.killpg(process.pid, sig)
+    if not terminal:
+        try: os.killpg(process.pid, signal.SIGTERM)
         except OSError: pass
-        if process.poll() is None:
-            try: process.send_signal(sig)
-            except OSError: pass
-        until = min(deadline, time.monotonic() + grace)
-        while time.monotonic() < until:
-            process.poll()
-            if _group_absent(process.pid) and process.returncode is not None: return True
-            time.sleep(min(0.01, max(0, until - time.monotonic())))
-    process.poll()
-    return _group_absent(process.pid) and process.returncode is not None
+        time.sleep(0.15)
+    try: os.killpg(process.pid, signal.SIGKILL)
+    except OSError: pass  # Darwin may return EPERM for a zombie; wait/reap then prove ESRCH.
+    try: process.wait(timeout=max(0.001, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired: return False
+    while time.monotonic() < deadline:
+        if _group_absent(process.pid): return True
+        time.sleep(0.005)
+    return _group_absent(process.pid)
+
+
+# The leader pins the shell PGID until the artifact's last signal. All terminals kill this group.
+# Status is private, never inherited by the shell; -I prevents workspace import shadowing.
+_BASH_SUPERVISOR = '''import os,signal,subprocess,sys,time
+parent, status = int(sys.argv[1]), int(sys.argv[3])
+stopped = False
+def stop(signum, frame):
+    global stopped
+    stopped = True
+signal.signal(signal.SIGTERM, stop)
+def terminal(value):
+    try: os.write(status, value)
+    except OSError: pass
+    os.killpg(os.getpgrp(), signal.SIGKILL)
+try:
+    if stopped or os.getppid() != parent: terminal(b'STOP\\n')
+    try: child = subprocess.Popen(['/bin/sh', '-c', sys.argv[2]], close_fds=True)
+    except OSError: terminal(b'SPAWN\\n')
+    while True:
+        if stopped or os.getppid() != parent: terminal(b'STOP\\n')
+        result = child.poll()
+        if result is not None: terminal(('EXIT ' + str(result & 255) + '\\n').encode('ascii'))
+        time.sleep(0.02)
+except BaseException:
+    terminal(b'BROKEN\\n')
+'''
 
 
 def bash_tool(args):
@@ -1049,45 +1117,65 @@ def bash_tool(args):
     command = _text(args['command'], nonempty=True, nul_code='invalid_arguments')
     timeout = _integer(args.get('timeout_ms', 20000), 1, 20000)
     process = None
+    status_read = status_write = None
+    cleaned = False
     selector = selectors.DefaultSelector()
+    deadline = time.monotonic() + min(timeout / 1000, 19.0)
     try:
-        process = subprocess.Popen(['/bin/sh', '-c', command], cwd=_workspace_root(),
-                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, start_new_session=True)
-        os.set_blocking(process.stdout.fileno(), False)
-        selector.register(process.stdout, selectors.EVENT_READ)
-        # Leave cleanup time within the public 20-second tool timeout.
-        deadline = time.monotonic() + min(timeout / 1000, 19.0)
-        chunks, size, eof = [], 0, False
-        while not eof:
-            if time.monotonic() >= deadline: raise ValueError('timeout')
-            events = selector.select(min(0.05, max(0, deadline - time.monotonic())))
-            for key, _ in events:
-                try: chunk = os.read(key.fd, 65536)
+        if not sys.executable or not os.access('/bin/sh', os.X_OK): raise ValueError('io_error')
+        status_read, status_write = os.pipe()
+        process = subprocess.Popen([sys.executable, '-I', '-c', _BASH_SUPERVISOR, str(os.getpid()), command, str(status_write)],
+                                   cwd=_workspace_root(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, start_new_session=True, pass_fds=(status_write,))
+        os.close(status_write)
+        status_write = None
+        for fd, label in ((process.stdout.fileno(), 'output'), (status_read, 'status')):
+            os.set_blocking(fd, False)
+            selector.register(fd, selectors.EVENT_READ, label)
+        chunks, size, status = [], 0, b''
+        decoder = codecs.getincrementaldecoder('utf-8')('replace')
+
+        def capture(chunk, *, final=False):
+            nonlocal size
+            text = decoder.decode(chunk, final=final).replace('\x00', '\ufffd')
+            size += len(text.encode('utf-8'))
+            if size > MAX_MANAGED_SPILL_BYTES - 256: raise BashOutputLimitError()
+            chunks.append(text)
+        while selector.get_map():
+            if time.monotonic() >= deadline:
+                if cleaned: raise CleanupUnproven()
+                raise ValueError('timeout')
+            for key, _ in selector.select(min(0.05, max(0, deadline - time.monotonic()))):
+                try: chunk = os.read(key.fd, 65536 if key.data == 'output' else 65)
                 except BlockingIOError: continue
                 if not chunk:
-                    eof = True
-                    break
-                size += len(chunk)
-                if size > MAX_FILE_BYTES: raise ValueError('output_too_large')
-                chunks.append(chunk)
-            # Drain available output, then stop background descendants on shell exit.
-            if not events and process.poll() is not None: break
-        while process.poll() is None:
-            if time.monotonic() >= deadline: raise ValueError('timeout')
-            time.sleep(0.005)
-        exit_code = process.returncode & 255
-        text = b''.join(chunks).decode('utf-8', 'replace').replace('\x00', '\ufffd')
-        if len(text.encode('utf-8')) > MAX_FILE_BYTES: raise ValueError('output_too_large')
-    except OSError: raise ValueError('io_error') from None
+                    selector.unregister(key.fd)
+                    if key.data == 'status':
+                        if not (status == b'SPAWN\n' or re.fullmatch(rb'EXIT (?:0|[1-9][0-9]{0,2})\n', status)):
+                            raise CleanupUnproven()
+                        cleaned = _kill_group(process, terminal=True)
+                        if not cleaned or process.returncode != -signal.SIGKILL: raise CleanupUnproven()
+                        deadline = min(deadline, time.monotonic() + 0.1)
+                elif key.data == 'status':
+                    status += chunk
+                    if len(status) > 64: raise CleanupUnproven()
+                else: capture(chunk)
+        if status == b'SPAWN\n': raise ValueError('io_error')
+        exit_code = int(status[5:-1])
+        if not 0 <= exit_code <= 255: raise CleanupUnproven()
+        capture(b'', final=True)
+        text = ''.join(chunks)
+    except OSError:
+        if process is None: raise ValueError('io_error') from None
+        raise CleanupUnproven() from None
     finally:
         selector.close()
-        if process is not None:
-            try:
-                # Close even when signalling fails; writers may then exit via SIGPIPE.
-                if process.stdout is not None: process.stdout.close()
-            finally:
-                if not _kill_group(process): raise CleanupUnproven() from None
+        try:
+            if process is not None and not cleaned and not _kill_group(process): raise CleanupUnproven()
+        finally:
+            if process is not None and process.stdout is not None: process.stdout.close()
+            for fd in (status_read, status_write):
+                if fd is not None: os.close(fd)
     return finish_command(text, exit_code)
 
 
@@ -1105,6 +1193,7 @@ def grep_tool(args):
     except re.error: raise ValueError('invalid_arguments') from None
     paths = sorted(_walk(_search_root(args.get('path', '.')), respect_ignore=True))
     output, matches, binary, size = [], 0, 0, 0
+    skipped = dict(not_utf8=0, file_too_large=0, io_error=0)
     root = _workspace_root()
     for path in paths:
         relative = path.relative_to(root).as_posix()
@@ -1112,7 +1201,7 @@ def grep_tool(args):
         try: lines = read_utf8(resolve_path(relative)).splitlines()
         except ValueError as exc:
             if str(exc) == 'binary_file': binary += 1; continue
-            if str(exc) in ('not_utf8', 'file_too_large', 'io_error'): continue
+            if str(exc) in skipped: skipped[str(exc)] += 1; continue
             raise
         visible = set()
         for index, line in enumerate(lines):
@@ -1128,7 +1217,9 @@ def grep_tool(args):
             if size > MAX_FILE_BYTES - 4096: raise ValueError('output_too_large')
             output.append(record)
         if matches >= limit: break
-    summary = f'matches={matches}; skipped_binary={binary}; limit={limit}; limit_reached={str(matches >= limit).lower()}'
+    summary = (f'matches={matches}; skipped_binary={binary}; skipped_not_utf8={skipped["not_utf8"]}; '
+               f'skipped_too_large={skipped["file_too_large"]}; skipped_io_error={skipped["io_error"]}; '
+               f'limit={limit}; limit_reached={str(matches >= limit).lower()}')
     return finish_text('\n'.join(output + [summary]))
 
 

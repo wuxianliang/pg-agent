@@ -21,8 +21,7 @@ from pathlib import Path
 FAMILY_IDENTITY = "v24.ui.rp_tools"
 FAMILY_VERSION = "1"
 TOOL_SPECS = ({'key': 'read_file',
-  'description': 'Read verbatim with 1-based start_line, unlike read offset; -N tails, 0 or negative plus '
-                 'limit invalid; head budgets with notice.',
+  'description': 'Verbatim; start_line=1; -N tails; 0/-N+limit invalid; head truncation notice.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': ['path'],
@@ -45,9 +44,7 @@ TOOL_SPECS = ({'key': 'read_file',
   'replay_class': 'read_only',
   'annotations': {'read_only': True, 'destructive': False, 'idempotent': True, 'open_world': False}},
  {'key': 'file_search',
-  'description': 'Search grouped paths/content: mode auto/path/content/both, regex=true, whole_word, '
-                 'context_lines, max_results=50, count_only, filter. Auto infers glob paths. Unlike grep '
-                 'glob/literal. Binary skipped/count.',
+  'description': 'Grouped paths/content; mode auto/path/content/both; regex, whole_word, context_lines, max_results=50, count_only, filter; extensions need dot; paths=[] means root; no gitignore.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': ['pattern'],
@@ -83,8 +80,7 @@ TOOL_SPECS = ({'key': 'read_file',
   'replay_class': 'read_only',
   'annotations': {'read_only': True, 'destructive': False, 'idempotent': True, 'open_world': False}},
  {'key': 'get_file_tree',
-  'description': 'ASCII tree; auto depth 2, full/folders unlimited; selected=full with no-selection notice; '
-                 'max_depth overrides.',
+  'description': 'ASCII tree; auto depth2; selected=full; no gitignore.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': [],
@@ -107,9 +103,7 @@ TOOL_SPECS = ({'key': 'read_file',
   'replay_class': 'read_only',
   'annotations': {'read_only': True, 'destructive': False, 'idempotent': True, 'open_world': False}},
  {'key': 'apply_edits',
-  'description': 'Exactly one mode: rewrite, search+replace, or edits. on_missing only with rewrite. '
-                 'Multiple modes: mode_conflict; absent/incomplete: invalid_mode. Status '
-                 'success/partial/failed/no_change; exact original matches, unlike Pi fuzzy edit.',
+  'description': 'Exactly one: rewrite/search+replace/edits; multiple=mode_conflict, absent/incomplete=invalid_mode; on_missing only rewrite; exact; status success/partial/failed/no_change.',
   'parameters': {'type': 'object',
                  'additionalProperties': False,
                  'required': [],
@@ -151,6 +145,7 @@ MAX_VALUE_BYTES = 40960
 MAX_CONTENT_BYTES = 41984
 MAX_META_BYTES = 4096
 MAX_SPILL_BYTES = 8 * 1024 * 1024
+MAX_MANAGED_SPILL_BYTES = MAX_SPILL_BYTES // 2
 SPILL_RESERVE = 128
 SPILL_NAMESPACE = '.v24/spill'
 SKILLS_NAMESPACE = '.v24/skills'
@@ -361,7 +356,7 @@ def _location(path):
     raise ValueError('path_escape')
 
 
-def _read_at(root, parts):
+def _read_at(root, parts, *, limit=MAX_FILE_BYTES):
     if not parts: raise ValueError('not_a_file')
     parent = fd = None
     try:
@@ -369,17 +364,17 @@ def _read_at(root, parts):
         before = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
         if stat.S_ISLNK(before.st_mode): raise ValueError('symlink_denied')
         if not stat.S_ISREG(before.st_mode): raise ValueError('not_a_file')
-        if before.st_size > MAX_FILE_BYTES: raise ValueError('file_too_large')
+        if before.st_size > limit: raise ValueError('file_too_large')
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
         opened = os.fstat(fd)
         if _signature(before) != _signature(opened): raise ValueError('io_error')
         chunks, size = [], 0
         while True:
-            chunk = os.read(fd, min(65536, MAX_FILE_BYTES + 1 - size))
+            chunk = os.read(fd, min(65536, limit + 1 - size))
             if not chunk: break
             chunks.append(chunk)
             size += len(chunk)
-            if size > MAX_FILE_BYTES: raise ValueError('file_too_large')
+            if size > limit: raise ValueError('file_too_large')
         after = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
         if _signature(opened) != _signature(os.fstat(fd)) or _signature(opened) != _signature(after):
             raise ValueError('io_error')
@@ -406,8 +401,8 @@ def read_utf8(path): return _read_snapshot(path)[0]
 def read_source(raw):
     # Provenance comes from the same checked descriptor snapshot as the text.
     kind, root, parts = _classify_path(raw)
-    text, signature, identity = _read_at(root, parts)
     managed = kind == 'spill' and len(parts) == 1 and re.fullmatch(r'[0-9a-f]{32}\.txt', parts[0])
+    text, signature, identity = _read_at(root, parts, limit=MAX_MANAGED_SPILL_BYTES if managed else MAX_FILE_BYTES)
     return text, (root, identity, parts[0], signature) if managed else None
 
 
@@ -456,6 +451,14 @@ def _payload(text):
 
 class PostCommitError(Exception):
     """An effect or its cleanup is uncertain; the host must preserve unknown."""
+
+
+_BASH_OUTPUT_LIMIT_MESSAGE = ('Bash output exceeded the 4 MiB capture budget; the command was terminated '
+                              'and may have partially executed. No complete output spill is returned.')
+
+
+class BashOutputLimitError(ValueError):
+    def __init__(self): super().__init__('output_too_large')
 
 
 def atomic_mutation(raw, text, expected):
@@ -528,16 +531,51 @@ def _prune_spill(directory, keep):
     except OSError: pass
 
 
-def spill_write(text):
+def _reuse_spill(directory, payload):
+    """Bounded byte comparison; never refresh a snapshot's signature or follow links."""
+    candidates, compared = [], 0
+    with os.scandir(directory) as entries:
+        for index, item in enumerate(entries):
+            if index >= 100: break
+            if not re.fullmatch(r'[0-9a-f]{32}\.txt', item.name): continue
+            try: info = item.stat(follow_symlinks=False)
+            except OSError: continue
+            if stat.S_ISREG(info.st_mode) and info.st_size == len(payload):
+                candidates.append((info.st_mtime_ns, item.name, _signature(info)))
+    for _, name, signature in sorted(candidates, reverse=True):
+        if compared + len(payload) > MAX_SPILL_BYTES: break
+        compared += len(payload)
+        fd = None
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            if _signature(os.fstat(fd)) != signature: continue
+            position = 0
+            while position < len(payload):
+                chunk = os.read(fd, min(65536, len(payload) - position))
+                if not chunk or chunk != payload[position:position + len(chunk)]: break
+                position += len(chunk)
+            else:
+                if (_signature(os.fstat(fd)) == signature and
+                        _signature(os.stat(name, dir_fd=directory, follow_symlinks=False)) == signature):
+                    return SPILL_NAMESPACE + '/' + name
+        except OSError: pass
+        finally:
+            if fd is not None: os.close(fd)
+    return None
+
+
+def spill_write(text, *, limit=MAX_FILE_BYTES):
     _text(text)
     payload = text.encode('utf-8')
-    if len(payload) > MAX_FILE_BYTES: raise ValueError('output_too_large')
+    if len(payload) > limit: raise ValueError('output_too_large')
     temporary = '.' + uuid.uuid4().hex + '.tmp'
     name = uuid.uuid4().hex + '.txt'
     directory = fd = None
     try:
         root = _spill_root()
         directory = _open_root(root)
+        reused = _reuse_spill(directory, payload)
+        if reused is not None: return reused
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
         with os.fdopen(fd, 'wb') as stream:
             fd = None
@@ -557,7 +595,7 @@ def spill_write(text):
             os.close(directory)
 
 
-def spill_read(path): return read_utf8(resolve_path(path))
+def spill_read(path): return read_source(path)[0]
 
 
 def _fits(value):
@@ -569,7 +607,8 @@ def _fits(value):
 def finish_text(text, *, spill=True, offset=1, limit=MAX_TEXT_LINES, coordinate='offset', extra=None, source_spill=None):
     """Whole-line head projection; notices use original source coordinates."""
     _text(text)
-    if len(text.encode('utf-8')) > MAX_FILE_BYTES: raise ValueError('output_too_large')
+    if len(text.encode('utf-8')) > (MAX_MANAGED_SPILL_BYTES if source_spill else MAX_FILE_BYTES):
+        raise ValueError('output_too_large')
     lines = text.splitlines(keepends=True)
     start = offset - 1
     selected = lines[start:start + limit]
@@ -608,7 +647,7 @@ def finish_command(text, exit_code):
     text = _text(text.replace('\x00', '\ufffd'))
     footer = f'Command exited with code {exit_code}' if exit_code else ''
     full = text.rstrip('\r\n') + ('\n\n' if text.rstrip('\r\n') else '') + footer if footer else text
-    if len(full.encode('utf-8')) > MAX_FILE_BYTES: raise ValueError('output_too_large')
+    if len(full.encode('utf-8')) > MAX_MANAGED_SPILL_BYTES: raise ValueError('output_too_large')
     # Only command tails may cut a source line. Work in code points to keep UTF-8 valid.
     lines = text.splitlines(keepends=True)
     shown = ''.join(lines[-MAX_TEXT_LINES:])
@@ -621,7 +660,7 @@ def finish_command(text, exit_code):
         value = dict(text=rendered, truncated=truncated, spill_path=placeholder if truncated else '', exit_code=exit_code)
         if _fits(value):
             if truncated:
-                actual = spill_write(full)
+                actual = spill_write(full, limit=MAX_MANAGED_SPILL_BYTES)
                 value['text'] = notice.replace(placeholder, actual) + shown.rstrip('\r\n') + ('\n\n' if shown.rstrip('\r\n') else '') + footer if footer else notice.replace(placeholder, actual) + shown
                 value['spill_path'] = actual
             if '\x00' in value['text']: raise ValueError('binary_file')
@@ -924,7 +963,8 @@ def main():
         response, code = {'ok': False, 'v': 2, 'error': {'code': 'io_error', 'message': 'io_error'}}, 1
     except Exception as exc:
         reason = str(exc) if isinstance(exc, ValueError) and str(exc) in _ERRORS else _os_error(exc) if isinstance(exc, OSError) else 'io_error'
-        response = {'ok': False, 'v': 2, 'error': {'code': reason, 'message': reason}}
+        message = _BASH_OUTPUT_LIMIT_MESSAGE if type(exc) is BashOutputLimitError else reason
+        response = {'ok': False, 'v': 2, 'error': {'code': reason, 'message': message}}
     finally: signal.setitimer(signal.ITIMER_REAL, 0)
     sys.stdout.buffer.write((frame(response) + '\n').encode('utf-8'))
     sys.stdout.buffer.flush()
@@ -947,6 +987,9 @@ def file_search(args):
         raise ValueError("invalid_arguments")
     if type(filters) is not dict or set(filters) - {"extensions", "paths", "exclude"} or any(type(v) is not list or any(not isinstance(x, str) or "\x00" in x for x in v) for v in filters.values()):
         raise ValueError("invalid_arguments")
+    extensions = filters.get("extensions", [])
+    if any(not extension.startswith('.') or len(extension) < 2 for extension in extensions):
+        raise ValueError("invalid_arguments")
     pattern = args["pattern"]
     auto_glob = mode == "auto" and any(char in pattern for char in "*?[")
     if mode == "auto":
@@ -957,12 +1000,12 @@ def file_search(args):
         matcher = None if path_glob else re.compile(r"\b(?:" + expression + r")\b" if whole else expression)
     except re.error:
         raise ValueError("invalid_arguments") from None
-    roots = [_search_root(raw) for raw in filters.get("paths", ["."])]
+    roots = [_search_root(raw) for raw in (filters.get("paths") or ["."])]
     paths = sorted({path for root in roots for path in _walk(root)})
     groups = []
     matches = 0
     binary = 0
-    extensions = filters.get("extensions", [])
+    skipped = dict(not_utf8=0, file_too_large=0, io_error=0)
     output_bytes = 0
     for path in paths:
         relative = path.relative_to(_workspace_root()).as_posix()
@@ -981,7 +1024,8 @@ def file_search(args):
                 if str(exc) == "binary_file":
                     binary += 1
                     continue
-                if str(exc) in ("not_utf8", "file_too_large", "io_error"):
+                if str(exc) in skipped:
+                    skipped[str(exc)] += 1
                     continue
                 raise
         if mode in ("path", "both"):
@@ -1008,7 +1052,9 @@ def file_search(args):
             groups.append(group)
         if matches >= maximum:
             break
-    summary = f"matches={matches}; files={len(groups)}; skipped_binary={binary}; limit={maximum}; limit_reached={str(matches >= maximum).lower()}"
+    summary = (f'matches={matches}; files={len(groups)}; skipped_binary={binary}; '
+               f'skipped_not_utf8={skipped["not_utf8"]}; skipped_too_large={skipped["file_too_large"]}; '
+               f'skipped_io_error={skipped["io_error"]}; limit={maximum}; limit_reached={str(matches >= maximum).lower()}')
     text = summary if count_only else summary + ("\n\n" + "\n\n".join(groups) if groups else "")
     return finish_text(text)
 
