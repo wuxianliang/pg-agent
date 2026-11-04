@@ -10,4 +10,4 @@ description: Make precise edits in one file.
 
 No `apply_edits.rewrite` for small changes.
 
-Large content: small `write(append=true)` (`write.append`) chunks. `MAX_SAFE_ARGS_BYTES=None`: unmeasured; invent no limit; follow it once measured.
+Large content: small `write(append=true)` (`write.append`) chunks. `MAX_SAFE_ARGS_BYTES=128`: keep complete tool-call args at or below 128 bytes.

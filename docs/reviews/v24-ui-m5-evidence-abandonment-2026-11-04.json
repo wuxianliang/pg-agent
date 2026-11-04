@@ -1,0 +1,23 @@
+{
+  "schema": "m5-abandoned-evidence-v1",
+  "decision": "abandoned",
+  "decided_at": "2026-11-04",
+  "decided_by": "coordinator",
+  "basis": "User instruction to abandon the lost historical evidence, record that abandonment, and close out M5.",
+  "synthetic_proof": false,
+  "completion_effect": "The listed ids are reported as abandoned_evidence and are not completion blockers. No proof is asserted. Every other gate, receipt, measurement and review requirement remains mandatory.",
+  "abandoned": [
+    {
+      "id": "original52_pre_WI1_baseline_proof_lost",
+      "status": "abandoned",
+      "proof": "unavailable",
+      "reason": "The original /tmp baseline and WI-1 logs are lost. The later resume snapshot covers only post-resume files and cannot prove the original 52 hashes; no synthetic baseline is created."
+    },
+    {
+      "id": "WI1_preincident_PGDATA_logical_equality_unproven",
+      "status": "abandoned",
+      "proof": "unavailable",
+      "reason": "Pre-incident PGDATA logical equality cannot be reconstructed from retained logs. The historical incident record is preserved; no logical-equality proof is claimed or synthesized."
+    }
+  ]
+}

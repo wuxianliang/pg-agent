@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
 
 from v24.host.canonical import descriptor_digest, pg_jsonb_text
 from v24.ui import catalog
-from v24.ui.control import AgentRuntime, DEFAULT_BUDGET, Discovery
+from v24.ui.control import AgentRuntime, Discovery
 from v24.ui.env import acquire_lock, open_env, release_lock, status_env
 from v24.ui.fake import ScriptedUiAdapter
 from v24.ui.render import (StepRecord, _record, render_effect, render_generating,
@@ -27,22 +27,39 @@ from v24.ui.render import (StepRecord, _record, render_effect, render_generating
 from v24.ui.sessions import SessionStore, TERMINAL
 
 
-UI_BODY_BYTE_CEILING = 8000
+UI_BODY_BYTE_CEILING = catalog.BODY_BYTE_CEILING
 
 
-def build_system_prompt(skills_block: str, history: str) -> str:
-    return (
-        "stream:false; complete answer. Reply in the user's language.\n"
-        "Call only this request's tools; skills add none.\n"
-        "| Choice | Pi | RPCE |\n|---|---|---|\n"
-        "| Read | read: verbatim, offset | read_file: start_line; -N tail, no limit |\n"
-        "| Search | grep: glob/literal | file_search: mode/filter/regex |\n"
-        "| Edit | edit: one batch, same original, no overlaps | apply_edits: exactly one of rewrite, search+replace, edits; on_missing only with rewrite |\n"
-        '512 tokens/reply including reasoning; finish_reason="length" => finish_length ends the run; '
-        "no truncated answers/arguments. Small write.append calls.\n"
-        "For a matching skill, first read its location in full with read/read_file.\n"
-        + skills_block + "\n" + history
-    )
+def build_system_prompt(skills_block: str, history: str,
+                        completion_cap: int | None = None,
+                        body_byte_ceiling: int | None = None,
+                        max_safe_args_bytes: int | None = None) -> str:
+    from v24.ui.catalog import (BODY_BYTE_CEILING, MAX_SAFE_ARGS_BYTES, OUTPUT_TOKEN_CAP,
+                                build_system_prompt as build)
+    return build(skills_block, history,
+                 OUTPUT_TOKEN_CAP if completion_cap is None else completion_cap,
+                 BODY_BYTE_CEILING if body_byte_ceiling is None else body_byte_ceiling,
+                 MAX_SAFE_ARGS_BYTES if max_safe_args_bytes is None else max_safe_args_bytes)
+
+
+def _real_scratch_workspace(value: str | None) -> Path:
+    """Require an explicit, empty, non-live scratch for real tool execution."""
+    if not value:
+        raise RuntimeError("workspace_required")
+    path = Path(value)
+    try:
+        if not path.is_absolute() or path.resolve() != path or not path.is_dir():
+            raise RuntimeError("workspace_invalid")
+        root = ROOT.resolve()
+        if (path.is_relative_to(root)
+                and not path.is_relative_to(root / "prompt-exports")
+                and not path.is_relative_to(root / ".uidata")):
+            raise RuntimeError("workspace_invalid")
+        if next(path.iterdir(), None) is not None:
+            raise RuntimeError("workspace_not_empty")
+    except OSError:
+        raise RuntimeError("workspace_invalid") from None
+    return path
 
 
 class FakeAppAdapter(ScriptedUiAdapter):
@@ -122,9 +139,24 @@ class Backend:
         self.mode = os.environ.get("V24_UI_MODE", "fake")
         if self.mode not in ("fake", "real"):
             raise RuntimeError("invalid_mode")
-        # Real provider activation is M5; M3 never constructs a real adapter.
+        adapter = None
+        limits = catalog.LEGACY_UI_LIMITS
+        real_workspace = None
         if self.mode == "real":
-            raise RuntimeError("real_mode_not_enabled")
+            # Credential, preflight, and explicit empty-scratch checks precede
+            # every directory, lock, database, and runtime resource. The real
+            # entry deliberately imports only the small provider factory.
+            from v24.ui.provider import create_real_adapter
+            limits = catalog.REAL_UI_LIMITS
+            adapter = create_real_adapter(limits)
+            real_workspace = _real_scratch_workspace(os.environ.get("V24_UI_WORKSPACE_ROOT"))
+        configured = os.environ.get("V24_UI_WORKSPACE_ROOT")
+        self.toolset = os.environ.get("V24_UI_TOOLSET")
+        if self.toolset is None:
+            # Real mode requires explicit write/bash opt-in; fake preserves its default.
+            self.toolset = "read" if (self.mode == "real" or configured) else "exec"
+        if self.toolset not in ("read", "write", "exec"):
+            raise RuntimeError("invalid_toolset")
         data_dir = env.data_dir if env else ROOT / ".uidata"
         data_dir.mkdir(mode=0o700, exist_ok=True)
         self.lock_fd = acquire_lock(data_dir)
@@ -134,15 +166,25 @@ class Backend:
                 status = status_env(self.env)
                 if status.get("status") != "ok":
                     raise RuntimeError(status.get("status", status.get("reason", "schema_drift")))
-            configured = os.environ.get("V24_UI_WORKSPACE_ROOT")
-            workspace = Path(configured) if configured else self.env.workspace_root
-            if not workspace.is_absolute() or workspace.resolve() != workspace or not workspace.is_dir():
-                raise RuntimeError("workspace_invalid")
+            if self.mode == "real":
+                workspace = real_workspace
+            else:
+                workspace = Path(configured) if configured else self.env.workspace_root
+                if not workspace.is_absolute() or workspace.resolve() != workspace or not workspace.is_dir():
+                    raise RuntimeError("workspace_invalid")
             self.env = dataclasses.replace(self.env, workspace_root=workspace)
-            self.toolset = os.environ.get("V24_UI_TOOLSET", "read" if configured else "exec")
-            if self.toolset not in ("read", "write", "exec"):
-                raise RuntimeError("invalid_toolset")
-            if not configured:
+            if self.mode == "real":
+                resolved = workspace.resolve()
+                # A scratch must not expose runtime state: reject the data root,
+                # its spill/spawn subtrees, and any parent containing them.
+                for blocked in (self.env.spawn_dir, self.env.spill_root):
+                    if resolved == blocked or resolved.is_relative_to(blocked):
+                        raise RuntimeError("workspace_invalid")
+                if resolved == self.env.data_dir or self.env.data_dir.is_relative_to(resolved):
+                    raise RuntimeError("workspace_invalid")
+            self.completion_cap = limits.completion_cap
+            self.body_byte_ceiling = limits.body_byte_ceiling
+            if self.mode == "fake" and not configured:
                 fixture = workspace / "README.md"
                 try:
                     fd = os.open(fixture, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -152,7 +194,8 @@ class Backend:
                     with os.fdopen(fd, "w") as stream:
                         stream.write("# v24 ui scratch\n")
             self.skills_block = catalog.available_skills()
-            self.rt = AgentRuntime(self.env, adapter=FakeAppAdapter())
+            self.rt = AgentRuntime(self.env, mode=self.mode,
+                                   adapter=adapter if self.mode == "real" else FakeAppAdapter(), limits=limits)
             self.store = SessionStore(data_dir, read_run=self.run)
         except BaseException:
             self.close()
@@ -190,8 +233,19 @@ class Backend:
     def digest(self, realm):
         return catalog.catalog_digest(self.families(realm))
 
+    def _limits_digest(self):
+        values = dataclasses.asdict(self.rt.limits)
+        values["budget_items"] = sorted(self.rt.limits.budget_items)
+        return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def _binding_profile_matches(self, binding):
+        mode = binding.get("mode")
+        return ((mode == self.mode or (self.mode == "fake" and mode is None))
+                and (self.mode != "real" or binding.get("limits_digest") == self._limits_digest()))
+
     def _rehydrate(self, binding):
-        if (binding.get("workspace_root") != str(self.env.workspace_root)
+        if (not self._binding_profile_matches(binding)
+                or binding.get("workspace_root") != str(self.env.workspace_root)
                 or binding.get("toolset") != self.toolset
                 or binding.get("catalog_digest") != self.digest(binding.get("realm", ""))):
             raise RuntimeError("catalog_changed")
@@ -250,7 +304,8 @@ class Backend:
         # reachable via this token and scope ID, including after process restart.
         row, token = self.store.new_conversation(scope_id=scope, realm=realm,
             workspace_root=str(self.env.workspace_root), toolset=self.toolset,
-            catalog_digest=self.digest(realm), setup_incomplete=True)
+            catalog_digest=self.digest(realm), mode=self.mode, limits_digest=self._limits_digest(),
+            setup_incomplete=True)
         st = ThreadState(sid, row["conversation_id"], scope, realm, stop=stop)
         self.states[sid] = st
         try:
@@ -264,9 +319,10 @@ class Backend:
         for identity in installs:
             self.step(st, StepRecord("install · " + identity.rsplit(".", 1)[-1], "run", "installed; fiber on"))
         keys = catalog.toolset_keys(self.toolset, self.families(realm))
-        self.send(st, "message", f"FAKE · db={self.env.db_name} · workspace={self.env.workspace_root}\n"
+        self.send(st, "message", f"{self.mode.upper()} · db={self.env.db_name} · workspace={self.env.workspace_root}\n"
                   f"toolset={self.toolset} (effective {len(keys)}) · scope={scope[:8]}\n"
-                  f"max_out=512 token（含推理；超限本轮失败） · safe-args={catalog.MAX_SAFE_ARGS_BYTES or 'unmeasured'}\n"
+                  f"max_out={self.completion_cap} token（含推理；超限本轮失败） · "
+                  f"{catalog.limits_contract(completion_cap=self.completion_cap, body_byte_ceiling=self.body_byte_ceiling)}\n"
                   f"resume token: `{token}`\n"
                   "`/resume <run_id> [token]` · `/cancel` · `/steer <text>` · `/close` · `/tools` · `/skills`\n"
                   "发第一条消息即开始 run。")
@@ -342,14 +398,16 @@ class Backend:
                     self.send(st, "idle")
                     return
             history = self.store.history_block(st.conversation_id)
-            system = build_system_prompt(self.skills_block, history)
+            system = build_system_prompt(self.skills_block, history, self.completion_cap,
+                                         self.body_byte_ceiling)
             st.run_id, _ = self.rt.start_run(st.scope, self.rt.fiber_for(st.scope, "v24.ui.pi_tools"),
                 [{"role": "system", "content": system}, {"role": "user", "content": text}],
                 toolset=self.toolset, key=self.key(st, "start"))
             self.store.bind(st.conversation_id, st.scope, st.run_id, realm=st.realm,
-                workspace_root=self.env.workspace_root, toolset=self.toolset, catalog_digest=self.digest(st.realm))
+                workspace_root=self.env.workspace_root, toolset=self.toolset, catalog_digest=self.digest(st.realm),
+                mode=self.mode, limits_digest=self._limits_digest())
             self._turn(st, text)
-            self.step(st, render_run_start(scope=st.scope, run_id=st.run_id, budget=DEFAULT_BUDGET,
+            self.step(st, render_run_start(scope=st.scope, run_id=st.run_id, budget=self.rt.limits.run_budget(),
                 requires=catalog.toolset_keys(self.toolset, self.families(st.realm))))
             self.send(st, "message", "run_id=" + st.run_id)
             self._activate(st)
@@ -388,6 +446,9 @@ class Backend:
     def answer(self, sid, run_id, interaction_id, text):
         self.check_thread()
         st = self.states[sid]
+        if self.mode == "real":
+            self.send(st, "message", "waiting_unsupported; use /cancel")
+            return
         if not text or not text.strip():
             return  # Waiting stays durable; no empty respond RPC.
         if st.readonly or st.run_id != run_id:
@@ -431,8 +492,13 @@ class Backend:
                     self.send(st, "final", _record("final", "llm", final).output)
         elif status == "waiting" and interaction:
             st.busy = False
-            # render_state scans the complete payload before this prompt is sent.
-            self.send(st, "ask", str((payload or {}).get("prompt", "Continue?")), interaction_id=interaction["interaction_id"])
+            if self.mode == "real":
+                # The real adapter contract has no interaction outcome. Keep
+                # the durable run inspectable and never route it to AskUser.
+                self.send(st, "message", "waiting_unsupported; use /cancel")
+            else:
+                # render_state scans the complete payload before this prompt is sent.
+                self.send(st, "ask", str((payload or {}).get("prompt", "Continue?")), interaction_id=interaction["interaction_id"])
         return run
 
     def tick(self):
@@ -497,15 +563,16 @@ class Backend:
         st.stop.clear()
         if setup_resume:
             st.scope, st.realm, st.run_id = row["scope_id"], row["realm"], None
-            st.readonly = False
-            self.send(st, "message", "setup_incomplete; use /close")
+            st.readonly = not self._binding_profile_matches(row)
+            self.send(st, "message", "catalog_changed; replay only" if st.readonly else "setup_incomplete; use /close")
             return
         st.scope, st.realm, st.run_id = binding["scope_id"], binding.get("realm", ""), binding["run_id"]
         st.readonly = False
         st.seen.clear()
         run = self.run(st.run_id)
         try:
-            if (binding.get("catalog_digest") != self.digest(st.realm)
+            if (not self._binding_profile_matches(binding)
+                    or binding.get("catalog_digest") != self.digest(st.realm)
                     or binding.get("workspace_root") != str(self.env.workspace_root)
                     or binding.get("toolset") != self.toolset):
                 st.readonly = True
@@ -700,7 +767,7 @@ async def _submit(method, *args):
     await _ensure_hub()
     if _HUB_TASK.done():
         error = _HUB_TASK.exception()
-        code = str(error) if str(error) in {"already_running", "invalid_mode", "invalid_toolset", "invalid_skill", "workspace_invalid", "real_mode_not_enabled", "schema_drift", "migration_required", "not_initialized"} else "startup_failed"
+        code = str(error) if str(error) in {"already_running", "invalid_mode", "invalid_toolset", "invalid_skill", "workspace_required", "workspace_invalid", "workspace_not_empty", "credentials_absent", "preflight_failed", "schema_drift", "migration_required", "not_initialized"} else "startup_failed"
         raise RuntimeError(code)
     done = asyncio.get_running_loop().create_future()
     await _DISPATCH.put((method, args, done))

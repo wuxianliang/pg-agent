@@ -8,6 +8,10 @@
 
 **规则：完成计划中的一个里程碑、且该里程碑的全部测试通过后，MUST 立即提交代码并推送到远程仓库。MUST NOT 把多个里程碑积压到一次提交。**
 
+### v24 Chainlit 本地分支例外（2026-11-03）
+
+仅 `v24/ui-chainlit` 的已授权里程碑，完整验收且协调者正式 review 通过后，由协调者逐路径创建独立本地 milestone commit；**不 push、不 amend、不修改或切换 main**。未完成的 M5/WI checkpoint 必须标记 INCOMPLETE，保持未暂存、未提交；不得拆出「完成提交」绕过验收。本例外不授权实施 agent 自行提交；用户当前明确要求不暂存、不提交时优先遵守。本节以外仍沿用下述默认规则。
+
 ### 什么算一个里程碑
 
 - 计划文件位于 `docs/plans/*.md`；里程碑 = 计划正文划分的 stage / gate。
@@ -70,10 +74,11 @@ git push origin main
 
 ## 其他既有约定（勿违反）
 
-- **外部 IO 一律不进数据库事务**（v8 不变量 4）。测试用 FakeLLM / FakeTool，不调真实 provider。`v15/**/test_*.py` 仍然如此，不得打开网络套接字。真实套接字只允许三个入口，三者都不是 gate，也不是合运行时证明；调用当时不得有打开的数据库事务：
+- **外部 IO 一律不进数据库事务**（v8 不变量 4）。测试用 FakeLLM / FakeTool，不调真实 provider。`v15/**/test_*.py` 仍然如此，不得打开网络套接字。真实 provider 套接字只允许以下四类受控入口，均不是 gate，也不能单独证明完整运行时验收；调用当时不得有打开的数据库事务：
   1. `v15/provider/smoke.py --real-provider-smoke`
   2. 仓库根 `demo_v15/drive.py`，且环境变量 `DEMO_MODE=real`。已 force-add 的 8 个驱动源文件受跟踪；`.gitignore` 仍含 `/demo_v15/`，因此 `reports/`、`__pycache__/` 与此后新增文件仍被忽略。无 key 时驱动打印 `credentials_absent`、退出码 2，不构造 `DeepSeekProvider`，不调用 `complete`。`DEMO_MODE` 缺省为 `fake`。
   3. `v24/host/smoke.py --real-provider-smoke`（模块入口 `python -m v24.host.smoke`）。无 flag 时打印 `not_requested`、退出码 0；flag 且无 `DEEPSEEK_API_KEY` 时打印 `credentials_absent`、退出码 2，不构造 adapter、不打开数据库；有 key 时只执行一次短的 start → model → final，不打印 prompt/content/reasoning/key，失败时保留 journal。
+  4. v24 UI/CLI 受控入口：Chainlit `v24/ui/app.py` 仅 `V24_UI_MODE=real` 显式 opt-in（默认 fake）；手动 CLI `python -m v24.ui.real --real-provider-smoke`（无 flag 为 `not_requested`/0）。DEEPSEEK_API_KEY 优先，OPENAI_API_KEY 回退；缺 key 时 UI 显示 `credentials_absent` 且服务继续，CLI 打印同码、退出 2；两者均不得构造 adapter、建目录或打开数据库。顺序为 key → 实际 DeepSeekAdapter → 本地 preflight → 显式空 scratch 校验 → 数据库/AgentRuntime，外部 IO 前两连接全部 IDLE。real UI 必须显式设置绝对路径 `V24_UI_WORKSPACE_ROOT` 且目录为空；只允许仓库外、`.uidata/` 或 `prompt-exports/` 下的 scratch，禁止直接写活仓库。real UI 默认工具集为 `read`；`write`/`exec`（含 bash）必须显式 `V24_UI_TOOLSET`，因为该前端没有认证，只能绑定回环地址。真实调用使用显式有限预算；不重试 unknown、不重放副作用；成功失败均保留私有 journal。原始证据目录 0700/文件 0600、忽略于 Git；`--evidence-dir` 在仓库内只允许 `prompt-exports/`，审计结果以 `O_EXCL` 新建，禁止覆盖保留证据。公开报告只含状态/数值/哈希，不含 key、Authorization、prompt/content/reasoning/resume token。工具子进程剥离 provider key 和 PG*。缺 key 的 UI 浏览器验证可用独立 scratch cwd 启动本地服务，清除 provider/PG 环境，不连接数据库；本地 UI 服务 socket 不属于 provider 实测。`test_*.py` 仍不得进行真实 provider 网络调用。real UI 的 stop/steer 在一次 provider 调用期间可能排队，不能据此宣称 W13 交互验收完成。
 - 测试是独立可跑脚本（`uv run python ...`，退出码 0 = 通过），不是 pytest 套件。每个 stage 的 `setup_db.py` 会 DROP/CREATE 自己的库，并按 `v8/load.py` 的 `SQL_LOAD_ORDER` 累计加载全部已注册 SQL。
 - 规格原文是唯一权威（`docs/designs/v8-dev.md`），`docs/analysis/v8-impl-digest/` 只作入口摘要。任何改动 MUST NOT 破坏既有 gate。
 - `prompt-exports/`、`.pgdata/`、`.venv`、`/memory` 已在 `.gitignore` 中，不要提交。

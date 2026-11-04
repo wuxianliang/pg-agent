@@ -1,6 +1,65 @@
 # v24 UI — M4 Chainlit agent runtime
 
-Current status: **M4 review repairs accepted: final independent Oracle review completed 2/2 with no remaining blocker (2026-11-03).** Round-1 review did not pass; both reproduced supervisor P1 findings and failed/partial plan history are preserved. Commit policy is one separate local repair commit on `v24/ui-chainlit` after closing checks; no push or M5 work. See [the repair record](../../docs/reviews/v24-ui-m4-review-fixes-2026-11-03.md) for the complete item inventory, executed checks and remaining evidence.
+Current status: **M5 closeout with abandoned historical evidence (2026-11-04).** `MAX_SAFE_ARGS_BYTES=128` was measured on the current profile after four formal review rounds (the first rejected the 160 B claim; later rounds rejected 128 snapshot defects): 13 targets 64–124 plus two additional 128 B probes per class (one repeat each) (45 probes, 45 passed), 14 complete targets and 3 boundary repeats. Earlier 144/160 batches showed sporadic `finish_length` and are retained as historical, not reused. The bound is an explicit working recommendation, not a token guarantee. `exec11` completes durably (five HTTP requests; write → bash → readback → final; empty guard rejections). The two unrecoverable historical proofs (original-52 baseline and WI-1 pre-incident logical equality) are abandoned by the dated coordinator record `docs/reviews/v24-ui-m5-evidence-abandonment-2026-11-04.json`; the audit reports them under `abandoned_evidence`, never as proof. The formal-review gate is recorded in `prompt-exports/v24-m5-evidence/m5-formal-review.json` after the review binds the current runtime and closeout documents; the final outcome is recorded in the JSON. Real admission ceiling 16384, legacy/fake 8000, completion cap 512, SQL reserve 4096 and run budget/lease/timeout are unchanged. Commit and push of this closeout on `v24/ui-chainlit` are authorized by the 2026-11-04 coordinator decision; `main` is not modified or switched.
+
+## M5 WI-3 incomplete checkpoint (2026-11-03)
+
+The durable evidence is under ignored `prompt-exports/v24-m5-evidence/wi2a-20261103T134358Z/` and the WI-2 reconciliation. It records 8 current-profile HTTP requests: short, write10, and skill completed; exec11 stopped at the first guard failure (`tool_failure`) with no bash execution, readback, or durable final. The original `/tmp` baseline and WI-1 receipts are absent; the resume snapshot contains 1,456 tracked hashes and 55 captured untracked hashes, so it cannot prove the original 52-file baseline or pre-incident logical equality. The historical WI-1 PGDATA incident remains a limitation. The focused offline contracts and the existing 16-command M4 runner passed in WI-2A; those receipts are historical checkpoint evidence, not M5 completion. The post-review offline fixes are verified by `test_real_entry.py`, `test_audit_m5.py`, and a fresh full `run_m4_checks.py` sweep; the audit snapshot exits 3 (`NOT ACCEPTED`) and completion derives the remaining blockers. No new real provider call was possible without a key. See [M5 checkpoint record](../../docs/reviews/v24-ui-m5-incomplete-checkpoint-2026-11-03.md) for source/evidence hashes, actual browser proof, audit results and remaining blockers.
+
+<!-- M5_CURRENT_VALUES_BEGIN -->
+legacy_body_bytes=8000; real_body_bytes=16384; output_token_cap=512; reserve_tokens=4096; max_safe_args_bytes=128
+<!-- M5_CURRENT_VALUES_END -->
+
+Current capacity values: legacy/fake 8000, real 16384, completion cap 512, SQL reserve 4096, run budget/lease/timeout unchanged, and `MAX_SAFE_ARGS_BYTES=128`. The safe-args value is the post-review working recommendation: 13 targets 64–124 plus two additional 128 B probes per class (one repeat each), 45 probes (45/45, no failures), 14 complete targets and 3 boundary repeats. The batch ran while the prompt already rendered 128, so it measures compliance/robustness, not an unprompted capacity threshold; earlier 144/160 batches showed sporadic `finish_length` (the 160 batch was 41/42) and are retained as historical, so 128 is not a token guarantee. The 16384 real ceiling remains admission headroom for six rounds, not a target body size: retained 8192-snapshot bodies grew 5,917→7,520 B over write10's four rounds and exec11 `v24-real-k5a0wn53` observed canonical bodies 6,498 / 7,416 / 8,080 / 8,434 / 8,734 B (wire maximum 8,751 B) with 12,265 tokens over five rounds, so six rounds project to roughly 14.7k tokens, inside the 20,000-token run budget, while a 16,384 B body would be ≈5.2k input tokens, above the 4,096 SQL reserve. Rounds 4–5 exceed 8192; round 3 (8,080 B) does not. The reserve and the D-UI-8 fallback are unchanged. The 16384 value is admission headroom, not a target body size or a token-safety proof: a body near 16 KB is ≈5.2k input tokens, above the 4096 SQL reserve, so such a call can settle as an unknown/blocked outcome rather than complete; the observed exec11 wire maximum is 8,751 B, below the reserve. The two unrecoverable historical proofs are abandoned by the dated coordinator record `docs/reviews/v24-ui-m5-evidence-abandonment-2026-11-04.json`; completion reports them under `abandoned_evidence` and does not count them as blockers, without writing a synthetic proof. Every other gate, receipt, measurement and formal-review requirement remains mandatory. `catalog.limits_contract` is the single renderer for the prompt and footer; the skill file mirrors the same number and the audit derives the render blocker from the renderer, the footer call site and this marked README block.
+
+## M5 real entry and audit discipline (2026-11-03 review fixes)
+
+The real UI remains explicit opt-in and is not a gate. It requires an absolute, empty scratch directory; the default toolset is `read`, and `write`/`exec` must be requested explicitly because this frontend has no authentication and must bind loopback only:
+
+```sh
+SCRATCH="$(cd "$(mktemp -d)" && pwd -P)"
+chmod 700 "$SCRATCH"
+UV_NO_SYNC=1 UV_NO_ENV_FILE=1 \
+V24_UI_MODE=real V24_UI_WORKSPACE_ROOT="$SCRATCH" V24_UI_TOOLSET=read \
+  uv run --project v24/ui chainlit run v24/ui/app.py --host 127.0.0.1 --port 8000 --headless
+```
+
+The order is key → actual `DeepSeekAdapter` → local preflight → empty-scratch validation → toolset validation → data directory/lock/`open_env`/`AgentRuntime`. A missing key returns `credentials_absent` and leaves the service alive; a missing/non-empty/non-ignored scratch returns `workspace_required`, `workspace_not_empty`, or `workspace_invalid` before database resources. Real mode rejects a scratch equal to the data root, containing it, or under the runtime spill/spawn subtrees. The app does **not** enforce a bind address; the operator must use `127.0.0.1`. One executor thread owns the runtime, so a provider call of up to 120 s can queue every session command; stop/steer during that call is not W13 acceptance. After a real `write`/`exec` run the scratch is non-empty, so a restart with the same directory fails `workspace_not_empty`; real-mode resume across restarts is not claimed. The manual CLI remains:
+
+```sh
+UV_NO_SYNC=1 UV_NO_ENV_FILE=1 uv run python -m v24.ui.real --real-provider-smoke --scenario short
+# no flag: not_requested / 0; missing key: credentials_absent / 2
+```
+
+`--evidence-dir` inside the repository is restricted to the ignored `prompt-exports/` root; the default already satisfies this. Audit output is created with `O_EXCL` and never overwrites retained evidence. Snapshot mode exits **3** with `[snapshot-consistent; NOT ACCEPTED]`; completion mode additionally requires the current five-gate receipt (each gate exit 0, log SHA256 re-verified, and before/after full runtime source maps equal to the audit-time map) before deriving the remaining blockers from current evidence. Pre-review receipt `wi3-checks-*-completion` has the current completion receipt and `gate_receipt.failures=[]`. The two abandoned proofs are reported as `abandoned_evidence` (never as proof) and are not blockers; the formal-review gate is recorded in `prompt-exports/v24-m5-evidence/m5-formal-review.json` after it binds the current runtime and closeout documents; exec11 and final-profile capacity are now evidenced, and the render contract is a derived check, not a standing blocker. The 16384 real ceiling is an admission bound, not a token/reserve safety proof; the SQL 4096 reserve and D-UI-8 fallback are unchanged.
+
+### Final-profile measurement matrix (executed 2026-11-04)
+
+Thirteen targets 64–124 (mixed step) × three content classes, plus two additional 128 B probes per class (one repeat each): 45 probes, all 45 `contract_passed`, 14 complete targets, 3 boundary repeats. The 128 B bound is the post-review working recommendation; the earlier 160 B batch (42 probes, 41 passed, one `finish_length`) and the 224 B pilot failure are retained as historical and are not reused. The bound is not a token guarantee: `finish_length` is stochastic when reasoning consumes the 512-token cap, and W12 (raise the cap) remains the structural fix.
+
+```sh
+for target in 64 68 72 80 84 88 92 96 100 104 108 116 124; do
+  for class in ascii cjk escape; do
+    UV_NO_SYNC=1 UV_NO_ENV_FILE=1 uv run python -m v24.ui.real \
+      --real-provider-smoke --profile current --scenario probe \
+      --target-args-bytes "$target" --content-class "$class"
+  done
+done
+# two extra repeats per class at the 128 B bound
+for round in 1 2; do
+  for class in ascii cjk escape; do
+    UV_NO_SYNC=1 UV_NO_ENV_FILE=1 uv run python -m v24.ui.real \
+      --real-provider-smoke --profile current --scenario probe \
+      --target-args-bytes 128 --content-class "$class"
+  done
+done
+UV_NO_SYNC=1 UV_NO_ENV_FILE=1 uv run python -m v24.ui.real \
+  --real-provider-smoke --profile current --scenario exec11
+```
+
+The capacity record is `prompt-exports/v24-m5-evidence/wi3-final-capacity-summary.json` (SHA256 `b2b400b9aed765e90a0c012211207431e9d15d971847ff395c9827ed332910dc`; 45 samples, 0 excluded, 0 failed, 14 complete targets, 3 boundary repeats). exec11 evidence is `v24-real-k5a0wn53` (SHA256 `e5411fb32ea2e10473a2eefc9539a859d53649b71c462706ca57bf1abb89bb3f`; five HTTP requests, all checks true, `guard_rejections=[]`). Backfilled `catalog.MAX_SAFE_ARGS_BYTES=128`; the prompt and footer render from it, and the `surgical-edit` skill is a synchronized static mirror of the same value checked by the audit. A missing key still prints `credentials_absent` and exits 2 without constructing an adapter or opening a database.
+
+Historical status at M4 repair closeout: **M4 review repairs accepted: final independent Oracle review completed 2/2 with no remaining blocker (2026-11-03).** Round-1 review did not pass; both reproduced supervisor P1 findings and failed/partial plan history are preserved. Commit policy is one separate local repair commit on `v24/ui-chainlit` after closing checks; no push or M5 work. See [the repair record](../../docs/reviews/v24-ui-m4-review-fixes-2026-11-03.md) for the complete item inventory, executed checks and remaining evidence.
 
 ## M4 review repair (2026-11-03; final review passed)
 

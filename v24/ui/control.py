@@ -14,12 +14,13 @@ from v24.host.worker import HostWorker
 from v24.host.canonical import compact_json
 from v24.host.canonical import pg_jsonb_text, descriptor_digest
 from v24.host.registry import AdapterNotFound
+from psycopg2 import connect
 from psycopg2.extras import Json
 from . import catalog
 from .env import open_env, init_env, acquire_lock, release_lock
 from .fake import ScriptedUiAdapter
 
-DEFAULT_BUDGET = {"steps":24,"tool_calls":24,"tokens":20000,"wall_ms":600000}
+DEFAULT_BUDGET = catalog.LEGACY_UI_LIMITS.run_budget()
 _TERMINAL = frozenset(("completed", "failed", "cancelled", "blocked_unknown"))
 
 @dataclass(frozen=True)
@@ -37,14 +38,31 @@ class Discovery:
 
 class AgentRuntime:
     """One serialized owner of HostDB, journal, worker and registry state."""
-    def __init__(self, env, *, mode="fake", adapter=None, workspace_root=None, max_rounds_per_turn=64):
+    def __init__(self, env, *, mode="fake", adapter=None, workspace_root=None, max_rounds_per_turn=64, limits=None):
         if workspace_root is not None and Path(workspace_root).resolve() != env.workspace_root.resolve():
             raise RuntimeError("workspace_mismatch")
         self.env=env; self.mode=mode; self.adapter=adapter; self.max_rounds_per_turn=max_rounds_per_turn
-        self.db=HostDB(env.admin_dsn, env.service_dsn)
-        self.journal=HostJournal.open(env.journal_path)
-        self.dispatcher=PluginDispatcher(self.db,catalog.build_registry(()))
-        self.worker=HostWorker(self.db,self.journal,adapter=adapter,tool_handler=self.dispatcher.tool_handler,resource_handler=self.dispatcher.resource_handler,default_lease_ms=30000)
+        self.limits = limits or catalog.LEGACY_UI_LIMITS
+        # Own raw connections through partial construction, including a
+        # second-connect or journal-open failure. HostDB still owns them on
+        # success and applies its unchanged session/transaction policy.
+        connections = []
+        self.journal = None
+        try:
+            for source in (env.admin_dsn, env.service_dsn):
+                connections.append(connect(source) if isinstance(source, str) else source)
+            self.db=HostDB(*connections)
+            self.journal=HostJournal.open(env.journal_path)
+            self.dispatcher=PluginDispatcher(self.db,catalog.build_registry(()))
+            self.worker=HostWorker(self.db,self.journal,adapter=adapter,tool_handler=self.dispatcher.tool_handler,resource_handler=self.dispatcher.resource_handler,default_lease_ms=self.limits.worker_lease_ms)
+        except BaseException:
+            try:
+                if self.journal is not None:
+                    self.journal.close()
+            finally:
+                for conn in connections:
+                    conn.close()
+            raise
         self.caches={}; self.scopes={}; self.plugins={}; self.discoveries={}; self._active_run=None; self.seq=0
 
     def _rpc(self, statement, params=(), *, service=False):
@@ -149,8 +167,8 @@ class AgentRuntime:
     def start_run(self, scope, owner_fiber_id, messages, *, toolset="exec", budget=None, key=None):
         families=self._families(scope,toolset); requires=[{"key":k} for k in catalog.toolset_keys(toolset,families)]
         if len(requires)>16: raise RuntimeError("invalid_args")
-        payload={"messages":messages,"requires":requires,"max_output_tokens":512}
-        value=self._rpc("SELECT v24.start(%s,%s,%s,%s,%s)",(scope,owner_fiber_id,Json(payload),Json(budget or DEFAULT_BUDGET),key or f"ui-start-{uuid.uuid4().hex}"))
+        payload={"messages":messages,"requires":requires,"max_output_tokens":self.limits.completion_cap}
+        value=self._rpc("SELECT v24.start(%s,%s,%s,%s,%s)",(scope,owner_fiber_id,Json(payload),Json(budget or self.limits.run_budget()),key or f"ui-start-{uuid.uuid4().hex}"))
         if value.get("disposition")!="committed": raise RuntimeError(value)
         emitted=tuple(str(x) for x in value["emitted"])
         self._active_run=emitted[0]

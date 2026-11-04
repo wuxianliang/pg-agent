@@ -8,15 +8,124 @@ import re
 import stat
 import sys
 from html import escape
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from v24.host.canonical import compact_json
 from v24.host.registry import ApprovedAdapterRegistry, ApprovedPlugin, ApprovedTool, adapter_declaration_digest
 from v24.host.renderers import RENDERERS
 
-MAX_SAFE_ARGS_BYTES = None
+MAX_SAFE_ARGS_BYTES = 128
+# Measured 2026-11-04 on the current profile (512 completion cap including
+# reasoning): 45 probes across 13 targets 64..124 plus two 128 B repeats per
+# class.  The capacity record keeps every attempt and names accepted fidelity
+# misses; finish_length at or below the bound is accepted only with its exact
+# observed rate, never averaged away.  The batch ran while the prompt already
+# rendered 128, so it is a compliance/robustness result, not an unprompted
+# threshold.  Working recommendation, not a token guarantee.
+# Shared UI/provider limits.  The values are the frozen legacy baseline; the
+# capacity checkpoint may recommend a value later, but it must not be guessed.
+OUTPUT_TOKEN_CAP = 512
+BODY_BYTE_CEILING = 8000
+DEFAULT_PROVIDER_TIMEOUT_S = 120.0
+DEFAULT_WORKER_LEASE_MS = 30000
+DEFAULT_RUN_BUDGET = {"steps": 24, "tool_calls": 24, "tokens": 20000, "wall_ms": 600000}
+_DEFAULT_BUDGET_ITEMS = tuple(DEFAULT_RUN_BUDGET.items())
+
+
+@dataclass(frozen=True)
+class UiLimits:
+    body_byte_ceiling: int = BODY_BYTE_CEILING
+    completion_cap: int = OUTPUT_TOKEN_CAP
+    timeout_s: float = DEFAULT_PROVIDER_TIMEOUT_S
+    worker_lease_ms: int = DEFAULT_WORKER_LEASE_MS
+    budget_items: tuple[tuple[str, int], ...] = _DEFAULT_BUDGET_ITEMS
+
+    def __post_init__(self):
+        # These are independent knobs; validate ranges and duplicate budget keys.
+        if (isinstance(self.body_byte_ceiling, bool)
+                or not isinstance(self.body_byte_ceiling, int)
+                or not 1 <= self.body_byte_ceiling <= 65536):
+            raise ValueError("body_byte_ceiling")
+        if (isinstance(self.completion_cap, bool)
+                or not isinstance(self.completion_cap, int)
+                or not 1 <= self.completion_cap <= OUTPUT_TOKEN_CAP):
+            raise ValueError("completion_cap")
+        if (isinstance(self.timeout_s, bool)
+                or not isinstance(self.timeout_s, (int, float))
+                or not 0 < self.timeout_s <= 239):
+            raise ValueError("timeout_s")
+        # Non-model effects use this lease; the worker's own tool timeout cap
+        # is 25s, so anything below 30s can expire a live tool dispatch.
+        if (isinstance(self.worker_lease_ms, bool)
+                or not isinstance(self.worker_lease_ms, int)
+                or not 30000 <= self.worker_lease_ms <= 300000):
+            raise ValueError("worker_lease_ms")
+        try:
+            items = tuple(self.budget_items)
+            pairs = []
+            for item in items:
+                if not isinstance(item, tuple) or len(item) != 2:
+                    raise ValueError
+                key, value = item
+                if not isinstance(key, str) or key in {k for k, _ in pairs}:
+                    raise ValueError
+                if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                    raise ValueError
+                pairs.append((key, value))
+            if (not isinstance(self.budget_items, tuple)
+                    or len(pairs) != len(DEFAULT_RUN_BUDGET)
+                    or {k for k, _ in pairs} != DEFAULT_RUN_BUDGET.keys()):
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValueError("budget_items") from None
+
+    def run_budget(self) -> dict:
+        return dict(self.budget_items)
+
+
+LEGACY_UI_LIMITS = UiLimits()
+# Admission-only headroom for multi-round real history (six rounds stay inside
+# the 20,000-token run budget); the SQL 4,096-token reserve is unchanged.
+REAL_UI_LIMITS = replace(LEGACY_UI_LIMITS, body_byte_ceiling=16384)
+
 LIMITS = {"max_value_bytes": 40960, "max_content_bytes": 41984, "max_meta_bytes": 4096}
+
+
+def limits_contract(*, completion_cap: int = OUTPUT_TOKEN_CAP,
+                    body_byte_ceiling: int = BODY_BYTE_CEILING,
+                    max_safe_args_bytes: int | None = MAX_SAFE_ARGS_BYTES) -> str:
+    """Single-source limit text for the system prompt and the UI footer.
+
+    A measured safe-args value renders its number; the unmeasured ``None``
+    renders no number at all, because the plan forbids guessing it.
+    """
+    safe = (f"tool-call args <= {max_safe_args_bytes} bytes" if max_safe_args_bytes is not None
+            else "tool-call args unmeasured; keep them small")
+    return (f"{completion_cap} tokens/reply including reasoning; "
+            f"request body <= {body_byte_ceiling} bytes; {safe}")
+
+
+def build_system_prompt(skills_block: str, history: str,
+                        completion_cap: int = OUTPUT_TOKEN_CAP,
+                        body_byte_ceiling: int = BODY_BYTE_CEILING,
+                        max_safe_args_bytes: int | None = MAX_SAFE_ARGS_BYTES) -> str:
+    return (
+        "stream:false; complete answer. Reply in the user's language.\n"
+        "Call only this request's tools; skills add none.\n"
+        "| Choice | Pi | RPCE |\n|---|---|---|\n"
+        "| Read | read: verbatim, offset | read_file: start_line; -N tail, no limit |\n"
+        "| Search | grep: glob/literal | file_search: mode/filter/regex |\n"
+        "| Edit | edit: one batch, same original, no overlaps | apply_edits: exactly one of rewrite, search+replace, edits; on_missing only with rewrite |\n"
+        + limits_contract(completion_cap=completion_cap, body_byte_ceiling=body_byte_ceiling,
+                          max_safe_args_bytes=max_safe_args_bytes)
+        + '; finish_reason="length" => finish_length ends the run; '
+        "no truncated answers/arguments. Small write.append calls.\n"
+        "For a matching skill, first read its location in full with read/read_file.\n"
+        + skills_block + "\n" + history
+    )
+
+
 _TOOLSETS = {
     "read": frozenset({"read", "grep", "find", "ls", "read_file", "file_search", "get_file_tree"}),
     "write": frozenset({"read", "grep", "find", "ls", "read_file", "file_search", "get_file_tree", "write", "edit", "apply_edits"}),

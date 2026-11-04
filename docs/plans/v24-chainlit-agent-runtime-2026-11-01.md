@@ -1705,3 +1705,82 @@ SQL、host、S13、requires 与 owner fiber 设计不改；M2 requires/pins 始�
 - **不变项。** 其余 12 条冻结路径仍要求整文件相等（`v24/b0`、`v24/s10`、`v24/s11`、`v24/load.py`、`canonical.py`、`descriptor.py`、`tool_schema.py`、`tool_results.py`、`line_json.py`、`journal.py`、`db.py`、`process_io.py`）；`v24/s13/vectors` 下只允许 `text_plain_v1.json` 一个新文件；`checks=6` 与 `[scope] passed base=c8c4bd0 checks=6` marker 不变；`BASE` 仍是 `c8c4bd0`，不重新基线化。
 - **无设计/SHA/SQL 变更。** `docs/designs/v24-tool-plugin-abi-v1-2026-10-30.md` 正文未改，`DESIGN_SHA256` 仍 `778b13a4df78f47987626bbe466b70ebada95fe939565253749b7e6105991a2d`；`v24/sql/` 相对 `c8c4bd0` 零 diff。follow-up 只改 `v24/s13/test_wiring.py` 与五份文档（本计划、`v24/s13/README.md`、W9 record、conformance matrix、deviation ledger）。
 - **未来 preflight 的硬要求。** 不能只 grep 符号。必须（a）对**每个计划内路径**做一次路径 grep，覆盖 `frozen`/`git diff --exit-code`/`git show BASE` 这类把路径当字符串的审计；（b）读出并核对所有 `git diff --exit-code`/`git show BASE` 审计的实际范围，而不是只看它们出现在文件里。否则整文件冻结审计会再次从命中表里消失。
+
+## M5 authoritative amendment — WI-2A / WI-3 INCOMPLETE (2026-11-03)
+
+本追加修订落实忽略目录中的计划导出 `oracle-plan-2026-11-03-164519-v24-m5-chainlit-runt-b345.md` 末尾 coordinator budget-checkpoint reconciliation 与 WI-2A authorized change。此前权威计划正文没有该 WI-2A 更新；本节是本次实际落盘记录，不把导出或 pair 陈述冒充既有正文。checkpoint B3E0C8A0-9472-4031-AF5F-971D8962CED1 的两路完成仅批准 real UI body ceiling8192；`LEGACY_UI_LIMITS`/fake8000、completion cap512、SQL reserve4096、timeout/lease/run budget、host/SQL/artifact/技能保持原值。观察到的8048 B请求可被8192接纳，但不证明后续历史、usage或工作流安全；没有批准1024 cap。
+
+实际 WI-2A 取证以 `prompt-exports/v24-m5-evidence/wi2a-20261103T134358Z/checkpoint.json` 为索引：focused、16条M4、S10全部exit0；current短答/write10/skill分别1/4/2次HTTP并completed，exec11第1次HTTP后写参数被测量guard拒绝，未write/bind，无bash/readback/final，停止后续真实请求。原计划M5验收仍不满足，`MAX_SAFE_ARGS_BYTES=None`，不得创建completion commit。legacy十尺寸矩阵只属历史源码证据，final-profile容量与非单调确认尚未完成。
+
+WI-3仅完成AGENTS两处例外、顶部INCOMPLETE与安全证据文档、新独立审计、无key真实Chainlit服务准备；不修改生产prompt/guards/workflows/budgets/host/SQL，不再调用provider。完整README/footer/system-prompt数值同源合同仍须审查：现有cap512已引用同一常量，但prompt未展示safe-args状态、README缺少生产渲染区块；若落实需生产改动，先由协调者审查范围。新审计可断言当前值，不能冒充完整渲染合同。
+
+原始`/tmp`baseline与WI-1日志已失：resume-baseline.json的1456 tracked/55 captured untracked仅证明resume之后的限定比较，不能升级为original52证明。初次WI-1 PGDATA事件保留，不能声称pre-incident逻辑相等。后续收据、hash及明确未完成项见[M5 measurement/review record](../reviews/v24-ui-m5-incomplete-checkpoint-2026-11-03.md)。所有历史RED/review/批准文本保留。WI-3不暂存/commit/push/amend/修改main；实际浏览器动作与正式review归协调者。
+
+---
+
+## 2026-11-03 M5 复审修复追加（有日期，不重写上文）
+
+用户授权的 M5 范围不变；本条只记录正式 Oracle 复审后的最小修复与仍存在的验收缺口。两条 Oracle lane 均 provider-completed 但未运行测试，判定 Request changes；协调者逐条核实后修复 material 项：
+
+1. 真实 UI 必须显式设置绝对、空的 `V24_UI_WORKSPACE_ROOT`，仓库内仅允许 `.uidata/` 或 `prompt-exports/` 下的 scratch；默认工具集为 `read`，`write`/`exec` 必须显式 opt-in。key → adapter → preflight → scratch 校验 → data/lock/open_env/runtime 的顺序由测试固定。
+2. provider 工厂拆到 `v24/ui/provider.py`，生产 UI 不再导入测量框架；`v24/ui/real.py` 保留兼容别名，CLI 继续共用实际 adapter/runtime。
+3. `UiLimits` 增加跨字段不变量（body/cap/timeout/lease/budget）；prompt 与 footer 使用 runtime `completion_cap`，README/audit 用同一组常量断言。512 仍是未提高的 completion cap；8192 仅是 real admission 上限，不证明 SQL 4096 reserve 或 token 安全。
+4. `--evidence-dir` 在仓库内仅允许 `prompt-exports/`；审计输出用 `O_EXCL` 新建，snapshot 一致时退出 3（`NOT ACCEPTED`），completion 的 blocker 从证据派生；PID 检查收窄为 `pid_exists`。
+5. 离线测试改用系统临时目录，新增 `test_audit_m5.py`；exec11 guard 拒绝记录 `key`/`predicate`，不放宽 guard。
+
+当前环境 `DEEPSEEK_API_KEY`/`OPENAI_API_KEY` 均 absent。按用户规则，exec11、final-profile capacity、original52 与 WI-1 pre-incident 证明仍为 BLOCKED；`MAX_SAFE_ARGS_BYTES=None`，M5 不完成、不暂存、不提交、不 push。
+
+第五轮正式 Oracle 复审为 2/2 provider-completed、未运行测试，两个 lane 均 **ACCEPT for continuation**，无 P1；两个非阻断 P2（部分被引用 evidence payload 仍可能在结构化结果写入前中止；审计 docstring 保留 scope blocker 之前的措辞）已记录。这不是 M5 completion：7 个证据派生 blocker、exec11/最终容量和完整 render contract 仍未关闭。复审修复后的离线收据：`test_real_entry.py` exit0；`test_audit_m5.py` exit0；`test_backend_regressions.py` exit0；完整 M4 runner 16 命令 exit0/skips0，末行 `[passed] M4 private checks; commands=16; exits=0; skips=0; persistent_pgdata_untouched=true`（`/tmp/v24-m5-review5-checks/results.json`，SHA256 `bb9e9b4d2a65445579c52967175088dfc5209ad4c743398e753e13840a2a7646`）。Snapshot audit exit3/NOT ACCEPTED，completion audit exit1，均列出7个证据派生 blocker；最终源码与 current-sources 哈希见 [M5 review record](../reviews/v24-ui-m5-incomplete-checkpoint-2026-11-03.md#fifth-review-addendum-2026-11-04-accept-for-continuation-only)。
+
+## 2026-11-04 有界测量修复追加（仍 INCOMPLETE）
+
+用户授权一次有边界的测量修复 + 预算复核，本条不重写上文、不改变 M5 验收结论：
+
+1. `REAL_UI_LIMITS.body_byte_ceiling` 由 8192 提到 16384，仅为真实工作流 6 轮历史增长提供 admission headroom；`LEGACY_UI_LIMITS`/fake 8000、completion cap 512、SQL `reserve_tokens` 4096、timeout/lease/run budget 均不变。
+2. probe 的 `escape` family 改为生成型 newline-only 内容（只覆盖 JSON `\n` 转义），不再用引号/反斜杠/制表符等病态字符串；三种 content class 仍全部保留。旧 8192 源码下的 escape 证据不能当作新 family 的容量证明。
+3. exec11 的 user prompt 明确要求 bash `command` 逐字等于 guard 常量，不得加 echo、链式、管道或改引号；prompt 与 guard 共用 `real.EXEC11_COMMAND`，避免两处漂移。guard 谓词本身未放宽。
+4. 预算复核（基于 retained 8192 快照，非新实测）：write10 四轮 canonical body 5,917/6,803/7,219/7,520 B，prompt tokens 1,893/2,110/2,207/2,265（约 3.1–3.3 B/token）。按 5–6 轮估算约 14–15k tokens，仍在 20,000 run budget 内；16,384 B body 约 5.2k input tokens，高于 4,096 reserve，故 16384 是 admission headroom 而非目标 body 大小，reserve 不放宽。
+5. 经授权的 production render contract：新增 `catalog.limits_contract` 单一渲染函数，system prompt 与 footer 都从 runtime `UiLimits` 取 `completion_cap`、`body_byte_ceiling` 与 safe-args 状态；未实测时不写数字。README marked block 同步。audit 的 render blocker 改为派生检查（渲染函数参数与调用、footer 调用点、README block），不再无条件追加；该 blocker 只在契约实际不成立时出现。
+
+当前环境 `DEEPSEEK_API_KEY`/`OPENAI_API_KEY` 均 absent：10 targets × 3 classes + exec11 未运行，`MAX_SAFE_ARGS_BYTES` 保持 `None`，exec11/final-profile capacity/formal review 仍是 blocker。M5 仍 INCOMPLETE，不暂存、不提交、不 push、不修改 main。
+
+## 2026-11-04 M5 实测回填与收尾快照（正式复审前）
+
+用户授权使用 key 后，M5 的真实测量在 current profile（`body_byte_ceiling=16384`、newline-only escape、completion cap 512、SQL reserve 4096 不变）上执行。本条只记录实测结果与当前收尾状态，不重写上述任何历史结论，也不把未关闭项说成完成。
+
+1. **容量矩阵。** 先做 64/96/128/160/192/224/256 的 pilot：64–192 三类全过，224 首次出现 `finish_length`。正式矩阵取 64/72/80/88/96/104/112/120/128/136/144/160 十二个尺寸 × 三类 = 42 次 probe，41 次 `contract_passed`；唯一失败是 160 B ascii 的第二次重复（`finish_length`，`completion_tokens=512`）。160 B 仍有 8 个成功样本（ascii base+1 repeat，cjk/escape base+2 repeats），边界重复 5 对。capacity 记录：`prompt-exports/v24-m5-evidence/wi3-final-capacity-summary.json`，SHA256 `b60279dc02901bdff34565f7743af91ae2949e5dc533451bb31df4265eafd91f`。
+2. **exec11。** 一次 `duplicate_bash` guard 拒绝后重跑成功：`v24-real-4ajjmgv5`，5 次 HTTP，`write → bash → readback → final`，`guard_rejections=[]`，SHA256 `d8b3651dc0cc20876cbf3bbfc0d30cd4231516df98bfd8b330c6a687c90961b8`。早前一次 `duplicate_bash` 失败保留为测量记录，不冒充通过。
+3. **回填。** `catalog.MAX_SAFE_ARGS_BYTES=160`（单一常量）；system prompt、footer 与 `surgical-edit` skill 从同一常量渲染；`test_ui_gate.py`、`test_real_entry.py`、`test_audit_m5.py` 的 `None`/unmeasured 断言和 prompt hash 同步更新；`run_m5_checks.py`/`audit_m5.py` 的 current-source 清单纳入 M4 gate 与 skill 两个授权改动路径。160 是“保守工作上限”，不是 token 保证：pilot 的 224 与正式矩阵的一次 160 重复都出现 `finish_length`。
+4. **离线收据。** `test_real_entry.py` exit0（`capacity=measured:160`）；`test_ui_gate.py` exit0（`steps=10; effects=5; artifacts=2; families=2`）；`test_audit_m5.py` exit0；`test_backend_regressions.py` exit0；完整 `run_m4_checks.py` 16 命令 exit0/skips0。completion audit 当前只剩 3 个 blocker：`original52_pre_WI1_baseline_proof_lost`、`WI1_preincident_PGDATA_logical_equality_unproven`、`full_UI_acceptance_and_formal_M5_review_not_accepted`；exec11、final capacity、safe args、render 均已清除。
+5. **未关闭项。** 前两个 blocker 是不可恢复的历史证据（原始 `/tmp` baseline 与 WI-1 日志已失），不得伪造 proof；第三个等待正式 Oracle 复审。按用户当时的“不暂存/不提交/push/main”约束，本快照仍未 commit。
+
+### 二次修订（首次正式复审 REJECT 后，2026-11-04）
+
+首次正式复审 2/2 lanes 均要求修改，P1 集中在：160 的表述与数据矛盾（评论 9/9 vs 文档 8/9）、证据哈希/目录未同步、权威 run 时 prompt 已写 160（循环性未披露）、16384 决策未编号、audit 未登记失败样本/未校验参数转发/未要求当前检查收据。据此修订如下（上一条 160 记录保留为历史，不删除）：
+
+1. `catalog.MAX_SAFE_ARGS_BYTES=128`。最终权威批次：13 个 base target（64,68,72,80,84,88,92,96,100,104,108,116,124）× 三类 + 128 B 每类 2 次重复 = 45 probes，45/45 passed、0 excluded、0 failed、0 infrastructure；14 个 complete target，3 个 boundary repeats。capacity 记录 SHA256 `b2b400b9aed765e90a0c012211207431e9d15d971847ff395c9827ed332910dc`。
+2. 早前 160 批次（42 probes，41 passed，1 次 `finish_length`）与 224 pilot 失败保留为历史；144/160 的偶发 `finish_length` 说明 512 cap 下该值不是 token 保证。128 是复审后的工作建议值，W12（提高 cap）仍是结构性修复。
+3. **循环性披露：** 最终 128 批次运行时 system prompt 已由 `catalog.limits_contract` 写入 128，因此该批次测量的是“prompt 已建议 128 时的合规/稳健性”，不是无提示的容量发现；无提示的 pilot 只用于选择初始候选（160），不能反过来证明 128。
+4. exec11：`v24-real-k5a0wn53`，5 HTTP，write→bash→readback→final，`guard_rejections=[]`，SHA256 `e5411fb32ea2e10473a2eefc9539a859d53649b71c462706ca57bf1abb89bb3f`；source map 与最终源码一致。
+5. audit 硬化：capacity 必须登记全部尝试并显式接受失败原因；render contract 校验 prompt/footer 的 `limits_contract` 关键字参数不是字面量；docstring 标明 snapshot/completion 完整性检查仅适用于 pre-commit 树。`run_m5_checks.py` 与 `audit_m5.py` 的 13 文件 source 清单一致。
+6. 16384 决策补记为 D-UI-17（取代 D-UI-11 的 8192-only 许可）；D-UI-13 改为 128 的表述。
+7. 首次复审后的修订再次触发 source map 变化，因此 128 批次是在最终源码上重跑的；之后未再改任何 `_source_hashes()` 路径。
+
+### 三次修订（第二次正式复审 REJECT 后，2026-11-04）
+
+第二次 2/2 复审（`prompt-exports/oracle-review-2026-11-04-093239-new-chat-ee3520-0a96.md`）两 lane 均 REJECT，P1 为 standalone completion 不强制 gate receipt、matrix/D-UI-17/README 数字矛盾、forwarding 仍接受 legacy 常量；P2 为 exclusion 绕过、canonical/run-id 去重、batch inventory、infrastructure 空白理由、accepted failure 无上限、默认值/skill 未校验、receipt 覆盖过窄与 verification-only 源绑定过宽。按“文档先改、再窄化 hash、再加 receipt”的顺序修复，未重测任何真实 provider：
+
+1. `run_m5_checks.py` 在 audit 前写 `gates.json`（五 gate 的 exit/log SHA256/last line/全量 source map）；`audit_m5.py --completion` 新增 `current_gate_receipt_missing_or_failed`，缺 receipt、gate 失败、source 不等或 log 哈希不符均拒绝；audit 输出记录 `gate_receipt.sha256`。
+2. capacity accounting：低于/等于 recommendation 的失败只能归 failed；排除仅允许 target>safe 且非 complete；canonical path 与 run ID 跨所有类别唯一；inventory 按记录里的完整 batch source map 精确对账；infrastructure 必须 `transport`，failure/infrastructure 各 ≤10%；`finish_length_rate` 精确。
+3. forwarding：prompt keyword 必须是同名参数；footer 必须转发 runtime 属性；app wrapper 与 turn 调用点均校验；contract/prompt 默认值与 skill 静态 128 断言；新增 footer 省略、legacy 常量、skill stale 反例。
+4. 文档：matrix contract 表改为 current 2026-11-04；D-UI-17/README 改为 6,498/7,416/8,080/8,434/8,734 B（wire max 8,751）、12,265 tokens，round 4–5 超 8192；"second 2/2" 改为 third。
+5. 该轮 receipt `wi3-checks-20261104T022955502286Z-completion` 为历史记录，后续代码/证据修复已用新 receipt 取代；当前收尾 receipt 与 final outcome 记录在 `prompt-exports/v24-m5-evidence/m5-formal-review.json`。仍剩 original52、WI-1 pre-incident 两个不可恢复历史证据 blocker，formal review 由该 JSON 记录。
+6. 测量绑定仍用 request-shaping 子集；audit/runner/test 的修改不再使 45 样本或 exec11 失效。全量 source map 只用于 gate receipt/snapshot 身份。未暂存、未提交、未 push；第三次复审已请求，结果记录在 `prompt-exports/v24-m5-evidence/m5-formal-review.json`（可用时）。
+
+## 2026-11-04 历史证据放弃与 M5 收尾授权（不重写上文）
+
+协调者按用户本次直接指示，放弃两处不可恢复的历史证据（original52 pre-WI-1 baseline、WI-1 pre-incident PGDATA logical equality），不再尝试重建，并记录该事实。依据 `docs/reviews/v24-ui-m5-evidence-abandonment-2026-11-04.json`（`m5-abandoned-evidence-v1`、`decision=abandoned`、`synthetic_proof=false`、两项 `status=abandoned`/`proof=unavailable`）。
+
+- `audit_m5.py` 仅在该记录完整且恰好包含两项时，把它们从 completion blocker 移除，并在结果中保留 `abandoned_evidence`；记录缺失、字段不符、id 缺失/重复均 fail closed。放弃不是 proof，也不是对 review/measurement/安全门槛的豁免。
+- `test_audit_m5.py` 增加 valid 与 missing/schema/decision/synthetic/decided_by/duplicate/status/proof/reason 反例；`completion_blockers()` 仍要求 gate receipt、exec11、capacity、safe-args、render contract 与 2/2 正式复审。
+- 本次用户明确指示提交并推送 `v24/ui-chainlit`；该直接指示取代此前本分支“不 push”的约定。`main` 不修改、不切换、不 force-push。M5 的 completion 结果、receipt 与 review export 路径/SHA256 记录在 `prompt-exports/v24-m5-evidence/m5-formal-review.json`。

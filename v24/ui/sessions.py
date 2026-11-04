@@ -129,24 +129,33 @@ class SessionStore:
         self._check()
         return next((row for row in self.conversations if row["conversation_id"] == conversation_id), None)
 
-    def new_conversation(self, **scope_metadata):
+    def new_conversation(self, *, mode=None, limits_digest=None, **scope_metadata):
         self._check()
         token = secrets.token_urlsafe(32)
         row = {"conversation_id": str(uuid.uuid4()), "resume_token_hash": hashlib.sha256(token.encode()).hexdigest(),
                "created_at": now(), "updated_at": now(), "bindings": [], "active_binding": None,
                **scope_metadata}
+        if mode is not None:
+            row["mode"] = mode
+        if limits_digest is not None:
+            row["limits_digest"] = limits_digest
         self.conversations.append(row)
         self.active_conversation_id = row["conversation_id"]
         self.flush()
         return row, token
 
-    def bind(self, conversation_id, scope_id, run_id, *, realm, workspace_root, toolset, catalog_digest):
+    def bind(self, conversation_id, scope_id, run_id, *, realm, workspace_root, toolset, catalog_digest,
+             mode=None, limits_digest=None):
         row = self.get(conversation_id)
         if row is None:
             raise RuntimeError("not_found_or_denied")
         binding = {"scope_id": scope_id, "run_id": run_id, "realm": realm,
                    "workspace_root": str(Path(workspace_root).resolve()), "toolset": toolset,
                    "catalog_digest": catalog_digest}
+        if mode is not None:
+            binding["mode"] = mode
+        if limits_digest is not None:
+            binding["limits_digest"] = limits_digest
         row["bindings"] = [b for b in row["bindings"] if b["run_id"] != run_id] + [binding]
         row["bindings"] = row["bindings"][-200:]
         row["active_binding"] = binding

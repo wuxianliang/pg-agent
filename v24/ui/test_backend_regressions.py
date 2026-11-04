@@ -108,11 +108,18 @@ def child(config_path, phase, toolset):
         backend.new(sid, threading.Event())
         state = backend.states[sid]
         require(state.scope and not state.readonly, 'new session failed')
+        row = backend.store.get(state.conversation_id)
+        require(row['mode'] == 'fake' and row['limits_digest'] == backend._limits_digest(), 'fake conversation profile not persisted')
         messages = '\n'.join(str(e.value) for s, e in events if s == sid and e.kind == 'message')
         token = re.search(r'resume token: `([^`]+)`', messages)
         require(token is not None, 'resume token missing')
         return state, token.group(1)
     def checkpoint(state, token):
+        stored = json.loads(backend.store.path.read_text())['conversations']
+        row = next(r for r in stored if r['conversation_id'] == state.conversation_id)
+        require(row['mode'] == 'fake' and row['limits_digest'] == backend._limits_digest(), 'fake stored profile')
+        require(bool(row['bindings']) and all(b['mode'] == 'fake' and b['limits_digest'] == backend._limits_digest()
+                                             for b in row['bindings']), 'fake binding profile not persisted')
         pins = backend.rt.db.host_run_pins(state.run_id, None, 64)
         require(not pins.get('has_more') and {p['key'] for p in pins['items']} == catalog._TOOLSETS[toolset], 'production pins changed')
         require(len(pins['items']) == EXPECTED_PIN_COUNTS[toolset], 'unexpected production pin count')

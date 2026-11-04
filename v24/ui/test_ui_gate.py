@@ -147,7 +147,7 @@ def _app_prompt(history=""):
     check(prompt.endswith("\n" + history), 'actual app history-last ordering')
     for fact in ("stream:false", "complete answer", "Reply in the user's language", "read_file", "start_line", "grep", "file_search", "edit", "apply_edits", "512", "reasoning", 'finish_reason="length"', 'finish_length', 'read its location in full', "Call only this request's tools; skills add none.", 'no truncated answers/arguments', 'write.append'):
         check(fact in prompt, ("app prompt fact", fact))
-    check(prompt.count(catalog.available_skills()) == 1 and catalog.MAX_SAFE_ARGS_BYTES is None, "skills/safe args prompt")
+    check(prompt.count(catalog.available_skills()) == 1 and catalog.MAX_SAFE_ARGS_BYTES == 128, "skills/safe args prompt")
     return prompt
 
 
@@ -865,7 +865,9 @@ def _interaction_render_smoke():
     check(render_effect({"kind": "model_call", "status": "unknown", "outcome": {"body": None}}).output == "unknown", "unknown None fallback")
     # A credential-shaped source is refused, not byte-equality PASS and not a
     # redacted placeholder. Ordinary source examples can be false positives.
-    for text in ("Bearer token-shaped-example", "postgres://example"):
+    # `synthetic-token-shaped-example` is the sole synthetic shape the repo
+    # audit allowlists; the renderer still refuses it here.
+    for text in ("Bearer synthetic-token-shaped-example", "postgres://example"):
         effect = {"kind": "tool_call", "status": "succeeded", "outcome": {"body": {"result": {"output": {"content": [{"type": "text", "text": text}]}}}}}
         before = copy.deepcopy(effect)
         try:
@@ -1356,7 +1358,7 @@ def _skills_contract(env):
             'start_line=-N', 'without `limit`', 'offset', 'continuation', '<=120 words', 'No edits'),
         'surgical-edit': ('edits[{oldText,newText}]', 'same original', 'nonoverlapping',
             'edit_ambiguous', 'Read back', 'No `apply_edits.rewrite` for small changes',
-            'write.append', 'MAX_SAFE_ARGS_BYTES=None', 'unmeasured')}
+            'write.append', 'MAX_SAFE_ARGS_BYTES=128', '128 bytes')}
     for name, facts in required.items():
         raw = (env.skills_root / name / 'SKILL.md').read_text()
         check(all(fact in raw for fact in facts), ('compressed skill lost plan requirement', name))
