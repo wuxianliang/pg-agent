@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
 from v24.session import SessionService, SessionStore, StartResult, StoreError  # noqa: E402
 from v24.session import wire  # noqa: E402
 
-PASS = "[passed] v24 session M1 gate"
+PASS = "[passed] v24 session M1/M2 gate"
 
 
 def check(condition, message):
@@ -39,6 +39,8 @@ class FakeBackend:
         self.runs = {}
         self.budgets = []
         self.messages = []
+        self.cancel_calls = []
+        self.cancel_fail = None
 
     def start(self, *, session_id, message, toolset, budget, run_key, workspace_root, model):
         self.start_calls.append((session_id, run_key))
@@ -66,6 +68,19 @@ class FakeBackend:
                   for seq in range(1, self.events + 1)]
         return {"v": 1, "revision": run["revision"], "changed": True,
                 "run": dict(run), "events": events}
+
+    def cancel(self, rid, key):
+        self.cancel_calls.append((rid, key))
+        if self.cancel_fail is not None:
+            raise self.cancel_fail
+        run = self.runs.get(rid)
+        if run is None:
+            return {"error": {"code": "not_found_or_denied"}}
+        if run["status"] in ("completed", "failed", "cancelled", "blocked_unknown"):
+            return {"error": {"code": "already_terminal"}}
+        run["status"] = "cancelled"
+        run["revision"] += 1
+        return {"run": dict(run)}
 
     def finish(self, rid, status):
         self.runs[rid]["status"] = status
@@ -153,6 +168,187 @@ def test_start_poll():
         replay2 = service2.start({"message": "read the parser", "request_key": "k-1"})
         check(replay2["disposition"] == "replay" and replay2["session_id"] == sid, replay2)
         check(backend2.start_calls == [], backend2.start_calls)
+
+
+def test_wait_cancel():
+    with tempfile.TemporaryDirectory(prefix="v24-session-m2-") as temp:
+        store = _new_store(temp)
+        backend = FakeBackend(events=3)
+        service = SessionService(store, backend)
+        started = service.start({"message": "wait", "request_key": "wait"})
+        sid, rid, cursor = started["session_id"], started["run_id"], started["cursor"]
+
+        # timeout, then revision-only (changed but no wake), then none at timeout 0.
+        timed = service.wait({"session_id": sid, "cursor": cursor, "timeout_ms": 20,
+                              "include_events": False})
+        check(timed["wake"] == {"ready": False, "reason": "timeout"}, timed)
+        check(timed["changed"] is False, timed)
+        backend.runs[rid]["revision"] += 1
+        revision_only = service.wait({"session_id": sid, "cursor": cursor, "timeout_ms": 20,
+                                      "include_events": False})
+        check(revision_only["wake"]["reason"] == "timeout", revision_only)
+        check(revision_only["changed"] is True, revision_only)
+        no_wait = service.wait({"session_id": sid, "cursor": cursor, "timeout_ms": 0,
+                                "include_events": False})
+        check(no_wait["wake"] == {"ready": False, "reason": "none"}, no_wait)
+
+        # event wake uses the returned prefix and advances only to its max seq.
+        backend.events = 5
+        event = service.wait({"session_id": sid, "cursor": cursor, "timeout_ms": 100,
+                              "include_events": True})
+        check(event["wake"]["reason"] == "event", event)
+        check(event["cursor"]["event_seq"] == 5, event)
+        check([item["seq"] for item in event["events"]] == [1, 2, 3, 4, 5], event)
+        no_event = service.wait({"session_id": sid, "cursor": event["cursor"], "timeout_ms": 20,
+                                 "include_events": True})
+        check(no_event["wake"]["reason"] == "timeout", no_event)
+
+        # No cursor takes the current high-water mark, so existing events do not wake.
+        high = service.wait({"session_id": sid, "timeout_ms": 0, "include_events": True})
+        check(high["wake"]["reason"] == "none", high)
+        check(high["cursor"]["event_seq"] == 5, high)
+        check(high["events"] == [], high)
+
+        # terminal.
+        backend.finish(rid, "completed")
+        terminal = service.wait({"session_id": sid, "cursor": cursor, "timeout_ms": 0})
+        check(terminal["wake"]["reason"] == "terminal", terminal)
+        check(terminal["snapshot"]["status"] == "completed", terminal)
+
+        # interaction (separate session) is top-level and does not need event pagination.
+        interaction_start = service.start({"message": "ask", "request_key": "ask"})
+        irid = interaction_start["run_id"]
+        backend.runs[irid]["status"] = "waiting"
+        backend.runs[irid]["interaction"] = {"interaction_id": str(uuid.uuid4())}
+        backend.runs[irid]["revision"] += 1
+        interaction = service.wait({"session_id": interaction_start["session_id"],
+                                    "cursor": interaction_start["cursor"], "timeout_ms": 0})
+        check(interaction["wake"]["reason"] == "interaction", interaction)
+        check(interaction["interaction_id"] == backend.runs[irid]["interaction"]["interaction_id"],
+              interaction)
+
+        # epoch resets event_seq to 0 and is not reported as not-found.
+        epoch_start = service.start({"message": "epoch", "request_key": "epoch"})
+        erid = epoch_start["run_id"]
+        backend.runs[erid]["epoch_no"] = 2
+        backend.runs[erid]["driving_generation"] = 2
+        backend.runs[erid]["revision"] += 1
+        epoch = service.wait({"session_id": epoch_start["session_id"],
+                              "cursor": epoch_start["cursor"], "timeout_ms": 0,
+                              "include_events": True})
+        check(epoch["wake"]["reason"] == "epoch", epoch)
+        check(epoch["cursor"]["event_seq"] == 0, epoch)
+
+        # registration-generation mismatch is the same epoch wake, not not-found.
+        reg_start = service.start({"message": "registration", "request_key": "registration"})
+        reg_rid = reg_start["run_id"]
+        backend.runs[reg_rid]["registration_generation"] = 2
+        backend.runs[reg_rid]["revision"] += 1
+        stale_registration = service.wait({"session_id": reg_start["session_id"],
+                                           "cursor": reg_start["cursor"],
+                                           "timeout_ms": 0, "include_events": True})
+        check(stale_registration["wake"]["reason"] == "epoch", stale_registration)
+        check(stale_registration["cursor"]["event_seq"] == 0, stale_registration)
+
+        # run_started outranks terminal on the new run.
+        run_started = service.start({"message": "switch", "request_key": "switch"})
+        old_cursor = run_started["cursor"]
+        second = backend.start(session_id=run_started["session_id"], message="next",
+                               toolset=None, budget={}, run_key="second-run",
+                               workspace_root=None, model=None)
+        store.bind(run_started["session_id"], second.scope_id, second.run_id,
+                   realm="test", workspace_root="", toolset="", catalog_digest="",
+                   mode="fake", limits_digest="")
+        backend.finish(second.run_id, "completed")
+        switched = service.wait({"session_id": run_started["session_id"],
+                                  "cursor": old_cursor, "timeout_ms": 0})
+        check(switched["wake"]["reason"] == "run_started", switched)
+        check(switched["snapshot"]["current_run"]["run_id"] == second.run_id, switched)
+
+        # Multi-session: terminal winner, pending ids, full cursor map, all_terminal.
+        terminal_session = service.start({"message": "t", "request_key": "multi-t"})
+        running_session = service.start({"message": "r", "request_key": "multi-r"})
+        backend.finish(terminal_session["run_id"], "completed")
+        terminal_sid = terminal_session["session_id"]
+        running_sid = running_session["session_id"]
+        multi = service.wait({"session_ids": [terminal_sid, running_sid],
+                              "timeout_ms": 0, "include_events": False})
+        check(multi["ok"] and multi["wake"]["reason"] == "terminal", multi)
+        check(multi["winner_session_id"] in (terminal_sid, running_sid), multi)
+        check(len(multi["cursors"]) == 2, multi)
+        check(multi["all_terminal"] is False, multi)
+        check(set(multi["pending_session_ids"]) == {terminal_sid, running_sid}
+              - {multi["winner_session_id"]}, multi)
+        backend.finish(running_session["run_id"], "completed")
+        all_done = service.wait({"session_ids": [terminal_sid, running_sid],
+                                 "timeout_ms": 0, "include_events": False})
+        check(all_done["all_terminal"] is True, all_done)
+        check(all_done["wake"]["reason"] == "terminal", all_done)
+
+        # Cancel: committed, replay does not call backend twice, terminal is rejected.
+        cancel_session = service.start({"message": "cancel", "request_key": "cancel"})
+        crid = cancel_session["run_id"]
+        cancelled = service.cancel({"session_id": cancel_session["session_id"],
+                                    "expected_run_id": crid, "expected_generation": 1,
+                                    "request_key": "cancel-1"})
+        check(cancelled["ok"] and cancelled["already_terminal"] is False, cancelled)
+        check(cancelled["snapshot"]["status"] == "cancelled", cancelled)
+        calls = len(backend.cancel_calls)
+        replay = service.cancel({"session_id": cancel_session["session_id"],
+                                 "expected_run_id": crid, "expected_generation": 1,
+                                 "request_key": "cancel-1"})
+        check(replay["disposition"] == "replay" and replay["ok"], replay)
+        check(len(backend.cancel_calls) == calls, backend.cancel_calls)
+        terminal_cancel = service.cancel({"session_id": cancel_session["session_id"],
+                                          "request_key": "cancel-2"})
+        check(terminal_cancel["ok"] is False and terminal_cancel["already_terminal"], terminal_cancel)
+        conflict = service.cancel({"session_id": cancel_session["session_id"],
+                                   "expected_run_id": "different", "request_key": "cancel-1"})
+        check(conflict["error"]["code"] == "request_conflict", conflict)
+
+        # Expected-generation CAS happens before the backend call.
+        cas_session = service.start({"message": "cas", "request_key": "cas"})
+        before = len(backend.cancel_calls)
+        stale = service.cancel({"session_id": cas_session["session_id"],
+                                "expected_generation": 99, "request_key": "cas-1"})
+        check(stale["error"]["code"] == "stale_generation", stale)
+        check(len(backend.cancel_calls) == before, backend.cancel_calls)
+
+        # A failing cancel freezes; the same key is replayed without a second call.
+        frozen_session = service.start({"message": "frozen", "request_key": "frozen"})
+        backend.cancel_fail = RuntimeError("provider_unavailable")
+        frozen = service.cancel({"session_id": frozen_session["session_id"],
+                                 "request_key": "frozen-1"})
+        check(frozen["disposition"] == "deferred" and frozen["ok"] is False, frozen)
+        calls = len(backend.cancel_calls)
+        frozen_replay = service.cancel({"session_id": frozen_session["session_id"],
+                                        "request_key": "frozen-1"})
+        check(frozen_replay["disposition"] == "deferred", frozen_replay)
+        check(len(backend.cancel_calls) == calls, backend.cancel_calls)
+        backend.cancel_fail = None
+
+        # Unknown and idle sessions are rejected without touching a run.
+        unknown = service.wait({"session_id": str(uuid.uuid4()), "timeout_ms": 0})
+        check(unknown["error"]["code"] == "not_found_or_denied", unknown)
+        unknown_many = service.wait({"session_ids": [running_sid, str(uuid.uuid4())],
+                                     "timeout_ms": 0})
+        check(unknown_many["ok"] is False and len(unknown_many["errors"]) == 1, unknown_many)
+
+        # Wait is a pure read: the store bytes do not change.
+        before = (Path(temp) / "sessions.json").read_bytes()
+        service.wait({"session_id": running_session["session_id"], "timeout_ms": 10})
+        check((Path(temp) / "sessions.json").read_bytes() == before, "wait wrote the store")
+
+    with tempfile.TemporaryDirectory(prefix="v24-session-m2-starting-") as temp:
+        store = _new_store(temp)
+        service = SessionService(store, FakeBackend(fail=RuntimeError("setup_incomplete")))
+        deferred = service.start({"message": "start", "request_key": "starting"})
+        sid = deferred["session_id"]
+        closed = service.cancel({"session_id": sid, "request_key": "start-cancel"})
+        check(closed["ok"] and closed["snapshot"]["state"] == "closed", closed)
+        check(store.get(sid)["state"] == "closed", store.get(sid))
+        again = service.cancel({"session_id": sid, "request_key": "start-cancel-2"})
+        check(again["error"]["code"] == "session_closed", again)
 
 
 def test_event_prefix_and_multi_session():
@@ -269,6 +465,7 @@ def main():
     test_import_boundary()
     test_start_poll()
     test_event_prefix_and_multi_session()
+    test_wait_cancel()
     test_budget_and_deferred()
     test_migration_and_fail_closed()
     print(PASS, flush=True)
@@ -279,5 +476,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print(f"[failed] v24 session M1 gate; {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"[failed] v24 session M1/M2 gate; {type(exc).__name__}: {exc}", file=sys.stderr)
         raise

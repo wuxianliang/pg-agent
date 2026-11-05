@@ -344,6 +344,89 @@ class SessionStore:
                 return receipt
         return None
 
+    def begin_command(self, session_id, *, principal_id, op, key_hash, command_id,
+                      normalized_request, digest, target_run_id=None):
+        """Persist a control intent before the backend is called."""
+        self._check()
+        row = self.get(session_id)
+        if row is None:
+            raise StoreError("not_found_or_denied")
+        if row.get("owner_principal_id") != principal_id:
+            raise StoreError("owner_fenced")
+        for receipt in reversed(row.get("receipts", [])):
+            if receipt.get("op") == op and receipt.get("key_hash") == key_hash:
+                return receipt
+        completed = sum(1 for receipt in row.get("receipts", [])
+                        if receipt.get("phase") in ("completed", "rejected"))
+        if completed >= MAX_RECEIPTS:
+            self._prune_receipts(row, limit=MAX_RECEIPTS - 1)
+        receipt = {
+            "command_id": command_id,
+            "op": op,
+            "key_hash": key_hash,
+            "principal_id": principal_id,
+            "normalized_request": normalized_request,
+            "digest": digest,
+            "phase": "intent",
+            "outcome": None,
+            "target_run_id": target_run_id,
+            "resolved_variant": None,
+            "original_envelope": None,
+            "frozen_deferred": False,
+            "at": now(),
+        }
+        row.setdefault("receipts", []).append(receipt)
+        row["updated_at"] = now()
+        self.flush()
+        return receipt
+
+    def complete_command(self, session_id, command_id, envelope, *, outcome="committed",
+                         target_run_id=None, state=None):
+        self._check()
+        row = self.get(session_id)
+        if row is None:
+            raise StoreError("not_found_or_denied")
+        receipt = next((r for r in reversed(row.get("receipts", []))
+                        if r.get("command_id") == command_id), None)
+        if receipt is None:
+            raise StoreError("receipt_missing")
+        receipt["phase"] = "completed"
+        receipt["outcome"] = outcome
+        receipt["original_envelope"] = envelope
+        receipt["frozen_deferred"] = False
+        if target_run_id is not None:
+            receipt["target_run_id"] = target_run_id
+        if state is not None:
+            row["state"] = state
+            if state == "closed":
+                row["pending_intent"] = None
+                row["active_run_id"] = None
+        row["updated_at"] = now()
+        self._prune_receipts(row)
+        self.flush()
+
+    def freeze_command(self, session_id, command_id, envelope, *, outcome="deferred",
+                       state=None):
+        self._check()
+        row = self.get(session_id)
+        if row is None:
+            raise StoreError("not_found_or_denied")
+        receipt = next((r for r in reversed(row.get("receipts", []))
+                        if r.get("command_id") == command_id), None)
+        if receipt is None:
+            raise StoreError("receipt_missing")
+        receipt["phase"] = "deferred"
+        receipt["outcome"] = outcome
+        receipt["original_envelope"] = envelope
+        receipt["frozen_deferred"] = True
+        if state is not None:
+            row["state"] = state
+            if state == "closed":
+                row["pending_intent"] = None
+                row["active_run_id"] = None
+        row["updated_at"] = now()
+        self.flush()
+
     def next_turn_seq(self):
         return max((turn["seq"] for turn in self.turns), default=0) + 1
 
@@ -601,11 +684,11 @@ class SessionStore:
                 stream.flush()
                 os.fsync(stream.fileno())
 
-    def _prune_receipts(self, row):
+    def _prune_receipts(self, row, limit=MAX_RECEIPTS):
         receipts = row.get("receipts", [])
         completed = [r for r in receipts if r.get("phase") in ("completed", "rejected")]
         other = [r for r in receipts if r.get("phase") not in ("completed", "rejected")]
-        row["receipts"] = other + completed[-MAX_RECEIPTS:]
+        row["receipts"] = other + completed[-limit:]
 
     # ---- history -------------------------------------------------------------
 

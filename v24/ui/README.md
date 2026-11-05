@@ -131,6 +131,22 @@ M1 gates (all exit 0): `v24/session/test_session_verbs.py`,
 `v24/ui/test_real_entry.py` was also run.  S0 keeps
 `git diff -- v24/sql v24/load.py v24/host/deepseek.py` empty.
 
+M2 adds `SessionService.wait/cancel`.  `wait` short-reads the backend projection
+and sleeps on a condition/20 ms fallback; it returns one winner with the
+priority `run_started > terminal > interaction > epoch > event > timeout > none`.
+A missing cursor first takes the current high-water mark, `include_events=false`
+does not wake on or advance events, `registration_stale` maps to
+`epoch` with a reset `event_seq=0`, and revision-only changes do not wake (the
+timeout response still reports `changed=true`).  Multi-session uses
+`cursors: {session_id: cursor}` and returns `winner_session_id`,
+`pending_session_ids`, `all_terminal` and the full cursor map.  `cancel` targets
+the active run, rejects an already-terminal run with `already_terminal`,
+freezes a failed backend call, and replays the original receipt for the same
+`request_key`; `expected_run_id`/`expected_generation` are CAS fields.  `wait`
+does not write the store; `cancel` writes only its receipt unless it is closing
+a `starting` session.  M2 gates: the same session gate,
+`v24/s7/test_g6.py`, and `v24/ui/test_ui_gate.py`.
+
 ## M3 closeout (2026-11-02)
 
 Launch from the repository root after the existing environment has been initialized:

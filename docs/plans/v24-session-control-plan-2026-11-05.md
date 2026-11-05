@@ -8,7 +8,7 @@
 | 项 | 值 |
 |---|---|
 | 日期 | 2026-11-05 |
-| 状态 | **Adopted（2026-11-05）**；五项决策已定稿；S0-M1 已实现并通过 gate；M2 待开工；每个里程碑测试全绿后按路径提交 |
+| 状态 | **Adopted（2026-11-05）**；五项决策已定稿；S0-M1/M2 已实现并通过 gate；M3 待开工；每个里程碑测试全绿后按路径提交 |
 | 目标 | 把 v24 的 run 级六动词升级为 RepoPrompt 式 session 级六动词 |
 | 配套 | 决策记录：`docs/reviews/v24-session-control-decision-record-2026-11-05.md`；设计：`docs/designs/v24-session-control-design-verified-2026-11-05.md`；API：`docs/designs/v24-session-control-api-2026-11-05.md` |
 | 提交策略 | 每个 S0 里程碑测试全绿、收尾工件更新后，按路径一次提交；S1 需 frozen-baseline bump 独立获批后单独提交 |
@@ -16,9 +16,16 @@
 > **M1 进展（2026-11-05）**：`SessionStore` v2、迁移/`.v1.bak`/`.prev`、`SessionService.start/poll`、
 > start/replay/deferred、cursor 前缀与 import 边界 gate 已落地。M1 三个 gate 全绿：
 > `v24/session/test_session_verbs.py`、`v24/ui/test_ui_gate.py`、`v24/ui/test_backend_regressions.py`；
-> `v24/ui/test_real_entry.py` 也通过。真实 `AgentRuntime` adapter 与 UI 全量切换按计划留在 M4；
-> 当前 app 仍走 `SessionStore` 兼容入口。S0 冻结边界
-> `git diff -- v24/sql v24/load.py v24/host/deepseek.py` 为空。
+> `v24/ui/test_real_entry.py` 也通过。
+>
+> **M2 进展（2026-11-05）**：`SessionService.wait/cancel`、七种 wake（`run_started > terminal >
+> interaction > epoch > event > timeout > none`）、无 cursor 高水位、per-session `cursors` +
+> winner 轮转、`all_terminal`、revision-only 不唤醒、`registration_stale → epoch + event_seq=0`；
+> cancel 的活动/终态/starting/deferred/replay 与 `expected_run_id`/`expected_generation` CAS 已落地。
+> `wait` 不写 store，`cancel` 写 receipt 但不重写 run。新 gate
+> (`v24/session/test_session_verbs.py`) 与 `v24/s7/test_g6.py`、`v24/ui/test_ui_gate.py` 全绿。
+> 真实 `AgentRuntime` adapter 与 UI 全量切换按计划留在 M4；当前 app 仍走 `SessionStore` 兼容入口。
+> S0 冻结边界 `git diff -- v24/sql v24/load.py v24/host/deepseek.py` 为空。
 
 ## 0. 完成定义（DoD）
 

@@ -136,6 +136,81 @@ def normalize_poll(request):
     return {"session_id": single, "session_ids": many, "include_events": include, "cursor": cursor}
 
 
+def normalize_wait(request):
+    if not isinstance(request, dict) or request.get("op") not in (None, "wait"):
+        raise WireError("invalid_args", "request")
+    single = request.get("session_id")
+    many = request.get("session_ids")
+    if (single is None) == (many is None):
+        raise WireError("invalid_args", "session_id_xor_session_ids")
+    if single is not None and not isinstance(single, str):
+        raise WireError("invalid_args", "session_id")
+    if many is not None:
+        if (not isinstance(many, list) or not 1 <= len(many) <= 32
+                or any(not isinstance(sid, str) for sid in many)):
+            raise WireError("invalid_args", "session_ids")
+    cursor = request.get("cursor")
+    cursors = request.get("cursors")
+    if cursor is not None and cursors is not None:
+        raise WireError("invalid_args", "cursor_xor_cursors")
+    if cursor is not None and not isinstance(cursor, dict):
+        raise WireError("invalid_args", "cursor")
+    if cursors is not None:
+        if (not isinstance(cursors, dict) or len(cursors) > 32
+                or any(not isinstance(key, str) or not isinstance(value, dict)
+                       for key, value in cursors.items())):
+            raise WireError("invalid_args", "cursors")
+    timeout_ms = _int(request.get("timeout_ms", 120000), "timeout_ms",
+                      minimum=0, maximum=MAX_TIMEOUT_MS)
+    include = request.get("include_events", False)
+    if not isinstance(include, bool):
+        raise WireError("invalid_args", "include_events")
+    return {"session_id": single, "session_ids": many, "cursor": cursor,
+            "cursors": cursors, "timeout_ms": timeout_ms, "include_events": include}
+
+
+def normalize_cancel(request):
+    if not isinstance(request, dict) or request.get("op") not in (None, "cancel"):
+        raise WireError("invalid_args", "request")
+    session_id = _text(request.get("session_id"), "session_id", maximum=64)
+    request_key = _text(request.get("request_key"), "request_key", maximum=MAX_KEY)
+    expected_run_id = request.get("expected_run_id")
+    if expected_run_id is not None and not isinstance(expected_run_id, str):
+        raise WireError("invalid_args", "expected_run_id")
+    expected_generation = request.get("expected_generation")
+    if expected_generation is not None:
+        expected_generation = _int(expected_generation, "expected_generation",
+                                   minimum=0, maximum=10**9)
+    normal = {"session_id": session_id, "expected_run_id": expected_run_id,
+              "expected_generation": expected_generation}
+    return {"session_id": session_id, "expected_run_id": expected_run_id,
+            "expected_generation": expected_generation, "normalized": normal,
+            "digest": sha256_hex(normal), "key_hash": key_hash(request_key)}
+
+
+def wake_reason(cursor, snap, *, include_events):
+    """Return the highest-priority wake, or None for a revision-only change."""
+    current = snap["cursor"]
+    if cursor is None:
+        return None
+    if current.get("run_id") != cursor.get("run_id"):
+        return "run_started"
+    if snap.get("terminal"):
+        return "terminal"
+    interaction = snap.get("interaction") or {}
+    if (snap.get("status") == "waiting_for_input"
+            and interaction.get("interaction_id") != cursor.get("interaction_id")):
+        return "interaction"
+    if (current.get("registration_generation") != cursor.get("registration_generation")):
+        return "epoch"
+    if (current.get("epoch_no"), current.get("generation")) != (
+            cursor.get("epoch_no"), cursor.get("generation")):
+        return "epoch"
+    if include_events and current.get("event_seq", 0) > cursor.get("event_seq", 0):
+        return "event"
+    return None
+
+
 def public_status(session, run):
     state = session.get("state", "starting")
     if state == "closed":

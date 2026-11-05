@@ -29,3 +29,6 @@ class SessionBackend(Protocol):
 
     def poll(self, run_id: str, after_revision: int = 0) -> dict:
         ...
+
+    def cancel(self, run_id: str, request_key: str) -> dict:
+        ...

@@ -528,7 +528,8 @@
 - revision-only（`run_revision` / `session_revision` 前进但 `event_seq` 未变）：默认不唤醒；正超时到期返回快照并带 `changed=true`，避免忙等。
 - 不消费 wake/event；不同 waiter 可各看到一次。
 - `timeout` 不是错误；`ok=true`，`wake.ready=false`。
-- unknown session：单会话整请求 `not_found_or_denied`；多会话逐项 `ok:false`。
+- unknown session：单会话整请求 `not_found_or_denied`；多会话返回 `ok=false` 和
+  `errors: {session_id: {"code": "not_found_or_denied"}}`，不把未知 session 当作 timeout。
 - 不允许 `timeout_ms > 600000` 或负数。
 
 **错误**：`invalid_args`、`not_found_or_denied`、`registration_stale`。
