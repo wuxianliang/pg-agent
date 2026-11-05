@@ -107,6 +107,30 @@ The pre-existing fingerprint encoding uses the deterministic functions-then-colu
 
 Exact acceptance commands, exits and final lines are recorded in [the UI conformance matrix](../../docs/reviews/v24-ui-conformance-matrix-2026-11-01.md) and [deviation ledger](../../docs/reviews/v24-ui-deviation-ledger-2026-11-01.md). The commit stays on `v24/ui-chainlit`; no push.
 
+## Session control plane (S0-M1, 2026-11-05)
+
+`v24/ui/sessions.py` is now a compatibility facade over the headless
+`v24/session/store.py`.  `sessions.json` is written as `format_version=2` with
+`session_id`, `state`, `session_revision`, `counter_origin`, `start_index`,
+bounded `receipts`, and `pending_intent`; the top-level `conversations` key and
+the existing `/resume` token/binding lookup are preserved.  A v1 file is
+migrated in place after an exclusive `sessions.json.v1.bak`/`turns.jsonl.v1.bak`
+copy; every atomic replacement keeps the previous file as `.prev`.  A corrupt
+or unknown-version file makes the whole store fail closed (`session_store_corrupt`
+or `session_store_unsupported`) and is never overwritten.
+
+`v24/session/` is transport-neutral: it does not import Chainlit or `v24.ui`.
+M1 provides `SessionStore` and `SessionService.start/poll` over an injected
+`SessionBackend`; the M1 gate uses a scripted backend.  The app still uses the
+legacy conversation entry points, so `/resume` and the current UI behave as
+before.  Wiring `AgentRuntime` through `SessionBackend` and moving the UI to
+session-level verbs is M4 work.
+
+M1 gates (all exit 0): `v24/session/test_session_verbs.py`,
+`v24/ui/test_ui_gate.py`, `v24/ui/test_backend_regressions.py`; the offline
+`v24/ui/test_real_entry.py` was also run.  S0 keeps
+`git diff -- v24/sql v24/load.py v24/host/deepseek.py` empty.
+
 ## M3 closeout (2026-11-02)
 
 Launch from the repository root after the existing environment has been initialized:
