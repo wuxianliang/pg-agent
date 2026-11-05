@@ -345,7 +345,8 @@ class SessionStore:
         return None
 
     def begin_command(self, session_id, *, principal_id, op, key_hash, command_id,
-                      normalized_request, digest, target_run_id=None):
+                      normalized_request, digest, target_run_id=None,
+                      pending_intent=None):
         """Persist a control intent before the backend is called."""
         self._check()
         row = self.get(session_id)
@@ -376,6 +377,8 @@ class SessionStore:
             "at": now(),
         }
         row.setdefault("receipts", []).append(receipt)
+        if pending_intent is not None:
+            row["pending_intent"] = pending_intent
         row["updated_at"] = now()
         self.flush()
         return receipt
@@ -416,6 +419,9 @@ class SessionStore:
         if receipt is None:
             raise StoreError("receipt_missing")
         receipt["phase"] = "deferred"
+        intent = row.get("pending_intent")
+        if isinstance(intent, dict) and intent.get("command_id") == command_id:
+            intent["phase"] = "deferred"
         receipt["outcome"] = outcome
         receipt["original_envelope"] = envelope
         receipt["frozen_deferred"] = True
@@ -425,6 +431,65 @@ class SessionStore:
                 row["pending_intent"] = None
                 row["active_run_id"] = None
         row["updated_at"] = now()
+        self.flush()
+
+    def complete_steer_active(self, session_id, command_id, run_id, message,
+                              envelope_factory):
+        self._check()
+        row = self.get(session_id)
+        if row is None:
+            raise StoreError("not_found_or_denied")
+        receipt = next((r for r in reversed(row.get("receipts", []))
+                        if r.get("command_id") == command_id), None)
+        if receipt is None or receipt.get("op") != "steer":
+            raise StoreError("receipt_missing")
+        row["user_turn_no"] = int(row.get("user_turn_no", 0)) + 1
+        row["session_revision"] = int(row.get("session_revision", 0)) + 1
+        row["updated_at"] = now()
+        self._append_turn_memory(conversation_id=session_id, run_id=run_id,
+                                 seq=self.next_turn_seq(), user_text=message)
+        receipt["target_run_id"] = run_id
+        receipt["resolved_variant"] = "steer_active"
+        receipt["phase"] = "completed"
+        receipt["outcome"] = "committed"
+        receipt["original_envelope"] = envelope_factory(row)
+        receipt["frozen_deferred"] = False
+        self._write_turns()
+        self.flush()
+
+    def complete_steer_run(self, session_id, command_id, run_id, binding, message,
+                           envelope_factory):
+        self._check()
+        row = self.get(session_id)
+        if row is None:
+            raise StoreError("not_found_or_denied")
+        intent = row.get("pending_intent")
+        if not isinstance(intent, dict) or intent.get("command_id") != command_id:
+            raise StoreError("owner_fenced")
+        row["bindings"] = [b for b in row.get("bindings", []) if b.get("run_id") != run_id] + [binding]
+        row["bindings"] = row["bindings"][-MAX_BINDINGS:]
+        row["active_binding"] = binding
+        row["active_run_id"] = run_id
+        row["run_no"] = int(row.get("run_no", 0)) + 1
+        row["user_turn_no"] = int(row.get("user_turn_no", 0)) + 1
+        row["state"] = "active"
+        row["session_revision"] = int(row.get("session_revision", 0)) + 1
+        row["updated_at"] = now()
+        self._append_turn_memory(conversation_id=session_id, run_id=run_id,
+                                 seq=self.next_turn_seq(), user_text=message)
+        receipt = next((r for r in reversed(row.get("receipts", []))
+                        if r.get("command_id") == command_id), None)
+        if receipt is None or receipt.get("op") != "steer":
+            raise StoreError("receipt_missing")
+        receipt["target_run_id"] = run_id
+        receipt["resolved_variant"] = "steer_new_run"
+        receipt["phase"] = "completed"
+        receipt["outcome"] = "committed"
+        receipt["original_envelope"] = envelope_factory(row)
+        receipt["frozen_deferred"] = False
+        row["pending_intent"] = None
+        self._prune_receipts(row)
+        self._write_turns()
         self.flush()
 
     def next_turn_seq(self):
@@ -535,6 +600,9 @@ class SessionStore:
         receipt["original_envelope"] = envelope
         receipt["frozen_deferred"] = True
         receipt["phase"] = "deferred"
+        intent = row.get("pending_intent")
+        if isinstance(intent, dict) and intent.get("command_id") == command_id:
+            intent["phase"] = "deferred"
         receipt["outcome"] = envelope.get("error", {}).get("code") if isinstance(envelope, dict) else "deferred"
         intent = row.get("pending_intent")
         if isinstance(intent, dict):

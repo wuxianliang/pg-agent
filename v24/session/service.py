@@ -16,6 +16,8 @@ _SAFE_ERRORS = frozenset({
     "provider_unavailable", "dependency_unresolved", "budget_exceeded",
     "catalog_changed", "workspace_mismatch", "setup_incomplete", "session_busy",
     "session_closed", "owner_fenced", "invalid_run", "receipt_missing",
+    "already_terminal", "interaction_pending", "interaction_mismatch",
+    "not_waiting", "stale_generation", "waiting_unsupported", "blocked_unknown",
 })
 
 
@@ -209,6 +211,334 @@ class SessionService:
         return self._deferred(session, run_id=pending.get("run_id"),
                               code="setup_incomplete",
                               command_id=(receipt or {}).get("command_id"))
+
+    # ---- steer / respond -----------------------------------------------------
+
+    def _replay_command(self, receipt):
+        envelope = copy.deepcopy(receipt.get("original_envelope"))
+        if not isinstance(envelope, dict):
+            return None
+        envelope["disposition"] = "deferred" if receipt.get("frozen_deferred") else "replay"
+        return envelope
+
+    def _reject_command(self, session, op, norm, code, *, details=None, run=None):
+        command_id = str(uuid.uuid4())
+        try:
+            self.store.begin_command(
+                session["session_id"], principal_id=self.principal_id, op=op,
+                key_hash=norm["key_hash"], command_id=command_id,
+                normalized_request=norm["normalized"], digest=norm["digest"],
+                target_run_id=(run or {}).get("run_id"))
+        except StoreError as exc:
+            return wire.error_envelope(op, _error_code(exc), session_id=session["session_id"])
+        snap = wire.snapshot(session, run)
+        error = {"code": code}
+        if details is not None:
+            error["details"] = details
+        envelope = {
+            "v": wire.API_VERSION, "op": op, "ok": False,
+            "disposition": "rejected", "session_id": session["session_id"],
+            "run_id": (run or {}).get("run_id"), "error": error,
+            "snapshot": snap, "cursor": snap["cursor"],
+        }
+        self.store.complete_command(session["session_id"], command_id, envelope,
+                                    outcome="rejected",
+                                    target_run_id=(run or {}).get("run_id"))
+        return envelope
+
+    def steer(self, request):
+        try:
+            norm = wire.normalize_steer(request)
+        except wire.WireError as exc:
+            return wire.error_envelope("steer", exc.code, message=exc.message)
+        response = self._steer_locked(request)
+        if norm["wait"] and response.get("ok"):
+            waited = self.wait({"session_id": norm["session_id"],
+                                "cursor": response["cursor"],
+                                "timeout_ms": norm["timeout_ms"],
+                                "include_events": False})
+            response["wake"] = waited.get("wake", {"ready": False, "reason": "none"})
+            if "snapshot" in waited:
+                response["snapshot"] = waited["snapshot"]
+                response["cursor"] = waited["cursor"]
+        return response
+
+    def _steer_locked(self, request):
+        with self.domain.enter():
+            try:
+                norm = wire.normalize_steer(request)
+            except wire.WireError as exc:
+                return wire.error_envelope("steer", exc.code, message=exc.message)
+            session = self.store.get(norm["session_id"])
+            if session is None:
+                return wire.error_envelope("steer", "not_found_or_denied")
+            sid = norm["session_id"]
+            if session.get("state") == "closed":
+                return wire.error_envelope("steer", "session_closed", session_id=sid)
+            receipt = self.store.get_receipt(sid, "steer", norm["key_hash"])
+            if receipt is not None:
+                if receipt.get("digest") not in (None, norm["digest"]):
+                    return wire.error_envelope("steer", "request_conflict", session_id=sid)
+                replay = self._replay_command(receipt)
+                if replay is not None:
+                    return replay
+            run_id = self._current_run_id(session)
+            run = None
+            if run_id:
+                try:
+                    run = self._projection(run_id).get("run")
+                except wire.WireError as exc:
+                    return wire.error_envelope("steer", exc.code, session_id=sid)
+            status = wire.public_status(session, run)
+            if norm["expected_run_id"] is not None and norm["expected_run_id"] != run_id:
+                return wire.error_envelope("steer", "stale_generation", session_id=sid)
+            generation = int((run or {}).get("driving_generation", 0) or 0)
+            if (norm["expected_generation"] is not None
+                    and norm["expected_generation"] != generation):
+                return wire.error_envelope("steer", "stale_generation", session_id=sid)
+
+            if session.get("state") == "starting" or session.get("pending_intent"):
+                return self._reject_command(session, "steer", norm,
+                                            "setup_incomplete" if session.get("pending_intent")
+                                            else "session_busy", run=run)
+            if status == "waiting_for_input":
+                interaction = (run or {}).get("interaction") or {}
+                return self._reject_command(session, "steer", norm, "interaction_pending",
+                                            details={"interaction_id": interaction.get("interaction_id")},
+                                            run=run)
+            if status == "blocked_unknown":
+                return self._reject_command(session, "steer", norm, "blocked_unknown", run=run)
+            if status == "starting":
+                return self._reject_command(session, "steer", norm, "setup_incomplete", run=run)
+
+            if status in ("completed", "failed", "cancelled", "closed", "idle"):
+                command_id = str(uuid.uuid4())
+                run_key = f"s:{sid}:steer:{norm['key_hash'][:32]}"
+                pending = {"op": "steer", "command_id": command_id,
+                           "variant": "steer_new_run", "run_key": run_key,
+                           "owner_epoch": int(session.get("session_revision", 0)) + 1,
+                           "phase": "intent"}
+                try:
+                    self.store.begin_command(
+                        sid, principal_id=self.principal_id, op="steer",
+                        key_hash=norm["key_hash"], command_id=command_id,
+                        normalized_request=norm["normalized"], digest=norm["digest"],
+                        pending_intent=pending)
+                except StoreError as exc:
+                    return wire.error_envelope("steer", _error_code(exc), session_id=sid)
+                try:
+                    value = self.backend.start(
+                        session_id=sid, message=norm["message"],
+                        toolset=session.get("toolset") or None,
+                        budget=wire.normalize_budget(None), run_key=run_key,
+                        workspace_root=session.get("workspace_root"),
+                        model=session.get("model"),
+                        seed=self._seed_messages(sid, norm["message"]))
+                    result, new_run, binding = self._start_result(
+                        value, session_id=sid,
+                        workspace_root=session.get("workspace_root"),
+                        toolset=session.get("toolset"))
+                except Exception as exc:
+                    snap = wire.snapshot(session, run)
+                    envelope = {
+                        "v": wire.API_VERSION, "op": "steer", "ok": False,
+                        "disposition": "deferred", "session_id": sid,
+                        "run_id": None, "started": False, "queued": False,
+                        "superseded": False, "error": {"code": _error_code(exc)},
+                        "snapshot": snap, "cursor": snap["cursor"],
+                    }
+                    self.store.freeze_command(sid, command_id, envelope)
+                    return envelope
+                holder = {}
+                def build_steer_envelope(session_row):
+                    envelope = {
+                        "v": wire.API_VERSION, "op": "steer", "ok": True,
+                        "disposition": "committed", "session_id": sid,
+                        "run_id": result.run_id, "started": True,
+                        "queued": False, "superseded": False,
+                        "snapshot": wire.snapshot(session_row, new_run),
+                    }
+                    envelope["cursor"] = envelope["snapshot"]["cursor"]
+                    holder["envelope"] = envelope
+                    return envelope
+                try:
+                    self.store.complete_steer_run(sid, command_id, result.run_id,
+                                                  binding, norm["message"],
+                                                  build_steer_envelope)
+                except Exception as exc:
+                    snap = wire.snapshot(session, run)
+                    envelope = {
+                        "v": wire.API_VERSION, "op": "steer", "ok": False,
+                        "disposition": "deferred", "session_id": sid,
+                        "run_id": result.run_id, "started": False, "queued": False,
+                        "superseded": False, "error": {"code": _error_code(exc)},
+                        "snapshot": snap, "cursor": snap["cursor"],
+                    }
+                    self.store.freeze_command(sid, command_id, envelope)
+                    return envelope
+                self.domain.notify()
+                return holder["envelope"]
+
+            # Active run: queue the instruction on the same run.
+            command_id = str(uuid.uuid4())
+            try:
+                self.store.begin_command(
+                    sid, principal_id=self.principal_id, op="steer",
+                    key_hash=norm["key_hash"], command_id=command_id,
+                    normalized_request=norm["normalized"], digest=norm["digest"],
+                    target_run_id=run_id)
+            except StoreError as exc:
+                return wire.error_envelope("steer", _error_code(exc), session_id=sid)
+            try:
+                value = self.backend.steer(run_id, norm["message"], generation,
+                                           self._command_key("steer", norm))
+                if isinstance(value, dict) and isinstance(value.get("error"), dict):
+                    code = value["error"].get("code", "provider_unavailable")
+                    raise wire.WireError(code if code in _SAFE_ERRORS else "provider_unavailable")
+            except Exception as exc:
+                code = _error_code(exc)
+                snap = wire.snapshot(session, run)
+                if code in ("already_terminal", "interaction_pending",
+                            "blocked_unknown", "stale_generation"):
+                    envelope = {
+                        "v": wire.API_VERSION, "op": "steer", "ok": False,
+                        "disposition": "rejected", "session_id": sid,
+                        "run_id": run_id, "started": False, "queued": False,
+                        "superseded": False, "error": {"code": code},
+                        "snapshot": snap, "cursor": snap["cursor"],
+                    }
+                    self.store.complete_command(sid, command_id, envelope,
+                                                outcome="rejected", target_run_id=run_id)
+                    return envelope
+                envelope = {
+                    "v": wire.API_VERSION, "op": "steer", "ok": False,
+                    "disposition": "deferred", "session_id": sid,
+                    "run_id": run_id, "started": False, "queued": False,
+                    "superseded": False, "error": {"code": code},
+                    "snapshot": snap, "cursor": snap["cursor"],
+                }
+                self.store.freeze_command(sid, command_id, envelope)
+                return envelope
+            if isinstance(value, dict) and isinstance(value.get("run"), dict):
+                run = value["run"]
+            else:
+                try:
+                    run = self._projection(run_id).get("run") or run
+                except wire.WireError:
+                    pass
+            queued = bool(value.get("queued", True)) if isinstance(value, dict) else True
+            superseded = bool(value.get("superseded", False)) if isinstance(value, dict) else False
+            holder = {}
+            def build_active_envelope(session_row):
+                envelope = {
+                    "v": wire.API_VERSION, "op": "steer", "ok": True,
+                    "disposition": "committed", "session_id": sid,
+                    "run_id": run_id, "started": False,
+                    "queued": queued, "superseded": superseded,
+                    "snapshot": wire.snapshot(session_row, run),
+                }
+                envelope["cursor"] = envelope["snapshot"]["cursor"]
+                holder["envelope"] = envelope
+                return envelope
+            try:
+                self.store.complete_steer_active(sid, command_id, run_id,
+                                                  norm["message"], build_active_envelope)
+            except Exception as exc:
+                snap = wire.snapshot(session, run)
+                envelope = {
+                    "v": wire.API_VERSION, "op": "steer", "ok": False,
+                    "disposition": "deferred", "session_id": sid,
+                    "run_id": run_id, "started": False, "queued": False,
+                    "superseded": False, "error": {"code": _error_code(exc)},
+                    "snapshot": snap, "cursor": snap["cursor"],
+                }
+                self.store.freeze_command(sid, command_id, envelope)
+                return envelope
+            self.domain.notify()
+            return holder["envelope"]
+
+    def respond(self, request):
+        with self.domain.enter():
+            try:
+                norm = wire.normalize_respond(request)
+            except wire.WireError as exc:
+                return wire.error_envelope("respond", exc.code, message=exc.message)
+            session = self.store.get(norm["session_id"])
+            if session is None:
+                return wire.error_envelope("respond", "not_found_or_denied")
+            sid = norm["session_id"]
+            if session.get("state") == "closed":
+                return wire.error_envelope("respond", "session_closed", session_id=sid)
+            receipt = self.store.get_receipt(sid, "respond", norm["key_hash"])
+            if receipt is not None:
+                if receipt.get("digest") not in (None, norm["digest"]):
+                    return wire.error_envelope("respond", "request_conflict", session_id=sid)
+                replay = self._replay_command(receipt)
+                if replay is not None:
+                    return replay
+            run_id = self._current_run_id(session)
+            if not run_id:
+                return wire.error_envelope("respond", "not_waiting", session_id=sid)
+            try:
+                run = self._projection(run_id).get("run")
+            except wire.WireError as exc:
+                return wire.error_envelope("respond", exc.code, session_id=sid)
+            status = wire.public_status(session, run)
+            if status in ("completed", "failed", "cancelled", "blocked_unknown"):
+                return wire.error_envelope("respond", "already_terminal", session_id=sid,
+                                           details={"status": status})
+            if status != "waiting_for_input":
+                return wire.error_envelope("respond", "not_waiting", session_id=sid)
+            interaction = (run or {}).get("interaction") or {}
+            if interaction.get("interaction_id") != norm["interaction_id"]:
+                return wire.error_envelope("respond", "interaction_mismatch", session_id=sid)
+            generation = int((run or {}).get("driving_generation", 0) or 0)
+            if (norm["expected_generation"] is not None
+                    and norm["expected_generation"] != generation):
+                return wire.error_envelope("respond", "stale_generation", session_id=sid)
+            command_id = str(uuid.uuid4())
+            try:
+                self.store.begin_command(
+                    sid, principal_id=self.principal_id, op="respond",
+                    key_hash=norm["key_hash"], command_id=command_id,
+                    normalized_request=norm["normalized"], digest=norm["digest"],
+                    target_run_id=run_id)
+            except StoreError as exc:
+                return wire.error_envelope("respond", _error_code(exc), session_id=sid)
+            try:
+                value = self.backend.respond(run_id, norm["interaction_id"],
+                                             norm["response"], generation,
+                                             self._command_key("respond", norm))
+                if isinstance(value, dict) and isinstance(value.get("error"), dict):
+                    code = value["error"].get("code", "provider_unavailable")
+                    raise wire.WireError(code if code in _SAFE_ERRORS else "provider_unavailable")
+            except Exception as exc:
+                code = _error_code(exc)
+                snap = wire.snapshot(session, run)
+                envelope = {
+                    "v": wire.API_VERSION, "op": "respond", "ok": False,
+                    "disposition": "rejected", "session_id": sid,
+                    "run_id": run_id, "error": {"code": code},
+                    "snapshot": snap, "cursor": snap["cursor"],
+                }
+                self.store.complete_command(sid, command_id, envelope,
+                                            outcome="rejected", target_run_id=run_id)
+                return envelope
+            try:
+                run = self._projection(run_id).get("run") or run
+            except wire.WireError:
+                pass
+            snap = wire.snapshot(session, run)
+            envelope = {
+                "v": wire.API_VERSION, "op": "respond", "ok": True,
+                "disposition": "committed", "session_id": sid,
+                "run_id": run_id, "consumed_interaction_id": norm["interaction_id"],
+                "snapshot": snap, "cursor": snap["cursor"],
+            }
+            self.store.complete_command(sid, command_id, envelope,
+                                        outcome="committed", target_run_id=run_id)
+            self.domain.notify()
+            return envelope
 
     # ---- wait ----------------------------------------------------------------
 
@@ -454,7 +784,7 @@ class SessionService:
             backend_already = False
             returned_run = None
             try:
-                value = self.backend.cancel(run_id, self._cancel_key(norm))
+                value = self.backend.cancel(run_id, self._command_key("cancel", norm))
                 if isinstance(value, dict):
                     if isinstance(value.get("error"), dict):
                         code = value["error"].get("code", "provider_unavailable")
@@ -506,8 +836,13 @@ class SessionService:
             self.domain.notify()
             return envelope
 
-    def _cancel_key(self, norm):
-        return f"c:{norm['session_id']}:{norm['key_hash'][:48]}"
+    def _command_key(self, op, norm):
+        return f"{op[0]}:{norm['session_id']}:{norm['key_hash'][:48]}"
+
+    def _seed_messages(self, session_id, message):
+        block = self.store.history_block(session_id)
+        return [{"role": "system", "content": block},
+                {"role": "user", "content": message}]
 
     # ---- poll ----------------------------------------------------------------
 

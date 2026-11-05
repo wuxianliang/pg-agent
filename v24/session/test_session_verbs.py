@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
 from v24.session import SessionService, SessionStore, StartResult, StoreError  # noqa: E402
 from v24.session import wire  # noqa: E402
 
-PASS = "[passed] v24 session M1/M2 gate"
+PASS = "[passed] v24 session M1/M2/M3 gate"
 
 
 def check(condition, message):
@@ -41,11 +41,17 @@ class FakeBackend:
         self.messages = []
         self.cancel_calls = []
         self.cancel_fail = None
+        self.steer_calls = []
+        self.respond_calls = []
+        self.respond_fail = None
+        self.last_seed = None
 
-    def start(self, *, session_id, message, toolset, budget, run_key, workspace_root, model):
+    def start(self, *, session_id, message, toolset, budget, run_key, workspace_root,
+              model, seed=None):
         self.start_calls.append((session_id, run_key))
         self.budgets.append(dict(budget))
         self.messages.append(message)
+        self.last_seed = seed
         if self.fail is not None:
             raise self.fail
         rid = run_id()
@@ -66,8 +72,11 @@ class FakeBackend:
         events = [{"seq": seq, "event_kind": "run_started" if seq == 1 else "tool_call_settled",
                    "payload": {"run_id": rid}, "created_at": "2026-11-05T00:00:00+00:00"}
                   for seq in range(1, self.events + 1)]
-        return {"v": 1, "revision": run["revision"], "changed": True,
-                "run": dict(run), "events": events}
+        value = {"v": 1, "revision": run["revision"], "changed": True,
+                 "run": dict(run), "events": events}
+        if run.get("result") is not None:
+            value["result"] = run["result"]
+        return value
 
     def cancel(self, rid, key):
         self.cancel_calls.append((rid, key))
@@ -79,6 +88,38 @@ class FakeBackend:
         if run["status"] in ("completed", "failed", "cancelled", "blocked_unknown"):
             return {"error": {"code": "already_terminal"}}
         run["status"] = "cancelled"
+        run["revision"] += 1
+        return {"run": dict(run)}
+
+    def steer(self, rid, message, generation, key):
+        self.steer_calls.append((rid, message, generation, key))
+        run = self.runs.get(rid)
+        if run is None:
+            return {"error": {"code": "not_found_or_denied"}}
+        if run["status"] in ("completed", "failed", "cancelled", "blocked_unknown"):
+            return {"error": {"code": "already_terminal"}}
+        if run["status"] == "waiting":
+            return {"error": {"code": "interaction_pending"}}
+        run["pending_steer"] = {"message": message}
+        run["epoch_no"] += 1
+        run["driving_generation"] += 1
+        run["revision"] += 1
+        return {"queued": True, "superseded": False, "run": dict(run)}
+
+    def respond(self, rid, interaction_id, response, generation, key):
+        self.respond_calls.append((rid, interaction_id, response, generation, key))
+        if self.respond_fail is not None:
+            raise self.respond_fail
+        run = self.runs.get(rid)
+        if run is None:
+            return {"error": {"code": "not_found_or_denied"}}
+        if run["status"] in ("completed", "failed", "cancelled", "blocked_unknown"):
+            return {"error": {"code": "already_terminal"}}
+        interaction = run.get("interaction") or {}
+        if run["status"] != "waiting" or interaction.get("interaction_id") != interaction_id:
+            return {"error": {"code": "interaction_mismatch"}}
+        run["status"] = "running"
+        run["interaction"] = None
         run["revision"] += 1
         return {"run": dict(run)}
 
@@ -115,6 +156,7 @@ def test_start_poll():
     with tempfile.TemporaryDirectory(prefix="v24-session-m1-") as temp:
         store = _new_store(temp)
         backend = FakeBackend(events=3)
+        store.read_run = backend.poll
         service = SessionService(store, backend)
         response = service.start({"message": "read the parser", "request_key": "k-1"})
         check(response["ok"] and response["disposition"] == "committed", response)
@@ -376,6 +418,180 @@ def test_event_prefix_and_multi_session():
         check(wrong["cursor"]["event_seq"] == 0, wrong)
 
 
+def test_steer_respond():
+    with tempfile.TemporaryDirectory(prefix="v24-session-m3-") as temp:
+        store = _new_store(temp)
+        backend = FakeBackend(events=3)
+        store.read_run = backend.poll
+        service = SessionService(store, backend)
+
+        # Active steer stays on the same run and increments user_turn_no once.
+        active = service.start({"message": "start", "request_key": "active"})
+        sid, rid = active["session_id"], active["run_id"]
+        steered = service.steer({"session_id": sid, "message": "more",
+                                  "expected_run_id": rid, "expected_generation": 1,
+                                  "request_key": "steer-1"})
+        check(steered["ok"] and steered["started"] is False and steered["queued"], steered)
+        check(steered["run_id"] == rid, steered)
+        check(steered["snapshot"]["user_turn_no"] == 2, steered)
+        check(steered["snapshot"]["current_run"]["epoch_no"] == 2, steered)
+        check(steered["snapshot"]["pending_steer"]["message"] == "more", steered)
+        waited = service.steer({"session_id": sid, "message": "wait-zero",
+                                "request_key": "steer-wait-zero", "wait": True,
+                                "timeout_ms": 0})
+        check(waited["ok"] and waited["wake"]["reason"] == "none", waited)
+        check(store.get(sid)["run_no"] == 1, store.get(sid))
+        calls = len(backend.steer_calls)
+        replay = service.steer({"session_id": sid, "message": "more",
+                                "expected_run_id": rid, "expected_generation": 1,
+                                "request_key": "steer-1"})
+        check(replay["disposition"] == "replay" and replay["snapshot"]["user_turn_no"] == 2, replay)
+        check(len(backend.steer_calls) == calls, backend.steer_calls)
+        conflict = service.steer({"session_id": sid, "message": "different",
+                                  "request_key": "steer-1"})
+        check(conflict["error"]["code"] == "request_conflict", conflict)
+
+        # Terminal steer starts a new run in the same session, seeded by the host.
+        backend.runs[rid]["result"] = {"final_text": "done"}
+        backend.finish(rid, "completed")
+        terminal = service.steer({"session_id": sid, "message": "next",
+                                   "expected_run_id": rid, "request_key": "steer-2"})
+        check(isinstance(backend.last_seed, list) and backend.last_seed[-1]["content"] == "next",
+              backend.last_seed)
+        check("assistant: done" in backend.last_seed[0]["content"], backend.last_seed)
+        check(terminal["ok"] and terminal["started"] and not terminal["queued"], terminal)
+        check(terminal["run_id"] != rid, terminal)
+        check(terminal["snapshot"]["run_no"] == 2, terminal)
+        check(terminal["snapshot"]["user_turn_no"] == 4, terminal)
+        check(store.get(sid)["run_no"] == 2, store.get(sid))
+        calls = len(backend.start_calls)
+        terminal_replay = service.steer({"session_id": sid, "message": "next",
+                                         "expected_run_id": rid, "request_key": "steer-2"})
+        check(terminal_replay["disposition"] == "replay"
+              and terminal_replay["run_id"] == terminal["run_id"], terminal_replay)
+        check(len(backend.start_calls) == calls, backend.start_calls)
+        restarted_store = SessionStore(temp, read_run=backend.poll)
+        restarted = SessionService(restarted_store, backend)
+        restart_replay = restarted.steer({"session_id": sid, "message": "next",
+                                          "expected_run_id": rid, "request_key": "steer-2"})
+        check(restart_replay["disposition"] == "replay"
+              and restart_replay["run_id"] == terminal["run_id"], restart_replay)
+        check(restarted_store.get(sid)["run_no"] == 2, restarted_store.get(sid))
+
+        # Waiting rejects with interaction_pending and zero run/counter writes.
+        waiting = service.start({"message": "wait", "request_key": "waiting"})
+        wrid = waiting["run_id"]
+        backend.runs[wrid]["status"] = "waiting"
+        backend.runs[wrid]["interaction"] = {"interaction_id": str(uuid.uuid4())}
+        backend.runs[wrid]["revision"] += 1
+        before = (store.get(waiting["session_id"])["run_no"],
+                  store.get(waiting["session_id"])["user_turn_no"])
+        rejected = service.steer({"session_id": waiting["session_id"],
+                                  "message": "too early", "request_key": "steer-wait"})
+        check(rejected["error"]["code"] == "interaction_pending", rejected)
+        check((store.get(waiting["session_id"])["run_no"],
+               store.get(waiting["session_id"])["user_turn_no"]) == before,
+              "waiting steer changed counters")
+        check(backend.steer_calls[-1][0] != wrid, backend.steer_calls)
+        rejected_replay = service.steer({"session_id": waiting["session_id"],
+                                         "message": "too early", "request_key": "steer-wait"})
+        check(rejected_replay["disposition"] == "replay"
+              and rejected_replay["error"]["code"] == "interaction_pending", rejected_replay)
+
+        # blocked_unknown is a hard rejection with zero run writes.
+        blocked = service.start({"message": "blocked", "request_key": "blocked"})
+        brid = blocked["run_id"]
+        backend.runs[brid]["status"] = "blocked_unknown"
+        backend.runs[brid]["revision"] += 1
+        blocked_steer = service.steer({"session_id": blocked["session_id"],
+                                       "message": "go", "request_key": "steer-blocked"})
+        check(blocked_steer["error"]["code"] == "blocked_unknown", blocked_steer)
+        check(store.get(blocked["session_id"])["run_no"] == 1, store.get(blocked["session_id"]))
+
+        # Respond consumes only the exact interaction, does not add a user turn.
+        respond_start = service.start({"message": "ask", "request_key": "respond"})
+        rsid, rrid = respond_start["session_id"], respond_start["run_id"]
+        interaction_id = str(uuid.uuid4())
+        backend.runs[rrid]["status"] = "waiting"
+        backend.runs[rrid]["interaction"] = {"interaction_id": interaction_id}
+        backend.runs[rrid]["revision"] += 1
+        wrong = service.respond({"session_id": rsid, "interaction_id": str(uuid.uuid4()),
+                                 "response": "accept", "request_key": "respond-wrong"})
+        check(wrong["error"]["code"] == "interaction_mismatch", wrong)
+        stale = service.respond({"session_id": rsid, "interaction_id": interaction_id,
+                                 "response": "accept", "expected_generation": 99,
+                                 "request_key": "respond-stale"})
+        check(stale["error"]["code"] == "stale_generation", stale)
+        before_turns = store.get(rsid)["user_turn_no"]
+        answered = service.respond({"session_id": rsid, "interaction_id": interaction_id,
+                                    "response": "accept", "request_key": "respond-1"})
+        check(answered["ok"] and answered["consumed_interaction_id"] == interaction_id, answered)
+        check(answered["snapshot"]["status"] == "running", answered)
+        check(store.get(rsid)["user_turn_no"] == before_turns, "respond changed user_turn_no")
+        calls = len(backend.respond_calls)
+        respond_replay = service.respond({"session_id": rsid, "interaction_id": interaction_id,
+                                          "response": "accept", "request_key": "respond-1"})
+        check(respond_replay["disposition"] == "replay", respond_replay)
+        check(len(backend.respond_calls) == calls, backend.respond_calls)
+        restarted = SessionService(SessionStore(temp, read_run=backend.poll), backend)
+        restart_respond = restarted.respond({"session_id": rsid,
+                                             "interaction_id": interaction_id,
+                                             "response": "accept",
+                                             "request_key": "respond-1"})
+        check(restart_respond["disposition"] == "replay"
+              and restart_respond["ok"], restart_respond)
+        not_waiting = service.respond({"session_id": rsid, "interaction_id": interaction_id,
+                                       "response": "accept", "request_key": "respond-2"})
+        check(not_waiting["error"]["code"] == "not_waiting", not_waiting)
+
+        # Structured answer normalization and terminal rejection.
+        structured = service.start({"message": "struct", "request_key": "struct"})
+        srid = structured["run_id"]
+        backend.runs[srid]["status"] = "waiting"
+        backend.runs[srid]["interaction"] = {"interaction_id": "i-1"}
+        backend.runs[srid]["revision"] += 1
+        answered2 = service.respond({"session_id": structured["session_id"],
+                                     "interaction_id": "i-1",
+                                     "answers": {"q": "yes"}, "request_key": "respond-3"})
+        check(answered2["ok"], answered2)
+        check(backend.respond_calls[-1][2] == {"answers": {"q": "yes"}},
+              backend.respond_calls[-1])
+        backend.finish(structured["run_id"], "completed")
+        terminal_respond = service.respond({"session_id": structured["session_id"],
+                                            "interaction_id": "i-1", "response": "accept",
+                                            "request_key": "respond-4"})
+        check(terminal_respond["error"]["code"] == "already_terminal", terminal_respond)
+
+        # Real-mode respond is fixed waiting_unsupported and leaves the run waiting.
+        unsupported = service.start({"message": "unsupported", "request_key": "unsupported"})
+        urid = unsupported["run_id"]
+        backend.runs[urid]["status"] = "waiting"
+        backend.runs[urid]["interaction"] = {"interaction_id": "u-1"}
+        backend.runs[urid]["revision"] += 1
+        backend.respond_fail = RuntimeError("waiting_unsupported")
+        blocked_respond = service.respond({"session_id": unsupported["session_id"],
+                                           "interaction_id": "u-1", "response": "accept",
+                                           "request_key": "respond-unsupported"})
+        check(blocked_respond["error"]["code"] == "waiting_unsupported", blocked_respond)
+        check(backend.runs[urid]["status"] == "waiting", backend.runs[urid])
+        replay_unsupported = service.respond({"session_id": unsupported["session_id"],
+                                              "interaction_id": "u-1", "response": "accept",
+                                              "request_key": "respond-unsupported"})
+        check(replay_unsupported["disposition"] == "replay", replay_unsupported)
+        backend.respond_fail = None
+
+        # Receipt window is bounded per session.
+        cap = service.start({"message": "cap", "request_key": "cap"})
+        for index in range(260):
+            result = service.steer({"session_id": cap["session_id"],
+                                    "message": f"m{index}",
+                                    "request_key": f"cap-{index}"})
+            check(result["ok"], (index, result))
+        receipts = [item for item in store.get(cap["session_id"])["receipts"]
+                    if item.get("phase") in ("completed", "rejected")]
+        check(len(receipts) == 256, len(receipts))
+
+
 def test_budget_and_deferred():
     with tempfile.TemporaryDirectory(prefix="v24-session-m1-budget-") as temp:
         store = _new_store(temp)
@@ -466,6 +682,7 @@ def main():
     test_start_poll()
     test_event_prefix_and_multi_session()
     test_wait_cancel()
+    test_steer_respond()
     test_budget_and_deferred()
     test_migration_and_fail_closed()
     print(PASS, flush=True)
@@ -476,5 +693,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print(f"[failed] v24 session M1/M2 gate; {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"[failed] v24 session M1/M2/M3 gate; {type(exc).__name__}: {exc}", file=sys.stderr)
         raise

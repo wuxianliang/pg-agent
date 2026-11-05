@@ -147,6 +147,16 @@ does not write the store; `cancel` writes only its receipt unless it is closing
 a `starting` session.  M2 gates: the same session gate,
 `v24/s7/test_g6.py`, and `v24/ui/test_ui_gate.py`.
 
+M3 adds `SessionService.steer/respond`.  Active steer keeps the run and
+increments `user_turn_no`; a terminal steer starts a new run in the same
+session (`run_no+1`) with a system history block as seed.  The same request key
+replays the first `steer_active`/`steer_new_run` variant across state changes
+and restarts; a different payload conflicts.  `waiting_for_input` and
+`blocked_unknown` steer are rejected with zero run writes, while respond
+consumes only the exact `interaction_id`, does not change `user_turn_no`, and
+maps a real backend to `waiting_unsupported`.  M3 gates: the session gate,
+`v24/ui/test_backend_regressions.py`, and `v24/s4/test_g2b.py`.
+
 ## M3 closeout (2026-11-02)
 
 Launch from the repository root after the existing environment has been initialized:

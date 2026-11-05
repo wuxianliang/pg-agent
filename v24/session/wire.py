@@ -188,6 +188,85 @@ def normalize_cancel(request):
             "digest": sha256_hex(normal), "key_hash": key_hash(request_key)}
 
 
+def _optional_dict(value, field):
+    if value is not None and not isinstance(value, dict):
+        raise WireError("invalid_args", field)
+    return value
+
+
+def normalize_steer(request):
+    if not isinstance(request, dict) or request.get("op") not in (None, "steer"):
+        raise WireError("invalid_args", "request")
+    session_id = _text(request.get("session_id"), "session_id", maximum=64)
+    message = _text(request.get("message"), "message", maximum=8192)
+    request_key = _text(request.get("request_key"), "request_key", maximum=MAX_KEY)
+    expected_run_id = request.get("expected_run_id")
+    if expected_run_id is not None and not isinstance(expected_run_id, str):
+        raise WireError("invalid_args", "expected_run_id")
+    expected_generation = request.get("expected_generation")
+    if expected_generation is not None:
+        expected_generation = _int(expected_generation, "expected_generation",
+                                   minimum=0, maximum=10**9)
+    wait = request.get("wait", False)
+    if not isinstance(wait, bool):
+        raise WireError("invalid_args", "wait")
+    timeout_ms = _int(request.get("timeout_ms", 0), "timeout_ms",
+                      minimum=0, maximum=MAX_TIMEOUT_MS)
+    if request.get("queue"):
+        raise WireError("invalid_args", "queue")
+    normal = {"session_id": session_id, "message": message,
+              "expected_run_id": expected_run_id,
+              "expected_generation": expected_generation}
+    return {"session_id": session_id, "message": message,
+            "expected_run_id": expected_run_id,
+            "expected_generation": expected_generation, "wait": wait,
+            "timeout_ms": timeout_ms, "normalized": normal,
+            "digest": sha256_hex(normal), "key_hash": key_hash(request_key)}
+
+
+def normalize_respond(request):
+    if not isinstance(request, dict) or request.get("op") not in (None, "respond"):
+        raise WireError("invalid_args", "request")
+    session_id = _text(request.get("session_id"), "session_id", maximum=64)
+    interaction_id = _text(request.get("interaction_id"), "interaction_id", maximum=128)
+    request_key = _text(request.get("request_key"), "request_key", maximum=MAX_KEY)
+    response = request.get("response")
+    if response is not None and not isinstance(response, str):
+        raise WireError("invalid_args", "response")
+    answers = _optional_dict(request.get("answers"), "answers")
+    content = _optional_dict(request.get("content"), "content")
+    meta = _optional_dict(request.get("meta"), "meta")
+    amendment = request.get("amendment")
+    if amendment is not None and not isinstance(amendment, str):
+        raise WireError("invalid_args", "amendment")
+    if all(value is None for value in (response, answers, content, meta, amendment)):
+        raise WireError("invalid_args", "response_required")
+    if response == "" or amendment == "" or answers == {}:
+        raise WireError("invalid_args", "response_empty")
+    if amendment is not None:
+        kernel = {"action": "accept_with_amendment", "amendment": amendment}
+    elif answers is not None:
+        kernel = {"answers": answers}
+    elif content is not None or meta is not None:
+        kernel = {"action": response or "accept"}
+        if content is not None:
+            kernel["content"] = content
+        if meta is not None:
+            kernel["meta"] = meta
+    else:
+        kernel = {"text": response}
+    expected_generation = request.get("expected_generation")
+    if expected_generation is not None:
+        expected_generation = _int(expected_generation, "expected_generation",
+                                   minimum=0, maximum=10**9)
+    normal = {"session_id": session_id, "interaction_id": interaction_id,
+              "response": kernel, "expected_generation": expected_generation}
+    return {"session_id": session_id, "interaction_id": interaction_id,
+            "response": kernel, "expected_generation": expected_generation,
+            "normalized": normal, "digest": sha256_hex(normal),
+            "key_hash": key_hash(request_key)}
+
+
 def wake_reason(cursor, snap, *, include_events):
     """Return the highest-priority wake, or None for a revision-only change."""
     current = snap["cursor"]

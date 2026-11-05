@@ -8,7 +8,7 @@
 | 项 | 值 |
 |---|---|
 | 日期 | 2026-11-05 |
-| 状态 | **Adopted（2026-11-05）**；五项决策已定稿；S0-M1/M2 已实现并通过 gate；M3 待开工；每个里程碑测试全绿后按路径提交 |
+| 状态 | **Adopted（2026-11-05）**；五项决策已定稿；S0-M1/M2/M3 已实现并通过 gate；M4 待开工；每个里程碑测试全绿后按路径提交 |
 | 目标 | 把 v24 的 run 级六动词升级为 RepoPrompt 式 session 级六动词 |
 | 配套 | 决策记录：`docs/reviews/v24-session-control-decision-record-2026-11-05.md`；设计：`docs/designs/v24-session-control-design-verified-2026-11-05.md`；API：`docs/designs/v24-session-control-api-2026-11-05.md` |
 | 提交策略 | 每个 S0 里程碑测试全绿、收尾工件更新后，按路径一次提交；S1 需 frozen-baseline bump 独立获批后单独提交 |
@@ -26,6 +26,14 @@
 > (`v24/session/test_session_verbs.py`) 与 `v24/s7/test_g6.py`、`v24/ui/test_ui_gate.py` 全绿。
 > 真实 `AgentRuntime` adapter 与 UI 全量切换按计划留在 M4；当前 app 仍走 `SessionStore` 兼容入口。
 > S0 冻结边界 `git diff -- v24/sql v24/load.py v24/host/deepseek.py` 为空。
+>
+> **M3 进展（2026-11-05）**：`SessionService.steer/respond`、活动/终态/`waiting`/`blocked_unknown`
+> 分派、同 key replay、跨重启 replay、`expected_run_id`/`expected_generation` CAS、终态新 run
+> `run_no+1` 与历史 system seed、活动 steer `user_turn_no+1`、256 receipt 窗口、respond 精确
+> `interaction_id`/`waiting_unsupported` 已落地。M3 三个 gate 全绿：
+> `v24/session/test_session_verbs.py`、`v24/ui/test_backend_regressions.py`、`v24/s4/test_g2b.py`。
+> `steer(wait=true)` 在写提交后复用 `wait`；`respond` 不增加 `user_turn_no`。
+> 真实 `AgentRuntimeBackend` 仍在 M4，S0 real respond 固定 `waiting_unsupported`。
 
 ## 0. 完成定义（DoD）
 
