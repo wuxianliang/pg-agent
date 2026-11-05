@@ -24,7 +24,8 @@ class SessionBackend(Protocol):
 
     def start(self, *, session_id: str, message: str, toolset: str | None,
               budget: dict, run_key: str, workspace_root: str | None,
-              model: str | None, seed: list[dict] | None = None) -> StartResult:
+              model: str | None, seed: list[dict] | None = None,
+              binding: dict | None = None) -> StartResult:
         ...
 
     def poll(self, run_id: str, after_revision: int = 0) -> dict:

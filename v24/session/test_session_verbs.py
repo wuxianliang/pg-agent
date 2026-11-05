@@ -6,6 +6,7 @@ Run: uv run python v24/session/test_session_verbs.py
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import sys
 import tempfile
@@ -18,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from v24.session import SessionService, SessionStore, StartResult, StoreError  # noqa: E402
 from v24.session import wire  # noqa: E402
+from v24.session.rollback import RollbackError, restore_v1  # noqa: E402
 
 PASS = "[passed] v24 session M1/M2/M3 gate"
 
@@ -45,9 +47,10 @@ class FakeBackend:
         self.respond_calls = []
         self.respond_fail = None
         self.last_seed = None
+        self.recovered = []
 
     def start(self, *, session_id, message, toolset, budget, run_key, workspace_root,
-              model, seed=None):
+              model, seed=None, binding=None):
         self.start_calls.append((session_id, run_key))
         self.budgets.append(dict(budget))
         self.messages.append(message)
@@ -122,6 +125,10 @@ class FakeBackend:
         run["interaction"] = None
         run["revision"] += 1
         return {"run": dict(run)}
+
+    def recover(self, session, binding):
+        self.recovered.append((session.get("session_id"), binding.get("run_id")))
+        return self.runs.get(binding.get("run_id"))
 
     def finish(self, rid, status):
         self.runs[rid]["status"] = status
@@ -592,6 +599,34 @@ def test_steer_respond():
         check(len(receipts) == 256, len(receipts))
 
 
+def test_recovery():
+    with tempfile.TemporaryDirectory(prefix="v24-session-recover-") as temp:
+        store = _new_store(temp)
+        backend = FakeBackend(events=1)
+        service = SessionService(store, backend)
+        active = service.start({"message": "live", "request_key": "live"})
+        counts = service.recover()
+        check(counts["recovered"] == 1, counts)
+        check(backend.recovered[-1][0] == active["session_id"], backend.recovered)
+        backend.finish(active["run_id"], "completed")
+        counts = service.recover()
+        check(counts["terminal"] == 1 and counts["recovered"] == 0, counts)
+        check(backend.runs[active["run_id"]]["status"] == "completed", backend.runs)
+
+        # An intent without a committed run is frozen, never restarted.
+        sid = str(uuid.uuid4())
+        store.begin_start(session_id=sid, principal_id="local", key_hash="b" * 64,
+                          command_id=str(uuid.uuid4()), run_key="orphan",
+                          normalized_request={"session_id": sid},
+                          digest="c" * 64)
+        counts = service.recover()
+        check(counts["deferred"] == 1, counts)
+        row = store.get(sid)
+        check(row["pending_intent"]["phase"] == "deferred", row)
+        polled = service.poll({"session_id": sid})
+        check(polled["snapshot"]["status"] == "starting", polled)
+
+
 def test_budget_and_deferred():
     with tempfile.TemporaryDirectory(prefix="v24-session-m1-budget-") as temp:
         store = _new_store(temp)
@@ -626,6 +661,58 @@ def test_budget_and_deferred():
         check(len(store.sessions) == 1 and len(failing.start_calls) == 1, failing.start_calls)
         deferred_poll = service.poll({"session_id": sid})
         check(deferred_poll["snapshot"]["status"] == "starting", deferred_poll)
+
+
+def test_rollback():
+    with tempfile.TemporaryDirectory(prefix="v24-session-rollback-") as temp:
+        root = Path(temp)
+        sid, scope_id, rid = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+        v1 = {"format_version": 1, "active_conversation_id": sid,
+              "conversations": [{
+                  "conversation_id": sid, "name": "legacy", "state": "active",
+                  "resume_token_hash": "a" * 64,
+                  "created_at": "2026-01-01T00:00:00+00:00",
+                  "updated_at": "2026-01-01T00:00:00+00:00",
+                  "bindings": [{"scope_id": scope_id, "run_id": rid,
+                                "realm": "legacy", "workspace_root": "",
+                                "toolset": "read"}],
+                  "active_binding": {"scope_id": scope_id, "run_id": rid},
+              }]}
+        (root / "sessions.json").write_text(json.dumps(v1))
+        (root / "turns.jsonl").write_text(json.dumps({
+            "conversation_id": sid, "run_id": rid, "seq": 1,
+            "user_text": "legacy turn"}) + "\n")
+        store = SessionStore(root)
+        check(store.get(sid) is not None, store.warnings)
+        check((root / "sessions.json.v1.bak").exists(), "missing v1 backup")
+        row, _ = store.new_conversation(scope_id=str(uuid.uuid4()), realm="new")
+        new_sid = row["session_id"]
+        store.append_turn(conversation_id=new_sid, run_id=str(uuid.uuid4()), seq=1,
+                          user_text="v2 only")
+        v2_hash = hashlib.sha256((root / "sessions.json").read_bytes()).hexdigest()
+        try:
+            restore_v1(root)
+        except RollbackError as exc:
+            check(str(exc) == "confirmation_required", exc)
+        else:
+            raise AssertionError("rollback ran without confirmation")
+        result = restore_v1(root, confirm=True)
+        check(result["status"] == "rolled_back", result)
+        restored = json.loads((root / "sessions.json").read_text())
+        check(restored["format_version"] == 1, restored)
+        check([item["conversation_id"] for item in restored["conversations"]] == [sid],
+              restored)
+        turns = [json.loads(line) for line in (root / "turns.jsonl").read_text().splitlines()]
+        check(len(turns) == 1 and turns[0]["user_text"] == "legacy turn", turns)
+        archive = Path(result["archive"])
+        manifest = json.loads((archive / "manifest.json").read_text())
+        check(manifest["files"]["sessions.json"]["sha256"] == v2_hash, manifest)
+        check((root / "sessions.json.prev").exists(), "v2 prev was not preserved")
+        v1_hash = hashlib.sha256((root / "sessions.json").read_bytes()).hexdigest()
+        second = restore_v1(root, confirm=True)
+        check(second["archive"] != result["archive"], second)
+        check(json.loads((Path(second["archive"]) / "manifest.json").read_text())
+              ["files"]["sessions.json"]["sha256"] == v1_hash, "archive overwritten")
 
 
 def test_migration_and_fail_closed():
@@ -683,8 +770,10 @@ def main():
     test_event_prefix_and_multi_session()
     test_wait_cancel()
     test_steer_respond()
+    test_recovery()
     test_budget_and_deferred()
     test_migration_and_fail_closed()
+    test_rollback()
     print(PASS, flush=True)
     return 0
 

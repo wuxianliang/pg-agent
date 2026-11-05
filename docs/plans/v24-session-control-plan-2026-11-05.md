@@ -8,7 +8,7 @@
 | 项 | 值 |
 |---|---|
 | 日期 | 2026-11-05 |
-| 状态 | **Adopted（2026-11-05）**；五项决策已定稿；S0-M1/M2/M3 已实现并通过 gate；M4 待开工；每个里程碑测试全绿后按路径提交 |
+| 状态 | **Adopted（2026-11-05）**；五项决策已定稿；S0-M1/M2/M3 已实现并通过 gate；M4 进行中（headless 恢复/回滚/适配器已落地，UI 全量切换与 M5 审计基线未完成）；每个里程碑测试全绿后按路径提交 |
 | 目标 | 把 v24 的 run 级六动词升级为 RepoPrompt 式 session 级六动词 |
 | 配套 | 决策记录：`docs/reviews/v24-session-control-decision-record-2026-11-05.md`；设计：`docs/designs/v24-session-control-design-verified-2026-11-05.md`；API：`docs/designs/v24-session-control-api-2026-11-05.md` |
 | 提交策略 | 每个 S0 里程碑测试全绿、收尾工件更新后，按路径一次提交；S1 需 frozen-baseline bump 独立获批后单独提交 |
@@ -34,6 +34,15 @@
 > `v24/session/test_session_verbs.py`、`v24/ui/test_backend_regressions.py`、`v24/s4/test_g2b.py`。
 > `steer(wait=true)` 在写提交后复用 `wait`；`respond` 不增加 `user_turn_no`。
 > 真实 `AgentRuntimeBackend` 仍在 M4，S0 real respond 固定 `waiting_unsupported`。
+>
+> **M4 进行中（2026-11-05）**：`SessionService.recover`（不重开 terminal；孤儿 start intent
+> 冻结为 `recovery_pending`）、`v24/session/rollback.py`（先归档 v2、再恢复
+> `.v1.bak`/`.v1.bak` turns、`O_EXCL` 归档目录 + 内容哈希）和
+> `v24/ui/session_backend.py`（`AgentRuntimeBackend`：scope/install/start/poll/cancel/steer、
+> real respond `waiting_unsupported`）已落地，并通过
+> `v24/session/test_session_verbs.py`、`v24/ui/test_session_backend.py`。UI 仍走旧
+> `Backend`；`V24_SESSION_API` 切换、启动时 `recover` 接线、M5 evidence/audit 基线尚未完成，
+> 因此不把 M4 标为完成。
 
 ## 0. 完成定义（DoD）
 

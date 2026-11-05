@@ -212,6 +212,65 @@ class SessionService:
                               code="setup_incomplete",
                               command_id=(receipt or {}).get("command_id"))
 
+    # ---- recovery ------------------------------------------------------------
+
+    def recover(self):
+        """Rebuild live scopes without re-opening terminal runs.
+
+        ``recover`` is deliberately idempotent.  A session with a persisted
+        start intent but no committed run is frozen as ``recovery_pending``;
+        it is never treated as a fresh start.  The adapter owns provider/worker
+        rehydrate and must not replay a terminal run.
+        """
+        counts = {"sessions": 0, "recovered": 0, "terminal": 0,
+                  "deferred": 0, "errors": 0}
+        with self.domain.enter():
+            for session in list(self.store.sessions):
+                counts["sessions"] += 1
+                if session.get("state") == "closed":
+                    counts["terminal"] += 1
+                    continue
+                intent = session.get("pending_intent")
+                if isinstance(intent, dict) and intent.get("phase") == "intent":
+                    code = "recovery_pending"
+                    envelope = {
+                        "v": wire.API_VERSION, "op": intent.get("op", "start"),
+                        "ok": False, "disposition": "deferred",
+                        "session_id": session.get("session_id"),
+                        "run_id": None, "started": False,
+                        "error": {"code": code},
+                        "snapshot": wire.snapshot(session, None),
+                    }
+                    envelope["cursor"] = envelope["snapshot"]["cursor"]
+                    try:
+                        if intent.get("op") == "start":
+                            self.store.freeze_deferred(session["session_id"],
+                                                       intent["command_id"], envelope)
+                        else:
+                            self.store.freeze_command(session["session_id"],
+                                                      intent["command_id"], envelope)
+                        counts["deferred"] += 1
+                    except StoreError:
+                        counts["errors"] += 1
+                    continue
+                binding = session.get("active_binding")
+                if not binding:
+                    continue
+                recover = getattr(self.backend, "recover", None)
+                if recover is None:
+                    continue
+                try:
+                    run = recover(session, binding)
+                except Exception:
+                    counts["errors"] += 1
+                    continue
+                if isinstance(run, dict) and wire.public_status(session, run) in (
+                        "completed", "failed", "cancelled", "blocked_unknown"):
+                    counts["terminal"] += 1
+                else:
+                    counts["recovered"] += 1
+        return counts
+
     # ---- steer / respond -----------------------------------------------------
 
     def _replay_command(self, receipt):
@@ -333,7 +392,8 @@ class SessionService:
                         budget=wire.normalize_budget(None), run_key=run_key,
                         workspace_root=session.get("workspace_root"),
                         model=session.get("model"),
-                        seed=self._seed_messages(sid, norm["message"]))
+                        seed=self._seed_messages(sid, norm["message"]),
+                        binding=session.get("active_binding"))
                     result, new_run, binding = self._start_result(
                         value, session_id=sid,
                         workspace_root=session.get("workspace_root"),

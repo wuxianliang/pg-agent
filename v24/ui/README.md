@@ -157,6 +157,15 @@ consumes only the exact `interaction_id`, does not change `user_turn_no`, and
 maps a real backend to `waiting_unsupported`.  M3 gates: the session gate,
 `v24/ui/test_backend_regressions.py`, and `v24/s4/test_g2b.py`.
 
+M4 groundwork adds `v24/ui/session_backend.py` (an `AgentRuntime` adapter for
+scope/install/start/poll/cancel/steer; real `respond` is fixed
+`waiting_unsupported`), `SessionService.recover` (terminal runs are not
+reopened; orphan start intents freeze as `recovery_pending`), and
+`v24/session/rollback.py` (create-once v2 archive, then `.v1.bak` restore).
+Gate: `v24/ui/test_session_backend.py`.  The Chainlit `Backend` still owns the
+UI path; the `V24_SESSION_API` switch, startup recovery wiring and M5
+evidence/audit baseline remain M4 work.
+
 ## M3 closeout (2026-11-02)
 
 Launch from the repository root after the existing environment has been initialized:
